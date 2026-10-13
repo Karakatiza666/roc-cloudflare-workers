@@ -1,6 +1,8 @@
 # Plan: fix the gaps found in the audit (2026-10-13)
 
-The audit compared this platform with wasm-bindgen and workers-rs (Rust), workers-zig and Zig std, Go, TinyGo and workers-go, Pyodide and Python Workers, Emscripten, Almide, soli_lang and plumekit. This plan fixes the 5 problems it found.
+The audit compared this platform with wasm-bindgen and workers-rs (Rust), workers-zig and Zig std, Go, TinyGo and workers-go, Pyodide and Python Workers, Emscripten, Almide, soli_lang and plumekit. This plan fixes the 5 problems it found (1 to 5).
+
+A second audit (2026-10-13) compared the code with the design in `../DESIGN.md` §10.1 and §10.2. It found 3 bugs, 6 gaps between the design and the code, and 4 design risks. Problems 6 to 11 fix them. The numbers 1 to 5 stay as they are, because other files refer to them.
 
 | # | Problem | Effect |
 |---|---|---|
@@ -9,17 +11,29 @@ The audit compared this platform with wasm-bindgen and workers-rs (Rust), worker
 | 3 | A wait that never settles (the client disconnects) | The task's saved stack copy and heap leak forever |
 | 4 | Pool rules: "up to 16 per instance" and an open count | More memory, no gain |
 | 5 | The CPU limit stops the instance in a task | `task_abort` does not run. The instance state is stale. |
+| 6 | Host bugs: the log buffer has the owner tag of a task (B1), `num` goes to JS as an `f64` (B2), JS does not read `c` and `num` (B3) | B1: heap corruption with no trap after a `dbg` and a `crash`, and a leak for each `dbg`. B2: values above 2^53 change. B3: no effect can send binary data. |
+| 7 | The platform ABI has bench exports (R1), the build settings are given by hand (R3), the glue can drift (R4) | `set_copy(0)` breaks requests that run at the same time. A plain `roc build` gives the wrong stack size. An ABI change is not seen. |
+| 8 | The platform API is not the designed API: `Str => Str` (G1), raw kind numbers (G2), status 0 on all errors (G3), only a fetch handler (G4) | The registry cannot take binary uploads, has no types, no test seam, no error causes and no cron |
+| 9 | The JS shim is bench code, and `io` has no request context (G5) | No entry module for users. No `ctx.waitUntil`, `request.signal` or headers in an effect. |
+| 10 | All bodies go through wasm memory (R2) | A large R2 object uses wasm memory that never gets smaller |
+| 11 | No release (G6) | Nobody can use the platform by URL |
 
 ## Order of work
 
 | Order | Items | Depends on |
 |---|---|---|
-| 1 | 1a, 1a-ci, 1b to 1d | none |
-| 2 | 2a to 2d | none |
-| 3 | 3.0 (workerd facts), then 3a to 3d | the task table (2c) |
-| 4 | 4 | cancel (3c) |
-| 5 | 5 | none. Test it on the edge last. |
-| 6 | Update DESIGN.md §10.2 and `bench/README.md` | all |
+| 1 | 1a, 1a-ci, 1b to 1d (done) | none |
+| 2 | 6a to 6c | none. 6a corrupts the heap, so it comes first. |
+| 3 | 2a to 2d | none |
+| 4 | 3.0 (workerd facts), then 3a to 3d | the task table (2c) |
+| 5 | 4 | cancel (3c) |
+| 6 | 5a to 5c. 5d (edge) waits for a deployed worker in 11. | none |
+| 7 | 7a to 7c | none. Before 8, because 8 changes the exports. |
+| 8 | 8a to 8e | the split ABI (7a), the header settings (7b) |
+| 9 | 9a to 9c | the task table (2c), the API (8) |
+| 10 | 10a to 10c | the API (8), the shim (9) |
+| 11 | 11a to 11c, then 5d on the edge | 7 to 10 |
+| 12 | Update DESIGN.md §10.1, §10.2 and `bench/README.md` | all |
 
 Each new test must fail when its change is reverted.
 
@@ -226,8 +240,89 @@ Limits:
 | 5c | Check the terminated flag at `handle`, and retire when it is set | Node: write 1 between requests, with stale `TASK_TOP` |
 | 5d | Edge test: a handler that loops past the CPU limit. Does the signal arrive? Does the isolate survive? | Deployed worker |
 
+## 6. Host bugs (second audit)
+
+| Bug | Where | Now |
+|---|---|---|
+| B1 | `hostlib/roc.zig:13-19`, `hostlib/wordbuf.zig:13-15`, `hostlib/alloc.zig:177` | `logPushCopy` and the growth of the `LOG` buffer allocate with `OWNER` = the task that runs. No JS code calls `log_ptr`, `log_len` or `log_clear`. After a clean trap, `freeOwner` frees the buffer and its entries while `LOG.ptr` still points to them. The next `dbg` writes into a freed span that can be in use by another task. Each `dbg` also leaks, because nothing drains the log. |
+| B2 | `host/host.zig:115,125` | The import `js_wait` takes `num` as an `f64` (`@floatFromInt`). Values above 2^53 change with no error. |
+| B3 | `bench/core.js:456-460` | `makeWait` reads `a` and `b`, but not `c` (bytes) or `num`. |
+
+| Step | Change | Test |
+|---|---|---|
+| 6a | Host-owned allocations use owner 0: put `OWNER = 0` around `logPushCopy` and `WordBuf.push` (as `js_alloc` does at `hostlib/alloc.zig:279-286`). JS drains the log after each `handle` and after each `task_abort`, and calls `log_clear`. | `bench/app.roc` request option `dbg`: a `dbg`, then a `crash`. Run 200 such requests mixed with good requests on one instance. Expect live bytes 0 at the end and 0 bad bodies. Revert the owner change: the test must fail. |
+| 6b | The import takes `num` as `i64`. JS gets a `BigInt` (JS BigInt integration). | io that echoes `num` as text, with 2^53 + 1 and 2^64 - 1. Revert: the echo is wrong. |
+| 6c | `makeWait` reads `cp, cl` as bytes and `num` before its first `await`, and gives them to `io`. | io that echoes `c`, with bytes that are not UTF-8 (0x00 to 0xFF). Revert: the bytes are not passed. |
+
+## 7. ABI and build settings
+
+| Risk | Where | Now |
+|---|---|---|
+| R1 | `platform/main.roc:12` | The exports list has bench and test functions: `set_copy`, `copy_bench`, `alloc_bench`, `heap_fill`, `walk_bench`, `stats_reset`. `set_copy(0)` on a shared instance made 24 of 64 requests trap (`bench/README.md:182`). |
+| R3 | `hostlib/canary.zig:1`, `bench/build.sh:94-95` | `STACK_SIZE` must equal `--wasm-stack-size` by hand, and each user must pass `--wasm-memory=0`. |
+| R4 | `host/roc_platform_abi.zig` | The generated glue (975 lines) is committed. A change in a new nightly is not seen. |
+
+| Step | Change | Test |
+|---|---|---|
+| 7a | Two export lists: production (`init`, `handle`, `task_abort`, `js_alloc`, `res_free`, `stack_first`, the log exports, the CPU globals of 5a) and bench (all others). One way: a second platform file `bench/platform/main.roc` that adds the bench exports, and a build option that leaves the bench functions out of the production host. | Read the export section of a production build: no bench export. The bench tests still pass on the bench build. |
+| 7b | Put the stack size and the memory settings in the `targets.wasm32` record of the platform header (`initial_stack_size`, `minimum_memory`, `maximum_memory`; read in `roc:src/compile/targets_config.zig:67-74`). `hostlib/canary.zig` gets `STACK_SIZE` from the same build value. Remove the flags from `bench/build.sh`. | Build with a plain `roc build --target=wasm32`. `check-layout.mjs` gives STACK-FIRST with a 1 MB stack. Remove the header field: the stack size changes. |
+| 7c | `bench/ci-layout.sh` makes the glue again and fails on a diff with the committed file. | Change one line in the committed glue: CI fails. |
+
+## 8. Platform API
+
+| Gap | Design says (`../DESIGN.md` §10.1, §10.2) | Code has |
+|---|---|---|
+| G1 | A generic fetch handler | `requires { handle! : Str => Str }` (`platform/main.roc:2`). No method, headers or status. The body must be UTF-8. |
+| G2 | A `Worker` capability record (`fetch!`, `d1!`, `r2!`, `cache!`) and a scripted record for unit tests | The app imports `pf.Wait` and uses raw kind numbers (`bench/app.roc:10,14`) |
+| G3 | Effect errors are results | Status 0 on any error. JS drops the message (`bench/core.js:466`). |
+| G4 | The registry runs a compat bot and ingest | Only the fetch handler |
+
+| Step | Change | Test |
+|---|---|---|
+| 8a | `Request` (method, url, headers, body bytes) and `Response` (status, headers, body bytes) types. `requires { fetch! : Request, Worker => Response }`. JS encodes them in one js_alloc block, and the host decodes them. | Node: binary body (0x00 to 0xFF) round trip, 100 headers, status 404. Revert to `Str`: the test fails. |
+| 8b | Typed effects as Roc functions over `Wait.wait!`: `fetch!`, `d1_query!`, `d1_batch!`, `r2_get!`, `r2_put!`, `kv_get!`, `kv_put!`, `cache_match!`, `cache_put!`. They are fields of the `Worker` record. `Wait` is not in `exposes`. | Each effect against a Node fake of the binding |
+| 8c | A scripted `Worker` record for tests with no host (as roc-shpadoinkle `package/Await.roc:20-33`) | `roc test` of a handler with a scripted record |
+| 8d | Effects return `Try(ok, WorkerErr)`. JS writes the error kind and the message in the result block. | io that throws: Roc gets the message. A 404 and a network error give different tags. |
+| 8e | More entry points: `scheduled!` (cron) and `queue!` (a batch of messages). A missing one is not exported. | Node: call each entry point. workerd: a cron trigger runs `scheduled!`. |
+
+## 9. JS shim
+
+| Gap | Now |
+|---|---|
+| G5 | The shim is `bench/core.js`, mixed with test code (`expected`, `check`). `bench/worker.js:621` makes `io` from the `env` of the first request. `io` has no `ctx.waitUntil`, no `request.signal` and no request headers. |
+
+| Step | Change | Test |
+|---|---|---|
+| 9a | Move the runtime to `js/` (one entry module, for example `js/index.js` that exports `makeHandler(module)`). It returns `{ fetch, scheduled, queue }` for the Worker. Test helpers stay in `bench/`. | `bench/worker.js` and the Node tests use `js/` and still pass |
+| 9b | The `io` call gets the task id. The task table (2c) keeps the request context of each task: `env`, `ctx`, the `Request`. | Two requests at the same time with different headers. Each effect sees the headers of its own request. Revert to one shared context: the test fails. |
+| 9c | `ctx.waitUntil` as an effect | A `waitUntil` promise runs after the response |
+
+## 10. Body handles
+
+| Risk | Now |
+|---|---|
+| R2 | All bodies go through wasm memory, and wasm memory never gets smaller. A 10 MB R2 object uses 10 MB of the 128 MB isolate limit for the life of the instance (and counts toward the 32 MB retire rule of problem 4). |
+
+| Step | Change | Test |
+|---|---|---|
+| 10a | JS keeps large bodies (`ReadableStream`, `Response`) in a table, and Roc gets an opaque `Body` id. `Response` can give a `Body` back to JS with no copy into wasm. | Node: send an R2 object of 50 MB through `r2_get!` to the response. wasm memory grows by less than 1 MB. |
+| 10b | `body_read!(Body, max)` copies the bytes into wasm only when Roc needs them. Ingest needs only `main.roc` from the archive. | Read the first 1 KB of a 50 MB body |
+| 10c | The task table frees the body ids of a task at its end, its trap and its cancel (3c) | After 10,000 requests with traps and cancels, the body table is empty |
+
+## 11. Release
+
+| Gap | Now |
+|---|---|
+| G6 | `platform/targets/` is in `.gitignore`. There is no release workflow, so a user cannot use the platform by URL. |
+
+| Step | Change | Test |
+|---|---|---|
+| 11a | A release workflow: build the production host (7a) with the pinned nightly (`compat/last-stack-first-nightly`), bundle the platform with `roc bundle`, and attach the bundle and the `js/` package to a GitHub Release | Run on a test tag. A new app builds with the release URL. |
+| 11b | Publish `js/` (npm, or a file in the release that the app copies) | A new Worker project uses it with wrangler |
+| 11c | An example Worker app with a wrangler config, deployed by CI. 5d (CPU limit on the edge) runs on it. | The deployed example answers. 5d gives its results. |
+
 ## Done when
 
 - All tests above pass, and each fails when its change is reverted.
 - `bench/node-test.mjs` and the leak test still give 0 bad bodies and live bytes 0.
-- DESIGN.md §10.2 and `bench/README.md` show the new rules: stack-first, the task table, cancel, the pool of 3, and the CPU signals.
+- DESIGN.md §10.1, §10.2 and `bench/README.md` show the new rules: stack-first, the task table, cancel, the pool of 3, the CPU signals, the platform API (8), the shim (9), body handles (10) and the release (11).
