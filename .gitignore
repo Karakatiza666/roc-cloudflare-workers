@@ -1,0 +1,9 @@
+.cache/
+.zig-cache/
+zig-out/
+node_modules/
+platform/targets/
+bench/out/
+bench/out-*/
+bench/pad.txt
+bench/app_pad.roc

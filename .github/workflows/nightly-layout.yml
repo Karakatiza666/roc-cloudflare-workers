@@ -1,0 +1,55 @@
+# Check each new Roc nightly with bench/ci-layout.sh.
+# Pass: commit the nightly to compat/last-stack-first-nightly (releases pin it).
+# Fail: the job fails and opens an issue here. Then open the upstream issue at roc-lang/roc.
+# A failed nightly does not block a release: the file keeps the last nightly that passed.
+name: nightly-layout
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Nightly tag (default: the newest)'
+        required: false
+permissions:
+  contents: write
+  issues: write
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+      - name: Find the nightly
+        id: tag
+        run: |
+          tag='${{ inputs.tag }}'
+          [ -n "$tag" ] || tag=$(gh release list -R roc-lang/nightlies -L 1 --json tagName -q '.[0].tagName')
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [ -z '${{ inputs.tag }}' ] && [ "$tag" = "$(cat compat/last-stack-first-nightly)" ]; then
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Check
+        if: steps.tag.outputs.skip != '1'
+        run: ZIG=$(which zig) bench/ci-layout.sh '${{ steps.tag.outputs.tag }}'
+      - name: Record the nightly
+        if: steps.tag.outputs.skip != '1' && inputs.tag == ''
+        run: |
+          git diff --quiet compat/ && exit 0
+          git config user.name github-actions
+          git config user.email github-actions@users.noreply.github.com
+          git commit -m "compat: last stack-first nightly ${{ steps.tag.outputs.tag }}" compat/last-stack-first-nightly
+          git push
+      - name: Notify
+        if: failure() && steps.tag.outputs.tag != ''
+        run: |
+          title='Nightly check failed: ${{ steps.tag.outputs.tag }}'
+          gh issue list --state open --search "$title in:title" --json number -q '.[0].number' | grep -q . ||
+            gh issue create --title "$title" --body "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. If check-layout.mjs says DATA-FIRST, open the upstream issue at roc-lang/roc. Releases keep $(cat compat/last-stack-first-nightly)."
