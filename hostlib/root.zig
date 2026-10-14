@@ -1,4 +1,4 @@
-//! Host code from roc-shpadoinkle hostlib/ (allocator, canary, Roc callbacks).
+//! Shared host code (allocator, canary, Roc callbacks).
 //! A host imports this module and refers to `exports` so that the linker
 //! symbols in these files are emitted.
 

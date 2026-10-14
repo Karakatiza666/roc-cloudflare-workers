@@ -1,4 +1,4 @@
-//! zig build: the bench host into platform/targets/wasm32/host.wasm (as roc-shpadoinkle build.zig).
+//! zig build: the bench host into platform/targets/wasm32/host.wasm.
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {

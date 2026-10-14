@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the host, the glue, and the bench apps (bench/out/app.wasm, app_pad.wasm, app_deep.wasm).
-# Env: ZIG (Zig 0.17, as roc-shpadoinkle tools/zig).
+# Env: ZIG (Zig 0.17).
 # Optional: ROC (default: the nightly in compat/last-stack-first-nightly, see bench/get-roc.sh),
 # ZIG_FLAGS (e.g. "-Downer_tag=false -Dtrack_live=false"), OUT (default bench/out).
 set -euo pipefail

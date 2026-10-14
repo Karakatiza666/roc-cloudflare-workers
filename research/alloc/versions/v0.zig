@@ -233,7 +233,7 @@ export fn roc_realloc(ptr: ?*anyopaque, new_length: usize, alignment: usize) cal
 }
 
 /// Bytes of the spans in use (headers included). A leak check reads it before and after add and remove cycles.
-/// Counted only when `track_live` is set (the Shpadoinkle check host, build.zig). Else it stays 0.
+/// Counted only when `track_live` is set (a build.zig option). Else it stays 0.
 pub var LIVE_BYTES: usize = 0;
 const TRACK_LIVE = @import("build_options").track_live;
 

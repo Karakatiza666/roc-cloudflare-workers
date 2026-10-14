@@ -2,7 +2,7 @@
 
 The audit compared this platform with wasm-bindgen and workers-rs (Rust), workers-zig and Zig std, Go, TinyGo and workers-go, Pyodide and Python Workers, Emscripten, Almide, soli_lang and plumekit. This plan fixes the 5 problems it found (1 to 5).
 
-A second audit (2026-10-13) compared the code with the design in `../DESIGN.md` §10.1 and §10.2. It found 4 bugs, 6 gaps between the design and the code, and 4 design risks. Problems 6 to 11 fix them. The numbers 1 to 5 stay as they are, because other files refer to them.
+A second audit (2026-10-13) compared the code with the design in `../DESIGN.md` §6.1 and `../DESIGN-REGISTRY.md` §8. It found 4 bugs, 6 gaps between the design and the code, and 4 design risks. Problems 6 to 11 fix them. The numbers 1 to 5 stay as they are, because other files refer to them.
 
 Problem 12 (2026-10-14) is the goal of problem 4: one wasm instance per isolate. Each task checks at resume that its memory is unchanged, so a host bug does not make the whole instance untrusted. In this plan, a wild write is a write to a wrong address in linear memory, from a host bug or a compiler bug.
 
@@ -36,7 +36,7 @@ Problem 12 (2026-10-14) is the goal of problem 4: one wasm instance per isolate.
 | 9 | 9a to 9c | the task table (2c), the API (8) |
 | 10 | 10a to 10c | the API (8), the shim (9) |
 | 11 | 11a to 11c, then 5d on the edge | 7 to 10 |
-| 12 | Update DESIGN.md §10.1, §10.2 and `bench/README.md` | all |
+| 12 | Update DESIGN.md §6.1, DESIGN-REGISTRY.md §8 and `bench/README.md` | all |
 | 13 | 12g: measure with talon | talon runs on the platform |
 
 Each new test must fail when its change is reverted. Exceptions: moves, releases and edge runs (9a, 11a to 11c, 5d) and comparisons (the replay row of 6e). Their test is that the old tests still pass, or the run gives its numbers.
@@ -459,7 +459,7 @@ Port:
 
 ## 8. Platform API
 
-| Gap | Design says (`../DESIGN.md` §10.1, §10.2) | Code has |
+| Gap | Design says (`../DESIGN.md` §6.1, `../DESIGN-REGISTRY.md` §8) | Code has |
 |---|---|---|
 | G1 | A generic fetch handler | `requires { handle! : Str => Str }` (`platform/main.roc:2`). No method, headers or status. The body must be UTF-8. |
 | G2 | A `Worker` capability record (`fetch!`, `d1!`, `r2!`, `cache!`) and a scripted record for unit tests | The app imports `pf.Wait` and uses raw kind numbers (`bench/app.roc:10,14`) |
@@ -470,7 +470,7 @@ Port:
 |---|---|---|
 | 8a | `Request` (method, url, headers, body bytes) and `Response` (status, headers, body bytes) types. `requires { fetch! : Request, Worker => Response }`. JS encodes them in one js_alloc block, and the host decodes them. | Node: binary body (0x00 to 0xFF) round trip, 100 headers, status 404. Revert to `Str`: the test fails. |
 | 8b | Typed effects as Roc functions over `Wait.wait!`: `fetch!`, `d1_query!`, `d1_batch!`, `r2_get!`, `r2_put!`, `kv_get!`, `kv_put!`, `cache_match!`, `cache_put!`. They are fields of the `Worker` record. `Wait` is not in `exposes`. | Each effect against a Node fake of the binding. Revert (a wrong kind number in one effect): its test fails. |
-| 8c | A scripted `Worker` record for tests with no host (as roc-shpadoinkle `package/Await.roc:20-33`) | `roc test` of a handler with a scripted record. Revert (the record calls the host): `roc test` fails. |
+| 8c | A scripted `Worker` record for tests with no host | `roc test` of a handler with a scripted record. Revert (the record calls the host): `roc test` fails. |
 | 8d | Effects return `Try(ok, WorkerErr)`. JS writes the error kind and the message in the result block. | io that throws: Roc gets the message. A 404 and a network error give different tags. |
 | 8e | More entry points: `scheduled!` (cron) and `queue!` (a batch of messages). A missing one is not exported. | Node: call each entry point. workerd: a cron trigger runs `scheduled!`. Revert (no export): the call fails. |
 
@@ -659,4 +659,4 @@ A failed check acts as a failed check after an alarm: cancel all tasks (each get
 - All tests above pass, and each fails when its change is reverted (the exceptions are in "Order of work").
 
 - `bench/node-test.mjs` and the leak test still give 0 bad bodies and live bytes 0.
-- DESIGN.md §10.1, §10.2 and `bench/README.md` show the new rules: stack-first, the task table, cancel, the memory management of problem 4, one instance per isolate with the checks at resume (12), the CPU signals, the platform API (8), the shim (9), body handles (10) and the release (11).
+- DESIGN.md §6.1, DESIGN-REGISTRY.md §8 and `bench/README.md` show the new rules: stack-first, the task table, cancel, the memory management of problem 4, one instance per isolate with the checks at resume (12), the CPU signals, the platform API (8), the shim (9), body handles (10) and the release (11).

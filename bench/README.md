@@ -5,7 +5,7 @@ Question: a Roc wasm32 app with a Zig host serves concurrent requests that wait 
 | Variant | Model | Cost of a wait |
 |---|---|---|
 | A | One precompiled `WebAssembly.Module`. Each request makes `new WebAssembly.Instance`, calls `handle` through `WebAssembly.promising` | None. One instance runs one request |
-| B | One shared instance for all requests | A wait copies the used shadow stack `[sp, TOP)` to the heap and sets `__stack_pointer` to TOP. The resume copies it back to the same addresses (as roc-shpadoinkle `shpadoinkle/host/host.zig:959-1110`) |
+| B | One shared instance for all requests | A wait copies the used shadow stack `[sp, TOP)` to the heap and sets `__stack_pointer` to TOP. The resume copies it back to the same addresses (`../host/host.zig`) |
 | JS only | No wasm. The same two waits and body, in JS | Floor of workerd and the load generator |
 
 ## Files
@@ -13,7 +13,7 @@ Question: a Roc wasm32 app with a Zig host serves concurrent requests that wait 
 | File | Content |
 |---|---|
 | `../host/host.zig` | Host. `waitBegin`/`waitEnd` and `getSP`/`setSP` (copy), `roc_wait`, `handle`, `task_abort`, `copy_bench`, counters |
-| `../hostlib/` | Allocator, canary, Roc callbacks, copied from roc-shpadoinkle `hostlib/` |
+| `../hostlib/` | Allocator, canary, Roc callbacks |
 | `../platform/main.roc`, `../platform/Wait.roc` | Platform: `requires { handle! : Str => Str }`, one hosted `Wait.wait!(kind, num, a, b, c)` |
 | `app.roc` | Handler: 200 records to JSON (about 300 KB of heap), recursion `depth` levels with a kept value per level, two waits (fetch: 5 ms, db: 1 ms), body with the request id and a stack checksum |
 | `core.js` | JS shim: `makeRunner(module, "a" or "b", io)`, the `js_wait` import, the body check. "b" falls back to "a" when `stack_first()` is 0, and uses a new instance after an unclean trap |
@@ -29,7 +29,7 @@ Question: a Roc wasm32 app with a Zig host serves concurrent requests that wait 
 ## Reproduce
 
 ```sh
-ZIG=<zig 0.17, e.g. roc-shpadoinkle/tools/zig/zig> bench/build.sh   # roc: the nightly in compat/ (ROC= to override)
+ZIG=<zig 0.17> bench/build.sh   # roc: the nightly in compat/ (ROC= to override)
 node bench/node-test.mjs bench/out/app.wasm                      # smoke test, both variants
 node bench/overflow-test.mjs bench/out/app_deep.wasm             # stack overflow
 bench/ci-layout.sh <nightly tag>                                 # what CI runs for a new nightly
@@ -177,7 +177,7 @@ Two bugs found on the way, both fixed:
 | A costs more CPU per request | About 60 to 150 us per request for the 49 KB module, 500 to 800 us for instantiate alone with a 2 MB data segment. Its memory is a fresh 1.3 MB (mostly the 1 MB stack) per request in flight |
 | Throughput | No correctness errors in any run (0 bad bodies over 405,000 measured requests and 40,000 leak test requests). At concurrency 64, B serves 1.3 to 1.8x the req/s of A. The JS-only floor shows that workerd and the load generator cost most of the CPU |
 | Leak on trap in B | About 61 KB per trap (the heap of the task) for this handler. Fixed with owner tags (see above): 0 leak after a clean trap, for about 0.3 ns per allocation and a walk of about 1 ms per trap at 30 MB |
-| JSPI with Roc wasm | No problems found: `WebAssembly.Suspending` on the one hosted import and `WebAssembly.promising(handle)` work with the Roc `--target=wasm32` reactor output. The canary and `task_abort` work as in roc-shpadoinkle. The results on this page are from nightly 10-09, which links data-first (data below the stack, see `../PLAN.md` problem 1). From nightly 10-11 the layout is stack-first, the LLD 22 default |
+| JSPI with Roc wasm | No problems found: `WebAssembly.Suspending` on the one hosted import and `WebAssembly.promising(handle)` work with the Roc `--target=wasm32` reactor output. The canary and `task_abort` work. The results on this page are from nightly 10-09, which links data-first (data below the stack, see `../PLAN.md` problem 1). From nightly 10-11 the layout is stack-first, the LLD 22 default |
 | workerd clock | `performance.now()` does not advance inside a request (Spectre mitigation), so instantiate cost is client wall time of a loop of 500 |
 | Check of the check | With the copy turned off in B (`set_copy(0)`, 64 requests at once, depth 50), 24 of 64 requests trap (the shared stack is overwritten). With the copy on: 0. `bench.mjs` counts a trap as an error |
 

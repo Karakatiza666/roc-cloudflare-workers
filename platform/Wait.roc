@@ -1,4 +1,4 @@
-## The one wait primitive (as roc-shpadoinkle `Host.wait!`). The host suspends
+## The one wait primitive. The host suspends
 ## the wasm stack with JSPI until JS has the result.
 Wait := [].{
 	## kind, number, text a, text b, bytes c => status (0: no result), body.

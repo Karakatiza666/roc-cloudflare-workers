@@ -1,7 +1,7 @@
 //! Bench host: one Roc request handler that waits on JS with JSPI.
 //! Variant A (copy off): a fresh instance for each request, no stack copy.
 //! Variant B (copy on): one instance for all requests. A wait copies the
-//! used shadow stack to the heap, as roc-shpadoinkle shpadoinkle/host/host.zig:959-1110.
+//! used shadow stack to the heap, and back at the resume.
 //! roc_platform_abi.zig: `roc glue host/ZigGlue.roc host/glue platform/main.roc` (bench/build.sh).
 
 const std = @import("std");

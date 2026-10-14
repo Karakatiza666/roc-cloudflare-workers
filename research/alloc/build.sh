@@ -2,12 +2,12 @@
 # Build the research apps for allocator versions: out/app_<v>.wasm (bench/app.roc)
 # and out/app_v_<v>.wasm (the string-loop app). Usage: research/alloc/build.sh [v0 v1 v2 v3 v5]
 # Each build: a copy of the repo in .work/, the harness files over it, versions/<v>.zig as hostlib/alloc.zig.
-# Env: ZIG (default: roc-shpadoinkle tools/zig), ROC (default: bench/get-roc.sh).
+# Env: ZIG (Zig 0.17, default: zig on PATH), ROC (default: bench/get-roc.sh).
 # TRACE=1: build only out/app_<v>_trace.wasm, which calls js_trace at each allocator call (scripts/trace.mjs).
 set -euo pipefail
 D=$(cd "$(dirname "$0")" && pwd)
 R=$(cd "$D/../.." && pwd)
-ZIG=${ZIG:-$R/../../roc-shpadoinkle/tools/zig/zig}
+ZIG=${ZIG:-zig}
 W=$D/.work
 mkdir -p "$W" "$D/out"
 rsync -a --delete --exclude .git --exclude research --exclude .zig-cache --exclude bench/out "$R/" "$W/"

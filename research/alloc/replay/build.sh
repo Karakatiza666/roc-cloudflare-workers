@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Build the replay module for allocator versions: out/replay_<v>.wasm. Usage: replay/build.sh [v0 v1 ...]
-# Env: ZIG (default: roc-shpadoinkle tools/zig), OPT (default: ReleaseSmall, as the host build),
+# Env: ZIG (Zig 0.17, default: zig on PATH), OPT (default: ReleaseSmall, as the host build),
 # ZFLAGS (more zig flags, e.g. -fno-strip for function names in a profile).
 set -euo pipefail
 D=$(cd "$(dirname "$0")" && pwd)
 A=$(cd "$D/.." && pwd)
-ZIG=${ZIG:-$A/../../../../roc-shpadoinkle/tools/zig/zig}
+ZIG=${ZIG:-zig}
 W=$A/.work-replay
 mkdir -p "$W" "$A/out"
 export ZIG_GLOBAL_CACHE_DIR=$W/.cache/zig ZIG_LOCAL_CACHE_DIR=$W/.zig-cache
