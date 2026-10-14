@@ -180,3 +180,20 @@ Two bugs found on the way, both fixed:
 | JSPI with Roc wasm | No problems found: `WebAssembly.Suspending` on the one hosted import and `WebAssembly.promising(handle)` work with the Roc `--target=wasm32` reactor output. The canary and `task_abort` work as in roc-shpadoinkle. The results on this page are from nightly 10-09, which links data-first (data below the stack, see `../PLAN.md` problem 1). From nightly 10-11 the layout is stack-first, the LLD 22 default |
 | workerd clock | `performance.now()` does not advance inside a request (Spectre mitigation), so instantiate cost is client wall time of a loop of 500 |
 | Check of the check | With the copy turned off in B (`set_copy(0)`, 64 requests at once, depth 50), 24 of 64 requests trap (the shared stack is overwritten). With the copy on: 0. `bench.mjs` counts a trap as an error |
+
+## Edge (Q13, 2026-10-14, short test, not a full bench)
+
+`bench/deploy.sh` deploys `talon-bench-echo` and `talon-bench-{a,b,j}` (the setup of `config-*.capnp`). `bench/deploy.sh delete` removes them. `EDGE=<account>.workers.dev node bench/edge.mjs [n]` runs the load and joins the server CPU and wall time from `wrangler tail`. Tail drops events, so its numbers are a sample. Account: free plan (10 ms CPU per request), colo TBS.
+
+| Variant | Concurrency 1 | Concurrency 16 | Concurrency 64 |
+| --- | --- | --- | --- |
+| JS only (50 requests) | 0 errors | 0 errors | 0 errors |
+| B, depth 30 (50 requests) | 0 errors, 0 bad | 0 errors, 0 bad | 0 errors, 0 bad |
+| A, depth 30 (200 requests) | 0 errors, CPU about 6 ms | 179 `exceededCpu` | 199 `exceededCpu` |
+
+| Measure | Edge | Local workerd |
+| --- | --- | --- |
+| CPU per request, A | about 6 ms | about 0.3 ms |
+| `new WebAssembly.Instance` + `init`, real module | about 0.7 ms | 0.03 ms |
+
+JSPI works on the edge. B is correct under concurrency, and A does not fit the free plan CPU limit.
