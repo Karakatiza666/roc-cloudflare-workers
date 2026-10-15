@@ -1,6 +1,8 @@
-## A body: bytes in Roc, or a stream that stays in JS (API.md RS3).
-Body := [Empty, Text(Str), Bytes(List(U8)), Stream(U32)].{
-	## The default limit of a read into wasm memory (MODULES.md MC6).
+import Js
+
+## A body: bytes in Roc, or a stream that stays in JS (API.md RS3). A stream is a ref (MC13).
+Body := [Empty, Text(Str), Bytes(List(U8)), Stream(Js.Ref)].{
+	## The default limit of a read into wasm memory (MODULES.md MC11).
 	default_max : U64
 	default_max = 1_048_576
 

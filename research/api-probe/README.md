@@ -10,11 +10,12 @@
 | `program.mjs`, `program-test.mjs` | The JS interpreter of programs: roots, slots, all 10 ops, the J1 to J7 conversion with the i64 and depth limits, the ref table, status 0 to 3. Tested in Node against a fake D1 binding, a class with getters and timers. |
 | `bench/main.roc` | Decode cost in Roc of 200 D1 rows, best of 7 rounds: to a `Js` tree, to typed rows, with direct integer reads (`Js2.roc`), and `Json.parse` (basic-cli 0.29.0, native). `bench/Js.roc` is a copy of `Js.roc`, because an app imports from its own directory. |
 | `bench/rows.mjs`, `bench/decode.zig` | The same 200 rows from JS (`rows.bin`, same 51,385 bytes as Roc makes), decoded in Zig into a tree with the memory shape of Roc values: a lower bound for a decoder in the host |
-| `cbor/` | The CBOR profile (API.md 5, 5.2, AQ8): `Cbor.roc`, a format of the Roc codec protocol (28 `expect`s, with the RFC 8949 vectors of the profile); `CborRows.roc`, the variant that reads rows as arrays with one list of column names (AQ9); `cbor.mjs`, the JS side, and `cbor-test.mjs` (37 RFC vectors, 13 other checks, the JS cost, the input files of the bench); `bench.roc`, the decode and encode cost in Roc. |
+| `cbor/` | The CBOR profile (API.md 5, 5.2, AQ8): `Cbor.roc`, a format of the Roc codec protocol (33 `expect`s, with the RFC 8949 vectors of the profile), and its type `Cbor.Bytes` (a `List(U8)` that crosses as a CBOR byte string, so JS gets a `Uint8Array`: a hand-written `parser_for` and `encoder_for` over `parse_bytes` and `encode_bytes`, because the derived encoder writes a `List(U8)` as an array); `CborRows.roc`, the variant that reads rows as arrays with one list of column names (AQ9); `cbor.mjs`, the JS side, and `cbor-test.mjs` (37 RFC vectors, 13 other checks, the JS cost, the input files of the bench); `bench.roc`, the decode and encode cost in Roc. |
 | `glue-check/` | A platform with a hosted function that returns `Js`. `roc glue` shows the layout that a Zig decoder must write. |
 | `handlers-check/` | A handler record with optional effectful fields that builds the one entry `event!` (API.md 10.1, AQ6). Run: `roc test Handlers.roc && roc run.roc`. Result on 10-12: passes, and prints `fetched /v1/pkg \| unhandled`. |
 | `http-check/` | `roc-lang/http` 2.0.0 on the pinned nightlies (API.md AQ2) |
 | `modules-check/` | The module API of `../../MODULES.md`: 14 modules with its signatures over a fake JS side (`Io.cross`) that gives CBOR, and a copy of `Cbor.roc`. `app.roc` uses all of them and sends 26 fake events through `Worker.event!`, also a WebSocket room in a Durable Object. `secret_log.roc` and `secret_cbor.roc` must not compile. `clash/`: a module named `Crypto` shadows the builtin. Run: `ROC=<roc> ./run.sh`. Result on 10-09 and 10-12: passes (output equals `expected.txt`). |
+| `options-check/` | Typed KV metadata (`../../MODULES.md` 5.2): `optional.roc` shows that an optional field with a type variable of a `where` clause (`metadata ?: m`) compiles when the caller leaves it out, and that `.?field` reads an optional field. `untyped.roc` must not compile: a parsed type variable with no annotation at the call is "type not determined", so `Kv.Key` keeps its metadata as CBOR. Run: `ROC=<roc> ./run.sh`. Result on 10-09 and 10-12: passes. |
 | `wrappers-check/` | `Io` (API.md 6.5) and `Memo` (7.1) as nominal types with function fields: `Io.both!` joins the error unions of two operations, and `jwks.get!()` runs an effectful `load!` from a record field. The crossing and the pin table are fakes. Run: `roc run.roc`. Result on 10-09 and 10-12: passes, and prints `Ok((16, "fetch+/jwks")) \| Err(HttpErr("TypeError")) \| Ok(8) \| Ok("key-1")` (API.md AQ7). |
 
 Run:
@@ -96,6 +97,8 @@ Revert checks (each test fails):
 | `cbor/Cbor.roc`: `patch_count` does not write the real count | 1 `expect` (a record with an absent optional field) |
 | `cbor/Cbor.roc`: a byte string is not read as a `List(U8)` | 1 `expect` (`h'01020304'`) |
 | `cbor/Cbor.roc`: a head of width 25 reads 1 byte | 3 `expect`s |
+| `cbor/Cbor.roc`: `encode_bytes` writes an array of numbers, or `Cbor.Bytes` uses the derived `encoder_for` | 3 `expect`s (`Cbor.Bytes` as `h'010203'`, the record round trip, the head of width 24) |
+| `cbor/Cbor.roc`: `parse_bytes` takes any major type, or `Cbor.Bytes` uses the derived `parser_for` | 1 `expect` (an array of numbers is not a `Cbor.Bytes`) |
 | `cbor/CborRows.roc`: the key position does not move | 2 `expect`s |
 | `cbor/cbor.mjs`: a map key is reused with no compare of the bytes | `cbor-test.mjs` (the key-reuse check) |
 

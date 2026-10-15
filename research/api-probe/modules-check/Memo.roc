@@ -27,4 +27,11 @@ Memo(a, e) := { name : Str, max_age_ms : U64, load! : {} => Try(a, e), write : a
 			}
 		}
 	}
+
+	## Drop the pinned value, so the next `get!` loads again.
+	clear! : Memo(a, e) => {}
+	clear! = |m| {
+		_ = Io.run!(Io.new(["memo.unpin", m.name], |r| r))
+		{}
+	}
 }

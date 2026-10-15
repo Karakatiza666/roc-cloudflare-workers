@@ -8,6 +8,7 @@
 ## Profile: definite lengths only. Any argument width is read. Integers are major types 0 and 1.
 ## Floats are f16, f32 or f64 when read, f64 when written. `null` and `undefined` both read as null.
 ## A byte string reads as a `List(U8)`. A `List(U8)` writes as an array (the protocol has no bytes hook).
+## `Cbor.Bytes` reads and writes a byte string (major type 2), so JS gets a `Uint8Array`.
 Cbor := [Default, CamelCase].{
 	State :: { bytes : List(U8), pos : U64, raw : U64 }
 
@@ -20,6 +21,38 @@ Cbor := [Default, CamelCase].{
 		where [
 			a.encoder_for : Cbor -> (a, List(U8) -> Try(List(U8), err)),
 		]
+
+	## Bytes that cross as a CBOR byte string, so JS gets a `Uint8Array`. A `List(U8)`
+	## writes as an array of numbers, because the derived encoder has no hook for bytes.
+	Bytes := List(U8).{
+		is_eq : _
+
+		parser_for : encoding -> (state -> Try({ value : Cbor.Bytes, rest : state }, err))
+			where [
+				encoding.parse_bytes : encoding, state -> Try({ value : List(U8), rest : state }, err),
+			]
+		parser_for = |encoding| {
+			Encoding : encoding
+
+			|state| {
+				parsed = Encoding.parse_bytes(encoding, state)?
+				Ok({ value: Cbor.Bytes.(parsed.value), rest: parsed.rest })
+			}
+		}
+
+		encoder_for : encoding -> (Cbor.Bytes, state -> Try(state, err))
+			where [
+				encoding.encode_bytes : List(U8), state -> Try(state, err),
+			]
+		encoder_for = |_| {
+			Encoding : encoding
+
+			|Cbor.Bytes.(bytes), state| Encoding.encode_bytes(bytes, state)
+		}
+
+		to_list : Cbor.Bytes -> List(U8)
+		to_list = |Cbor.Bytes.(bytes)| bytes
+	}
 
 	parse : List(U8) -> Try(a, [InvalidCbor(U64), ..errs]) where [a.Parseable([InvalidCbor(U64), ..errs])]
 	parse = |bytes| {
@@ -61,6 +94,16 @@ Cbor := [Default, CamelCase].{
 
 	parse_str : Cbor, Cbor.State -> Try({ value : Str, rest : Cbor.State }, [InvalidCbor(U64)])
 	parse_str = |_, state| text(state)
+
+	## A byte string (major type 2) only. `Cbor.Bytes` calls it.
+	parse_bytes : Cbor, Cbor.State -> Try({ value : List(U8), rest : Cbor.State }, [InvalidCbor(U64)])
+	parse_bytes = |_, state| {
+		h = head(state)?
+		if h.major != 2 or h.next + h.arg > state.bytes.len() {
+			return Err(InvalidCbor(state.pos))
+		}
+		Ok({ value: state.bytes.sublist({ start: h.next, len: h.arg }), rest: at(state, h.next + h.arg) })
+	}
 
 	parse_bool : Cbor, Cbor.State -> Try({ value : Bool, rest : Cbor.State }, [InvalidCbor(U64)])
 	parse_bool = |_, state|
@@ -270,6 +313,10 @@ Cbor := [Default, CamelCase].{
 
 	encode_str : Str, List(U8) -> Try(List(U8), [])
 	encode_str = |value, out| Ok(put_text(out, value))
+
+	## A byte string (major type 2). `Cbor.Bytes` calls it.
+	encode_bytes : List(U8), List(U8) -> Try(List(U8), [])
+	encode_bytes = |value, out| Ok(put_head(out, 2, value.len()).concat(value))
 
 	encode_bool : Bool, List(U8) -> Try(List(U8), [])
 	encode_bool = |value, out| Ok(out.append(if value 0xf5 else 0xf4))
@@ -665,4 +712,32 @@ expect {
 	parsed : Try(List(U64), _)
 	parsed = Cbor.parse(Cbor.encode(xs))
 	parsed == Ok(xs)
+}
+
+## Cbor.Bytes writes a byte string (h'010203'), not an array of numbers.
+expect Cbor.encode(Cbor.Bytes.([1, 2, 3])) == [0x43, 0x01, 0x02, 0x03]
+
+## A List(U8) still writes an array.
+expect Cbor.encode([1.U8, 2, 3]) == [0x83, 0x01, 0x02, 0x03]
+
+## Cbor.Bytes reads a byte string, also as a record field, and round trips.
+expect {
+	v : { id : U64, data : Cbor.Bytes }
+	v = { id: 7, data: Cbor.Bytes.([0, 255, 16]) }
+	parsed : Try({ id : U64, data : Cbor.Bytes }, _)
+	parsed = Cbor.parse(Cbor.encode(v))
+	parsed == Ok(v)
+}
+
+## Cbor.Bytes reads only a byte string: an array of numbers is an error.
+expect {
+	r : Try(Cbor.Bytes, _)
+	r = Cbor.parse([0x83, 0x01, 0x02, 0x03])
+	r == Err(InvalidCbor(0))
+}
+
+## A head of width 24: 24 bytes or more.
+expect {
+	b = 0.U8.until(30).collect()
+	Cbor.encode(Cbor.Bytes.(b)).take_first(2) == [0x58, 30]
 }

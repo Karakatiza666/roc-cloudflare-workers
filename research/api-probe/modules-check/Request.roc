@@ -2,7 +2,29 @@ import Body
 import Method
 
 ## An HTTP request, incoming or outgoing. `Method` is a copy of the one of `roc-lang/http`.
-Request := { method : Method, url : Str, headers : List((Str, Str)) ?? [], body : Body ?? Body.Empty }.{
+## `cf`: incoming only, `request.cf` typed (MODULES.md 4). A field that JS does not give is `Err(Missing)`.
+Request := { method : Method, url : Str, headers : List((Str, Str)) ?? [], body : Body ?? Body.Empty, cf ?: Request.Cf }.{
+	Cf : {
+		asn : Try(U32, [Missing]),
+		as_organization : Try(Str, [Missing]),
+		colo : Try(Str, [Missing]),
+		country : Try(Str, [Missing]),
+		is_eu_country : Bool,
+		city : Try(Str, [Missing]),
+		continent : Try(Str, [Missing]),
+		region : Try(Str, [Missing]),
+		region_code : Try(Str, [Missing]),
+		postal_code : Try(Str, [Missing]),
+		metro_code : Try(Str, [Missing]),
+		latitude : Try(Str, [Missing]),
+		longitude : Try(Str, [Missing]),
+		timezone : Try(Str, [Missing]),
+		http_protocol : Try(Str, [Missing]),
+		tls_version : Try(Str, [Missing]),
+		tls_cipher : Try(Str, [Missing]),
+		client_tcp_rtt_ms : Try(U64, [Missing]),
+	}
+
 	get : Str -> Request
 	get = |url| Request.{ method: GET, url }
 

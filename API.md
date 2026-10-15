@@ -25,7 +25,7 @@ Sources: `../DESIGN-REGISTRY.md` (Registry), `../DESIGN.md` 6 and 8, `../DESIGN-
 | RN6 | Trusted publishing with GitHub OIDC (Registry 7) | Outbound `fetch` of the JWKS. WebCrypto `importKey` (JWK) and RS256 `verify`. A cache of the JWKS across requests. | `Http`, `WebCrypto` (the key is imported in the same crossing as `verify`), `Memo` (`MODULES.md` 9) | P2 |
 | RN7 | GitHub reads: the release, the asset, `.roc-version`, compiler releases with `digest` | Outbound `fetch` with a token header, redirects, a body as bytes or a stream | `Http`, `Body` | P2 |
 | RN8 | Archive checks: BLAKE3 hash of the asset, read `main.roc` from the `.tar.zst` | BLAKE3: Roc builtin. zstd: not in Workers (`research/api-probe/`). tar: plain Roc. | `Native` (8) | P2 |
-| RN9 | GitHub App webhook, and the App's own token | HMAC-SHA256 of the raw body, compared in constant time. RS256 `sign` (PKCS#8 key) for the App JWT. | `WebCrypto` (`hmac_sha256` in Roc, `equal!`), `Body` | P2 |
+| RN9 | GitHub App webhook, and the App's own token | HMAC-SHA256 of the raw body, compared in constant time. RS256 `sign` (PKCS#8 key) for the App JWT. | `WebCrypto` (`hmac_sha256` in Roc, `timing_safe_equal!`), `Body` | P2 |
 | RN10 | `POST /v1/ingest` from anyone | Rate limiting binding. Optional: a queue that moves the work out of the request. | `RateLimit`, `Queue` | P2 |
 | RN11 | Tile catch-up after a failed write, cleanup | Cron trigger | `Scheduled` event | P2 |
 | RN12 | Provenance: in-toto attestation, Sigstore bundle (Design 8) | ECDSA P-256 `verify`. X.509 parse in Roc. | `WebCrypto` | P3 |
@@ -162,10 +162,14 @@ One Roc type holds each value that crosses the bridge:
 ```roc
 Js := [
 	Undefined, Null, Bool(Bool), Num(F64), Int(I64), Text(Str), Bytes(List(U8)),
-	Arr(List(Js)), Obj(List((Str, Js))), Ref(U32), Error(Str, Str),
+	Arr(List(Js)), Obj(List((Str, Js))), Ref(Js.Ref), Error(Str, Str),
 	Packed(List(U8)),   # one value as CBOR, for typed data (5.2)
-]
+].{
+	Ref :: { id : U32 }.{ is_eq : _ }   # the id of a JS object in the ref table of the task (9). `==` compares ids (RS1). A record backing, so a ref has no codec (MC13, MODULES.md 15).
+}
 ```
+
+`Js.Ref` is the type of a ref in the other modules: `Body.Stream(Js.Ref)`, `Response.web_socket`, `WebCrypto.Key.Imported(Js.Ref)`, the result of `Io.start!` (6.5).
 
 The byte format is CBOR (RFC 8949), with this profile (decided 2026-10-15, AQ8):
 
@@ -270,7 +274,7 @@ A Workers operation is often 3 or 4 JS calls: `env.DB.prepare(sql).bind(...args)
 ### 6.2 Ops
 
 ```roc
-Target : [Root(Str), Slot(U32), Ref(U32)]
+Target : [Root(Str), Slot(U32), Ref(Js.Ref)]
 Arg : [Lit(Js), Slot(U32)]
 Op : [
 	Get(Target, Str),               # target[name]
@@ -283,6 +287,7 @@ Op : [
 	Array(List(Arg)),               # a JS array, for example of slots: db.batch([s1, s2])
 	Record(List((Str, Arg))),       # a plain JS object, for example with a slot as a field
 	Par(List(List(Op))),            # branches that run at the same time (OP6)
+	Race(List(List(Op))),           # branches that run at the same time, the first to settle wins (OP8)
 ]
 ```
 
@@ -291,9 +296,11 @@ Op : [
 | OP1 | In `await!`, JS awaits each op result that is a thenable before the next op, except the result of `Start`. In `call!`, a thenable result of an op other than `Start` is status 2. A `Start` slot holds a pending promise: a later op can give it to `Promise.all` or `ctx.waitUntil`, or `Keep` it. |
 | OP2 | The result of the program is the last slot, converted by J1 to J7. Other slots are not converted, so a module can chain a JS object with no ref. |
 | OP3 | Roots, resolved for the task that runs: `env`, `ctx`, `event` (the object that started the task), `global` (`globalThis`: `fetch`, `caches`, `crypto`, `console`, constructors), `pf` (the platform helpers, 6.4), `ops` (JS functions that the app adds, 6.4), and the `cloudflare:*` modules that the shim imports (`cloudflare:sockets`, `cloudflare:email`, `cloudflare:workers`). An unknown root is status 3. |
-| OP4 | A program has no branch and no loop. A module that must branch runs 2 programs or calls a platform helper (`pf`). An app adds a JS op (6.4). |
+| OP4 | A program has no branch and no loop. A module that must branch runs 2 programs or calls a platform helper (`pf`, 6.4). An app adds a JS op (6.4). A result that can be `null` needs no branch (OP7). |
 | OP5 | The op encoder in Roc (ops to a `Js` array) and the interpreter in JS are the only code that knows the op format. The byte format (5) is only in the Zig host and the JS shim. |
-| OP6 | `Par` runs each branch as its own program, with its own slots from 0, and awaits all of them (`Promise.allSettled`). Its slot gets an `Arr` with one `Arr([Num(status), value])` for each branch, in order, with the statuses of 4. A status 3 in a branch makes the whole program status 3. Workers lets 6 connections wait at the same time and queues the others, so a large `Par` is slower, but it does not fail. |
+| OP6 | `Par` runs each branch as its own program, with its own slots from 0, and awaits all of them (`Promise.allSettled`). Its slot gets an `Arr` with one `Arr([Num(status), value])` for each branch, in order, with the statuses of 4. A status 3 in a branch makes the whole program status 3. Workers lets 6 connections wait at the same time and queues the others, so a large `Par` is slower, but it does not fail. `Par` always gives a promise, so a program with `Par` runs with `await!`, also when each branch is sync (`Io.both!` of two `Io.sync` values). In `call!`, `Par` is status 2 (OP1). |
+| OP7 | `Get` and `Fields` on `null` or `undefined` give `undefined`, as `?.` in JS. `Call`, `Start`, `New` and `Set` on them still throw (status 1). So a module reads a result that can be `null` with no branch: `R2.get!` and `R2.head!` read `Fields` of the result of `get` or `head`, and `Undefined` is `NotFound`. `Cache.get!` does the same with the result of `match`. `WebSocket.connect!` reads `Fields(res, ["status", "webSocket"])` in its wait, gives `NotUpgrade` for a `Null` socket, and calls `accept()` on the ref in a second program with `call!` (no wait). |
+| OP8 | `Race` runs each branch as `Par` does, and settles when the first branch settles (`Promise.race`). Its slot gets `Arr([Int(index), Arr([Num(status), value])])` for that branch. The interpreter gives each branch an `AbortSignal` and aborts the other branches. They go on in JS until they see the abort, and their results are dropped. A platform helper that takes a value from a queue (a WebSocket message, a TCP read) stops its wait on the abort and leaves the value for the next call, so a branch that lost takes nothing. `Time.sleep` stops its timer (`scheduler.wait` with the signal). `Race` gives a promise, so it needs `await!` (as OP6). |
 
 Example, inside `D1` (all names are module code, not app code). Each function that waits has a pure twin that gives an `Io` (6.5):
 
@@ -316,7 +323,7 @@ rows! : D1, Str, List(Sql) => Try(Sql.Rows, [D1Err(Thrown)])
 rows! = |db, sql, params| Io.run!(rows(db, sql, params))
 ```
 
-`D1.batch!` uses the same start, then `prepare` and `bind` for each statement, then `Array` of their slots, then `Call(Slot(0), "batch", [Slot(n)])`: one crossing for the whole transaction. `D1.all` uses `all` in place of `raw`, then `Call(Root("pf"), "pack", [Slot(3)])`, so the rows come back as one `Packed` value for `Cbor.parse` (5.2).
+`D1.batch!` uses the same start, then `prepare` and `bind` for each statement, then `Array` of their slots, then `Call(Slot(0), "batch", [Slot(n)])`, then `Call(Root("pf"), "packEach", [Slot(n + 1), Lit(Text("results"))])` (6.4): one crossing for the whole transaction, and each `D1.Result` gets its `meta` and its rows as one `Packed` value. `D1.all` uses `all` in place of `raw`, then `Get(Slot(3), "results")` (slot 4: `all()` gives `{ results, meta }`), then `Call(Root("pf"), "pack", [Slot(4)])`, so the rows come back as one `Packed` value for `Cbor.parse` (5.2).
 
 ### 6.3 Binding values are names
 
@@ -329,6 +336,18 @@ A binding value holds the name of the binding: `D1 :: { name : Str }`, made with
 | A platform module needs a loop or a branch in JS: a stream read to a limit, the pin table (9) | A platform helper in the shim: `Call(Root("pf"), "readUpTo", [Slot(n), Lit(Num(max))])`. The helpers are part of the platform release, like the modules that call them. |
 | A Workers API that has no module yet | `Js.await!(program)`, `Js.call!(program)` or an `Io` (6.5) in the app. Same rules as in a module. |
 | JS logic with a branch, a loop or a callback (HTMLRewriter, a library from npm) | The app adds JS functions: `makeHandler(module, { ops: { name: async (...args) => ... } })`. Roc calls them with `Call(Root("ops"), "name", args)`. A Roc package that needs JS code tells the app to add its functions to `ops`. |
+
+The platform helpers (root `pf`) that this file names. Each one is a loop or a branch that a program cannot have (OP4).
+
+| Helper | Does | Used by |
+| --- | --- | --- |
+| `readUpTo(stream, max)` | Reads a stream to `max` bytes. Past `max`, it gives an error that the module turns into `TooLarge`. | `Body.bytes!`, `text!`, `json!` |
+| `pack(value)` | Writes the value as one `Packed` CBOR value (5.2) | `D1.all!`, `first!`, RPC, queue reads |
+| `packEach(array, key)` | Gives the array with the field `key` of each item as a `Packed` value. The other fields stay. | `D1.batch!` (6.2): `results` of each `D1Result` |
+| `findById(array, id)` | Gives the item whose `id` is `id`, else `undefined` (OP7) | `Queue.Message.ack!`, `retry!`: `Get(Root("event"), "messages")`, then `findById`, then `Call` of `ack` |
+| `spawn(ops)` | Runs the ops as an async program of the task. A throw goes to the log. The task context stays until it settles (RS1). | `Io.start!` (6.5) |
+| `writer()` | Makes a `TransformStream`, and records its writable side in the task table, so the task stays until the stream closes or is cancelled (10.2) | `Body.writer!` (`MODULES.md` 4) |
+| `pin`, `pinned`, `unpin` | The pin table (RS2) | `Js.pin!`, `pinned!`, `unpin!`, `Memo` |
 
 The app is trusted code: it is the developer's own Worker. A program can reach only the roots of OP3, and Workers does not allow `eval` or `new Function`.
 
@@ -347,9 +366,10 @@ Thrown : { name : Str, message : Str }
 | `Io.run!(io) => Try(a, e)` | 1 | The usual call. Each module function `f!` is `Io.run!(f(...))`. |
 | `Io.both!(Io(a, e), Io(b, e)) => Try((a, b), e)` | 1 (`Par`) | Two operations at the same time |
 | `Io.all!(List(Io(a, e))) => List(Try(a, e))` | 1 (`Par`) | Many operations at the same time: R2 tiles, cache reads |
-| `Io.start!(Io(a, e)) => Js.Ref` | 1, no wait | Start an operation and get its promise as a ref, for `Ctx.wait_until!`. It is `call!` of `Start(Root("pf"), "spawn", [Lit(ops)])` and `Keep`: the helper runs the ops as an async program of the task. The result is dropped. A throw goes to the log (`Log`). |
+| `Io.start!(Io(a, e)) => Js.Ref` | 1, no wait | Start an operation and get its promise as a ref, for `Ctx.wait_until!`. It is `call!` of `Start(Root("pf"), "spawn", [Lit(ops)])` and `Keep`: the helper runs the ops as an async program of the task. The result is dropped: the Roc reader of the `Io` does not run, so a Roc-level `Err` (`PreconditionFailed`, `BadData`) is not seen. A JS throw goes to the log (`Log`). The context of the task (its ref table and its roots) stays alive until each started program settles, or until the 30 s limit of `waitUntil` (RS1). Work whose result matters runs in the task after `respond!` (10.2). |
+| `Io.race!(List(Io(a, e))) => { index : U64, result : Try(a, e) }` | 1 (`Race`, OP8) | The first operation to settle wins (`Promise.race`). `index` is its place in the list. The others are aborted. A timeout is a race with `Time.sleep(ms)` (`MODULES.md` 11): `Io.race!([ws.receive().map(Got), Time.sleep(5_000).map(\|_\| TimedOut)])`. `Promise.race([])` never settles, so a `Race` with no branch is a bad program (status 3). |
 
-The error types join as tag unions, so `Io.both!(D1.query(db, sql, []), Http.get(jwks_url))` gives `Try((Rows, Response), [D1Err(_), HttpErr(_)])`.
+The error types join as tag unions, so `Io.both!(D1.rows(db, sql, []), Http.get(jwks_url))` gives `Try((Sql.Rows, Response), [D1Err(_), HttpErr(_), TooLarge])`.
 
 ## 7. Modules
 
@@ -359,27 +379,27 @@ The full surface. Each module is pure Roc over `Js` (6) or `Native` (8). `MODULE
 | --- | --- | --- | --- | --- |
 | `Request`, `Response` | `Request`, `Response`, `Headers` | One type for each, in both directions, with a `Body`. `segments` for routing, `header`, `query`, `json!`. `from_text`, `from_json`, `from_body`. `Method` and `Header` from `roc-lang/http` (AQ2). (4) | Reads of a stream body | A |
 | `Http` | `fetch` | `send!` (the body read in the same crossing, to 1 MiB), `open!` (the body stays a stream), `get!` (4) | Yes | A |
-| `Body` | `ReadableStream`, `crypto.DigestStream` | `text!`, `json!`, `bytes!` (one wait: the helper `pf.readUpTo`), `chunk!`, `tee!`, `sha256!` (no copy into wasm) (4) | Yes | A |
+| `Body` | `ReadableStream`, `crypto.DigestStream` | `text!`, `json!`, `bytes!` (one wait: the helper `pf.readUpTo`), `chunk!`, `tee!`, `sha256!` (no copy into wasm), `writer!` (a stream that the task writes, 10.2), `compress!`, `decompress!` (gzip, deflate) (4) | Yes | A |
 | `Env`, `Secret` | `env` vars, secrets | `var!`, `json!`, `secret!`. A `Secret` does not show in `Str.inspect` and has no codec. (10) | No | A |
-| `Ctx` | `ctx.waitUntil`, `ctx.passThroughOnException` | `respond!(Response)` (10.2), `wait_until!(Io)`, `pass_through!` (11) | No | A |
-| `D1`, `Sql` | `D1Database`, `D1PreparedStatement`, Sessions API | `all!` and `first!` into the type of the call (rows as objects, CBOR, AQ9), `run!`, `rows!` (no types, for columns that are not known at compile time), `batch!` (one crossing, 6.2, a typed `D1.Result` for each statement), `exec!`, `session!`, `bookmark!`. A parameter is a `Sql` value. D1 takes no BigInt, so `Int` goes as a number, and as text above 2^53 (an INTEGER column turns it back into an integer). D1 gives an INTEGER above 2^53 back as a rounded number, so a query that reads one uses `CAST(x AS TEXT)`. (5.1) | Yes | A |
-| `R2` | `R2Bucket`, `R2Object`, multipart | `get!`, `get_with!` (range, condition), `put!`, `put_with!` (a failed `only_if` is `PreconditionFailed`), `head!`, `delete!`, `list!`, `upload!` (5.3) | Yes | A |
+| `Ctx` | `ctx.waitUntil`, `ctx.passThroughOnException` | `respond!(Response)` (10.2), `wait_until!(Io)` (a JS throw goes to the log, 6.5), `pass_through!` (only in a Worker `Fetch`) (11) | No | A |
+| `D1`, `Sql` | `D1Database`, `D1PreparedStatement`, Sessions API | `all!` and `first!` into the type of the call (rows as objects, CBOR, AQ9), `run!`, `rows!` (no types, for columns that are not known at compile time), `batch!` (one crossing, 6.2, a typed `D1.Result` for each statement), `exec!`, `with_session!` (gives a `D1.Session` with the same query functions and `bookmark!`). Reads stop at 1 MiB (`TooLarge`), and the `_with` forms take `max_bytes`. A constraint failure is `Constraint(Str)`. A parameter is a `Sql` value. D1 takes no BigInt, so `Int` goes as a number, and as text above 2^53 (an INTEGER column turns it back into an integer). D1 gives an INTEGER above 2^53 back as a rounded number, so a query that reads one uses `CAST(x AS TEXT)`. (5.1) | Yes | A |
+| `R2` | `R2Bucket`, `R2Object`, multipart | `get!`, `get_with!` (range, condition), `put!`, `put_with!` (a failed `only_if` is `PreconditionFailed`; HTTP metadata, a checksum, `length_bytes` for a stream of unknown length), `head!`, `delete!`, `list!` (`include`, `start_after`), `create_multipart_upload!`, `resume_multipart_upload` (pure), and on the `R2.Upload` data `upload_part!`, `complete!`, `abort!`, so an upload can span requests (5.3) | Yes | A |
 | `Cache` | `caches.default`, `caches.open` | `get!` (`match`), `put!`, `delete!`, local to the data center (RF1) (5.4) | Yes | A |
-| `WebCrypto` | `crypto.subtle`, `getRandomValues`, `randomUUID`, `timingSafeEqual` | `sign!`, `verify!`, `encrypt!`, `decrypt!`, `derive_bits!` with the key as data (imported in the same crossing), `import!`, `hmac_sha256` (pure Roc), `equal!`, `random!`, `uuid!` (10). Not `Crypto`: that is a builtin module of Roc, and it stays useful next to `WebCrypto`: SHA-256 and BLAKE3 of small values in wasm memory, with no wait (`MODULES.md` 10). | sign, verify, encrypt: yes. The others: no. | A |
-| `Time` | `Date.now` | `now_ms!` (coarse on the edge) (11) | No | A |
+| `WebCrypto` | `crypto.subtle`, `getRandomValues`, `randomUUID`, `timingSafeEqual` | `sign!`, `verify!`, `encrypt!`, `decrypt!`, `derive_bits!` with the key as data (imported in the same crossing), `import_key!`, `export_key!`, `generate_key!` (the key as data), `hmac_sha256` (pure Roc), `timing_safe_equal!`, `random!`, `random_uuid!` (10). Not `Crypto`: that is a builtin module of Roc, and it stays useful next to `WebCrypto`: SHA-256 and BLAKE3 of small values in wasm memory, with no wait (`MODULES.md` 10). | Each `crypto.subtle` function: yes. `timing_safe_equal!`, `random!`, `random_uuid!`: no. `hmac_sha256`: no crossing. | A |
+| `Time` | `Date.now`, `scheduler.wait` | `now_ms!` (coarse on the edge), `sleep!` and its twin `sleep` (a timeout with `Io.race!`, 6.5) (11) | `sleep!`: yes | A |
 | `Log` | `console.log` | `info!`, `warn!`, `error!` with a record of fields: one JSON line (11) | No | A |
 | `Js` | everything (6.4) | `await!`, `call!`, `Js` value helpers, `pin!`, `pinned!`, `unpin!` (9, RS2) | per program | A |
-| `Io` | none: one operation as a value (6.5) | `new`, `sync`, `map`, `run!`, `both!`, `all!`, `start!` | per call | A |
+| `Io` | none: one operation as a value (6.5) | `new`, `sync`, `map`, `run!`, `both!`, `all!`, `race!`, `start!` | per call | A |
 | `Worker` | none: a wrapper (7.1, 10.1) | `Worker.{ fetch!, scheduled!, ... }` with optional fields, each with its own result type, and `event!` (`MODULES.md` 3) | | A |
 | `Memo` | none: a wrapper over the pin table | `new(name, { max_age_ms, load! })`, `get!`, `clear!`. The value is data, kept as CBOR bytes. (`MODULES.md` 9) | the first `get!` in an isolate runs `load!` | A |
 | `RateLimit` | Rate limiting binding | `limit!(key) => Try({}, [RateLimited, _])` (RN10) | Yes | A |
 | `Native` | none: Zig `std` in the host | `zstd_decode!`, `Blake3` and `Sha256` with state across chunks (8) | No | A (the registry hashes archives in chunks, RF5) |
-| `Kv` | `KVNamespace` | A typed namespace: `Kv.json`, `Kv.text`, `Kv.bytes`. `get!`, `get_with!`, `put!`, `put_with!`, `delete!`, `list!`, `cell` (5.2) | Yes | B |
-| `Queue` | Queue producer; consumer batch (event) | A typed queue: `Queue.json`. `send!`, `send_with!`, `send_all!`; `each!` (ack on `Ok`, retry on `Err`); `Message.ack!`, `retry!` (6) | send: yes | B |
-| `Object` | Durable Object namespace and stub; inside: `ctx.storage` (SQL, KV, alarm), the WebSocket hibernation API (`acceptWebSocket`, `getWebSockets`, `getTags`, auto responses, attachments) | Outside: `namespace`, `named` (pure), `fetch!` (a 101 response passes through), `call!` with an `Rpc` constant. Inside: `class` (a record of handlers, also `web_socket_message!`, `web_socket_close!`, `web_socket_error!`), `Self.sql!` (sync), `set_alarm!`, `accept!`, `accept_with!`, `sockets!`, `set_auto_response!`, `cell`, `Socket` with typed attachments (7, 12.1) | Stub calls: yes. Storage and sockets: no. | B |
+| `Kv` | `KVNamespace` | A typed namespace: `Kv.json`, `Kv.text`, `Kv.bytes`. `get!` (to 1 MiB, `TooLarge`), `get_with!`, `get_with_metadata!` (typed metadata), `put!`, `put_with!`, `delete!`, `list!`, `cell` (5.2) | Yes | B |
+| `Queue` | Queue producer; consumer batch (event) | A typed queue: `Queue.json`. `send!`, `send_with!`, `send_batch!`, `send_batch_with!` (`delay_ms`, rounded up to whole seconds); `each!` (gives the `Queue.Message` and the body; ack on `Ok`, retry on `Err`); `Batch.retry_all_with!`, `Message.ack!`, `retry!` (6) | send: yes | B |
+| `Object` | Durable Object namespace and stub; inside: `ctx.storage` (SQL, KV, alarm), the WebSocket hibernation API (`acceptWebSocket`, `getWebSockets`, `getTags`, auto responses, attachments) | Outside: `namespace`, `named` (pure), `jurisdiction`, `id!`, `fetch!` (a 101 response passes through), `call!` with an `Rpc` constant. Inside: `class` (a record of handlers, also `init!`, `alarm!`, `web_socket_message!`, `web_socket_close!`, `web_socket_error!`), `Self.sql!` (sync), `set_alarm!`, `get_alarm!`, `list!`, `delete_all!`, `accept!`, `accept_with!`, `sockets!`, `set_auto_response!`, `cell`, `Socket` with typed attachments (7, 12.1). SQLite-backed classes only. | Stub calls, alarm calls, `delete_all!`: yes. SQL, cells, `list!` and sockets: no. | B |
 | `Rpc`, `Service` | Service bindings and `WorkerEntrypoint` methods | `Rpc.method` gives a typed constant for both sides: `call!` on a `Service` or an `Object`, `on` for the callee (8) | Yes | B |
 | `WebSocket`, `Tcp` | `WebSocketPair`, `WebSocket`, a `fetch` with `Upgrade` for a client; `connect` of `cloudflare:sockets` (TCP, also for Hyperdrive) | `is_upgrade`, `accept!`, `connect!`, `send!`, `send_json!`, `receive!`, `close!`, `Message.json`; `Tcp.connect!`, `read!`, `write!`, `start_tls!` (12.2, 12.3) | `receive!`, `read!`, connects | B |
-| `Email` | `send_email` binding, `EmailMessage` (`cloudflare:email`); incoming mail (event) | `send!`; `Mail.forward!`, `reply!`, `reject!` (13) | Yes | B |
+| `Email` | `send_email` binding, `EmailMessage` (`cloudflare:email`); incoming mail (event) | `send!`; `Mail.forward!`, `forward_with!`, `reply!`, `set_reject!` (13) | Yes | B |
 | `Ai`, `Vectorize`, `Analytics`, `Assets`, `SecretsStore`, `Hyperdrive`, `Version`, `Workflows` (binding side) | The binding of the same name | One function per binding method. Most are one `Call`. (13) | Mostly yes. `Analytics.write!`: no. | B |
 | `Tail` | Tail Worker events | Event only (the `tail!` field) | | B |
 | `Workflow` | `WorkflowEntrypoint.run(event, step)`, `step.do`, `step.sleep` | Needs callbacks (13, AQ1) | | C |
@@ -389,8 +409,8 @@ Platform phases:
 | Phase | Content | Needed by |
 | --- | --- | --- |
 | A | The ABI (4), `Js` and `Io` (5, 6), the platform helpers (6.4), the full `Event` and `Outcome` types (10.1) with JS entry points for `fetch` and `scheduled`, modules marked A, the wrappers of 7.1 that use phase A modules, the ref and pin tables (9) | Registry v1 (RN1 to RN15). RN13 uses `Log` only. `Analytics` (B) is optional. |
-| B | All other modules, and the JS entry points of the other events. Each module is pure Roc over phase A. The tags of these events are already in `Event` (phase A), so phase B does not change its type (10.1). | Other apps |
-| C | Callbacks from JS into Roc (AQ1): `Workflow`, HTMLRewriter handlers, `transactionSync`, `blockConcurrencyWhile` | Other apps |
+| B | All other modules, and the JS entry points of the other events, with the class exports (`objectClass`, `entrypointClass`) and the event `Manifest` (AQ10). Each module is pure Roc over phase A. The tags of these events are already in `Event` (phase A), so phase B does not change its type (10.1). But the entry points of `queue`, `email` and `tail` move these kinds from `Other` to their own tags, so `other!` stops getting them: the release that adds them is a major release (10.1, 11). | Other apps |
+| C | Callbacks from JS into Roc (AQ1): `Workflow`, HTMLRewriter handlers, `transactionSync`, `blockConcurrencyWhile` in a handler. (In the constructor it is the event `Init` of phase B, 10.1: no callback.) | Other apps |
 
 ### 7.1 Declarations and wrappers
 
@@ -444,7 +464,7 @@ A Native op that Roc gets in its builtins later moves to Roc, and the op stays f
 
 | # | Rule |
 | --- | --- |
-| RS1 | A ref is a u32 id in the table of the task that made it. The table gives one id to one JS object (a `Map` from object to id), so two refs of the same object are equal in Roc: a Durable Object finds the sender among its sockets with `==` (`MODULES.md` 12.1). JS frees all refs of a task at its end, its trap and its cancel (`PLAN.md` 8a). So a ref never outlives its task, and Roc never has to free one. |
+| RS1 | A ref is a u32 id in the table of the task that made it. The table gives one id to one JS object (a `Map` from object to id), so two refs of the same object are equal in Roc: a Durable Object finds the sender among its sockets with `==` (`MODULES.md` 12.1). JS frees all refs of a task at its end, its trap and its cancel (`PLAN.md` 8a). A program that `Io.start!` started (6.5) uses the context of its task: the ref table and the roots. So at the end of the task, JS keeps that context until each started program settles, or until the 30 s limit of `waitUntil`, and frees it then. So a ref never outlives its task and its started programs, and Roc never has to free one. |
 | RS2 | The pin table keeps JS values for later tasks of the same isolate, by name. A later task cannot get an id from an earlier one, because Roc keeps no state across events, so a name is the key. `Js.pin!(Str, Js, { max_age_ms })` stores the value (each `Ref` in it becomes its object). `Js.pinned!(Str) => Try(Js, [NotPinned])` gives it back by J1 to J7, so each object in it gets a new ref of the task. `Js.unpin!(Str)` removes it. All three are one `call!` to a platform helper (6.4), with no wait. The table has a limit of entries (default 1,000, shim option `pinLimit`). A pin over the limit is status 1. Each pin and unpin is counted (`PLAN.md` M11). In a stateless Worker, only objects that are not I/O objects can be used from a later request (a `CryptoKey` can). Workers throws for a stream, a body, a socket or a `Response` of another request. Inside a Durable Object, all events share one context, so a `WebSocket` can be pinned. `Memo` (`MODULES.md` 9) is the typed wrapper for data: it pins the CBOR bytes, so JS does not parse them. `Js.pin!` is for JS objects. |
 | RS3 | A `Body` is `[Empty, Bytes(List(U8)), Text(Str), Stream(Ref)]`. A request body, a fetch response body and an R2 body arrive as `Stream(Ref)`, with no copy. `Body.bytes!` copies with a `max`, and gives an error past it. A `Stream` given to a `Response` or an R2 `put` goes back to JS with no copy (`PLAN.md` 10a, 10b). A stream can be read once. A copy of the `Body` value in Roc points to the same stream, so a second read gives status 1. `Body.tee!` gives two streams. |
 | RS4 | JS writes its result bytes into a `js_alloc` block (4.1). The host decodes them into Roc values that it allocates with the owner of the task, then frees the block (5.1). So the sums and `freeOwner` cover the values (`PLAN.md` 2a, 12a). |
@@ -467,23 +487,26 @@ One function takes every kind of event. An app that does not handle a kind retur
 | Phase A defines all the tags below, with their payload types. The functions of the payload modules come in phase B. | Phase B does not change the type |
 | A Workers handler kind with no tag comes as `Other({ kind, payload })` | A new Workers kind needs no new tag |
 | A new tag is a major release of the platform (11) | Semver holds |
-| An app that uses `Worker` (7.1) gets a new kind as a new optional field | Such an app never breaks |
+| A kind that moves from `Other` to its own tag (an entry point that phase B adds for `queue`, `email` or `tail`) is a major release too. A minor release cannot do it. | An app whose `other!` gets the kind sees the change only in a major release |
+| An app that uses `Worker` (7.1) gets a new kind as a new optional field | Such an app does not break, except an app whose `other!` got that kind before (the row above) |
 
 ```roc
 Event : [
 	Fetch(Request),
-	Scheduled({ cron : Str, time_ms : U64 }),
+	Scheduled(Worker.Scheduled),                           # { cron, time_ms } with no_retry! (MODULES.md 3)
 	Queue(Queue.Batch),
 	Email(Email.Mail),
 	Rpc({ entrypoint : Str, method : Str, arg : List(U8) }),   # arg: the one argument as CBOR (5.2, MODULES.md 8)
+	EntrypointFetch({ entrypoint : Str, request : Request }),  # fetch of a named entry point (MODULES.md 8)
 	Object({ class : Str, id : Str, event : Object.Event }),
-	Tail(List(Js)),
+	Tail(List(Worker.TraceItem)),                          # typed items of a Tail Worker (MODULES.md 3)
 	Other({ kind : Str, payload : Js }),
 	Manifest,                                              # once, at load: the names of classes and methods (AQ10)
 ]
 
 Object.Event : [
-	Fetch(Request), Alarm({ retry_count : U32 }), Rpc({ method : Str, arg : List(U8) }),
+	Init,                                                  # in the constructor, in blockConcurrencyWhile (MODULES.md 7)
+	Fetch(Request), Alarm({ retry_count : U32, is_retry : Bool }), Rpc({ method : Str, arg : List(U8) }),
 	SocketMessage(Object.Socket, WebSocket.Message),
 	SocketClose(Object.Socket, WebSocket.Closed), SocketError(Object.Socket, Thrown),
 ]
@@ -492,7 +515,7 @@ Outcome : [
 	Respond(Response),   # the body is a Body: bytes, text, a stream; a 101 carries a socket
 	Reply(Js),           # Rpc: the reply as Packed (5.2). Manifest: the names (AQ10).
 	Done,
-	Failed(Str),         # the handler gave Err: a log line, then a throw (500 for fetch)
+	Failed(Str),         # the handler gave Err: a log line, then a 500 response for fetch (a throw after pass_through!), a throw for the others
 	Unhandled,
 ]
 ```
@@ -501,15 +524,18 @@ Outcome : [
 
 | Workers entry | Event | Outcome that it takes | Other outcomes |
 | --- | --- | --- | --- |
-| `fetch` | `Fetch` | `Respond` | 500 and a log line |
-| `scheduled` | `Scheduled` | `Done` | The cron run fails and shows in Past Events. workerd also sets a retry flag unless the handler calls `controller.noRetry()`, and the docs do not say what production does with it. |
+| `fetch` | `Fetch` | `Respond` | `Failed`: a log line and a 500 response with no body. After `Ctx.pass_through!`, the shim throws, so Workers sends the request to the origin. `Unhandled`: a 500 response and a log line. |
+| `scheduled` | `Scheduled` | `Done` | `Failed`, `Unhandled`: a throw, so the cron run fails and shows in Past Events. The shim never calls `controller.noRetry()` by itself: only the app does, with `no_retry!` (`MODULES.md` 3). workerd keeps a retry flag, and the docs do not say what production does with it (AQ12). |
 | `queue` | `Queue` | `Done`. Messages with no ack or retry follow the queue default. | The whole batch is retried |
 | `email` | `Email` | `Done` | The mail is rejected |
 | `tail` | `Tail` | `Done` | ignored |
-| `WorkerEntrypoint` method (service binding RPC) | `Rpc` | `Reply` with the reply as `Packed` CBOR | The caller gets an exception |
+| `WorkerEntrypoint` method (service binding RPC), of the default export or of a named entry point | `Rpc` | `Reply` with the reply as `Packed` CBOR | The caller gets an exception |
+| `fetch` of a named `WorkerEntrypoint` (a service binding with `entrypoint`) | `EntrypointFetch` | `Respond` | As for `fetch` |
 | Durable Object class methods | `Object` | `Respond` (fetch), `Reply` (RPC), `Done` | as above |
+| Durable Object constructor, in `ctx.blockConcurrencyWhile` (only for a class with `init!`) | `Object` with `Init` | `Done` | `Failed`, `Unhandled`: a throw. Workers resets the object, and the event that started it fails. |
+| Durable Object `alarm` (only for a class with `alarm!`) | `Object` with `Alarm` | `Done` | `Failed`: a throw, and Workers retries the alarm (6 times or less, `MODULES.md` 7) |
 | None: the shim, once at load | `Manifest` | `Reply` with the names of classes and methods | `Unhandled`: the app has no classes |
-| A kind with no tag, or with no entry point yet. In phase A: `queue`, `email`, `tail`, when the app names them in `makeHandler(module, { other: ["queue"] })`. | `Other` | any | as above |
+| A kind with no tag, or with no entry point yet. In phase A: `queue`, `email`, `tail`, when the app names them in `makeHandler(module, { other: ["queue"] })`. A later release that gives such a kind its entry point is a major release (rules above). | `Other` | `Reply` with the value for JS (the `Ok` of `other!`) | `Failed`: a throw |
 
 Cost of one entry for all kinds, against one export for each kind:
 
@@ -523,23 +549,47 @@ Cost of one entry for all kinds, against one export for each kind:
 
 So one export for each kind gives no measurable gain. The cost of a request is in its I/O waits and its data, not in the entry. For better ergonomics, the `Worker` wrapper (7.1, `MODULES.md` 3) builds `event!` from a record of handlers. Each handler is an optional field with the result type of its kind, and a missing one gives `Unhandled`. An `Err` of a handler gives `Failed` (`research/api-probe/handlers-check/`: an optional field can hold an effectful function on nightly 10-12, and a call through it runs).
 
-Durable Object classes and RPC entry points are JS classes in Workers, and an ES module must name its exports in its source. So the entry file has one line for each class: `export const Room = objectClass("Room")`, `export const Admin = entrypointClass("Admin")` (`MODULES.md` 3). The names of the methods come from Roc: at load, `makeHandler` makes the instance, sends `Manifest`, and gets `{ objects: { Room: [methods] }, entrypoints: { Admin: [methods] } }` from the `Worker` wrapper. It defines each method on the prototype of its class, because workerd finds an RPC method only on the class prototype (an own property gives "The RPC receiver does not implement the method"). Each method call becomes an event. A class in the manifest with no export, or an export that is not in the manifest, is a throw at load, so `wrangler deploy` fails and names the class. An app with no `Worker` wrapper answers `Unhandled`: no classes. Wrangler names the classes as usual, and workerd checks them against the exports.
+Durable Object classes and RPC entry points are JS classes in Workers, and an ES module must name its exports in its source. So the entry file has one line for each class: `export const Room = objectClass("Room")`, `export const Admin = entrypointClass("Admin")` (`MODULES.md` 3). The names of the methods come from Roc: at load, `makeHandler` makes the instance, sends `Manifest`, and gets `{ default: [methods], objects: { Room: { handlers, methods } }, entrypoints: { Admin: { handlers, methods } } }` from the `Worker` wrapper (`MODULES.md` 3). `handlers` names the handlers that the class has (`init`, `fetch`, `alarm`, `webSocketMessage`, ...), and the shim defines a JS method only for those: a class with no `alarm!` has no `alarm` method, so an alarm cannot throw and retry for nothing, and a class with no `init!` has no `blockConcurrencyWhile`. `makeHandler` gives a subclass of `WorkerEntrypoint`, not a plain object, because Workers sends RPC to the default export only when it extends `WorkerEntrypoint`. Its `fetch`, `scheduled`, `queue`, `email` and `tail` methods send the events above, with `this.env` and `this.ctx` as roots, and the `default` methods are on its prototype. It defines each method on the prototype of its class, because workerd finds an RPC method only on the class prototype (an own property gives "The RPC receiver does not implement the method"). Each method call becomes an event. A class in the manifest with no export, or an export that is not in the manifest, is a throw at load, so `wrangler deploy` fails and names the class. An app with no `Worker` wrapper answers `Unhandled`: no classes. Wrangler names the classes as usual, and workerd checks them against the exports.
 
 ### 10.2 Respond now, work after
 
-`Ctx.respond!(response)` gives the response to Workers at once, and the task goes on. JS keeps the task alive with `ctx.waitUntil` on the promise of the task. The return value of `event!` is then ignored.
+`Ctx.respond!(response)` gives the response to Workers at once, and the task goes on. The return value of `event!` is then ignored. It works in the `Fetch` of a Worker, in the `EntrypointFetch` of a named entry point, and in the `Fetch` of a Durable Object:
+
+| Event | How the task stays alive after `respond!` |
+| --- | --- |
+| `Fetch` of a Worker, `EntrypointFetch` | JS calls `ctx.waitUntil` on the promise of the task |
+| `Fetch` of a Durable Object (`Object.Event`) | JS resolves the promise of the `fetch` method of the object with the response. It does not call `waitUntil`: an object does not need it to finish its work (Cloudflare docs, Context API, "`DurableObjectState.waitUntil()` exists for API compatibility"). `PLAN.md` 8f checks that the work after `respond!` runs. |
+
+Deadlines (`PLAN.md` 3b). The shim cancels a task at its deadline (`PLAN.md` 3c). The deadline depends on the event kind and on the state of the response:
+
+| Task state | Deadline | Why |
+| --- | --- | --- |
+| A `Fetch` task (of a Worker or of an object) or an `EntrypointFetch` task, before `respond!` | Each wait: 120 s (shim option `taskDeadlineMs`) | A wait that never settles (`PLAN.md` 3) |
+| A `Scheduled`, `Queue` or `Alarm` task | The whole task: 15 min from its start. One wait has no deadline of its own. | The wall time limit of Workers for a cron run, a queue consumer and an alarm handler (Cloudflare docs, limits) |
+| The `Init` task of an object | The whole task: 30 s from its start | Workers resets the object when `blockConcurrencyWhile` runs longer than 30 s (Cloudflare docs, Durable Object state). The shim cancels first, so the error names the task. |
+| A task of another kind (`Email`, `Tail`, `Rpc`, the other object events) | Each wait: 120 s (`taskDeadlineMs`), as before `respond!` | The default of `PLAN.md` 3b |
+| After `respond!` | 30 s after the response body is complete. The body is complete at `respond!` for `Empty`, `Text`, `Bytes` and a `Stream` that the task does not write. A stream of `Body.writer!` (`MODULES.md` 4) is complete at its `close!`, so the task stays while it writes. A 101 response is complete when its socket closes. | Workers: "`waitUntil()` can extend execution for up to 30 seconds after the response is sent", and "A Worker that is still streaming a response body remains active" (Cloudflare docs, limits) |
+| A wait on a socket (`WebSocket.receive!`, `Tcp.read!`), in any state | No deadline | A socket can be idle for a long time. Its close ends the task (below). |
+
+In each state, the task also ends (a cancel, `PLAN.md` 3c: at once for a task that waits, else at its next wait) when:
+
+| Signal | Note |
+| --- | --- |
+| `request.signal` aborts (the client went away) | Needs the compatibility flag `enable_request_signal` (`PLAN.md` 3.0). The docs do not say if it fires when the client goes away after the body is complete. `PLAN.md` 11c checks it on the edge. |
+| The socket of the task closes | A 101 response, `WebSocket.connect!`, `Tcp.connect!` |
+| Workers cancels the response stream (the client stopped reading) | A stream of `Body.writer!` |
 
 | Rule | |
 | --- | --- |
-| Time | Workers gives `waitUntil` work 30 s after the response, then cancels it. So the shim sets the deadline of the task (`PLAN.md` 3b) to 30 s after `respond!`, and cancels the task then (3c). It does not wait for the 120 s deadline. Exception: a 101 response with a WebSocket. Workers keeps the request while the socket is open, so the task stays until the socket closes. |
-| Second call | A second `respond!`, or a `respond!` in an event that is not `Fetch`, is status 1 (`Error("InvalidStateError", ...)`) |
+| Second call | A second `respond!`, or a `respond!` in an event that is not the `Fetch` of a Worker, an `EntrypointFetch` or the `Fetch` of a Durable Object, is status 1 (`Error("InvalidStateError", ...)`) |
+| Request body | Read the request body before `respond!`. workerd ends the request body when the response is sent, so a later read gives `BodyErr` (`MODULES.md` 4). |
 
 This one function covers 3 needs:
 
 | Need | How |
 | --- | --- |
 | Work after the response (cache put, tile catch-up, RN5, RN11) | `respond!`, then the work |
-| A streaming response | Make a `TransformStream` (`Js`), `respond!` with its readable side, then write chunks |
+| A streaming response (SSE, a long export) | `{ body, writer } = Body.writer!()?`, `respond!(Response.from_body(200, "text/event-stream", body))`, then `writer.write!(chunk)` for each chunk and `writer.close!()` at the end (`MODULES.md` 4). No `Js`. |
 | A WebSocket | `WebSocket.accept!(req)`, `respond!` with its 101 response, then `receive!` and `send!` (`MODULES.md` 12) |
 
 ## 11. Tests and the contract
@@ -547,11 +597,11 @@ This one function covers 3 needs:
 | Part | Test | Where |
 | --- | --- | --- |
 | Byte format (5) | HD1 to HD7 (5.1): the Zig host (wasm32 build, in Node) and the JS shim give the same bytes for the same fixtures | `host/`, `js/test/` |
-| Ops and `Io` (6) | `roc test`: each op encodes to a fixed `Js` array. Node: the interpreter runs each op, `Par`, `Start`, `Array` and `Record` against fakes, with statuses 0 to 3 (as `research/api-probe/program-test.mjs`). | `platform/`, `js/test/` |
+| Ops and `Io` (6) | `roc test`: each op encodes to a fixed `Js` array. Node: the interpreter runs each op, `Par`, `Race`, `Start`, `Array` and `Record` against fakes, `Get` and `Fields` on `null` (OP7), with statuses 0 to 3 (as `research/api-probe/program-test.mjs`). | `platform/`, `js/test/` |
 | Wrappers (7.1) | Conformance routes: a `Memo` loads once, and a second request gets the value with no load. `Worker` sends each kind to its field, and an `Err` gives `Failed`. A `Queue(a)` constant sends and reads one type. An `Rpc` constant calls an object and a service. | `conformance/` |
 | Module conventions (`MODULES.md` 1) | `research/api-probe/modules-check/` until `platform/` exists: `roc check`, a run against `expected.txt`, and two files that must not compile (a `Secret` in a JSON encode and in a CBOR encode) | `platform/`, `conformance/` |
 | Each module | The conformance app: one route for each module function, run in workerd with local bindings (Miniflare gives local D1, R2, KV, Queues and Durable Objects). Each test fails when its function sends a wrong method name. | `conformance/` of this repository |
-| Events | One test for each Workers entry kind (10.1) | `conformance/` |
+| Events | One test for each Workers entry kind (10.1). `scheduled` runs through `GET /cdn-cgi/local/scheduled?cron=...&time=...&format=json` of Miniflare, which gives the outcome and the `noRetry` flag (`MODULES.md` 3). | `conformance/` |
 | Host rules (traps, sums, memory) | As now | `bench/`, `PLAN.md` |
 
 The registry app does not fake the platform in Roc. An `expect` cannot run an effect (RF9), and a fake in Roc would test the fake. The registry tests:
@@ -560,8 +610,9 @@ The registry app does not fake the platform in Roc. An `expect` cannot run an ef
 | --- | --- | --- |
 | Pure logic: routes, records, the publish checks, the tile math | `roc test` in `packages/` and `worker/` | `../TESTING.md` L0, L1 |
 | Handlers | Each route of Registry 4 against Miniflare: local D1 with the real schema (`../sql/`), local R2. GitHub is a fake service (an outbound fetch handler that serves fixtures). | `worker/tests/`, run with Node |
+| Cron (RN11): tile catch-up and cleanup | A publish whose R2 tile write fails (a fake R2 error), then `GET /cdn-cgi/local/scheduled?cron=<the cron of the Wrangler config>&format=json` against Miniflare. The outcome is `ok`, and the tile and the checkpoint are then in local R2. A second run changes nothing. Revert (the handler does no catch-up): the tile is missing. | `worker/tests/`, run with Node |
 
-The contract between the platform and the registry is the public Roc modules of a platform release: the types and the functions of sections 6.5, 7 (with the wrappers of 7.1) and 10, with the signatures and rules of `MODULES.md`. The ABI (4) and the format (5, 6) are inside the platform: a platform release changes them with its Roc modules, so an app never sees the change. The platform follows semver on its public modules.
+The contract between the platform and the registry is the public Roc modules of a platform release: the types and the functions of sections 6.5, 7 (with the wrappers of 7.1) and 10, with the signatures and rules of `MODULES.md`. The ABI (4) and the format (5, 6) are inside the platform: a platform release changes them with its Roc modules, so an app never sees the change. The platform follows semver on its public modules. A change of the event that a Workers kind gives (from `Other` to its own tag, 10.1) is a breaking change too, so only a major release makes it.
 
 Work apart:
 
@@ -587,9 +638,10 @@ Cost of the chosen design, from `research/api-probe/` (native, Node), 200 D1 row
 
 | # | Question | How to settle |
 | --- | --- | --- |
-| AQ1 | Callbacks from JS into Roc (`step.do` of Workflows, HTMLRewriter, `transactionSync`, `blockConcurrencyWhile`). A hosted function can take a `Box` of a Roc closure, and a `provides` entry can call it. While the outer task waits, the callback runs as a new task on the same instance. Does this work with JSPI and the stack copy? | A probe in `research/`: a Roc closure boxed, given to JS, called from a JS callback while the caller waits |
+| AQ1 | Callbacks from JS into Roc (`step.do` of Workflows, HTMLRewriter, `transactionSync`, `blockConcurrencyWhile` in a handler: the one in the constructor is the event `Init`, 10.1). A hosted function can take a `Box` of a Roc closure, and a `provides` entry can call it. While the outer task waits, the callback runs as a new task on the same instance. Does this work with JSPI and the stack copy? | A probe in `research/`: a Roc closure boxed, given to JS, called from a JS callback while the caller waits |
 | AQ4 | The cost of one crossing, for programs of 1, 4 and 16 ops, on the edge | `PLAN.md` step 8g |
 | AQ5 | A decoder in the host straight into typed records. Typed data already skips the `Js` tree (`Packed`, 5.2). What is left is `Cbor.parse` in Roc: 137 µs for 200 rows, 70 µs of it the record matching of the derived parser. The host would need the layout of each record type, which `roc glue` does not give for app types. | Only if 8g shows that `Cbor.parse` costs much in wasm. First see if a newer compiler matches fields faster. |
+| AQ12 | What does production do with the retry flag of a failed cron run? workerd keeps a flag (`ScheduledResult.retry`): it is true unless the handler calls `controller.noRetry()`. The Cloudflare docs do not name `noRetry` and say nothing about a retry of a cron run. The shim never calls `noRetry` by itself (`MODULES.md` 3), so an app that gives `Err` can get a second run of the same `time_ms`, or none. | The edge test of `PLAN.md` 11c: count the runs for each `time_ms` of a cron that gives `Err`, with and without `no_retry!`. Write the answer in `MODULES.md` 3. |
 
 Settled:
 
@@ -602,4 +654,4 @@ Settled:
 | AQ8 | A codec format for the typed data of `MODULES.md` MC5, in place of JSON text? | Yes: CBOR (RFC 8949), also as the byte format of the bridge (5, 5.2). Compared: JSON, the first byte format, CBOR, MessagePack, BSON, Postgres JSONB, SQLite JSONB, Arrow, Protocol Buffers, FlatBuffers, Cap'n Proto, bincode, the V8 serializer, Ion (`research/api-probe/README.md`). The JS side has no Roc types, so the format must describe itself, which rules out the formats with a schema. CBOR is a standard with test vectors, has the JSON data model plus bytes, `undefined`, 64-bit integers and tags, and fits the counted containers of the Roc codec protocol. `research/api-probe/cbor/`: 2.5 times faster than `Json.parse` in Roc on the same rows, 216 µs against 265 to 363 µs with JS. |
 | AQ9 | Rows of `D1.all!` as objects or as arrays? | Objects. Arrays with one list of column names save 8 %, only in JS (5.2), and need a column mode in the format. `rows!` gives arrays with no types, for columns that are not known at compile time. |
 | AQ10 | A Durable Object class name is given twice: in `makeHandler(module, { objects })` and in `Object.class`. | The names of classes and methods come from Roc, through the event `Manifest` at load (10.1). The entry file exports each class with one line, because an ES module must name its exports, and the shim checks the exports against the manifest at load. A mismatch stops `wrangler deploy`. The method lists in JS are gone. |
-| AQ11 | Can the module API be typed with no codec code in the app: typed bindings, rows into the type of the call, typed RPC on both sides, handlers with `?`? | Yes. `research/api-probe/modules-check/` (`MODULES.md` 15): 13 modules and an app, `roc check` and a run on nightlies 10-09 and 10-12. A `Secret` must have a record backing: an opaque type over a bare `Str` gets the codecs of `Str`. With CBOR for typed data (AQ8), the same prototype passes, and a socket room of `MODULES.md` 12.1 runs too. |
+| AQ11 | Can the module API be typed with no codec code in the app: typed bindings, rows into the type of the call, typed RPC on both sides, handlers with `?`? | Yes. `research/api-probe/modules-check/` (`MODULES.md` 15): 21 modules and an app that sends 52 fake events, `roc check` and a run on nightlies 10-09 and 10-12. A `Secret` must have a record backing: an opaque type over a bare `Str` gets the codecs of `Str`. With CBOR for typed data (AQ8), the same prototype passes, and a socket room of `MODULES.md` 12.1 runs too. |

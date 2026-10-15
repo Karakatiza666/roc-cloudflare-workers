@@ -1,10 +1,11 @@
 import Io
+import Js
 import Request
 import Response
 
 ## A WebSocket in a Worker, or a client (MODULES.md 12.2). A value holds a ref, so it is good
 ## for one task (MC13). The fake JS side has no messages: `receive!` gives `Closed`.
-WebSocket :: { ref : U32 }.{
+WebSocket :: { ref : Js.Ref }.{
 	is_eq : _
 
 	is_upgrade : Request -> Bool
@@ -16,7 +17,7 @@ WebSocket :: { ref : U32 }.{
 			ref : Try(U32, _)
 			ref = Io.run!(Io.typed(["ws.accept"], |_| BadData("")))
 			r = ref ?? 0
-			Ok({ socket: WebSocket.{ ref: r }, response: Response.{ status: 101, headers: [], body: Empty, web_socket: r + 1 } })
+			Ok({ socket: WebSocket.{ ref: Js.Ref.fake(r) }, response: Response.{ status: 101, headers: [], body: Empty, web_socket: Js.Ref.fake(r + 1) } })
 		} else {
 			Err(NotUpgrade)
 		}
@@ -24,8 +25,15 @@ WebSocket :: { ref : U32 }.{
 	send! : WebSocket, WebSocket.Message => Try({}, [Closed])
 	send! = |_, _| Ok({})
 
+	## The twin of `receive!`, for `Io.race!` (a receive with a timeout).
+	receive : WebSocket -> Io(WebSocket.Message, [Closed(WebSocket.Closed)])
+	receive = |s| {
+		WebSocket.{ ref } = s
+		Io.new(["ws.receive", ref.to_str()], |_| Err(Closed({ code: 1000, reason: "", clean: Bool.True })))
+	}
+
 	receive! : WebSocket => Try(WebSocket.Message, [Closed(WebSocket.Closed)])
-	receive! = |_| Err(Closed({ code: 1000, reason: "", clean: Bool.True }))
+	receive! = |s| Io.run!(receive(s))
 
 	close! : WebSocket, U16, Str => {}
 	close! = |_, _, _| {}
