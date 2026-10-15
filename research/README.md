@@ -4,13 +4,14 @@ Prototypes and measurements for PLAN.md. They are not part of the platform build
 
 | Folder | What | Used for |
 |---|---|---|
+| `api-probe/` | workerd features (zstd, WebCrypto, DigestStream), the bridge value codec and programs in Roc and JS, codec cost (results in `api-probe/README.md`) | `API.md` |
 | `alloc/` | Allocator versions v0 to v7, a harness, bench scripts (results in `alloc/README.md`) | Step 6e (B5), sums per task, one instance per isolate |
 | `hash/` | Change-detection sums in wasm: Fletcher (SIMD), wyhash, XOR | The sum at each wait |
 | `heap-options/` | Heap options H1 to H9 on a standalone harness | Heap optimization table in PLAN.md |
 | `traps/` | V1 to V4 trap tests, wild-write test, on the v0 allocator with a walk sum | Clean and unclean traps |
 | `workerd/` | workerd probes: TCP reset, request signal, JSPI stack, FinalizationRegistry, JS heap | The workerd facts in PLAN.md |
 
-Only `alloc/` has a build script that works from this layout (`alloc/build.sh`). The other folders keep the sources as they ran: their paths point to a repo copy with `out/` and `bench/` beside the scripts.
+Only `alloc/` and `api-probe/` have scripts that works from this layout (`alloc/build.sh`). The other folders keep the sources as they ran: their paths point to a repo copy with `out/` and `bench/` beside the scripts.
 
 ## Results recorded here (measured 2026-10-14)
 

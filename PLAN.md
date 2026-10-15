@@ -15,7 +15,7 @@ Problem 12 (2026-10-14) is the goal of problem 4: one wasm instance per isolate.
 | 5 | The CPU limit stops the instance in a task | `task_abort` does not run. The instance state is stale. |
 | 6 | Host bugs: the log buffer has the owner tag of a task (B1), `num` goes to JS as an `f64` (B2), JS does not read `c` and `num` (B3), a failed allocation returns 0 to Roc (B4), large free spans are never joined or split (B5) | B1: heap corruption with no trap after a `dbg` and a `crash`, and a leak for each `dbg`. B2: values above 2^53 change. B3: no effect can send binary data. B4: a write through 0 goes into the bottom of the stack with no trap. B5: a string built in a loop takes memory that grows with the square of its length, and stops the isolate. |
 | 7 | The platform ABI has bench exports (R1), the build settings are given by hand (R3), the glue can drift (R4) | `set_copy(0)` breaks requests that run at the same time. A plain `roc build` gives the wrong stack size. An ABI change is not seen. |
-| 8 | The platform API is not the designed API: `Str => Str` (G1), raw kind numbers (G2), status 0 on all errors (G3), only a fetch handler (G4) | The registry cannot take binary uploads, has no types, no test seam, no error causes and no cron |
+| 8 | The platform API is not the designed API: `Str => Str` (G1), raw kind numbers (G2), status 0 on all errors (G3), only a fetch handler (G4). The design is now `API.md` (2026-10-15). | The registry cannot take binary uploads, has no types, no error causes and no cron |
 | 9 | The JS shim is bench code, and `io` has no request context (G5) | No entry module for users. No `ctx.waitUntil`, `request.signal` or headers in an effect. |
 | 10 | All bodies go through wasm memory (R2) | A large R2 object uses wasm memory that never gets smaller |
 | 11 | No release (G6) | Nobody can use the platform by URL |
@@ -26,13 +26,13 @@ Problem 12 (2026-10-14) is the goal of problem 4: one wasm instance per isolate.
 | Order | Items | Depends on |
 |---|---|---|
 | 1 | 1a, 1a-ci, 1b to 1d (done) | none |
-| 2 | 6e, then 6a to 6d | none. 6e replaces `hostlib/alloc.zig`, so 6a, 6d and 2a change the new file. 6e also fixes B5, which can stop the isolate with ordinary Roc code. 6a corrupts the heap, so it comes next. |
+| 2 | 6e, then 6a and 6d (6b and 6c are replaced by 8a) | none. 6e replaces `hostlib/alloc.zig`, so 6a, 6d and 2a change the new file. 6e also fixes B5, which can stop the isolate with ordinary Roc code. 6a corrupts the heap, so it comes next. |
 | 3 | 2a to 2d | none |
 | 4 | 3a to 3c (3.0 is done) | the task table (2c) |
 | 5 | 4-pre, 4a, then 12-pre, 12a, 12a-stack, 12b, 12d, 12c, 12e, 12f, then 4b to 4j (V1 to V4 are done) | the v7 allocator (6e), the task table (2c), cancel (3c), the clean OOM (6d). 12c needs one instance (4a) and the global check (12d). |
 | 6 | 5a to 5c. 5d (edge) waits for a deployed worker in 11. | none |
 | 7 | 7a to 7c | none. Before 8, because 8 changes the exports. |
-| 8 | 8a to 8e | the split ABI (7a), the header settings (7b) |
+| 8 | 8a to 8g (`API.md`) | the split ABI (7a), the header settings (7b) |
 | 9 | 9a to 9c | the task table (2c), the API (8) |
 | 10 | 10a to 10c | the API (8), the shim (9) |
 | 11 | 11a to 11c, then 5d on the edge | 7 to 10 |
@@ -384,8 +384,8 @@ The same loop in the allocator harness of the heap measurements: 596 MB now, 0.4
 | Step | Change | Test |
 |---|---|---|
 | 6a | Host-owned allocations use owner 0: put `OWNER = 0` around `logPushCopy` and `WordBuf.push` (as `js_alloc` does). JS reads the log after each `handle` and after each `task_abort`, and then calls `log_clear`. | `bench/app.roc` request option `dbg`: a `dbg`, then a `crash`. Run 200 such requests mixed with good requests on one instance. Expect live bytes 0 at the end and 0 bad bodies. Revert the owner change: the test must fail. |
-| 6b | The import takes `num` as `i64`. JS gets a `BigInt` (JS BigInt integration). | io that echoes `num` as text, with 2^53 + 1 and 2^64 - 1. Revert: the echo is wrong. |
-| 6c | `makeWait` reads `cp, cl` as bytes and `num` before its first `await`, and gives them to `io`. | io that echoes `c`, with bytes that are not UTF-8 (0x00 to 0xFF). Revert: the bytes are not passed. |
+| 6b | Replaced by 8a (2026-10-15): the new ABI has no `num`. Draft: the import takes `num` as `i64`. JS gets a `BigInt` (JS BigInt integration). | io that echoes `num` as text, with 2^53 + 1 and 2^64 - 1. Revert: the echo is wrong. |
+| 6c | Replaced by 8a (2026-10-15): the new ABI has no `a`, `b`, `c`. Draft: `makeWait` reads `cp, cl` as bytes and `num` before its first `await`, and gives them to `io`. | io that echoes `c`, with bytes that are not UTF-8 (0x00 to 0xFF). Revert: the bytes are not passed. |
 | 6d | `roc_alloc` and `roc_realloc` trap clean on 0 (`trapClean`, as `allocOrTrap`) | Test export `fail_next_alloc` (added here, and 2a uses it too): the task gets a clean trap, `task_abort` frees its pages, the next request is correct. Revert: no clean trap. |
 | 6e | Replace `hostlib/alloc.zig` with the v7 allocator (`research/alloc/versions/v7.zig`), without its research switches. See "6e: the v7 allocator" below. It fixes B5 (free runs join and split) and gives the per-task page lists that the sums of problem 12 need. | See the test table below |
 
@@ -459,20 +459,24 @@ Port:
 
 ## 8. Platform API
 
-| Gap | Design says (`../DESIGN.md` §6.1, `../DESIGN-REGISTRY.md` §8) | Code has |
+The API is `API.md` (2026-10-15). It replaces draft 1 of this section: kind numbers, a `Worker` record and a scripted record for `roc test`. The scripted record cannot work: an `expect` cannot run a function with `!` (`../research/core-shape/`, API.md RF9).
+
+| Gap | Design says (`API.md`) | Code has |
 |---|---|---|
-| G1 | A generic fetch handler | `requires { handle! : Str => Str }` (`platform/main.roc:2`). No method, headers or status. The body must be UTF-8. |
-| G2 | A `Worker` capability record (`fetch!`, `d1!`, `r2!`, `cache!`) and a scripted record for unit tests | The app imports `pf.Wait` and uses raw kind numbers (`bench/app.roc:10,14`) |
-| G3 | Effect errors are results | Status 0 on any error. JS drops the message (`bench/core.js:466`). |
-| G4 | The registry runs a compat bot and ingest | Only the fetch handler |
+| G1 | One entry `event! : Event => Outcome` for all Workers handler kinds (API.md 10) | `requires { handle! : Str => Str }` (`platform/main.roc:2`). No method, headers or status. The body must be UTF-8. |
+| G2 | Typed modules over programs of ops (API.md 6, 7). The app never sees a kind number. | The app imports `pf.Wait` and uses raw kind numbers (`bench/app.roc:10,14`) |
+| G3 | Effect errors are results: JS errors come back with name and message (API.md 4) | Status 0 on any error. JS drops the message (`bench/core.js:466`). |
+| G4 | `Scheduled`, `Queue` and the other events (API.md 10) | Only the fetch handler |
 
 | Step | Change | Test |
 |---|---|---|
-| 8a | `Request` (method, url, headers, body bytes) and `Response` (status, headers, body bytes) types. `requires { fetch! : Request, Worker => Response }`. JS encodes them in one js_alloc block, and the host decodes them. | Node: binary body (0x00 to 0xFF) round trip, 100 headers, status 404. Revert to `Str`: the test fails. |
-| 8b | Typed effects as Roc functions over `Wait.wait!`: `fetch!`, `d1_query!`, `d1_batch!`, `r2_get!`, `r2_put!`, `kv_get!`, `kv_put!`, `cache_match!`, `cache_put!`. They are fields of the `Worker` record. `Wait` is not in `exposes`. | Each effect against a Node fake of the binding. Revert (a wrong kind number in one effect): its test fails. |
-| 8c | A scripted `Worker` record for tests with no host | `roc test` of a handler with a scripted record. Revert (the record calls the host): `roc test` fails. |
-| 8d | Effects return `Try(ok, WorkerErr)`. JS writes the error kind and the message in the result block. | io that throws: Roc gets the message. A 404 and a network error give different tags. |
-| 8e | More entry points: `scheduled!` (cron) and `queue!` (a batch of messages). A missing one is not exported. | Node: call each entry point. workerd: a cron trigger runs `scheduled!`. Revert (no export): the call fails. |
+| 8a | The bridge (API.md 4 to 6): hosted `await!`, `call!` and `native!`. `Js` and programs in Roc (`platform/Js.roc`), the encoder and decoder of the byte format in the Zig host with the glue types (API.md 5.1), the program interpreter and the ref table in JS (from `research/api-probe/`). Remove `Wait.wait!`: this also removes B2 and B3 (6b, 6c). | HD1 to HD6 of API.md 5.1 (glue checks, glue diff, round trip, the Roc decoder as an oracle, fuzz, leaks). Same bytes in Zig and JS for a set of fixtures. A program of 4 ops gives the value of the last op with one wait. A promise in `call!` gives status 2. After 10,000 tasks with traps and cancels, the ref table is empty. Revert (no ref free at a trap): it is not empty. |
+| 8b | Events (API.md 10): `requires { event! : Event => Outcome }`, `provides` `roc_event`. `makeHandler` gives `fetch`, `scheduled` and `Other`. `Ctx.respond!` (10.2). | Binary body (0x00 to 0xFF) round trip, 100 headers, status 404. A cron call reaches `Scheduled`. `Unhandled` gives a 500 and a log line. Work after `respond!` runs after the response. Revert to `Str`: the binary test fails. |
+| 8c | Phase A modules (API.md 7): `Http`, `Body`, `Env`, `Ctx`, `D1`, `R2`, `Cache`, `Crypto`, `Time`, `Log`, `Js`. The `conformance/` app: one route for each function, run in Miniflare (local D1 and R2). | Each route passes. Revert (a wrong JS method name in one function): its route fails. |
+| 8d | Errors: each phase A module maps `Error(name, message)` to its own tags | A fetch to a closed port gives a network error tag. A D1 `UNIQUE` failure gives a constraint tag. Revert (no map): one generic tag. |
+| 8e | `Native` (API.md 8): `zstd_decode` with an output limit | Decode a package `.tar.zst`: the bytes match `zstd -d`. A small archive that decodes to more than the limit stops at the limit. Revert (no limit): memory grows past it. |
+| 8f | Phase B modules and events (API.md 7, 10) | One conformance route or event for each. Revert as in 8c. |
+| 8g | Measure: one crossing with programs of 1, 4 and 16 ops, and the decode of 200 D1 rows, in the platform (wasm), local and on the edge (AQ4) | None: a measurement. Numbers in `bench/README.md`. |
 
 ## 9. JS shim
 
@@ -483,8 +487,8 @@ Port:
 | Step | Change | Test |
 |---|---|---|
 | 9a | Move the runtime to `js/` (one entry module, for example `js/index.js` that exports `makeHandler(module)`). It returns `{ fetch, scheduled, queue }` for the Worker. Test helpers stay in `bench/`. | `bench/worker.js` and the Node tests use `js/` and still pass |
-| 9b | The `io` call gets the task id. The task table (2c) keeps the request context of each task: `env`, `ctx`, the `Request`. | Two requests at the same time with different headers. Each effect sees the headers of its own request. Revert to one shared context: the test fails. |
-| 9c | `ctx.waitUntil` as an effect | A `waitUntil` promise runs after the response. Revert (no `waitUntil`): the promise stops with the response. |
+| 9b | The `io` call gets the task id. The task table (2c) keeps the context of each task: `env`, `ctx`, the `event` object, and its ref table. These are the roots of API.md 6.2 (OP3). | Two requests at the same time with different headers. Each effect sees the headers of its own request. Revert to one shared context: the test fails. |
+| 9c | `Ctx.wait_until!` and `Ctx.respond!` (API.md 10.2) | A `waitUntil` promise runs after the response. Revert (no `waitUntil`): the promise stops with the response. |
 
 ## 10. Body handles
 
@@ -494,9 +498,9 @@ Port:
 
 | Step | Change | Test |
 |---|---|---|
-| 10a | JS keeps large bodies (`ReadableStream`, `Response`) in a table, and Roc gets an opaque `Body` id. `Response` can give a `Body` back to JS with no copy into wasm. | Node: send an R2 object of 50 MB through `r2_get!` to the response. wasm memory grows by less than 1 MB. |
-| 10b | `body_read!(Body, max)` copies the bytes into wasm only when Roc needs them. Ingest needs only `main.roc` from the archive. | Read the first 1 KB of a 50 MB body: wasm memory grows by less than 1 MB. Revert (copy all): it grows by 50 MB. |
-| 10c | The task table frees the body ids of a task at its end, its trap and its cancel (3c) | After 10,000 requests with traps and cancels, the body table is empty. Revert (no free at a trap): it is not empty. |
+| 10a | JS keeps large bodies (`ReadableStream`, `Response`) as refs (API.md 9, RS3): a body is `Stream(Ref)`. `Response` can give it back to JS with no copy into wasm. | Node: send an R2 object of 50 MB through `r2_get!` to the response. wasm memory grows by less than 1 MB. |
+| 10b | `Body.bytes!(Body, { max })` and `Body.chunks!` copy the bytes into wasm only when Roc needs them. Ingest needs only `main.roc` from the archive. | Read the first 1 KB of a 50 MB body: wasm memory grows by less than 1 MB. Revert (copy all): it grows by 50 MB. |
+| 10c | The task table frees the refs of a task (body ids too) at its end, its trap and its cancel (3c, API.md RS1) | After 10,000 requests with traps and cancels, the body table is empty. Revert (no free at a trap): it is not empty. |
 
 ## 11. Release
 

@@ -1,0 +1,6 @@
+bench/rows.bin
+bench/main
+bench/decode
+bench/*.o
+glue-check/out/
+http-check/main
