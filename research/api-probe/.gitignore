@@ -4,3 +4,6 @@ bench/decode
 bench/*.o
 glue-check/out/
 http-check/main
+cbor/bench
+cbor/*.cbor
+cbor/rows.json

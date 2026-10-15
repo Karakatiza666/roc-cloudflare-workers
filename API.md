@@ -2,12 +2,12 @@
 
 | Item | Value |
 | --- | --- |
-| Status | Draft 2, 2026-10-15 (draft 1 plus the fixes of the audit of 2026-10-15) |
-| Scope | The API between a Roc app and this platform: the events that the app gets, the modules that it calls, and the fixed ABI under them. The memory, trap and check rules of the host are in `PLAN.md`. |
+| Status | Draft 4, 2026-10-15 (draft 3, plus CBOR as the bridge format and for typed data, AQ8 to AQ10 settled) |
+| Scope | The API between a Roc app and this platform: the events that the app gets, the modules that it calls, and the fixed ABI under them. The signatures and rules of each module are in `MODULES.md`. The memory, trap and check rules of the host are in `PLAN.md`. |
 | Replaces | `PLAN.md` problem 8 steps 8a to 8e (draft 1 of the API: kind numbers, a `Worker` record), and the rows "One wait primitive" and "Capability record" of `../DESIGN-REGISTRY.md` 8 |
-| Evidence | `research/api-probe/` (workerd features, codec cost), `../research/core-shape/` (effects in `expect`) |
+| Evidence | `research/api-probe/` (workerd features, codec cost, the CBOR format `cbor/`, the module prototype `modules-check/`), `../research/core-shape/` (effects in `expect`) |
 
-Section 1 is an audit of the registry server: what it needs from the platform, and the problems in the registry design that the audit found. Sections 2 to 11 are the API. Section 7.1 gives the wrappers that make the modules easy to use. Section 12 lists the alternatives. Section 13 has the open questions.
+Section 1 is an audit of the registry server: what it needs from the platform, and the problems in the registry design that the audit found. Sections 2 to 11 are the API. Section 7 lists the modules, and `MODULES.md` gives their signatures and rules. Section 12 lists the alternatives. Section 13 has the open questions.
 
 ## 1. Audit: the registry server
 
@@ -20,15 +20,15 @@ Sources: `../DESIGN-REGISTRY.md` (Registry), `../DESIGN.md` 6 and 8, `../DESIGN-
 | RN1 | HTTP API (Registry 4): 11 routes, JSON bodies, ETag, `Cache-Control` | `fetch` handler. Method, URL, headers, raw body bytes. Status, headers, body. | `Fetch` event, `Http` | P2 |
 | RN2 | Reads: labels of a group, hash record, closure (recursive CTE), compat rows, toolchains, search | D1 `prepare`, `bind`, `raw`, `all`. FTS5 for search. Read replicas with the Sessions API. | `D1` | P2 |
 | RN3 | Publish: artifact, release and log leaf in one transaction (Registry 7) | D1 `batch` (atomic). D1 has no `BEGIN` from a Worker: it runs in auto-commit. | `D1` | P2 |
-| RN4 | Log tiles and the signed checkpoint (Registry 3) | R2 `get`, `put` with `onlyIf` (compare and swap on the etag). WebCrypto Ed25519 `sign`. The key is a secret. | `R2`, `Crypto`, `Env` | P2 |
+| RN4 | Log tiles and the signed checkpoint (Registry 3) | R2 `get`, `put` with `onlyIf` (compare and swap on the etag). WebCrypto Ed25519 `sign`. The key is a secret. | `R2`, `WebCrypto`, `Env` | P2 |
 | RN5 | Edge cache of immutable and short-lived answers | Cache API `match`, `put`, `delete`. `ctx.waitUntil` for a put after the response. | `Cache`, `Ctx` | P2 |
-| RN6 | Trusted publishing with GitHub OIDC (Registry 7) | Outbound `fetch` of the JWKS. WebCrypto `importKey` (JWK) and RS256 `verify`. A key cache across requests. | `Http`, `Crypto`, `Memo` (7.1) over the pin table (9) | P2 |
+| RN6 | Trusted publishing with GitHub OIDC (Registry 7) | Outbound `fetch` of the JWKS. WebCrypto `importKey` (JWK) and RS256 `verify`. A cache of the JWKS across requests. | `Http`, `WebCrypto` (the key is imported in the same crossing as `verify`), `Memo` (`MODULES.md` 9) | P2 |
 | RN7 | GitHub reads: the release, the asset, `.roc-version`, compiler releases with `digest` | Outbound `fetch` with a token header, redirects, a body as bytes or a stream | `Http`, `Body` | P2 |
 | RN8 | Archive checks: BLAKE3 hash of the asset, read `main.roc` from the `.tar.zst` | BLAKE3: Roc builtin. zstd: not in Workers (`research/api-probe/`). tar: plain Roc. | `Native` (8) | P2 |
-| RN9 | GitHub App webhook, and the App's own token | HMAC-SHA256 of the raw body, compared in constant time. RS256 `sign` (PKCS#8 key) for the App JWT. | `Crypto`, `Body` | P2 |
+| RN9 | GitHub App webhook, and the App's own token | HMAC-SHA256 of the raw body, compared in constant time. RS256 `sign` (PKCS#8 key) for the App JWT. | `WebCrypto` (`hmac_sha256` in Roc, `equal!`), `Body` | P2 |
 | RN10 | `POST /v1/ingest` from anyone | Rate limiting binding. Optional: a queue that moves the work out of the request. | `RateLimit`, `Queue` | P2 |
 | RN11 | Tile catch-up after a failed write, cleanup | Cron trigger | `Scheduled` event | P2 |
-| RN12 | Provenance: in-toto attestation, Sigstore bundle (Design 8) | ECDSA P-256 `verify`. X.509 parse in Roc. | `Crypto` | P3 |
+| RN12 | Provenance: in-toto attestation, Sigstore bundle (Design 8) | ECDSA P-256 `verify`. X.509 parse in Roc. | `WebCrypto` | P3 |
 | RN13 | Logs and counters (M11 of `PLAN.md`) | `console.log` (Workers Logs), optional Analytics Engine | `Log`, `Analytics` | P2 |
 | RN14 | Settings and keys | Vars and secrets | `Env` | P2 |
 | RN15 | Leaf time, token expiry | `Date.now()`. On the edge it moves only at I/O. | `Time` | P2 |
@@ -69,8 +69,8 @@ These are problems in the registry design, not in the platform. Each one is a ne
 flowchart TB
     APP["app (Roc)<br/>event! : Event => Outcome"]
     subgraph PF["platform/*.roc (pure Roc, part of the contract)"]
-        WR["wrappers (7.1)<br/>Worker, Memo, Kv.Cell"]
-        MOD["typed modules<br/>Http, Body, D1, R2, Kv, Cache, Queue, Object,<br/>Crypto, Socket, Ctx, Env, Time, Log, ..."]
+        WR["wrappers (7.1)<br/>Worker, Memo, Kv.Cell, Object.Cell, Rpc"]
+        MOD["typed modules (MODULES.md)<br/>Http, Body, D1, R2, Kv, Cache, Queue, Object,<br/>WebCrypto, WebSocket, Tcp, Ctx, Env, Time, Log, ..."]
         IO["Io: one operation as a value (6.5)"]
         JSM["Js: values, programs, refs (6)"]
         NAT["Native (8)"]
@@ -157,47 +157,52 @@ The hosted functions are Roc functions in the Zig host. Under them, the host and
 
 ## 5. Values: `Js`
 
-One Roc type holds each value that crosses the bridge (`research/api-probe/Js.roc`):
+One Roc type holds each value that crosses the bridge:
 
 ```roc
 Js := [
 	Undefined, Null, Bool(Bool), Num(F64), Int(I64), Text(Str), Bytes(List(U8)),
 	Arr(List(Js)), Obj(List((Str, Js))), Ref(U32), Error(Str, Str),
+	Packed(List(U8)),   # one value as CBOR, for typed data (5.2)
 ]
 ```
 
-Byte format, little-endian:
+The byte format is CBOR (RFC 8949), with this profile (decided 2026-10-15, AQ8):
 
-| Tag byte | Value | Then |
+| `Js` | CBOR | Rule |
 | --- | --- | --- |
-| 0, 1 | `undefined`, `null` | nothing |
-| 2, 3 | `false`, `true` | nothing |
-| 4 | number | f64 |
-| 5 | BigInt | i64 |
-| 6 | string | u32 length, UTF-8 bytes |
-| 7 | bytes | u32 length, bytes |
-| 8 | array | u32 count, values |
-| 9 | plain object | u32 count, (string key, value) pairs, in key order of JS |
-| 10 | ref | u32 id (9) |
-| 11 | error | name string, message string |
+| `Undefined`, `Null`, `Bool` | simple values 23, 22, 20, 21 | |
+| `Int(I64)` | major type 0 or 1 | An integer. JS writes a `Number` that is a safe integer, and a `BigInt` in the i64 range, as an integer. JS reads an integer as a `Number` up to 2^53, else as a `BigInt`. |
+| `Num(F64)` | major type 7, f64 | Any other `Number` (a fraction, NaN, an infinity). A decoder also reads f16 and f32. |
+| `Text`, `Bytes` | major types 3 and 2 | |
+| `Arr`, `Obj` | major types 4 and 5 | `Obj` keys are text, in the key order of JS |
+| `Ref(id)` | tag 27 (a generic object, a registered tag) with `["Ref", id]` | 9 |
+| `Error(name, message)` | tag 27 with `["Error", name, message]` | |
+| `Packed(bytes)` | tag 24 (encoded CBOR data item, RFC 8949 3.4.5.1) with a byte string | 5.2 |
+
+| Rule | |
+| --- | --- |
+| Lengths | Definite only. An indefinite length, a reserved value (28 to 30) or another tag is an error. A decoder reads any width of an argument. An encoder writes the shortest width, except a container head, which can be wider (an encoder that does not know the count first). |
+| Depth | 64 or less, in both directions (J3) |
+| Why CBOR | `research/api-probe/README.md` (AQ8): a standard with test vectors (RFC 8949 Appendix A) and tools (diagnostic notation), the same data model as JSON plus bytes, `undefined`, 64-bit integers and tags, and a format that the derived codecs of Roc can read (5.2) |
 
 JS to `Js` conversion (rule J1 to J7):
 
 | # | JS value | Becomes |
 | --- | --- | --- |
-| J1 | Primitive, `null`, `undefined` | Same kind. A string with a lone surrogate gets U+FFFD (`TextEncoder`). A BigInt outside i64 is status 1 (`RangeError`): the value comes from data, so it is not a platform bug. |
+| J1 | Primitive, `null`, `undefined` | Same kind. A `Number` that is a safe integer is `Int`. A string with a lone surrogate gets U+FFFD (`TextEncoder`). A `BigInt` outside 64 bits is status 1 (`RangeError`): the value comes from data, so it is not a platform bug. In a `Js` tree, a `BigInt` above the i64 range is status 1 too. In a `Packed` value, it reads into a `U64`. |
 | J2 | `Uint8Array`, `ArrayBuffer`, other typed arrays | `Bytes` (a copy) |
 | J3 | Array, plain object (prototype `Object.prototype` or `null`) | `Arr`, `Obj`, converted deep, to a depth of at most 64. Deeper, or a cycle, is status 1 (`RangeError`). |
-| J4 | `Date` | `Num`: milliseconds since 1970 |
+| J4 | `Date` | `Int` or `Num`: milliseconds since 1970 |
 | J5 | `Headers`, `Map`, `URLSearchParams` | `Arr` of `[key, value]` pairs |
 | J6 | `Error`, `DOMException` | `Error(name, message)` |
-| J7 | Any other object: a class instance, a function, a stream, a `Response`, a binding | `Ref`: a new id in the ref table of the task (9) |
+| J7 | Any other object: a class instance, a function, a stream, a `Response`, a binding | `Ref`: the id of the object in the ref table of the task (9) |
 
-`Js` to JS is the reverse: `Ref(id)` gives back the object of that id, `Bytes` gives a `Uint8Array`, `Int` gives a BigInt. Some Workers APIs do not take a BigInt (D1 `bind` throws `D1_TYPE_ERROR`), so their modules send `Num` (7).
+`Js` to JS is the reverse: `Ref(id)` gives back the object of that id, `Bytes` gives a `Uint8Array`, `Int` gives a `Number` up to 2^53 and a `BigInt` above, `Packed` gives the value that its bytes encode. Some Workers APIs do not take a `BigInt` (D1 `bind` throws `D1_TYPE_ERROR`), so their modules send text above 2^53 (7).
 
 ### 5.1 The host encodes and decodes
 
-Decided 2026-10-15, from `research/api-probe/README.md` (200 D1 rows, native, best of 7 rounds):
+Decided 2026-10-15, from `research/api-probe/README.md` (200 D1 rows, native, best of 7 rounds). The numbers are for the first byte format. The CBOR profile has the same work: a head, then a length and the bytes. It writes integers big-endian and with a variable width, which costs a byte swap and a branch. JS encodes the same rows (as objects) as CBOR in 79 to 90 µs, against 67 to 78 µs in the first format (5 runs).
 
 | Step | In Roc | In the Zig host |
 | --- | --- | --- |
@@ -220,10 +225,41 @@ Tests that keep the Zig code and Roc in step:
 | HD4 | Differential: the Roc decoder of `research/api-probe/Js.roc` stays as a test oracle. The same random byte strings go to both decoders. Both must give the same value or both an error. | A difference in the error cases (a bad length, bad UTF-8, trailing bytes) |
 | HD5 | Fuzz the Zig decoder with random and cut bytes (Zig `std.testing.fuzz`). It must give an error or a value, never a trap or a read past the block. The native fuzz run uses the 64-bit layout, so the corpus that it finds also runs through the wasm32 host build in Node (12-byte `RocStr`, small strings of 11 B or less). | Bounds bugs. A trap in the host is unclean (`PLAN.md` 12c). |
 | HD6 | Leaks, in the wasm32 build: after 10,000 decodes of the fixtures and a drop in Roc, live bytes return to 0 (`track_live`) | A refcount that is wrong by one |
+| HD7 | The vectors of RFC 8949 Appendix A that are in the profile, and the cases that are not (an indefinite length, tag 1, a cut input), in the Zig decoder and in the JS codec (as `research/api-probe/cbor/cbor-test.mjs`) | A wrong head width, a sign error in major type 1, a profile check that is missing |
 
 Each test must fail when its change is reverted (for example, swap two tag numbers, or turn off the small-string flag).
 
+HD4 uses the `Js` decoder in Roc as the oracle. It changes to the CBOR profile with the format (8a).
+
 JS cannot write Roc values itself with less cost. Each heap block needs its own allocation, so JS would call `js_alloc` once for each string and list. One large block for all values does not work, because Roc frees each block alone when its refcount goes to 0.
+
+### 5.2 Typed values
+
+Typed data of the app (`MODULES.md` MC5) does not become a `Js` tree. It crosses as one `Packed` value, and Roc reads it with the codecs that it derives for the `Cbor` format:
+
+| Direction | Steps |
+| --- | --- |
+| JS to Roc (a D1 row set, an RPC argument, a queue message) | The last op of the program is `Call(Root("pf"), "pack", [Slot(n)])`. The shim writes tag 24 and the CBOR of the value straight into the result block. The Zig host copies the bytes into one `List(U8)` (`Packed`). The module calls `Cbor.parse` into the type of the caller. |
+| Roc to JS (an RPC reply, a queue message, an argument) | The module calls `Cbor.encode` and puts `Packed(bytes)` in an op argument. The host copies the bytes into the program. JS reads the value in place. |
+
+`Cbor` is a format of the Roc codec protocol: an encoding type with `parse_str`, `parse_record_start`, `encode_record` and the other methods that the derived `parser_for` and `encoder_for` call (`research/api-probe/cbor/Cbor.roc`). It reads records as maps with text keys, and tags as `Json` does (a text, or a map of one entry), so JS sees the same objects as from `JSON.parse`. It is a generic package: it goes in its own repository (`roc-cbor`), as the generic packages of talon (`../DESIGN.md` 6.1, GP1 to GP6). The platform uses it by release URL.
+
+Cost, 200 D1 rows into typed records (`research/api-probe/cbor/`, native, best of 7 rounds of 300, same binary):
+
+| Path | JS | Roc | Total |
+| --- | --- | --- | --- |
+| JSON text (`JSON.stringify`, `Json.parse`), the design before AQ8 | 23 µs | 242 to 340 µs (the input text changes it) | 265 to 363 µs |
+| CBOR (`pf.pack`, `Cbor.parse`) | 79 µs | 137 µs | 216 µs |
+| CBOR, rows as arrays with one list of column names (AQ9) | 52 µs | 146 µs | 198 µs |
+| CBOR, rows as arrays into tuples (a lower bound, not typed records) | 52 µs | 67 µs | 119 µs |
+| `rows!`: a `Js` tree in Zig, then a match, no types (5.1) | 43 µs | 25 + 14 µs | 82 µs |
+
+| Direction of a write | Roc | JS | Total |
+| --- | --- | --- | --- |
+| JSON (`Json.to_str`, `JSON.parse`) | about 200 µs | 52 µs | about 250 µs |
+| CBOR (`Cbor.encode`, the shim decoder) | about 155 µs | 90 µs | about 245 µs |
+
+Typed records cost 70 µs more than tuples of the same values: that is the record matching of the derived parser, not the format. A compiler that matches field names faster makes every format faster (the Roc design for small-string field dispatch). These are native numbers. wasm32 numbers come in `PLAN.md` 8g.
 
 ## 6. Programs
 
@@ -262,29 +298,29 @@ Op : [
 Example, inside `D1` (all names are module code, not app code). Each function that waits has a pure twin that gives an `Io` (6.5):
 
 ```roc
-query : Db, Str, List(Value) -> Io(Rows, [D1Err(Problem)])
-query = |db, sql, params| Io.new(
+rows : D1, Str, List(Sql) -> Io(Sql.Rows, [D1Err(Thrown)])
+rows = |db, sql, params| Io.new(
 	[
-		Get(Root("env"), db.binding),                                         # slot 0: the binding
+		Get(Root("env"), db.name),                                            # slot 0: the binding
 		Call(Slot(0), "prepare", [Lit(Text(sql))]),                           # slot 1
-		Call(Slot(1), "bind", params.map(|v| Lit(Value.to_js(v)))),           # slot 2: no BigInt (5)
+		Call(Slot(1), "bind", params.map(|v| Lit(v.to_js()))),                # slot 2: no BigInt (5)
 		Call(Slot(2), "raw", [Lit(Obj([("columnNames", Bool(Bool.True))]))]), # slot 3: awaited
 	],
 	|result| match result {
-		Ok(value) => Rows.from_js(value)    # ["col", ...] then rows as arrays
-		Err(thrown) => Err(D1Err(Problem.from_js(thrown)))
+		Ok(value) => Sql.rows_from_js(value)    # ["col", ...] then rows as arrays
+		Err(thrown) => Err(D1Err(thrown))
 	},
 )
 
-query! : Db, Str, List(Value) => Try(Rows, [D1Err(Problem)])
-query! = |db, sql, params| Io.run!(query(db, sql, params))
+rows! : D1, Str, List(Sql) => Try(Sql.Rows, [D1Err(Thrown)])
+rows! = |db, sql, params| Io.run!(rows(db, sql, params))
 ```
 
-`D1.batch!` uses the same start, then `prepare` and `bind` for each statement, then `Array` of their slots, then `Call(Slot(0), "batch", [Slot(n)])`: one crossing for the whole transaction.
+`D1.batch!` uses the same start, then `prepare` and `bind` for each statement, then `Array` of their slots, then `Call(Slot(0), "batch", [Slot(n)])`: one crossing for the whole transaction. `D1.all` uses `all` in place of `raw`, then `Call(Root("pf"), "pack", [Slot(3)])`, so the rows come back as one `Packed` value for `Cbor.parse` (5.2).
 
 ### 6.3 Binding values are names
 
-A typed binding value holds only the name of the binding: `D1.Db :: { binding : Str }`, made with `D1.db("DB")`. Each program starts with `Get(Root("env"), name)`. So a binding value is plain data: an app can keep it in a constant, and a test can compare it. The `env` of each task is in the task context of the shim (`PLAN.md` 9b).
+A binding value holds the name of the binding: `D1 :: { name : Str }`, made with `D1.binding("DB")`. Each program starts with `Get(Root("env"), name)`. So a binding value is plain data: an app can keep it in a constant, and a test can compare it. A typed binding (`Kv.json("PREFS")`, `MODULES.md` MC6) also holds the two functions of its format, so it can be a constant, but `==` does not apply to it. The `env` of each task is in the task context of the shim (`PLAN.md` 9b).
 
 ### 6.4 JS helpers and the escape hatch
 
@@ -317,34 +353,35 @@ The error types join as tag unions, so `Io.both!(D1.query(db, sql, []), Http.get
 
 ## 7. Modules
 
-The full surface. Each module is pure Roc over `Js` (6) or `Native` (8). "Event" means the module is also a payload of an event (10). Each function `f!` that waits has a pure twin `f` that gives an `Io` (6.5), so an app can run it with others at the same time.
+The full surface. Each module is pure Roc over `Js` (6) or `Native` (8). `MODULES.md` gives the signatures, the rules that all modules follow (MC1 to MC13) and a prototype. "Event" means the module is also a payload of an event (10). Each function `f!` that waits has a pure twin `f` that gives an `Io` (6.5), so an app can run it with others at the same time.
 
-| Module | Workers API | Main functions | Waits | Platform phase |
+| Module | Workers API | Main functions (`MODULES.md`) | Waits | Platform phase |
 | --- | --- | --- | --- | --- |
-| `Http` | `fetch`, `Request`, `Response`, `Headers` | `send!(http.Request) => Try(http.Response, HttpErr)` with the buffered types of `roc-lang/http` (AQ2); `open!` for a response whose body stays a `Body` stream | Yes | A |
-| `Body` | `ReadableStream`, `Request.body`, `Response.body`, `crypto.DigestStream` | `bytes!(Body, { max })` and `text!` (one wait: the helper `pf.readUpTo`), `chunks!(Body, size) => Stream(List(U8))`, `sha256!` (no copy into wasm), `tee!` | Yes | A |
-| `Env` | `env` vars, secrets | `var!(Str)`, `secret!(Str)` | No | A |
-| `Ctx` | `ctx.waitUntil`, `ctx.passThroughOnException`, `request.signal` | `respond!(Outcome)` (answer now, the task goes on, 10.2), `wait_until!(Ref)`, `pass_through!` | No | A |
-| `D1` | `D1Database`, `D1PreparedStatement`, Sessions API | `query!`, `first!`, `run!`, `batch!` (one crossing, 6.2), `exec!`, `session!(Db, [Primary, Any, Bookmark(Str)])`, `bookmark!`. A parameter is a `D1.Value` (`Null`, `Int(I64)`, `Real(F64)`, `Text(Str)`, `Blob(List(U8))`). D1 does not take a BigInt, so `Int` goes as a number, and as text above 2^53 (an INTEGER column turns it back into an integer). D1 gives an INTEGER above 2^53 back as a rounded number, so a query that reads one uses `CAST(x AS TEXT)`. | Yes | A |
-| `R2` | `R2Bucket`, `R2Object`, multipart | `get!(Bucket, key, { range, only_if })` (the body stays a `Body`), `put!(Bucket, key, Body, { only_if, http_metadata })`, `head!`, `delete!`, `list!`, multipart functions | Yes | A |
-| `Cache` | `caches.default`, `caches.open` | `match!`, `put!`, `delete!` (local to the data center, RF1) | Yes | A |
-| `Crypto` | `crypto.subtle`, `crypto.getRandomValues`, `crypto.randomUUID`, `timingSafeEqual` | `import_key!` (JWK, PKCS#8, SPKI, raw), `sign!`, `verify!`, `digest!`, `encrypt!`, `decrypt!`, `derive_bits!`, `random!(n)`, `uuid!`, `equal_in_time!` | sign, verify, digest: yes. Random, equal: no. | A |
-| `Time` | `Date.now`, `performance.now` | `now_ms!` (coarse on the edge), `since!` | No | A |
-| `Log` | `console.log`, `console.error` | `info!`, `warn!`, `error!` with fields (Workers Logs takes JSON lines) | No | A |
+| `Request`, `Response` | `Request`, `Response`, `Headers` | One type for each, in both directions, with a `Body`. `segments` for routing, `header`, `query`, `json!`. `from_text`, `from_json`, `from_body`. `Method` and `Header` from `roc-lang/http` (AQ2). (4) | Reads of a stream body | A |
+| `Http` | `fetch` | `send!` (the body read in the same crossing, to 1 MiB), `open!` (the body stays a stream), `get!` (4) | Yes | A |
+| `Body` | `ReadableStream`, `crypto.DigestStream` | `text!`, `json!`, `bytes!` (one wait: the helper `pf.readUpTo`), `chunk!`, `tee!`, `sha256!` (no copy into wasm) (4) | Yes | A |
+| `Env`, `Secret` | `env` vars, secrets | `var!`, `json!`, `secret!`. A `Secret` does not show in `Str.inspect` and has no codec. (10) | No | A |
+| `Ctx` | `ctx.waitUntil`, `ctx.passThroughOnException` | `respond!(Response)` (10.2), `wait_until!(Io)`, `pass_through!` (11) | No | A |
+| `D1`, `Sql` | `D1Database`, `D1PreparedStatement`, Sessions API | `all!` and `first!` into the type of the call (rows as objects, CBOR, AQ9), `run!`, `rows!` (no types, for columns that are not known at compile time), `batch!` (one crossing, 6.2, a typed `D1.Result` for each statement), `exec!`, `session!`, `bookmark!`. A parameter is a `Sql` value. D1 takes no BigInt, so `Int` goes as a number, and as text above 2^53 (an INTEGER column turns it back into an integer). D1 gives an INTEGER above 2^53 back as a rounded number, so a query that reads one uses `CAST(x AS TEXT)`. (5.1) | Yes | A |
+| `R2` | `R2Bucket`, `R2Object`, multipart | `get!`, `get_with!` (range, condition), `put!`, `put_with!` (a failed `only_if` is `PreconditionFailed`), `head!`, `delete!`, `list!`, `upload!` (5.3) | Yes | A |
+| `Cache` | `caches.default`, `caches.open` | `get!` (`match`), `put!`, `delete!`, local to the data center (RF1) (5.4) | Yes | A |
+| `WebCrypto` | `crypto.subtle`, `getRandomValues`, `randomUUID`, `timingSafeEqual` | `sign!`, `verify!`, `encrypt!`, `decrypt!`, `derive_bits!` with the key as data (imported in the same crossing), `import!`, `hmac_sha256` (pure Roc), `equal!`, `random!`, `uuid!` (10). Not `Crypto`: that is a builtin module of Roc, and it stays useful next to `WebCrypto`: SHA-256 and BLAKE3 of small values in wasm memory, with no wait (`MODULES.md` 10). | sign, verify, encrypt: yes. The others: no. | A |
+| `Time` | `Date.now` | `now_ms!` (coarse on the edge) (11) | No | A |
+| `Log` | `console.log` | `info!`, `warn!`, `error!` with a record of fields: one JSON line (11) | No | A |
 | `Js` | everything (6.4) | `await!`, `call!`, `Js` value helpers, `pin!`, `pinned!`, `unpin!` (9, RS2) | per program | A |
 | `Io` | none: one operation as a value (6.5) | `new`, `sync`, `map`, `run!`, `both!`, `all!`, `start!` | per call | A |
-| `Worker` | none: a wrapper (7.1, 10.1) | `event!(Handlers, Event)`: the handler record with optional fields | | A |
-| `Memo` | none: a wrapper over the pin table (7.1) | `new(name, { max_age_ms, load!, codec })`, `get!`, `clear!` | the first `get!` in an isolate runs `load!` | A |
-| `RateLimit` | Rate limiting binding | `limit!(Limiter, key) => Bool` (RN10) | Yes | A |
+| `Worker` | none: a wrapper (7.1, 10.1) | `Worker.{ fetch!, scheduled!, ... }` with optional fields, each with its own result type, and `event!` (`MODULES.md` 3) | | A |
+| `Memo` | none: a wrapper over the pin table | `new(name, { max_age_ms, load! })`, `get!`, `clear!`. The value is data, kept as CBOR bytes. (`MODULES.md` 9) | the first `get!` in an isolate runs `load!` | A |
+| `RateLimit` | Rate limiting binding | `limit!(key) => Try({}, [RateLimited, _])` (RN10) | Yes | A |
 | `Native` | none: Zig `std` in the host | `zstd_decode!`, `Blake3` and `Sha256` with state across chunks (8) | No | A (the registry hashes archives in chunks, RF5) |
-| `Kv` | `KVNamespace` | `get!` (text, bytes, JSON, stream), `get_with_metadata!`, `put!` (`expiration_ttl`, metadata), `delete!`, `list!` | Yes | B |
-| `Queue` | Queue producer; consumer batch (event) | `send!`, `send_batch!`; `Message.ack!`, `retry!(delay)`; `Batch.ack_all!`, `retry_all!` | send: yes | B |
-| `Object` | Durable Object namespace and stub; inside an object: `ctx.storage` (SQL, KV, alarm), `ctx.acceptWebSocket`, `ctx.getWebSockets`, `blockConcurrencyWhile` (13, AQ1) | Outside: `id_from_name`, `get!`, `fetch!`, `call!` (RPC). Inside: `sql!` (sync), `get!`, `put!`, `set_alarm!`, `accept_socket!`, `sockets!` | Stub calls: yes. SQL: no. | B |
-| `Socket` | `WebSocketPair`, `WebSocket`; `connect` from `cloudflare:sockets` (TCP, also for Hyperdrive) | `pair!`, `accept!`, `send!`, `close!`; `connect!(host, port, { tls })` gives a `Body` in and a writer out | some | B |
-| `Rpc` | Service bindings and `WorkerEntrypoint` methods | `call!(binding, method, List(Js))`; incoming calls are an event | Yes | B |
-| `Email` | `send_email` binding, `EmailMessage` (`cloudflare:email`); incoming mail (event) | `send!`; `Mail.forward!`, `reply!`, `reject!` | Yes | B |
-| `Ai`, `Vectorize`, `Analytics`, `Images`, `Assets`, `SecretsStore`, `Hyperdrive`, `Version`, `Workflows` (binding side: `create!`, `get!`, `status!`) | The binding of the same name | One function per binding method. Most are one `Call`. | Mostly yes. `Analytics.write!`: no. | B |
-| `Tail` | Tail Worker events | Event only | | B |
+| `Kv` | `KVNamespace` | A typed namespace: `Kv.json`, `Kv.text`, `Kv.bytes`. `get!`, `get_with!`, `put!`, `put_with!`, `delete!`, `list!`, `cell` (5.2) | Yes | B |
+| `Queue` | Queue producer; consumer batch (event) | A typed queue: `Queue.json`. `send!`, `send_with!`, `send_all!`; `each!` (ack on `Ok`, retry on `Err`); `Message.ack!`, `retry!` (6) | send: yes | B |
+| `Object` | Durable Object namespace and stub; inside: `ctx.storage` (SQL, KV, alarm), the WebSocket hibernation API (`acceptWebSocket`, `getWebSockets`, `getTags`, auto responses, attachments) | Outside: `namespace`, `named` (pure), `fetch!` (a 101 response passes through), `call!` with an `Rpc` constant. Inside: `class` (a record of handlers, also `web_socket_message!`, `web_socket_close!`, `web_socket_error!`), `Self.sql!` (sync), `set_alarm!`, `accept!`, `accept_with!`, `sockets!`, `set_auto_response!`, `cell`, `Socket` with typed attachments (7, 12.1) | Stub calls: yes. Storage and sockets: no. | B |
+| `Rpc`, `Service` | Service bindings and `WorkerEntrypoint` methods | `Rpc.method` gives a typed constant for both sides: `call!` on a `Service` or an `Object`, `on` for the callee (8) | Yes | B |
+| `WebSocket`, `Tcp` | `WebSocketPair`, `WebSocket`, a `fetch` with `Upgrade` for a client; `connect` of `cloudflare:sockets` (TCP, also for Hyperdrive) | `is_upgrade`, `accept!`, `connect!`, `send!`, `send_json!`, `receive!`, `close!`, `Message.json`; `Tcp.connect!`, `read!`, `write!`, `start_tls!` (12.2, 12.3) | `receive!`, `read!`, connects | B |
+| `Email` | `send_email` binding, `EmailMessage` (`cloudflare:email`); incoming mail (event) | `send!`; `Mail.forward!`, `reply!`, `reject!` (13) | Yes | B |
+| `Ai`, `Vectorize`, `Analytics`, `Assets`, `SecretsStore`, `Hyperdrive`, `Version`, `Workflows` (binding side) | The binding of the same name | One function per binding method. Most are one `Call`. (13) | Mostly yes. `Analytics.write!`: no. | B |
+| `Tail` | Tail Worker events | Event only (the `tail!` field) | | B |
 | `Workflow` | `WorkflowEntrypoint.run(event, step)`, `step.do`, `step.sleep` | Needs callbacks (13, AQ1) | | C |
 
 Platform phases:
@@ -363,44 +400,22 @@ Rules that let a wrapper be written in the platform or outside it:
 
 | # | Rule | Why a wrapper needs it |
 | --- | --- | --- |
-| WR1 | A declaration is a pure constant: a binding (`D1.db("DB")`, 6.3), a `Memo`, a `Kv.Cell`, a handler record. Effects run only when a function with `!` uses it. | A declaration can be at the top of a module, with no init step |
+| WR1 | A declaration is a pure constant: a binding (`D1.binding("DB")`, 6.3), a typed binding (`Kv.json("PREFS")`), a `Memo`, a cell, an `Rpc` method, a handler record. Effects run only when a function with `!` uses it. | A declaration can be at the top of a module, with no init step |
 | WR2 | Each function that waits has an `Io` twin (6.5) | A wrapper can join operations into one crossing, or run them at the same time |
-| WR3 | An optional record field can hold an effectful function (AQ6) | Records of handlers or hooks, with defaults: `Worker`, `Memo` |
+| WR3 | An optional record field can hold an effectful function (AQ6) | Records of handlers or hooks, with defaults: `Worker`, `Object.class`, `Memo` |
 | WR4 | A wrapper uses only the public modules (`Js`, `Io`, the typed modules). A wrapper outside the platform is a normal Roc package with the same reach as a platform module. | Wrappers can ship with the platform or come from anyone |
-| WR5 | A codec is a record `{ to_js : a -> Js, from_js : Js -> Try(a, [BadJs(Str)]) }`. `Js.Codec` gives codecs for the builtin types, lists, pairs and records, and each typed module gives the codecs of its own types (`Crypto.key_codec`). | Typed storage of a value in the pin table, KV or a Durable Object |
+| WR5 | Typed values use the codecs that Roc derives for the `Cbor` format (5.2, `MODULES.md` MC5). A declaration that has one type for all its values keeps the two functions of its format (MC6). The app writes a type, never a codec. | Typed storage in the pin table, KV, a queue or a Durable Object, with no codec code |
 | WR6 | A wrapper that needs JS code adds its functions to `ops` (6.4), and its docs tell the app to add them | Rare. The platform wrappers need none. |
 
 Wrappers:
 
 | Wrapper | Declaration | Use | Under it | Phase |
 | --- | --- | --- | --- | --- |
-| `Worker` | `event! = \|e\| Worker.event!(Worker.{ fetch!: handle_fetch!, scheduled!: tick! }, e)` | One field for each event kind, all optional. A new kind is a new optional field, so it does not change the app (10.1). | `event!` | A |
-| `Memo` | `jwks = Memo.new("github-jwks", { max_age_ms: 3_600_000, load!: load_jwks!, codec: Jwks.codec })` | `keys = jwks.get!()?`: a value kept in the isolate across requests | the pin table (RS2) | A |
-| `Kv.Cell` | `prefs = Kv.cell(Kv.ns("PREFS"), "prefs", { codec: Prefs.codec, default: Prefs.default })` | `prefs.get!()`, `prefs.set!(p)`: the `localStorage` wrapper, but shared by all isolates, and it stays | `Kv` | B |
-| `Object.Cell` | The same over the storage of a Durable Object | Strong consistency, inside one object | `Object` | B |
-
-`Memo`:
-
-```roc
-Memo(a, e) := { name : Str, max_age_ms : U64, load! : {} => Try(a, e), codec : Js.Codec(a) }
-
-jwks : Memo(Jwks, [HttpErr(Http.Problem), CryptoErr(Crypto.Problem)])
-jwks = Memo.new("github-jwks", { max_age_ms: 3_600_000, load!: load_jwks!, codec: Jwks.codec })
-
-verify_token! = |token| {
-	keys = jwks.get!()?    # the first call in an isolate runs load_jwks!, later calls do not
-	...
-}
-```
-
-| Item | Rule |
-| --- | --- |
-| Scope | One isolate. Each isolate loads its own value. Workers can evict an isolate at any time, so a `Memo` is a cache, never state (AQ3). |
-| `get!` | One `call!` to `Js.pinned!` (no wait). If the value is missing, older than `max_age_ms`, or the codec cannot read it, `get!` runs `load!` and then `Js.pin!`. |
-| Two tasks at once | Both can run `load!`. The second pin replaces the first. So `load!` must give an equal value each time. |
-| Content | Any value that the codec gives as a `Js`: plain data, and objects that are not I/O objects (a `CryptoKey`). A stream, a body, a socket or a `Response` cannot be kept: Workers throws when a later request uses one (RS2). |
-| Cost | Plain data is copied into Roc at each `get!`. Each object in the value becomes a new ref of the task (RS2). |
-| Instance replace (`PLAN.md` M1) | The pin table is in JS, so the values stay |
+| `Worker` | `worker = Worker.{ fetch!, scheduled! }`, then `event! = \|e\| worker.event!(e)` | One field for each event kind, all optional, each with its own result type. A new kind is a new optional field, so it does not change the app (10.1). | `event!` | A |
+| `Memo` | `jwks = Memo.new("github-jwks", { max_age_ms: 3_600_000, load!: load_jwks! })` | `keys = jwks.get!()?`: a value kept in the isolate across requests (`MODULES.md` 9) | the pin table (RS2) | A |
+| `Kv.Cell` | `theme = prefs.cell("theme")`, where `prefs : Kv(Prefs)` | `theme.get!()`, `theme.set!(p)`: the `localStorage` wrapper, but shared by all isolates, and it stays | `Kv` | B |
+| `Object.Cell` | `count : Object.Cell(I64)`, `count = Object.cell("count")` | `count.get!(self)`, `count.set!(self, n)`: strong consistency, inside one object | `Object` | B |
+| `Rpc` | `increment : Rpc({ by : I64 }, I64)`, `increment = Rpc.method("increment")` | The caller: `stub.call!(increment, { by: 1 })`. The callee: `increment.on(\|self, { by }\| ...)`. One constant, so both sides have the same types. | `Object`, `Service` | B |
 
 ## 8. Native
 
@@ -429,8 +444,8 @@ A Native op that Roc gets in its builtins later moves to Roc, and the op stays f
 
 | # | Rule |
 | --- | --- |
-| RS1 | A ref is a u32 id in the table of the task that made it. JS frees all refs of a task at its end, its trap and its cancel (`PLAN.md` 8a). So a ref never outlives its task, and Roc never has to free one. |
-| RS2 | The pin table keeps JS values for later tasks of the same isolate, by name. A later task cannot get an id from an earlier one, because Roc keeps no state across events, so a name is the key. `Js.pin!(Str, Js, { max_age_ms })` stores the value (each `Ref` in it becomes its object). `Js.pinned!(Str) => Try(Js, [NotPinned])` gives it back by J1 to J7, so each object in it gets a new ref of the task. `Js.unpin!(Str)` removes it. All three are one `call!` to a platform helper (6.4), with no wait. The table has a limit of entries (default 1,000, shim option `pinLimit`). A pin over the limit is status 1. Each pin and unpin is counted (`PLAN.md` M11). In a stateless Worker, only objects that are not I/O objects can be used from a later request (a `CryptoKey` can). Workers throws for a stream, a body, a socket or a `Response` of another request. Inside a Durable Object, all events share one context, so a `WebSocket` can be pinned. `Memo` (7.1) is the typed wrapper. |
+| RS1 | A ref is a u32 id in the table of the task that made it. The table gives one id to one JS object (a `Map` from object to id), so two refs of the same object are equal in Roc: a Durable Object finds the sender among its sockets with `==` (`MODULES.md` 12.1). JS frees all refs of a task at its end, its trap and its cancel (`PLAN.md` 8a). So a ref never outlives its task, and Roc never has to free one. |
+| RS2 | The pin table keeps JS values for later tasks of the same isolate, by name. A later task cannot get an id from an earlier one, because Roc keeps no state across events, so a name is the key. `Js.pin!(Str, Js, { max_age_ms })` stores the value (each `Ref` in it becomes its object). `Js.pinned!(Str) => Try(Js, [NotPinned])` gives it back by J1 to J7, so each object in it gets a new ref of the task. `Js.unpin!(Str)` removes it. All three are one `call!` to a platform helper (6.4), with no wait. The table has a limit of entries (default 1,000, shim option `pinLimit`). A pin over the limit is status 1. Each pin and unpin is counted (`PLAN.md` M11). In a stateless Worker, only objects that are not I/O objects can be used from a later request (a `CryptoKey` can). Workers throws for a stream, a body, a socket or a `Response` of another request. Inside a Durable Object, all events share one context, so a `WebSocket` can be pinned. `Memo` (`MODULES.md` 9) is the typed wrapper for data: it pins the CBOR bytes, so JS does not parse them. `Js.pin!` is for JS objects. |
 | RS3 | A `Body` is `[Empty, Bytes(List(U8)), Text(Str), Stream(Ref)]`. A request body, a fetch response body and an R2 body arrive as `Stream(Ref)`, with no copy. `Body.bytes!` copies with a `max`, and gives an error past it. A `Stream` given to a `Response` or an R2 `put` goes back to JS with no copy (`PLAN.md` 10a, 10b). A stream can be read once. A copy of the `Body` value in Roc points to the same stream, so a second read gives status 1. `Body.tee!` gives two streams. |
 | RS4 | JS writes its result bytes into a `js_alloc` block (4.1). The host decodes them into Roc values that it allocates with the owner of the task, then frees the block (5.1). So the sums and `freeOwner` cover the values (`PLAN.md` 2a, 12a). |
 
@@ -460,37 +475,40 @@ Event : [
 	Scheduled({ cron : Str, time_ms : U64 }),
 	Queue(Queue.Batch),
 	Email(Email.Mail),
-	Rpc({ method : Str, args : List(Js) }),
+	Rpc({ entrypoint : Str, method : Str, arg : List(U8) }),   # arg: the one argument as CBOR (5.2, MODULES.md 8)
 	Object({ class : Str, id : Str, event : Object.Event }),
 	Tail(List(Js)),
 	Other({ kind : Str, payload : Js }),
+	Manifest,                                              # once, at load: the names of classes and methods (AQ10)
 ]
 
 Object.Event : [
-	Fetch(Request), Alarm({ retry_count : U32 }), Rpc({ method : Str, args : List(Js) }),
-	SocketMessage(Socket.Ws, Body), SocketClose(Socket.Ws, { code : U16, reason : Str, clean : Bool }), SocketError(Socket.Ws, Js),
+	Fetch(Request), Alarm({ retry_count : U32 }), Rpc({ method : Str, arg : List(U8) }),
+	SocketMessage(Object.Socket, WebSocket.Message),
+	SocketClose(Object.Socket, WebSocket.Closed), SocketError(Object.Socket, Thrown),
 ]
 
 Outcome : [
-	Respond(Response),           # http.Response (roc-lang/http): a buffered body
-	RespondBody(BodyResponse),   # a Body stream, an R2 object or a socket
-	Reply(Js), Done, Unhandled,
+	Respond(Response),   # the body is a Body: bytes, text, a stream; a 101 carries a socket
+	Reply(Js),           # Rpc: the reply as Packed (5.2). Manifest: the names (AQ10).
+	Done,
+	Failed(Str),         # the handler gave Err: a log line, then a throw (500 for fetch)
+	Unhandled,
 ]
-
-# Method, Header and Response come from roc-lang/http (AQ2).
-Request : { method : Method, url : Str, headers : List(Header), body : Body, cf : Js }
-BodyResponse : { status : U16, headers : List(Header), body : Body, socket : [None, Socket(Socket.Ws)] }
 ```
+
+`Request` and `Response` are the platform types of `MODULES.md` 4: nominal records with a `Body`, for both directions. `Method` and `Header` come from `roc-lang/http` (AQ2).
 
 | Workers entry | Event | Outcome that it takes | Other outcomes |
 | --- | --- | --- | --- |
-| `fetch` | `Fetch` | `Respond`, `RespondBody` | 500 and a log line |
+| `fetch` | `Fetch` | `Respond` | 500 and a log line |
 | `scheduled` | `Scheduled` | `Done` | The cron run fails and shows in Past Events. workerd also sets a retry flag unless the handler calls `controller.noRetry()`, and the docs do not say what production does with it. |
 | `queue` | `Queue` | `Done`. Messages with no ack or retry follow the queue default. | The whole batch is retried |
 | `email` | `Email` | `Done` | The mail is rejected |
 | `tail` | `Tail` | `Done` | ignored |
-| `WorkerEntrypoint` method (service binding RPC) | `Rpc` | `Reply` | The caller gets an exception |
-| Durable Object class methods | `Object` | `Respond` or `RespondBody` (fetch), `Reply` (RPC), `Done` | as above |
+| `WorkerEntrypoint` method (service binding RPC) | `Rpc` | `Reply` with the reply as `Packed` CBOR | The caller gets an exception |
+| Durable Object class methods | `Object` | `Respond` (fetch), `Reply` (RPC), `Done` | as above |
+| None: the shim, once at load | `Manifest` | `Reply` with the names of classes and methods | `Unhandled`: the app has no classes |
 | A kind with no tag, or with no entry point yet. In phase A: `queue`, `email`, `tail`, when the app names them in `makeHandler(module, { other: ["queue"] })`. | `Other` | any | as above |
 
 Cost of one entry for all kinds, against one export for each kind:
@@ -503,19 +521,18 @@ Cost of one entry for all kinds, against one export for each kind:
 | Module size | The code for all kinds is in the module | The same: the platform Roc code for all kinds is linked in either form |
 | App code | One function. A kind that the app does not use costs one `_ => Unhandled` arm. | `requires` has no optional field, so the app must write each function, also the ones it does not use |
 
-So one export for each kind gives no measurable gain. The cost of a request is in its I/O waits and its data, not in the entry. For better ergonomics, the `Worker` wrapper (7.1) builds `event!` from a record of handlers. Each handler is an optional field, and a missing one gives `Unhandled` (`research/api-probe/handlers-check/`: an optional field can hold an effectful function on nightly 10-12, and a call through it runs).
+So one export for each kind gives no measurable gain. The cost of a request is in its I/O waits and its data, not in the entry. For better ergonomics, the `Worker` wrapper (7.1, `MODULES.md` 3) builds `event!` from a record of handlers. Each handler is an optional field with the result type of its kind, and a missing one gives `Unhandled`. An `Err` of a handler gives `Failed` (`research/api-probe/handlers-check/`: an optional field can hold an effectful function on nightly 10-12, and a call through it runs).
 
-Durable Object classes and RPC entry points are JS classes in Workers. The shim makes them: `makeHandler(module, { objects: { Counter: ["increment", "get"] }, entrypoints: { Admin: ["purge"] } })` exports classes of those names, and each method call becomes an event. workerd finds an RPC method only on the class prototype (an own property gives "The RPC receiver does not implement the method"), so the shim defines each named method on the prototype of the class that it makes. Wrangler names the classes as usual.
+Durable Object classes and RPC entry points are JS classes in Workers, and an ES module must name its exports in its source. So the entry file has one line for each class: `export const Room = objectClass("Room")`, `export const Admin = entrypointClass("Admin")` (`MODULES.md` 3). The names of the methods come from Roc: at load, `makeHandler` makes the instance, sends `Manifest`, and gets `{ objects: { Room: [methods] }, entrypoints: { Admin: [methods] } }` from the `Worker` wrapper. It defines each method on the prototype of its class, because workerd finds an RPC method only on the class prototype (an own property gives "The RPC receiver does not implement the method"). Each method call becomes an event. A class in the manifest with no export, or an export that is not in the manifest, is a throw at load, so `wrangler deploy` fails and names the class. An app with no `Worker` wrapper answers `Unhandled`: no classes. Wrangler names the classes as usual, and workerd checks them against the exports.
 
 ### 10.2 Respond now, work after
 
-`Ctx.respond!(outcome)` gives a `Respond` or `RespondBody` to Workers at once, and the task goes on. JS keeps the task alive with `ctx.waitUntil` on the promise of the task. The return value of `event!` is then ignored.
+`Ctx.respond!(response)` gives the response to Workers at once, and the task goes on. JS keeps the task alive with `ctx.waitUntil` on the promise of the task. The return value of `event!` is then ignored.
 
 | Rule | |
 | --- | --- |
-| Time | Workers gives `waitUntil` work 30 s after the response, then cancels it. So the shim sets the deadline of the task (`PLAN.md` 3b) to 30 s after `respond!`, and cancels the task then (3c). It does not wait for the 120 s deadline. |
+| Time | Workers gives `waitUntil` work 30 s after the response, then cancels it. So the shim sets the deadline of the task (`PLAN.md` 3b) to 30 s after `respond!`, and cancels the task then (3c). It does not wait for the 120 s deadline. Exception: a 101 response with a WebSocket. Workers keeps the request while the socket is open, so the task stays until the socket closes. |
 | Second call | A second `respond!`, or a `respond!` in an event that is not `Fetch`, is status 1 (`Error("InvalidStateError", ...)`) |
-| Outcome | Only `Respond` and `RespondBody`. Other outcomes are status 1. |
 
 This one function covers 3 needs:
 
@@ -523,15 +540,16 @@ This one function covers 3 needs:
 | --- | --- |
 | Work after the response (cache put, tile catch-up, RN5, RN11) | `respond!`, then the work |
 | A streaming response | Make a `TransformStream` (`Js`), `respond!` with its readable side, then write chunks |
-| A WebSocket | `Socket.pair!`, `respond!` with status 101 and the socket, then read and send |
+| A WebSocket | `WebSocket.accept!(req)`, `respond!` with its 101 response, then `receive!` and `send!` (`MODULES.md` 12) |
 
 ## 11. Tests and the contract
 
 | Part | Test | Where |
 | --- | --- | --- |
-| Byte format (5) | HD1 to HD6 (5.1): the Zig host (wasm32 build, in Node) and the JS shim give the same bytes for the same fixtures | `host/`, `js/test/` |
+| Byte format (5) | HD1 to HD7 (5.1): the Zig host (wasm32 build, in Node) and the JS shim give the same bytes for the same fixtures | `host/`, `js/test/` |
 | Ops and `Io` (6) | `roc test`: each op encodes to a fixed `Js` array. Node: the interpreter runs each op, `Par`, `Start`, `Array` and `Record` against fakes, with statuses 0 to 3 (as `research/api-probe/program-test.mjs`). | `platform/`, `js/test/` |
-| Wrappers (7.1) | Conformance routes: a `Memo` loads once, and a second request gets the value with no load. `Worker` sends each kind to its field. | `conformance/` |
+| Wrappers (7.1) | Conformance routes: a `Memo` loads once, and a second request gets the value with no load. `Worker` sends each kind to its field, and an `Err` gives `Failed`. A `Queue(a)` constant sends and reads one type. An `Rpc` constant calls an object and a service. | `conformance/` |
+| Module conventions (`MODULES.md` 1) | `research/api-probe/modules-check/` until `platform/` exists: `roc check`, a run against `expected.txt`, and two files that must not compile (a `Secret` in a JSON encode and in a CBOR encode) | `platform/`, `conformance/` |
 | Each module | The conformance app: one route for each module function, run in workerd with local bindings (Miniflare gives local D1, R2, KV, Queues and Durable Objects). Each test fails when its function sends a wrong method name. | `conformance/` of this repository |
 | Events | One test for each Workers entry kind (10.1) | `conformance/` |
 | Host rules (traps, sums, memory) | As now | `bench/`, `PLAN.md` |
@@ -543,7 +561,7 @@ The registry app does not fake the platform in Roc. An `expect` cannot run an ef
 | Pure logic: routes, records, the publish checks, the tile math | `roc test` in `packages/` and `worker/` | `../TESTING.md` L0, L1 |
 | Handlers | Each route of Registry 4 against Miniflare: local D1 with the real schema (`../sql/`), local R2. GitHub is a fake service (an outbound fetch handler that serves fixtures). | `worker/tests/`, run with Node |
 
-The contract between the platform and the registry is the public Roc modules of a platform release: the types and the functions of sections 6.5, 7 (with the wrappers of 7.1) and 10. The ABI (4) and the format (5, 6) are inside the platform: a platform release changes them with its Roc modules, so an app never sees the change. The platform follows semver on its public modules.
+The contract between the platform and the registry is the public Roc modules of a platform release: the types and the functions of sections 6.5, 7 (with the wrappers of 7.1) and 10, with the signatures and rules of `MODULES.md`. The ABI (4) and the format (5, 6) are inside the platform: a platform release changes them with its Roc modules, so an app never sees the change. The platform follows semver on its public modules.
 
 Work apart:
 
@@ -563,7 +581,7 @@ Work apart:
 | Programs over refs (this design) | A Roc module, and JS only for a new event kind or a platform helper (6.4) | 1 | Yes, in modules | Chosen |
 | WebAssembly components (WIT) | | | | Not in Workers |
 
-Cost of the chosen design, from `research/api-probe/` (native, Node): 200 D1 rows cost 45 µs to encode in JS (as arrays, 89 µs as objects), 25 µs to decode in the Zig host and 14 µs to match into typed rows in Roc: 84 µs. JSON costs 20 µs (`JSON.stringify`) and 229 to 238 µs (`Json.parse`). So modules ask D1 for arrays (`raw`), and Q29 (RF7) asks if large reads should pass through as JSON that SQLite makes.
+Cost of the chosen design, from `research/api-probe/` (native, Node), 200 D1 rows: typed records through CBOR cost 216 µs (JS 79, Roc 137), against 265 to 363 µs through JSON (5.2). Rows with no types (`rows!`) cost 82 µs (JS 43, Zig 25, Roc 14). Q29 (RF7) asks if large reads should pass through as JSON that SQLite makes, with no decode in Roc.
 
 ## 13. Open questions
 
@@ -571,13 +589,17 @@ Cost of the chosen design, from `research/api-probe/` (native, Node): 200 D1 row
 | --- | --- | --- |
 | AQ1 | Callbacks from JS into Roc (`step.do` of Workflows, HTMLRewriter, `transactionSync`, `blockConcurrencyWhile`). A hosted function can take a `Box` of a Roc closure, and a `provides` entry can call it. While the outer task waits, the callback runs as a new task on the same instance. Does this work with JSPI and the stack copy? | A probe in `research/`: a Roc closure boxed, given to JS, called from a JS callback while the caller waits |
 | AQ4 | The cost of one crossing, for programs of 1, 4 and 16 ops, on the edge | `PLAN.md` step 8g |
-| AQ5 | A decoder straight into typed records with no `Js` tree, after the Zig decoder (5.1). It would save the 14 µs match and the tree allocations, but the host would need the layout of each record type. | Only if 8g shows that the tree still costs much in wasm |
+| AQ5 | A decoder in the host straight into typed records. Typed data already skips the `Js` tree (`Packed`, 5.2). What is left is `Cbor.parse` in Roc: 137 µs for 200 rows, 70 µs of it the record matching of the derived parser. The host would need the layout of each record type, which `roc glue` does not give for app types. | Only if 8g shows that `Cbor.parse` costs much in wasm. First see if a newer compiler matches fields faster. |
 
 Settled:
 
 | # | Question | Answer |
 | --- | --- | --- |
-| AQ2 | Use `roc-lang/http`? | Yes, as basic-webserver does. Version 2.0.0 builds on nightlies 10-09 and 10-12 (`research/api-probe/http-check/`). `Method` and `Header` are used in all request and response types. Its `Request` and `Response` (opaque, body `List(U8)`) are the buffered types of `Http.send!` and of `Outcome.Respond`. The incoming request and a streaming response use the platform types of 10.1, because there the body is a `Body` stream (RS3), and `http` has no stream. |
-| AQ3 | State in Roc memory across events of one Durable Object? | No. The state of a Durable Object is its storage: SQLite in the same thread as the object, up to 10 GB, read with sync calls (`Object.sql!` uses `call!`, so no JSPI wait). Workers can evict an idle object from memory at any time, so memory is only a cache of the storage. If an app needs such a cache, it uses `Memo` (7.1) or the pin table (RS2). |
+| AQ2 | Use `roc-lang/http`? | Yes, for `Method` and `Header`, as basic-webserver does. Version 2.0.0 builds on nightlies 10-09 and 10-12 (`research/api-probe/http-check/`). Its `Request` and `Response` (opaque, body `List(U8)`) are not the types of the API: the platform has one `Request` and one `Response` with a `Body` for both directions (`MODULES.md` 4), because a body can be a stream (RS3) and `http` has no stream. `Response.from_http` and `to_http!` convert for packages that use `http`. (Draft 2 used the `http` types for buffered bodies, and a second type for streams.) |
+| AQ3 | State in Roc memory across events of one Durable Object? | No. The state of a Durable Object is its storage: SQLite in the same thread as the object, up to 10 GB, read with sync calls (`Object.sql!` uses `call!`, so no JSPI wait). Workers can evict an idle object from memory at any time, so memory is only a cache of the storage. If an app needs such a cache, it uses `Memo` (7.1) or the pin table (RS2). Typed storage is `Object.Cell` (`MODULES.md` 7). |
 | AQ6 | Can an optional record field hold an effectful function, for the handler record of 10.1? | Yes. `research/api-probe/handlers-check/`: `roc check`, `roc test` and a run on nightly 10-12. |
 | AQ7 | Can `Io` (6.5) and `Memo` (7.1) be nominal types with function fields and two type variables, called as `jwks.get!()`, with the error unions of two `Io`s joined? | Yes. `research/api-probe/wrappers-check/`: `roc check` and a run on nightlies 10-09 and 10-12. The crossing and the pin table are fakes there. |
+| AQ8 | A codec format for the typed data of `MODULES.md` MC5, in place of JSON text? | Yes: CBOR (RFC 8949), also as the byte format of the bridge (5, 5.2). Compared: JSON, the first byte format, CBOR, MessagePack, BSON, Postgres JSONB, SQLite JSONB, Arrow, Protocol Buffers, FlatBuffers, Cap'n Proto, bincode, the V8 serializer, Ion (`research/api-probe/README.md`). The JS side has no Roc types, so the format must describe itself, which rules out the formats with a schema. CBOR is a standard with test vectors, has the JSON data model plus bytes, `undefined`, 64-bit integers and tags, and fits the counted containers of the Roc codec protocol. `research/api-probe/cbor/`: 2.5 times faster than `Json.parse` in Roc on the same rows, 216 µs against 265 to 363 µs with JS. |
+| AQ9 | Rows of `D1.all!` as objects or as arrays? | Objects. Arrays with one list of column names save 8 %, only in JS (5.2), and need a column mode in the format. `rows!` gives arrays with no types, for columns that are not known at compile time. |
+| AQ10 | A Durable Object class name is given twice: in `makeHandler(module, { objects })` and in `Object.class`. | The names of classes and methods come from Roc, through the event `Manifest` at load (10.1). The entry file exports each class with one line, because an ES module must name its exports, and the shim checks the exports against the manifest at load. A mismatch stops `wrangler deploy`. The method lists in JS are gone. |
+| AQ11 | Can the module API be typed with no codec code in the app: typed bindings, rows into the type of the call, typed RPC on both sides, handlers with `?`? | Yes. `research/api-probe/modules-check/` (`MODULES.md` 15): 13 modules and an app, `roc check` and a run on nightlies 10-09 and 10-12. A `Secret` must have a record backing: an opaque type over a bare `Str` gets the codecs of `Str`. With CBOR for typed data (AQ8), the same prototype passes, and a socket room of `MODULES.md` 12.1 runs too. |

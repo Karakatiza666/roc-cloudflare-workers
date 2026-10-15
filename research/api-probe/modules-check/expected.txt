@@ -1,0 +1,28 @@
+200 [{"name":"a/b","version":"1.2.0"},{"name":"a/c","version":"0.1.0"}]
+200 {"name":"a/b","version":"1.2.0"}
+failed: NotFound
+200 2 dark
+200 dark
+202 Secret(...) 1 etag-2
+failed: BadData("MissingRequiredField(\"attempt\")")
+failed: PreconditionFailed
+200 6
+404 
+101  (web_socket)
+426 
+101  (web_socket)
+101  (web_socket)
+failed: NotUpgrade
+sent to socket 8
+sent to socket 12
+done
+failed: NotFound
+done
+queue jobs: acked 1, retried 2
+done
+failed: no method nope
+reply 5
+failed: bad argument: MissingRequiredField("by")
+reply -1
+unhandled
+unhandled
