@@ -32,14 +32,14 @@ Problem 12 (2026-10-14) is the goal of problem 4: one wasm instance per isolate.
 | 5 | 4-pre, 4a, then 12-pre, 12a, 12a-stack, 12b, 12d, 12c, 12e, 12f, then 4b to 4j (V1 to V4 are done) | the v7 allocator (6e), the task table (2c), cancel (3c), the clean OOM (6d). 12c needs one instance (4a) and the global check (12d). |
 | 6 | 5a to 5c. 5d (edge) waits for a deployed worker in 11. | none |
 | 7 | 7a to 7c | none. Before 8, because 8 changes the exports. |
-| 8 | 8a to 8g (`API.md`) | the split ABI (7a), the header settings (7b) |
-| 9 | 9a to 9c | the task table (2c), the API (8) |
-| 10 | 10a to 10c | the API (8), the shim (9) |
+| 8 | 9a and 9b, then 8a, 8b with 9c, 8c with 10a and 10b, 8d, 8e (`API.md` phase A). 10c is part of the test of 8a. | the split ABI (7a), the header settings (7b), the task table (2c), cancel (3c). 8a needs the per-task roots and ref table of 9b, and 8b and 8c need `makeHandler` of 9a. |
+| 9 | 8f (`API.md` phase B) | 8a to 8e |
+| 10 | 8g, local. The edge part runs after 11. | 8a to 8e |
 | 11 | 11a to 11c, then 5d on the edge | 7 to 10 |
-| 12 | Update DESIGN.md §6.1, DESIGN-REGISTRY.md §8 and `bench/README.md` | all |
+| 12 | Update DESIGN.md §6.1, Q12 and Q14, DESIGN-REGISTRY.md §8 and `bench/README.md` (API.md RF10) | all |
 | 13 | 12g: measure with talon | talon runs on the platform |
 
-Each new test must fail when its change is reverted. Exceptions: moves, releases and edge runs (9a, 11a to 11c, 5d) and comparisons (the replay row of 6e). Their test is that the old tests still pass, or the run gives its numbers.
+Each new test must fail when its change is reverted. Exceptions: moves, releases and edge runs (9a, 11a to 11c, 5d), comparisons (the replay row of 6e) and measurements (8g, 12-pre, 12f, 12g). Their test is that the old tests still pass, or the run gives its numbers.
 
 ## 1. Stack overflow corrupts data
 
@@ -182,7 +182,7 @@ A throw at the resume point skips `waitEnd`. Then the task's owner id is lost (`
 
 | Step | Change | Test |
 |---|---|---|
-| 2a | `js_alloc` returns 0 on out of memory and does not trap. JS gives the task an error status. | Test export `fail_next_alloc` (6d) before a `js_alloc`: the task gets an error status, and the other tasks are correct. Revert (trap): the waiting task is lost. |
+| 2a | `js_alloc` returns 0 on out of memory and does not trap. JS returns status 4 (API.md 4.1), and the host makes a clean OOM trap for the task. | Test export `fail_next_alloc` (6d) before a `js_alloc`: the task gets a 503, and the other tasks are correct. Revert (trap): the waiting task is lost. |
 | 2b | `makeWait` (`bench/core.js:9-27`) puts one try/catch around all the code after it reads the arguments. It always returns a status and never rejects (as Pyodide `suspenders.c` and the wasm-bindgen `catch` imports do). | io that throws synchronously; io that rejects. Both tasks get an error status. Revert (no try/catch): the sync throw skips `waitEnd`, and live bytes stay. |
 | 2c | Task table in the host. JS gives each task an id: `handle(p, l, id)`. The host keeps each `Wait` in a table by id. `task_abort(id)` frees the saved copy and calls `freeOwner(id)`, also when `waitEnd` did not run. Problems 3 and 4 use this table. | Force a throw into a waiting task: live bytes return to 0. Revert (no table): live bytes stay. |
 | 2d | `TRAP_CLEAN` is set only while a task runs (`OWNER != 0`), and is cleared when `handle` starts | A trap in a host call from JS is unclean. Revert: it is clean. |
@@ -208,8 +208,8 @@ When workerd drops a request (for example, the client disconnects), its I/O prom
 | Step | Change | Test |
 |---|---|---|
 | 3a | JS task table: id to `{instance, waitingSince, cancelled, cancel}`. `cancel` resolves the cancel promise of 3c. | Used by the tests of 3b and 3c |
-| 3b | Each new request first checks the table (it runs in a live request context). A task that waits longer than the deadline is cancelled (3c). The default deadline is 120 s and is configurable. Also cancel on `request.signal`. 3.0: it fires only with the compatibility flag `enable_request_signal`, so the shim documents the flag and 11c sets it. | Node: deadline 100 ms, io that never resolves for one request. The next request cancels it: it gets a 503, and live bytes return to 0. Abort the signal of a waiting request: it is cancelled at once. Revert (no check of the table): live bytes stay. |
-| 3c | Cancel (`task_cancel(id)`): the host frees the saved copy and calls `freeOwner(id)`. Then the import wrapper must end the suspended stack, because a suspended JSPI stack is never freed and keeps its instance (3.0). The wrapper waits on `Promise.race([io, cancelPromise])`. On cancel, it returns the status "cancelled". The host checks this status first, before it reads or writes memory or a global, and runs `unreachable`. The trap ends the stack. JS knows that the task was cancelled, so this trap is not an alarm. A replace (M1) cancels all tasks of the old instance in the same way, so the old instance can be collected. | Node: io that never resolves for some ids. Expect live bytes 0, the other requests correct, and flat memory (RSS too) over 10,000 cancels. Replace an instance with 10 waiting tasks (`--expose-gc`): the `FinalizationRegistry` callback reports the old instance collected. Revert (a promise that never settles, as before): RSS grows by about 6 KB per cancel, and the old instance is not collected. |
+| 3b | Each new request first checks the table (it runs in a live request context). A task that waits longer than the deadline is cancelled (3c). The default deadline is 120 s (shim option `taskDeadlineMs`). After `Ctx.respond!` it is 30 s, the `waitUntil` limit of Workers (API.md 10.2). Also cancel on `request.signal`. 3.0: it fires only with the compatibility flag `enable_request_signal`, so the shim documents the flag and 11c sets it. | Node: deadline 100 ms, io that never resolves for one request. The next request cancels it: it gets a 503, and live bytes return to 0. Abort the signal of a waiting request: it is cancelled at once. Revert (no check of the table): live bytes stay. |
+| 3c | Cancel (`task_cancel(id)`): the host frees the saved copy and calls `freeOwner(id)`. Then the import wrapper must end the suspended stack, because a suspended JSPI stack is never freed and keeps its instance (3.0). The wrapper waits on `Promise.race([io, cancelPromise])`. On cancel, it returns status 5, "cancelled" (API.md 4.1). The host checks this status first, before it reads or writes memory or a global, and runs `unreachable`. The trap ends the stack. JS knows that the task was cancelled, so this trap is not an alarm. A replace (M1) cancels all tasks of the old instance in the same way, so the old instance can be collected. | Node: io that never resolves for some ids. Expect live bytes 0, the other requests correct, and flat memory (RSS too) over 10,000 cancels. Replace an instance with 10 waiting tasks (`--expose-gc`): the `FinalizationRegistry` callback reports the old instance collected. Revert (a promise that never settles, as before): RSS grows by about 6 KB per cancel, and the old instance is not collected. |
 | 3d | Removed (2026-10-14): no instance drains (problem 12) | |
 
 
@@ -298,7 +298,7 @@ Done or not needed:
 
 `memory.discard` would let an instance give pages back. V8 does not have it. Check it again when V8 ships it.
 
-### Developer options (shim, `makeHandler(module, opts)`)
+### Shim options (`makeHandler(module, opts)`)
 
 | Option | Default | Use |
 |---|---|---|
@@ -311,6 +311,11 @@ Done or not needed:
 | `resumeCheck` | `"always"` | 12b. `"afterAlarm"`: check at resume only after an alarm (sum mode 1). It costs less, but misses a wild write with no trap. |
 | `heapCheckEvery` | 1,000 at first. 12e sets it from the check time of 12d. | 12e. Run the shared-memory check after this many requests. 0: off. |
 | `heapCheckWhenIdle` | `true` | 12e. Run the shared-memory check when the instance becomes idle |
+| `taskDeadlineMs` | 120,000 | 3b. A task that waits longer is cancelled. |
+| `pinLimit` | 1,000 | API.md RS2: the number of entries in the pin table |
+| `ops` | none | API.md 6.4: JS functions of the app, the root `ops` |
+| `objects`, `entrypoints` | none | API.md 10.1: Durable Object classes and RPC entry points, each with its method names |
+| `other` | none | API.md 10.1: Workers handler names that give the event `Other` |
 
 ### Steps
 
@@ -364,8 +369,8 @@ Limits:
 | Bug | Where | Now |
 |---|---|---|
 | B1 | `hostlib/roc.zig:13-19`, `hostlib/wordbuf.zig:13-15`, `hostlib/alloc.zig:177` | `logPushCopy` and the growth of the `LOG` buffer allocate with `OWNER` = the task that runs. No JS code calls `log_ptr`, `log_len` or `log_clear`. After a clean trap, `freeOwner` frees the buffer and its entries while `LOG.ptr` still points to them. The next `dbg` writes into a freed span that can be in use by another task. Each `dbg` also leaks, because nothing drains the log. |
-| B2 | `host/host.zig:115,125` | The import `js_wait` takes `num` as an `f64` (`@floatFromInt`). Values above 2^53 change with no error. |
-| B3 | `bench/core.js:456-460` | `makeWait` reads `a` and `b`, but not `c` (bytes) or `num`. |
+| B2 | `host/host.zig:114,121,123` | The import `js_wait` takes `num` as an `f64` (`@floatFromInt`). Values above 2^53 change with no error. |
+| B3 | `bench/core.js:12-13` | `makeWait` reads `a` and `b`, but not `c` (bytes) or `num`. |
 | B4 | `hostlib/alloc.zig:219-231` | `roc_alloc` and `roc_realloc` return 0 to Roc when memory cannot grow. Address 0 is the bottom of the stack. Today `memory.grow` does not fail before the isolate is stopped. With `js_grow` (4b) it can fail. |
 | B5 | `hostlib/alloc.zig:126-145`, `189-201` | Spans above 4 KB go on one free list with first fit, and are never split or joined. A string built in a loop (`$s = "${$s},${$i.to_str()}"`) asks at each step for a span a little larger than all freed ones, so each step takes new memory from the top. The free spans are next to each other, but nothing joins them. |
 
@@ -453,7 +458,7 @@ Port:
 
 | Step | Change | Test |
 |---|---|---|
-| 7a | Two export lists: production (`init`, `handle`, `task_abort`, `js_alloc`, `res_free`, `stack_first`, the log exports, the CPU globals of 5a) and bench (all others). One way: a second platform file `bench/platform/main.roc` that adds the bench exports, and a build option that leaves the bench functions out of the production host. | Read the export section of a production build: no bench export. The bench tests still pass on the bench build. |
+| 7a | Two export lists: production (`init`, `handle`, `task_abort`, `task_cancel` (3c), `js_alloc`, `res_free`, `stack_first`, `set_free_mark` (6e), `check_heap` (12d), the log exports, the counter exports (M11, H3), the CPU globals of 5a) and bench (all others). One way: a second platform file `bench/platform/main.roc` that adds the bench exports, and a build option that leaves the bench functions out of the production host. | Read the export section of a production build: no bench export. The bench tests still pass on the bench build. |
 | 7b | Put the stack size and the memory settings in the `targets.wasm32` record of the platform header (`initial_stack_size`, `minimum_memory`, `maximum_memory`; read in `roc:src/compile/targets_config.zig:67-74`). `hostlib/canary.zig` gets `STACK_SIZE` from the same build value. Remove the flags from `bench/build.sh`. | Build with a plain `roc build --target=wasm32`. `check-layout.mjs` gives STACK-FIRST with a 1 MB stack. Remove the header field: the stack size changes. |
 | 7c | `bench/ci-layout.sh` makes the glue again and fails on a diff with the committed file. | Change one line in the committed glue: CI fails. |
 
@@ -465,16 +470,16 @@ The API is `API.md` (2026-10-15). It replaces draft 1 of this section: kind numb
 |---|---|---|
 | G1 | One entry `event! : Event => Outcome` for all Workers handler kinds (API.md 10) | `requires { handle! : Str => Str }` (`platform/main.roc:2`). No method, headers or status. The body must be UTF-8. |
 | G2 | Typed modules over programs of ops (API.md 6, 7). The app never sees a kind number. | The app imports `pf.Wait` and uses raw kind numbers (`bench/app.roc:10,14`) |
-| G3 | Effect errors are results: JS errors come back with name and message (API.md 4) | Status 0 on any error. JS drops the message (`bench/core.js:466`). |
+| G3 | Effect errors are results: JS errors come back with name and message (API.md 4) | Status 0 on any error. JS drops the message (`bench/core.js:16-20`). |
 | G4 | `Scheduled`, `Queue` and the other events (API.md 10) | Only the fetch handler |
 
 | Step | Change | Test |
 |---|---|---|
-| 8a | The bridge (API.md 4 to 6): hosted `await!`, `call!` and `native!`. `Js` and programs in Roc (`platform/Js.roc`), the encoder and decoder of the byte format in the Zig host with the glue types (API.md 5.1), the program interpreter and the ref table in JS (from `research/api-probe/`). Remove `Wait.wait!`: this also removes B2 and B3 (6b, 6c). | HD1 to HD6 of API.md 5.1 (glue checks, glue diff, round trip, the Roc decoder as an oracle, fuzz, leaks). Same bytes in Zig and JS for a set of fixtures. A program of 4 ops gives the value of the last op with one wait. A promise in `call!` gives status 2. After 10,000 tasks with traps and cancels, the ref table is empty. Revert (no ref free at a trap): it is not empty. |
-| 8b | Events (API.md 10): `requires { event! : Event => Outcome }`, `provides` `roc_event`. `makeHandler` gives `fetch`, `scheduled` and `Other`. `Ctx.respond!` (10.2). | Binary body (0x00 to 0xFF) round trip, 100 headers, status 404. A cron call reaches `Scheduled`. `Unhandled` gives a 500 and a log line. Work after `respond!` runs after the response. Revert to `Str`: the binary test fails. |
-| 8c | Phase A modules (API.md 7): `Http`, `Body`, `Env`, `Ctx`, `D1`, `R2`, `Cache`, `Crypto`, `Time`, `Log`, `Js`. The `conformance/` app: one route for each function, run in Miniflare (local D1 and R2). | Each route passes. Revert (a wrong JS method name in one function): its route fails. |
+| 8a | The bridge (API.md 4 to 6): hosted `await!`, `call!` and `native!`, the wasm imports and statuses 4 and 5 of API.md 4.1. `Js`, programs and `Io` in Roc (`platform/Js.roc`, `platform/Io.roc`), the encoder and decoder of the byte format in the Zig host with the glue types (API.md 5.1), the program interpreter (all ops of API.md 6.2), the platform helpers (`pf`, API.md 6.4), the ref table and the pin table in JS (from `research/api-probe/`). Remove `Wait.wait!`: this also removes B2 and B3 (6b, 6c). | HD1 to HD6 of API.md 5.1 (glue checks, glue diff, round trip, the Roc decoder as an oracle, fuzz, leaks). Same bytes in Zig and JS for a set of fixtures. A program of 4 ops gives the value of the last op with one wait. A promise in `call!` gives status 2. `Io.both!` of two operations that each wait 100 ms takes one wait and about 100 ms. Revert (`Par` runs the branches one after the other): about 200 ms. A `js_alloc` that fails during a wait gives a clean OOM trap (status 4). After 10,000 tasks with traps and cancels, the ref table is empty (10c). Revert (no ref free at a trap): it is not empty. A pinned `CryptoKey` is used by a later task. |
+| 8b | Events (API.md 10): `requires { event! : Event => Outcome }` with the full `Event` type, `provides` `roc_event`. `makeHandler` gives `fetch` and `scheduled`, and `Other` for the handler names in its `other` option. `Ctx.respond!` with its rules (10.2). The `Worker` wrapper (API.md 7.1). | Binary body (0x00 to 0xFF) round trip, 100 headers, status 404. A cron call reaches `Scheduled`. A `queue` call in `other` reaches `Other`. `Unhandled` gives a 500 and a log line. Work after `respond!` runs after the response. A second `respond!` gives status 1. A task that runs past 30 s after `respond!` is cancelled. Revert to `Str`: the binary test fails. |
+| 8c | Phase A modules (API.md 7): `Http`, `Body`, `Env`, `Ctx`, `D1`, `R2`, `Cache`, `Crypto`, `Time`, `Log`, `Js`, `RateLimit`, and the wrapper `Memo` (7.1). The `conformance/` app: one route for each function and its `Io` twin, run in Miniflare (local D1 and R2). | Each route passes. Revert (a wrong JS method name in one function): its route fails. `D1` with an `Int` above 2^53 stores the exact value. Revert (send a BigInt): `D1_TYPE_ERROR`. `D1.batch!` is one crossing. `Memo`: a second request gets the value with no `load!`. |
 | 8d | Errors: each phase A module maps `Error(name, message)` to its own tags | A fetch to a closed port gives a network error tag. A D1 `UNIQUE` failure gives a constraint tag. Revert (no map): one generic tag. |
-| 8e | `Native` (API.md 8): `zstd_decode` with an output limit | Decode a package `.tar.zst`: the bytes match `zstd -d`. A small archive that decodes to more than the limit stops at the limit. Revert (no limit): memory grows past it. |
+| 8e | `Native` (API.md 8): `zstd_decode` with an output limit, the zstd stream ops, and BLAKE3 and SHA-256 with state | Decode a package `.tar.zst`: the bytes match `zstd -d`. A small archive that decodes to more than the limit stops at the limit. Revert (no limit): memory grows past it. BLAKE3 of a file in chunks of 64 KB equals `b3sum`. A handle of another task gives status 1. |
 | 8f | Phase B modules and events (API.md 7, 10) | One conformance route or event for each. Revert as in 8c. |
 | 8g | Measure: one crossing with programs of 1, 4 and 16 ops, and the decode of 200 D1 rows, in the platform (wasm), local and on the edge (AQ4) | None: a measurement. Numbers in `bench/README.md`. |
 
@@ -482,11 +487,11 @@ The API is `API.md` (2026-10-15). It replaces draft 1 of this section: kind numb
 
 | Gap | Now |
 |---|---|
-| G5 | The shim is `bench/core.js`, mixed with test code (`expected`, `check`). `bench/worker.js:621` makes `io` from the `env` of the first request. `io` has no `ctx.waitUntil`, no `request.signal` and no request headers. |
+| G5 | The shim is `bench/core.js`, mixed with test code (`expected`, `check`). `bench/worker.js:12-15,33` makes `io` from the `env` of the first request. `io` has no `ctx.waitUntil`, no `request.signal` and no request headers. |
 
 | Step | Change | Test |
 |---|---|---|
-| 9a | Move the runtime to `js/` (one entry module, for example `js/index.js` that exports `makeHandler(module)`). It returns `{ fetch, scheduled, queue }` for the Worker. Test helpers stay in `bench/`. | `bench/worker.js` and the Node tests use `js/` and still pass |
+| 9a | Move the runtime to `js/` (one entry module, for example `js/index.js` that exports `makeHandler(module, opts)`). It returns the handlers of API.md 10.1 for the Worker, and the classes of the `objects` and `entrypoints` options. Test helpers stay in `bench/`. | `bench/worker.js` and the Node tests use `js/` and still pass |
 | 9b | The `io` call gets the task id. The task table (2c) keeps the context of each task: `env`, `ctx`, the `event` object, and its ref table. These are the roots of API.md 6.2 (OP3). | Two requests at the same time with different headers. Each effect sees the headers of its own request. Revert to one shared context: the test fails. |
 | 9c | `Ctx.wait_until!` and `Ctx.respond!` (API.md 10.2) | A `waitUntil` promise runs after the response. Revert (no `waitUntil`): the promise stops with the response. |
 
@@ -498,9 +503,9 @@ The API is `API.md` (2026-10-15). It replaces draft 1 of this section: kind numb
 
 | Step | Change | Test |
 |---|---|---|
-| 10a | JS keeps large bodies (`ReadableStream`, `Response`) as refs (API.md 9, RS3): a body is `Stream(Ref)`. `Response` can give it back to JS with no copy into wasm. | Node: send an R2 object of 50 MB through `r2_get!` to the response. wasm memory grows by less than 1 MB. |
-| 10b | `Body.bytes!(Body, { max })` and `Body.chunks!` copy the bytes into wasm only when Roc needs them. Ingest needs only `main.roc` from the archive. | Read the first 1 KB of a 50 MB body: wasm memory grows by less than 1 MB. Revert (copy all): it grows by 50 MB. |
-| 10c | The task table frees the refs of a task (body ids too) at its end, its trap and its cancel (3c, API.md RS1) | After 10,000 requests with traps and cancels, the body table is empty. Revert (no free at a trap): it is not empty. |
+| 10a | JS keeps large bodies (`ReadableStream`, `Response`) as refs (API.md 9, RS3): a body is `Stream(Ref)`. `Response` can give it back to JS with no copy into wasm. Done in 8c. | Node: send an R2 object of 50 MB through `R2.get!` to the response. wasm memory grows by less than 1 MB. |
+| 10b | `Body.bytes!(Body, { max })` and `Body.chunks!` copy the bytes into wasm only when Roc needs them. Ingest needs only `main.roc` from the archive. Done in 8c. | Read the first 1 KB of a 50 MB body: wasm memory grows by less than 1 MB. Revert (copy all): it grows by 50 MB. |
+| 10c | The task table frees the refs of a task (body ids too) at its end, its trap and its cancel (3c, API.md RS1). Done in 8a. | The ref-table test of 8a |
 
 ## 11. Release
 
@@ -512,8 +517,7 @@ The API is `API.md` (2026-10-15). It replaces draft 1 of this section: kind numb
 |---|---|---|
 | 11a | A release workflow: build the production host (7a) with the pinned nightly (`compat/last-stack-first-nightly`), bundle the platform with `roc bundle`, and attach the bundle and the `js/` package to a GitHub Release | Run on a test tag. A new app builds with the release URL. |
 | 11b | Publish `js/` (npm, or a file in the release that the app copies) | A new Worker project uses it with wrangler |
-| 11c | An example Worker app with a wrangler config (with the compatibility flag `enable_request_signal`, for 3b), deployed by CI. 5d (CPU limit on the edge) runs on it. Also check what the edge does at 128 MB: is only the isolate stopped, and do the requests in flight fail? |
- The deployed example answers. 5d and the 128 MB check give their results. |
+| 11c | An example Worker app with a wrangler config (with the compatibility flag `enable_request_signal`, for 3b), deployed by CI. 5d (CPU limit on the edge) runs on it. Also check what the edge does at 128 MB: is only the isolate stopped, and do the requests in flight fail? | The deployed example answers. 5d and the 128 MB check give their results. |
 
 ## 12. One instance per isolate: check memory at resume
 
@@ -661,6 +665,5 @@ A failed check acts as a failed check after an alarm: cancel all tasks (each get
 ## Done when
 
 - All tests above pass, and each fails when its change is reverted (the exceptions are in "Order of work").
-
 - `bench/node-test.mjs` and the leak test still give 0 bad bodies and live bytes 0.
-- DESIGN.md §6.1, DESIGN-REGISTRY.md §8 and `bench/README.md` show the new rules: stack-first, the task table, cancel, the memory management of problem 4, one instance per isolate with the checks at resume (12), the CPU signals, the platform API (8), the shim (9), body handles (10) and the release (11).
+- DESIGN.md §6.1, DESIGN-REGISTRY.md §8 and `bench/README.md` show the new rules: stack-first, the task table, cancel, the memory management of problem 4, one instance per isolate with the checks at resume (12), the CPU signals, the platform API (8, `API.md` phases A and B), the shim (9), body handles (10) and the release (11).

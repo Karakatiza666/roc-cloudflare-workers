@@ -6,13 +6,14 @@
 | `Js.roc` | The bridge value type and its byte format (API.md 5), with 4 `expect`s |
 | `codec.mjs` | The JS side of the same byte format |
 | `codec-test.mjs` | Same bytes as `Js.roc`, round trip with a handle, encode cost of D1 results |
-| `Program.roc` | The ops of a program (API.md 6.2) and their encoder, as a `Js` array. A D1 query as 4 ops. 1 `expect`. |
-| `program.mjs`, `program-test.mjs` | The JS interpreter of programs: roots, slots, the J1 to J7 conversion, the ref table, status 0 to 3. Tested in Node against a fake D1 binding and a class with getters. |
+| `Program.roc` | The ops of a program (API.md 6.2), all 10, and their encoder, as a `Js` array. A D1 query as 4 ops, two queries in one `Par`, `Array` and `Record` of slots. 3 `expect`s. |
+| `program.mjs`, `program-test.mjs` | The JS interpreter of programs: roots, slots, all 10 ops, the J1 to J7 conversion with the i64 and depth limits, the ref table, status 0 to 3. Tested in Node against a fake D1 binding, a class with getters and timers. |
 | `bench/main.roc` | Decode cost in Roc of 200 D1 rows, best of 7 rounds: to a `Js` tree, to typed rows, with direct integer reads (`Js2.roc`), and `Json.parse` (basic-cli 0.29.0, native). `bench/Js.roc` is a copy of `Js.roc`, because an app imports from its own directory. |
 | `bench/rows.mjs`, `bench/decode.zig` | The same 200 rows from JS (`rows.bin`, same 51,385 bytes as Roc makes), decoded in Zig into a tree with the memory shape of Roc values: a lower bound for a decoder in the host |
 | `glue-check/` | A platform with a hosted function that returns `Js`. `roc glue` shows the layout that a Zig decoder must write. |
 | `handlers-check/` | A handler record with optional effectful fields that builds the one entry `event!` (API.md 10.1, AQ6). Run: `roc test Handlers.roc && roc run.roc`. Result on 10-12: passes, and prints `fetched /v1/pkg \| unhandled`. |
 | `http-check/` | `roc-lang/http` 2.0.0 on the pinned nightlies (API.md AQ2) |
+| `wrappers-check/` | `Io` (API.md 6.5) and `Memo` (7.1) as nominal types with function fields: `Io.both!` joins the error unions of two operations, and `jwks.get!()` runs an effectful `load!` from a record field. The crossing and the pin table are fakes. Run: `roc run.roc`. Result on 10-09 and 10-12: passes, and prints `Ok((16, "fetch+/jwks")) \| Err(HttpErr("TypeError")) \| Ok(8) \| Ok("key-1")` (API.md AQ7). |
 
 Run:
 
@@ -67,7 +68,7 @@ So 85 % of the Roc decode is the tree, and Zig builds the same tree 3.4 times fa
 
 `roc-lang/http` 2.0.0 (the same hash as 1.0.0): `http-check/` builds and runs on nightlies 10-09 and 10-12 with no warning. `Request` is opaque, for a client (`uri`, `timeout_ms`, body `List(U8)`). `Response` is opaque (status, headers, body `List(U8)`). `Method` and `Header` are nominal.
 
-Programs: `program-test.mjs` passes. `prepare`, `bind` and `raw` run in one crossing. A class instance comes back as a ref, `Fields` reads its getters, and a `Date` becomes milliseconds. A promise in `call!` gives status 2, a throw status 1, an unknown root status 3. After `clear`, the ref of the task is gone. `Program.roc`: 5 of 5 `expect`s pass with `Js.roc`.
+Programs: `program-test.mjs` passes. `prepare`, `bind` and `raw` run in one crossing. A class instance comes back as a ref, `Fields` reads its getters, and a `Date` becomes milliseconds. A promise in `call!` gives status 2, a throw status 1, an unknown root status 3. After `clear`, the ref of the task is gone. A D1 batch of 2 statements is one crossing (`Array`). Two branches of `Par` that each wait 100 ms take about 100 ms. A throw in a branch is status 1 for that branch only. Two `Start` calls go to `Promise.all`. A BigInt of 2^64, a cycle and an array 100 deep are status 1. `Program.roc`: 7 of 7 `expect`s pass with `Js.roc` on 10-09 and 10-12.
 
 Revert checks (each test fails):
 
@@ -77,6 +78,12 @@ Revert checks (each test fails):
 | `Program.roc`: the `expect` asks for 3 ops | The program `expect` |
 | `program.mjs`: `call!` awaits a promise and does not give status 2 | `program-test.mjs` |
 | `program.mjs`: `Fields` copies own properties, not getters | `program-test.mjs` |
+| `program.mjs`: `Par` runs its branches one after the other | `program-test.mjs` ("par took 201 ms") |
+| `program.mjs`: `Start` is awaited like `Call` | `program-test.mjs` (status 2 in `call!`) |
+| `program.mjs`: no depth limit, or no i64 range check | `program-test.mjs` |
+| `program.mjs`: `Array` keeps the arg form | `program-test.mjs` |
+| `program.mjs`: a bad root in a branch is status 1 | `program-test.mjs` |
+| `Program.roc`: `Par` or `Record` encodes no content | The `Par` or the `Array` and `Record` `expect` |
 
 ## Conclusion
 
