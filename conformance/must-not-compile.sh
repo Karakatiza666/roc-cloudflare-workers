@@ -1,16 +1,13 @@
 #!/usr/bin/env bash
 # Must-not-compile checks (MODULES.md 10, PLAN.md 8c): a `Secret` in the fields of a `Log` line, and in a CBOR encode.
 # Each `*_bad.roc` must fail `roc check` with an error that names `Secret`, and its `*_ok.roc` (the same file with
-# `s.reveal()`) must pass, so the error is the secret and not another fault. The files are checked in a copy in
-# .cache/must-not-compile/ next to bench/Cbor.roc (the format of the bench, MC5), at the same depth, so the platform
-# path stays right. Env: ROC (default: bench/get-roc.sh). Exit 1 on a failure.
+# `s.reveal()`) must pass, so the error is the secret and not another fault. The CBOR files import `Cbor` of the package
+# `roc-cbor` (the release of the platform, MC5). Env: ROC (default: bench/get-roc.sh). Exit 1 on a failure.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 ROC=${ROC:-$(bench/get-roc.sh)}
 export ROC_CACHE_DIR=$PWD/.cache/roc XDG_CACHE_HOME=$PWD/.cache
-dir=.cache/must-not-compile
-rm -rf "$dir" && mkdir -p "$dir"
-cp conformance/must-not-compile/*.roc bench/Cbor.roc "$dir"/
+dir=conformance/must-not-compile
 rc=0
 for kind in log cbor; do
   out=$("$ROC" check "$dir/secret_${kind}_bad.roc" 2>&1)

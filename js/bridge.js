@@ -57,7 +57,8 @@ export function writeResult(x, out, status, value, refs) {
   }
 }
 
-// cell: { x, gate, cancelTrap } of the instance. tasks: the task table (null in some tests). shim: { ops, pins, log }.
+// cell: { x, gate, cancelTrap } of the instance. tasks: the task table (null in some tests). shim: { ops, pins, log,
+// crossings }: `crossings` counts the calls of `js_await` and `js_call` (`{ await, call }`, PLAN.md 8c).
 export function makeBridge(cell, tasks, shim) {
   // The context of a program of task `t` (OP3): its roots, its ref table (RS1), its signal (OP8: aborted at the
   // end of the task). One for each task, made at its first program.
@@ -79,7 +80,10 @@ export function makeBridge(cell, tasks, shim) {
     }
   };
 
+  // The crossings of the instance (`stats.crossings` of the runner): one count for each import call.
+  const crossings = shim.crossings ?? { await: 0, call: 0 };
   async function js_await(id, ap, al, out) {
+    crossings.await++;
     const x = cell.x;
     const t = tasks?.get(id);
     // A task that was cancelled while it ran ends at its next wait.
@@ -116,6 +120,7 @@ export function makeBridge(cell, tasks, shim) {
 
   // No wait: a promise is status 2 (OP1). The task is not cancelled here: a cancel stops a task at a wait.
   function js_call(id, ap, al, out) {
+    crossings.call++;
     const x = cell.x;
     try {
       const c = contextOf(tasks?.get(id));

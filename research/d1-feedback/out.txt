@@ -1,0 +1,458 @@
+{
+ "pk": {
+  "err": {
+   "name": "Error",
+   "message": "D1_ERROR: UNIQUE constraint failed: t.id: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)",
+   "ctor": "Error",
+   "props": {
+    "message": "D1_ERROR: UNIQUE constraint failed: t.id: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)",
+    "cause": "Error: UNIQUE constraint failed: t.id: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)"
+   },
+   "cause": {
+    "name": "Error",
+    "message": "UNIQUE constraint failed: t.id: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)",
+    "props": [
+     "message"
+    ],
+    "extra": {}
+   }
+  }
+ },
+ "unique": {
+  "err": {
+   "name": "Error",
+   "message": "D1_ERROR: UNIQUE constraint failed: t.u: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_UNIQUE)",
+   "ctor": "Error",
+   "props": {
+    "message": "D1_ERROR: UNIQUE constraint failed: t.u: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_UNIQUE)",
+    "cause": "Error: UNIQUE constraint failed: t.u: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_UNIQUE)"
+   },
+   "cause": {
+    "name": "Error",
+    "message": "UNIQUE constraint failed: t.u: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_UNIQUE)",
+    "props": [
+     "message"
+    ],
+    "extra": {}
+   }
+  }
+ },
+ "notnull": {
+  "err": {
+   "name": "Error",
+   "message": "D1_ERROR: NOT NULL constraint failed: t.n: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_NOTNULL)",
+   "ctor": "Error",
+   "props": {
+    "message": "D1_ERROR: NOT NULL constraint failed: t.n: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_NOTNULL)",
+    "cause": "Error: NOT NULL constraint failed: t.n: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_NOTNULL)"
+   },
+   "cause": {
+    "name": "Error",
+    "message": "NOT NULL constraint failed: t.n: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_NOTNULL)",
+    "props": [
+     "message"
+    ],
+    "extra": {}
+   }
+  }
+ },
+ "check": {
+  "err": {
+   "name": "Error",
+   "message": "D1_ERROR: CHECK constraint failed: c >= 0: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_CHECK)",
+   "ctor": "Error",
+   "props": {
+    "message": "D1_ERROR: CHECK constraint failed: c >= 0: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_CHECK)",
+    "cause": "Error: CHECK constraint failed: c >= 0: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_CHECK)"
+   },
+   "cause": {
+    "name": "Error",
+    "message": "CHECK constraint failed: c >= 0: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_CHECK)",
+    "props": [
+     "message"
+    ],
+    "extra": {}
+   }
+  }
+ },
+ "fk": {
+  "err": {
+   "name": "Error",
+   "message": "D1_ERROR: FOREIGN KEY constraint failed: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_FOREIGNKEY)",
+   "ctor": "Error",
+   "props": {
+    "message": "D1_ERROR: FOREIGN KEY constraint failed: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_FOREIGNKEY)",
+    "cause": "Error: FOREIGN KEY constraint failed: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_FOREIGNKEY)"
+   },
+   "cause": {
+    "name": "Error",
+    "message": "FOREIGN KEY constraint failed: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_FOREIGNKEY)",
+    "props": [
+     "message"
+    ],
+    "extra": {}
+   }
+  }
+ },
+ "trigger_abort": {
+  "err": {
+   "name": "Error",
+   "message": "D1_ERROR: label-conflict: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)",
+   "ctor": "Error",
+   "props": {
+    "message": "D1_ERROR: label-conflict: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)",
+    "cause": "Error: label-conflict: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)"
+   },
+   "cause": {
+    "name": "Error",
+    "message": "label-conflict: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)",
+    "props": [
+     "message"
+    ],
+    "extra": {}
+   }
+  }
+ },
+ "trigger_fail": {
+  "err": {
+   "name": "Error",
+   "message": "D1_ERROR: sweep-incomplete: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)",
+   "ctor": "Error",
+   "props": {
+    "message": "D1_ERROR: sweep-incomplete: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)",
+    "cause": "Error: sweep-incomplete: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)"
+   },
+   "cause": {
+    "name": "Error",
+    "message": "sweep-incomplete: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)",
+    "props": [
+     "message"
+    ],
+    "extra": {}
+   }
+  }
+ },
+ "trigger_fake": {
+  "err": {
+   "name": "Error",
+   "message": "D1_ERROR: UNIQUE constraint failed: fake: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)",
+   "ctor": "Error",
+   "props": {
+    "message": "D1_ERROR: UNIQUE constraint failed: fake: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)",
+    "cause": "Error: UNIQUE constraint failed: fake: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)"
+   },
+   "cause": {
+    "name": "Error",
+    "message": "UNIQUE constraint failed: fake: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)",
+    "props": [
+     "message"
+    ],
+    "extra": {}
+   }
+  }
+ },
+ "strict": {
+  "err": {
+   "name": "Error",
+   "message": "D1_ERROR: cannot store TEXT value in INTEGER column s.v: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_DATATYPE)",
+   "ctor": "Error",
+   "props": {
+    "message": "D1_ERROR: cannot store TEXT value in INTEGER column s.v: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_DATATYPE)",
+    "cause": "Error: cannot store TEXT value in INTEGER column s.v: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_DATATYPE)"
+   },
+   "cause": {
+    "name": "Error",
+    "message": "cannot store TEXT value in INTEGER column s.v: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_DATATYPE)",
+    "props": [
+     "message"
+    ],
+    "extra": {}
+   }
+  }
+ },
+ "batch_pk": {
+  "err": {
+   "name": "Error",
+   "message": "D1_ERROR: UNIQUE constraint failed: t.id: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)",
+   "ctor": "Error",
+   "props": {
+    "message": "D1_ERROR: UNIQUE constraint failed: t.id: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)",
+    "cause": "Error: UNIQUE constraint failed: t.id: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)"
+   },
+   "cause": {
+    "name": "Error",
+    "message": "UNIQUE constraint failed: t.id: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)",
+    "props": [
+     "message"
+    ],
+    "extra": {}
+   }
+  }
+ },
+ "batch_trigger": {
+  "err": {
+   "name": "Error",
+   "message": "D1_ERROR: label-conflict: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)",
+   "ctor": "Error",
+   "props": {
+    "message": "D1_ERROR: label-conflict: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)",
+    "cause": "Error: label-conflict: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)"
+   },
+   "cause": {
+    "name": "Error",
+    "message": "label-conflict: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)",
+    "props": [
+     "message"
+    ],
+    "extra": {}
+   }
+  }
+ },
+ "exec_pk": {
+  "err": {
+   "name": "Error",
+   "message": "D1_EXEC_ERROR: Error in line 1: INSERT INTO t (id, u, n, c) VALUES (1, 'q', 1, 1): UNIQUE constraint failed: t.id: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)",
+   "ctor": "Error",
+   "props": {
+    "message": "D1_EXEC_ERROR: Error in line 1: INSERT INTO t (id, u, n, c) VALUES (1, 'q', 1, 1): UNIQUE constraint failed: t.id: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)",
+    "cause": "Error: Error in line 1: INSERT INTO t (id, u, n, c) VALUES (1, 'q', 1, 1): UNIQUE constraint failed: t.id: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)"
+   },
+   "cause": {
+    "name": "Error",
+    "message": "Error in line 1: INSERT INTO t (id, u, n, c) VALUES (1, 'q', 1, 1): UNIQUE constraint failed: t.id: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)",
+    "props": [
+     "message"
+    ],
+    "extra": {}
+   }
+  }
+ },
+ "syntax": {
+  "err": {
+   "name": "Error",
+   "message": "D1_ERROR: near \"SELEC\": syntax error at offset 0: SQLITE_ERROR",
+   "ctor": "Error",
+   "props": {
+    "message": "D1_ERROR: near \"SELEC\": syntax error at offset 0: SQLITE_ERROR",
+    "cause": "Error: near \"SELEC\": syntax error at offset 0: SQLITE_ERROR"
+   },
+   "cause": {
+    "name": "Error",
+    "message": "near \"SELEC\": syntax error at offset 0: SQLITE_ERROR",
+    "props": [
+     "message"
+    ],
+    "extra": {}
+   }
+  }
+ },
+ "bigint": {
+  "err": {
+   "name": "Error",
+   "message": "D1_TYPE_ERROR: Type 'bigint' not supported for value '1152921504606846976'",
+   "ctor": "Error",
+   "props": {
+    "message": "D1_TYPE_ERROR: Type 'bigint' not supported for value '1152921504606846976'",
+    "cause": "Error: Type 'bigint' not supported for value '1152921504606846976'"
+   },
+   "cause": {
+    "name": "Error",
+    "message": "Type 'bigint' not supported for value '1152921504606846976'",
+    "props": [
+     "message"
+    ],
+    "extra": {}
+   }
+  }
+ },
+ "ints": [
+  {
+   "v": "9007199254740991",
+   "type": "integer",
+   "plain": "9007199254740991",
+   "js": "number",
+   "safe": true,
+   "cast": "9007199254740991",
+   "lookup_of_plain": [
+    "9007199254740991"
+   ]
+  },
+  {
+   "v": "9007199254740992",
+   "type": "integer",
+   "plain": "9007199254740992",
+   "js": "number",
+   "safe": false,
+   "cast": "9007199254740992",
+   "lookup_of_plain": [
+    "9007199254740992"
+   ]
+  },
+  {
+   "v": "9007199254740993",
+   "type": "integer",
+   "plain": "9007199254740992",
+   "js": "number",
+   "safe": false,
+   "cast": "9007199254740993",
+   "lookup_of_plain": [
+    "9007199254740992"
+   ]
+  },
+  {
+   "v": "-9007199254740991",
+   "type": "integer",
+   "plain": "-9007199254740991",
+   "js": "number",
+   "safe": true,
+   "cast": "-9007199254740991",
+   "lookup_of_plain": [
+    "-9007199254740991"
+   ]
+  },
+  {
+   "v": "-9007199254740992",
+   "type": "integer",
+   "plain": "-9007199254740992",
+   "js": "number",
+   "safe": false,
+   "cast": "-9007199254740992",
+   "lookup_of_plain": [
+    "-9007199254740992"
+   ]
+  },
+  {
+   "v": "-9007199254740993",
+   "type": "integer",
+   "plain": "-9007199254740992",
+   "js": "number",
+   "safe": false,
+   "cast": "-9007199254740993",
+   "lookup_of_plain": [
+    "-9007199254740992"
+   ]
+  },
+  {
+   "v": "9223372036854775807",
+   "type": "integer",
+   "plain": "9223372036854776000",
+   "js": "number",
+   "safe": false,
+   "cast": "9223372036854775807",
+   "lookup_of_plain": []
+  },
+  {
+   "v": "-9223372036854775808",
+   "type": "integer",
+   "plain": "-9223372036854776000",
+   "js": "number",
+   "safe": false,
+   "cast": "-9223372036854775808",
+   "lookup_of_plain": [
+    "-9223372036854775808"
+   ]
+  },
+  {
+   "v": "-2687166099708853831",
+   "type": "integer",
+   "plain": "-2687166099708854000",
+   "js": "number",
+   "safe": false,
+   "cast": "-2687166099708853831",
+   "lookup_of_plain": []
+  }
+ ],
+ "text_param": {
+  "two_params": 0,
+  "typeof_param": "text",
+  "col_eq": 1,
+  "col_lt": 3,
+  "expr": 1,
+  "number_neg": {
+   "ok": "-9007199254740992"
+  },
+  "real_col": {
+   "r": 100000000000000000000,
+   "r2": 9007199254740992,
+   "i": 9007199254740992
+  }
+ }
+}
+--- DO
+{
+ "pk": {
+  "err": {
+   "name": "Error",
+   "message": "UNIQUE constraint failed: t.id: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)",
+   "ctor": "Error",
+   "props": {
+    "message": "UNIQUE constraint failed: t.id: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)"
+   },
+   "cause": null
+  }
+ },
+ "unique": {
+  "err": {
+   "name": "Error",
+   "message": "UNIQUE constraint failed: t.u: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_UNIQUE)",
+   "ctor": "Error",
+   "props": {
+    "message": "UNIQUE constraint failed: t.u: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_UNIQUE)"
+   },
+   "cause": null
+  }
+ },
+ "notnull": {
+  "err": {
+   "name": "Error",
+   "message": "NOT NULL constraint failed: t.n: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_NOTNULL)",
+   "ctor": "Error",
+   "props": {
+    "message": "NOT NULL constraint failed: t.n: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_NOTNULL)"
+   },
+   "cause": null
+  }
+ },
+ "check": {
+  "err": {
+   "name": "Error",
+   "message": "CHECK constraint failed: c >= 0: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_CHECK)",
+   "ctor": "Error",
+   "props": {
+    "message": "CHECK constraint failed: c >= 0: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_CHECK)"
+   },
+   "cause": null
+  }
+ },
+ "trigger": {
+  "err": {
+   "name": "Error",
+   "message": "label-conflict: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)",
+   "ctor": "Error",
+   "props": {
+    "message": "label-conflict: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)"
+   },
+   "cause": null
+  }
+ },
+ "bigread": {
+  "ok": [
+   "number",
+   "9007199254740992"
+  ]
+ },
+ "bigcast": {
+  "ok": "9007199254740993"
+ },
+ "bigint_bind": {
+  "err": {
+   "name": "TypeError",
+   "message": "Cannot convert a BigInt value to a number",
+   "ctor": "TypeError",
+   "props": {
+    "message": "Cannot convert a BigInt value to a number"
+   },
+   "cause": null
+  }
+ }
+}

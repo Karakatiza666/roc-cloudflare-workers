@@ -1,4 +1,7 @@
-app [event!] { pf: platform "../bench/platform/main.roc" }
+app [event!] {
+	pf: platform "../bench/platform/main.roc",
+	cbor: "https://github.com/Karakatiza666/roc-cbor/releases/download/0.1.0/9QL2dCyq7bcmvAEZfDFwi8kBvWLCZpEMS4WQYnZisezw.tar.zst",
+}
 
 ## The conformance app (PLAN.md 8c): one route for each function of a module and for its `Io` twin. `run.mjs` runs it
 ## in Miniflare and checks each answer. A route is `/<module>/<function>`. Each module has its routes in its own file
@@ -16,6 +19,9 @@ import ShimRoutes
 import WebCryptoRoutes
 import R2Routes
 import CacheRoutes
+import D1Routes
+import MemoRoutes
+import PinRoutes
 
 fetch! : Request => Try(Response, [])
 fetch! = |req| {
@@ -30,6 +36,9 @@ fetch! = |req| {
 		["webcrypto", .. as rest] => WebCryptoRoutes.route!(req, rest)
 		["r2", .. as rest] => R2Routes.route!(req, rest)
 		["cache", .. as rest] => CacheRoutes.route!(req, rest)
+		["d1", .. as rest] => D1Routes.route!(req, rest)
+		["memo", .. as rest] => MemoRoutes.route!(req, rest)
+		["pin", .. as rest] => PinRoutes.route!(req, rest)
 		_ => Response.from_text(404, "no route")
 	}
 	Ok(res)

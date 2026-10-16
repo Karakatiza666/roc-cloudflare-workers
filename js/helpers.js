@@ -1,6 +1,6 @@
 // The platform helpers: the root `pf` of a program (API.md 6.4). Each one is a loop or a branch that a program
 // cannot have (OP4). One `pf` object for each task: `spawn`, `writer`, `respond` and `passThrough` use its task.
-import { Packed, TooLarge } from './values.js';
+import { Packed, Limited, TooLarge } from './values.js';
 import { runAwait, errorOf } from './program.js';
 import { responseOf } from './events.js';
 
@@ -78,9 +78,16 @@ export function makeHelpers(t, c, shim, tasks) {
       return new Packed(value, maxBytes ?? Infinity);
     },
     // The array with the field `key` of each item as a `Packed` value. The other fields stay (D1 `batch`).
+    // `maxBytes`: the limit of all the packed fields together (MC11: the rows of a whole batch).
     packEach(array, key, maxBytes) {
       if (!Array.isArray(array)) throw new TypeError('packEach: the first argument must be an array');
-      return array.map((item) => ({ ...item, [key]: new Packed(item?.[key], maxBytes ?? Infinity) }));
+      const budget = { left: maxBytes ?? Infinity };
+      return array.map((item) => ({ ...item, [key]: new Packed(item?.[key], Infinity, budget) }));
+    },
+    // The value as a `Js` tree (J1 to J7), with a limit of its CBOR size: more is a TooLarge, before any copy into
+    // wasm (MC11). `D1.rows!`: rows with no types do not go through `pack`.
+    limit(value, maxBytes) {
+      return new Limited(value, maxBytes ?? Infinity);
     },
     // The item whose `id` is `id`, else undefined (OP7). `Queue.Message.ack!` finds its message with it.
     findById(array, id) {

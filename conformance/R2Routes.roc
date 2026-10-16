@@ -5,7 +5,6 @@ import pf.Response
 import pf.R2
 import pf.Io
 import pf.Body
-import pf.Js
 import Q
 
 bucket = R2.binding("BUCKET")
@@ -229,50 +228,21 @@ list_options = |req| {
 # ---- A stream that the app makes ----
 
 ## A stream that the app makes: R2 needs a known length. With no `len`, the put of a `Body.writer!` stream fails at
-## once. With `len`, `length_bytes` pipes the stream through a `FixedLengthStream`: the same stream (`pf.writer`), and a
-## feed in the other branch of `Io.both!` (the writer waits until the put reads, so it cannot run before the put).
+## once. With `len`, `length_bytes` pipes the stream through a `FixedLengthStream`. The writes and the close come
+## before the put, with the public API: `Io.start!` of the `write` and `write_text` twins queues the chunks (a write
+## waits until the put reads it), then `close!` queues the end, then `put_with!` reads all of it.
 put_stream! : Str, Str => Response
-put_stream! = |key, len| {
-	if len == "" {
-		match Body.writer!({}) {
-			Err(BodyErr(t)) => Response.from_text(200, "writer ${t.name}")
-			Ok({ body, writer: _ }) => out(bucket.put_with!(key, body, {}), show_meta)
+put_stream! = |key, len| match Body.writer!({}) {
+	Err(BodyErr(t)) => Response.from_text(200, "writer ${t.name}")
+	Ok({ body, writer }) =>
+		if len == "" {
+			out(bucket.put_with!(key, body, {}), show_meta)
+		} else {
+			_ = Io.start!(writer.write("hello ".to_utf8()))
+			_ = Io.start!(writer.write_text("world"))
+			writer.close!()
+			out(bucket.put_with!(key, body, { length_bytes: U64.from_str(len) ?? 0 }), show_meta)
 		}
-	} else {
-		match Io.call!([Call(Root("pf"), "writer", [])]) {
-			Ok(Obj(fields)) => match (field(fields, "readable"), field(fields, "writer")) {
-				(Ref(readable), Ref(w)) => {
-					# The feed waits 1.5 s at its end, so the put (which ends at `close`) wins the race. A put that fails at
-					# once also wins it: the writer waits for a reader that never comes, so a `Par` would hang.
-					feed = Io.new(
-						[
-							Call(Ref(w), "write", [Lit(Bytes("hello ".to_utf8()))]),
-							Call(Ref(w), "write", [Lit(Bytes("world".to_utf8()))]),
-							Call(Root("pf"), "close", [Lit(Ref(w))]),
-							Get(Root("global"), "scheduler"),
-							Call(Slot(3), "wait", [Lit(Int(1500))]),
-						],
-						|_| Ok(Fed),
-					)
-					put = bucket.put_with(key, Stream(readable), { length_bytes: U64.from_str(len) ?? 0 }).map(|meta| Put(meta))
-					got = Io.race!([put, feed]).result
-					match got {
-						Ok(Put(meta)) => Response.from_text(200, "Ok ${show_meta(meta)}")
-						Ok(Fed) => Response.from_text(200, "the feed ended first")
-						Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
-					}
-				}
-				_ => Response.from_text(500, "pf.writer gave another shape")
-			}
-			_ => Response.from_text(500, "pf.writer failed")
-		}
-	}
-}
-
-field : List((Str, Js)), Str -> Js
-field = |fields, name| match fields.find_first(|(k, _)| k == name) {
-	Ok((_, v)) => v
-	Err(_) => Undefined
 }
 
 # ---- Multipart ----

@@ -1,0 +1,253 @@
+--- /home/george/dev/Karakatiza666/roc-cbor/src/Cbor.roc	2026-10-16 20:31:09.011859843 +0400
++++ cbor-copy/src/Cbor.roc	2026-10-16 20:38:15.548457472 +0400
+@@ -19,7 +19,14 @@
+ ## (F32: f32) when written. `null` and `undefined` both read as `Err(Null)` of a `Try(a, [Null])`.
+ ## A byte string reads as a `List(U8)`. A `List(U8)` writes as an array (the protocol has no bytes hook).
+ ## `Cbor.Bytes` reads and writes a byte string (major type 2).
+-Cbor :: [Default, CamelCase].{
++Cbor :: { fields : [Snake, Camel], int_from_text : Bool }.{
++
++	## The options of `parse_with`.
++	Options : { fields : [Snake, Camel], int_from_text : Bool }
++
++	## One step of a path: an array index or a map key.
++	Step : [Index(U64), Key(Str)]
++
+ 
+ 	## The read position of a parse. The derived parsers pass it from step to step. Its fields are hidden.
+ 	State :: { bytes : List(U8), pos : U64, raw : U64 }
+@@ -83,7 +90,7 @@
+ 	parse : List(U8) -> Try(a, [InvalidCbor(U64), ..errs]) where [a.Parseable([InvalidCbor(U64), ..errs])]
+ 	parse = |bytes| {
+ 		Shape : a
+-		parse_shape = Shape.parser_for(Cbor.Default)
++		parse_shape = Shape.parser_for(Cbor.{ fields: Snake, int_from_text: Bool.False })
+ 		parsed = parse_shape(Cbor.State.{ bytes, pos: 0, raw: 0 })?
+ 		if parsed.rest.pos == bytes.len() Ok(parsed.value) else Err(InvalidCbor(parsed.rest.pos))
+ 	}
+@@ -92,16 +99,32 @@
+ 	parse_camel : List(U8) -> Try(a, [InvalidCbor(U64), ..errs]) where [a.Parseable([InvalidCbor(U64), ..errs])]
+ 	parse_camel = |bytes| {
+ 		Shape : a
+-		parse_shape = Shape.parser_for(Cbor.CamelCase)
++		parse_shape = Shape.parser_for(Cbor.{ fields: Camel, int_from_text: Bool.False })
+ 		parsed = parse_shape(Cbor.State.{ bytes, pos: 0, raw: 0 })?
+ 		if parsed.rest.pos == bytes.len() Ok(parsed.value) else Err(InvalidCbor(parsed.rest.pos))
+ 	}
+ 
++	## Like `parse`, with options. `int_from_text`: an integer type also reads text that is a
++	## canonical decimal integer in its range.
++	parse_with : List(U8), Cbor.Options -> Try(a, [InvalidCbor(U64), ..errs]) where [a.Parseable([InvalidCbor(U64), ..errs])]
++	parse_with = |bytes, options| {
++		Shape : a
++		parse_shape = Shape.parser_for(Cbor.{ fields: options.fields, int_from_text: options.int_from_text })
++		parsed = parse_shape(Cbor.State.{ bytes, pos: 0, raw: 0 })?
++		if parsed.rest.pos == bytes.len() Ok(parsed.value) else Err(InvalidCbor(parsed.rest.pos))
++	}
++
++	## The path from the root to the item that starts at `pos`: the array indexes and the map keys.
++	## Use it with the position of `InvalidCbor(pos)` to name the field of an error.
++	## `Err(NotFound)` when no item starts at `pos`, or the bytes are not valid before it.
++	path_at : List(U8), U64 -> Try(List(Cbor.Step), [NotFound])
++	path_at = |bytes, pos| path_in(Cbor.State.{ bytes, pos: 0, raw: 0 }, pos, [])
++
+ 	## Writes `value` as one CBOR item. It cannot fail.
+ 	encode : a -> List(U8) where [a.Encodable([])]
+ 	encode = |value| {
+ 		Shape : a
+-		encode_shape = Shape.encoder_for(Cbor.Default)
++		encode_shape = Shape.encoder_for(Cbor.{ fields: Snake, int_from_text: Bool.False })
+ 		match encode_shape(value, List.with_capacity(256)) {
+ 			Ok(out) => out
+ 		}
+@@ -111,8 +134,8 @@
+ 	rename_field : Cbor, Str -> Str
+ 	rename_field = |encoding, name|
+ 		match encoding {
+-			Default => name
+-			CamelCase => Json.snake_to_camel(name)
++			{ fields: Snake, int_from_text: _ } => name
++			{ fields: Camel, int_from_text: _ } => Json.snake_to_camel(name)
+ 		}
+ 
+ 	## Codec protocol: the error for a value that does not fit its type.
+@@ -154,63 +177,63 @@
+ 
+ 	## Codec protocol: the derived `parser_for` of a type calls it. An app calls `Cbor.parse`.
+ 	parse_u8 : Cbor, Cbor.State -> Try({ value : U8, rest : Cbor.State }, [InvalidCbor(U64)])
+-	parse_u8 = |_, state|
++	parse_u8 = |cbor, state|
+ 		if state.raw > 0 {
+ 			# An item of a byte string read as a List(U8).
+ 			b = state.bytes.get(state.pos) ? |_| InvalidCbor(state.pos)
+ 			Ok({ value: b, rest: Cbor.State.{ bytes: state.bytes, pos: state.pos + 1, raw: state.raw - 1 } })
+ 		} else {
+-			n = int(state)?
++			n = int(cbor, state)?
+ 			v = n.value.to_u8_try() ? |_| InvalidCbor(state.pos)
+ 			Ok({ value: v, rest: n.rest })
+ 		}
+ 
+ 	## Codec protocol: the derived `parser_for` of a type calls it. An app calls `Cbor.parse`.
+ 	parse_u16 : Cbor, Cbor.State -> Try({ value : U16, rest : Cbor.State }, [InvalidCbor(U64)])
+-	parse_u16 = |_, state| {
+-		n = int(state)?
++	parse_u16 = |cbor, state| {
++		n = int(cbor, state)?
+ 		Ok({ value: n.value.to_u16_try() ? |_| InvalidCbor(state.pos), rest: n.rest })
+ 	}
+ 
+ 	## Codec protocol: the derived `parser_for` of a type calls it. An app calls `Cbor.parse`.
+ 	parse_u32 : Cbor, Cbor.State -> Try({ value : U32, rest : Cbor.State }, [InvalidCbor(U64)])
+-	parse_u32 = |_, state| {
+-		n = int(state)?
++	parse_u32 = |cbor, state| {
++		n = int(cbor, state)?
+ 		Ok({ value: n.value.to_u32_try() ? |_| InvalidCbor(state.pos), rest: n.rest })
+ 	}
+ 
+ 	## Codec protocol: the derived `parser_for` of a type calls it. An app calls `Cbor.parse`.
+ 	parse_u64 : Cbor, Cbor.State -> Try({ value : U64, rest : Cbor.State }, [InvalidCbor(U64)])
+-	parse_u64 = |_, state| {
+-		n = int(state)?
++	parse_u64 = |cbor, state| {
++		n = int(cbor, state)?
+ 		Ok({ value: n.value.to_u64_try() ? |_| InvalidCbor(state.pos), rest: n.rest })
+ 	}
+ 
+ 	## Codec protocol: the derived `parser_for` of a type calls it. An app calls `Cbor.parse`.
+ 	parse_i8 : Cbor, Cbor.State -> Try({ value : I8, rest : Cbor.State }, [InvalidCbor(U64)])
+-	parse_i8 = |_, state| {
+-		n = int(state)?
++	parse_i8 = |cbor, state| {
++		n = int(cbor, state)?
+ 		Ok({ value: n.value.to_i8_try() ? |_| InvalidCbor(state.pos), rest: n.rest })
+ 	}
+ 
+ 	## Codec protocol: the derived `parser_for` of a type calls it. An app calls `Cbor.parse`.
+ 	parse_i16 : Cbor, Cbor.State -> Try({ value : I16, rest : Cbor.State }, [InvalidCbor(U64)])
+-	parse_i16 = |_, state| {
+-		n = int(state)?
++	parse_i16 = |cbor, state| {
++		n = int(cbor, state)?
+ 		Ok({ value: n.value.to_i16_try() ? |_| InvalidCbor(state.pos), rest: n.rest })
+ 	}
+ 
+ 	## Codec protocol: the derived `parser_for` of a type calls it. An app calls `Cbor.parse`.
+ 	parse_i32 : Cbor, Cbor.State -> Try({ value : I32, rest : Cbor.State }, [InvalidCbor(U64)])
+-	parse_i32 = |_, state| {
+-		n = int(state)?
++	parse_i32 = |cbor, state| {
++		n = int(cbor, state)?
+ 		Ok({ value: n.value.to_i32_try() ? |_| InvalidCbor(state.pos), rest: n.rest })
+ 	}
+ 
+ 	## Codec protocol: the derived `parser_for` of a type calls it. An app calls `Cbor.parse`.
+ 	parse_i64 : Cbor, Cbor.State -> Try({ value : I64, rest : Cbor.State }, [InvalidCbor(U64)])
+-	parse_i64 = |_, state| {
+-		n = int(state)?
++	parse_i64 = |cbor, state| {
++		n = int(cbor, state)?
+ 		Ok({ value: n.value.to_i64_try() ? |_| InvalidCbor(state.pos), rest: n.rest })
+ 	}
+ 
+@@ -533,23 +556,57 @@
+ 	Ok({ value, rest: at(state, h.next + h.arg) })
+ }
+ 
+-## An integer of major type 0 or 1, as I128 so that both u64 and -2^64 fit. A float that is
+-## an exact integer is also read: a JS peer writes 2^53 and more as a float when it is a Number.
+-int : Cbor.State -> Try({ value : I128, rest : Cbor.State }, [InvalidCbor(U64)])
+-int = |state| {
++## An integer of major type 0 or 1, as I128 so that both u64 and -2^64 fit. A float with no
++## fraction is also read when its size is 2^53 - 1 or less: each such float is one integer.
++## A larger float can be a rounded value of another integer, so it is an error.
++## With `int_from_text`, text that is a canonical decimal integer is also read.
++int : Cbor, Cbor.State -> Try({ value : I128, rest : Cbor.State }, [InvalidCbor(U64)])
++int = |cbor, state| {
+ 	h = head(state)?
+ 	match h.major {
+ 		0 => Ok({ value: h.arg.to_i128(), rest: at(state, h.next) })
+ 		1 => Ok({ value: -1 - h.arg.to_i128(), rest: at(state, h.next) })
++		3 => {
++			match cbor {
++				{ fields: _, int_from_text: Bool.True } => {
++					t = text(state)?
++					i = decimal(t.value) ? |_| InvalidCbor(state.pos)
++					Ok({ value: i, rest: t.rest })
++				}
++				_ => Err(InvalidCbor(state.pos))
++			}
++		}
+ 		7 => {
+ 			f = float(state)?
+ 			i = f.value.to_i128_try() ? |_| InvalidCbor(state.pos)
+-			if i.to_f64() == f.value Ok({ value: i, rest: f.rest }) else Err(InvalidCbor(state.pos))
++			safe = 9007199254740991
++			if i.to_f64() == f.value and i <= safe and i >= -safe Ok({ value: i, rest: f.rest }) else Err(InvalidCbor(state.pos))
+ 		}
+ 		_ => Err(InvalidCbor(state.pos))
+ 	}
+ }
+ 
++## A canonical decimal integer: `0`, or an optional `-` and a digit 1 to 9, then digits. At most 20 digits.
++decimal : Str -> Try(I128, [NotDecimal])
++decimal = |s| {
++	bytes = s.to_utf8()
++	(neg, digits) = match bytes {
++		['-', .. as rest] => (Bool.True, rest)
++		_ => (Bool.False, bytes)
++	}
++	ok = match digits {
++		['0'] => Bool.not(neg)
++		[first, ..] => first >= '1' and first <= '9' and digits.len() <= 20 and digits.all(|d| d >= '0' and d <= '9')
++		[] => Bool.False
++	}
++	if ok {
++		n = digits.fold(0.I128, |acc, d| acc * 10 + (d - '0').to_i128())
++		Ok(if neg -n else n)
++	} else {
++		Err(NotDecimal)
++	}
++}
++
+ float : Cbor.State -> Try({ value : F64, rest : Cbor.State }, [InvalidCbor(U64)])
+ float = |state| {
+ 	h = head(state)?
+@@ -627,6 +684,36 @@
+ 	Ok($s)
+ }
+ 
++path_in : Cbor.State, U64, List(Cbor.Step) -> Try(List(Cbor.Step), [NotFound])
++path_in = |state, pos, path| {
++	if state.pos == pos {
++		return Ok(path)
++	}
++	h = head(state) ? |_| NotFound
++	if h.major != 4 and h.major != 5 {
++		return Err(NotFound)
++	}
++	var $s = at(state, h.next)
++	var $i = 0.U64
++	while $i < h.arg {
++		key =
++			if h.major == 5 {
++				k = text($s) ? |_| NotFound
++				$s = k.rest
++				Key(k.value)
++			} else {
++				Index($i)
++			}
++		end = skip($s) ? |_| NotFound
++		if pos >= $s.pos and pos < end.pos {
++			return path_in($s, pos, path.append(key))
++		}
++		$s = end
++		$i = $i + 1
++	}
++	Err(NotFound)
++}
++
+ put_head : List(U8), U8, U64 -> List(U8)
+ put_head = |out, major, n| {
+ 	m = major.shl_wrap(5)

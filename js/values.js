@@ -30,8 +30,15 @@ export class Refs {
 
 // Marks a value to be written as `Packed` (tag 24 and the CBOR of the value as a byte string), inside a tree.
 // For a value at the top, use `pack`. maxBytes: the limit of the content (TooLarge).
+// budget: an object `{ left }` that some Packed values share (`pf.packEach`): the limit of all of them together.
 export class Packed {
-  constructor(value, maxBytes = Infinity) { this.value = value; this.maxBytes = maxBytes; }
+  constructor(value, maxBytes = Infinity, budget = null) { this.value = value; this.maxBytes = maxBytes; this.budget = budget; }
+}
+
+// Marks a value to be written as a `Js` tree (J1 to J7) with a limit of its CBOR size: more is a TooLarge
+// (`pf.limit`, `D1.rows!`, MC11).
+export class Limited {
+  constructor(value, maxBytes) { this.value = value; this.maxBytes = maxBytes; }
 }
 
 // Marks a value to be written as a `Ref`, also a plain value or a promise (the op `Keep`, API.md 6.2).
@@ -97,7 +104,21 @@ function put(w, v, refs, level, typed) {
   if (v instanceof Kept) return ref(w, v.value, refs, typed);
   if (v instanceof Packed) {
     if (typed) throw new TypeError('Packed data cannot hold a Packed value');
-    return packed(w, v.value, refs, level, v.maxBytes);
+    if (!v.budget) return packed(w, v.value, refs, level, v.maxBytes);
+    const before = w.n;
+    packed(w, v.value, refs, level, Math.min(v.maxBytes, v.budget.left));
+    v.budget.left -= w.n - before;
+    return;
+  }
+  if (v instanceof Limited) {
+    const saved = w.limit;
+    w.limit = Math.min(saved, w.n + v.maxBytes);
+    try {
+      put(w, v.value, refs, level, typed);
+    } finally {
+      w.limit = saved;
+    }
+    return;
   }
   return ref(w, v, refs, typed);
 }

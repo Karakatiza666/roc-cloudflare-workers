@@ -1,11 +1,14 @@
-app [event!] { pf: platform "platform/main.roc" }
+app [event!] {
+	pf: platform "platform/main.roc",
+	cbor: "https://github.com/Karakatiza666/roc-cbor/releases/download/0.1.0/9QL2dCyq7bcmvAEZfDFwi8kBvWLCZpEMS4WQYnZisezw.tar.zst",
+}
 
 import pf.Worker
 import pf.Response
 import pf.Js
 import pf.Io
-# A copy of research/api-probe/cbor/Cbor.roc, until the `roc-cbor` package has a release URL (API.md 5.2).
-import Cbor
+# The `roc-cbor` package, the same release as the platform (API.md 5.2).
+import cbor.Cbor
 
 ## The PLAN.md 8a tests of the bridge (`bench/bridge-test.mjs`). Request: "<case> <args>". Body: the result as text.
 

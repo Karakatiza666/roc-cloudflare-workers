@@ -102,6 +102,35 @@ Io(a, e) := { ops : List(Js.Op), waits : Bool, read : Try(Js, Io.Thrown) -> Try(
 		Ok(_) => crash "Io.start!: the result is not a ref"
 		Err(t) => crash "Io.start!: ${t.name}: ${t.message}"
 	}
+
+	## The pin table of the isolate (API.md RS2): `Js.pin!`, `pinned!` and `unpin!` of API.md, here for the reason of
+	## `await!` and `call!` (`Host` imports `Js`, no import cycles). Each is one `call!`, no wait.
+	## `pin!` keeps the value for later tasks of this isolate by name: each `Ref` in it keeps its object. A full table
+	## (shim option `pinLimit`) is `PinErr`.
+	pin! : Str, Js, { max_age_ms : U64 } => Try({}, [PinErr(Io.Thrown)])
+	pin! = |name, value, opts| {
+		age = opts.max_age_ms.to_i64_try() ?? I64.highest
+		match call!([Call(Root("pf"), "pin", [Lit(Text(name)), Lit(value), Lit(Int(age))])]) {
+			Ok(_) => Ok({})
+			Err(t) => Err(PinErr(t))
+		}
+	}
+
+	## The value that `pin!` kept (J1 to J7: each object gets a new ref of this task). `NotPinned`: no entry, or an
+	## entry past its age.
+	pinned! : Str => Try(Js, [NotPinned])
+	pinned! = |name| match call!([Call(Root("pf"), "pinned", [Lit(Text(name))])]) {
+		Ok(Undefined) => Err(NotPinned)
+		Ok(v) => Ok(v)
+		Err(t) => crash "Io.pinned!: ${t.name}: ${t.message}"
+	}
+
+	## Remove the entry. No entry: no change.
+	unpin! : Str => {}
+	unpin! = |name| match call!([Call(Root("pf"), "unpin", [Lit(Text(name))])]) {
+		Ok(_) => {}
+		Err(t) => crash "Io.unpin!: ${t.name}: ${t.message}"
+	}
 }
 
 ## Status 0 to 3 of a hosted call (API.md 4). Status 3 is a platform bug: crash.

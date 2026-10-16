@@ -121,19 +121,29 @@ Body := [Empty, Text(Str), Bytes(List(U8)), Stream(Js.Ref)].{
 	## The writable side of a `writer!` stream. It holds a ref, so it is good for one task (MC13).
 	Writer :: { writer : Js.Ref }.{
 
-		## One wait: until the stream takes the chunk (the reader asked for it). After `close!`: `BodyErr`.
-		write! : Body.Writer, List(U8) => Try({}, [BodyErr(Io.Thrown)])
-		write! = |w, bytes| {
+		## One wait: until the stream takes the chunk (the reader asked for it, MC3). After `close!`: `BodyErr`.
+		## The twin gives an `Io`, so a write can run next to the read of the stream (`Io.race!`, `Io.start!`).
+		write : Body.Writer, List(U8) -> Io({}, [BodyErr(Io.Thrown)])
+		write = |w, bytes| {
 			Body.Writer.{ writer } = w
-			match Io.await!([Call(Ref(writer), "write", [Lit(Bytes(bytes))])]) {
-				Ok(_) => Ok({})
-				Err(t) => Err(BodyErr(t))
-			}
+			Io.new(
+				[Call(Ref(writer), "write", [Lit(Bytes(bytes))])],
+				|r| match r {
+					Ok(_) => Ok({})
+					Err(t) => Err(BodyErr(t))
+				},
+			)
 		}
 
+		write! : Body.Writer, List(U8) => Try({}, [BodyErr(Io.Thrown)])
+		write! = |w, bytes| Io.run!(write(w, bytes))
+
 		## The text as UTF-8 (a stream of a response takes bytes only).
+		write_text : Body.Writer, Str -> Io({}, [BodyErr(Io.Thrown)])
+		write_text = |w, text| write(w, text.to_utf8())
+
 		write_text! : Body.Writer, Str => Try({}, [BodyErr(Io.Thrown)])
-		write_text! = |w, text| write!(w, text.to_utf8())
+		write_text! = |w, text| Io.run!(write_text(w, text))
 
 		## No wait. The body is complete now (API.md 10.2): the 30 s limit after `respond!` starts.
 		close! : Body.Writer => {}

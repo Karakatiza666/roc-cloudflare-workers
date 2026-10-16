@@ -22,7 +22,7 @@ In the signatures, `a.Encodable` stands for `a.Cbor.Encodable([])` and `a.Parsea
 | MC6 | When all values of a binding have one type, the declaration gives the type and the format. The same constant writes and reads. | `jobs : Queue(Job)`, `jobs = Queue.json("JOBS")` |
 | MC7 | When the type changes from call to call (a D1 query), the annotation at the call gives it. | `pkg : Pkg`, `pkg = db.first!(sql, params)?` |
 | MC8 | There is no null. A missing value is `Err(NotFound)`, so `?` returns it and `??` gives a default. | `theme.get!() ?? default_prefs` |
-| MC9 | Errors are open tag unions, so the errors of two modules join (`?`, `Io.both!`). A throw in JS is `<Module>Err(Thrown)`. A value that does not fit its type is `BadData(Str)`. A known result has its own tag. A known throw has its own tag too: the module maps it by the `name` and `message` of the JS error (table "Named error tags" below). Each other throw stays `<Module>Err(Thrown)`. | `D1Err(t)`, `Constraint(msg)`, `Network(t)`, `PreconditionFailed`, `RateLimited`, `TooLarge`, `BadSignature` |
+| MC9 | Errors are open tag unions, so the errors of two modules join (`?`, `Io.both!`). A throw in JS is `<Module>Err(Thrown)`. A value that does not fit its type is `BadData(Str)`. A known result has its own tag. A known throw has its own tag too: the module maps it by the `name` and `message` of the JS error (table "Named error tags" below). Each other throw stays `<Module>Err(Thrown)`. | `D1Err(t)`, `Constraint({ kind: Unique, message })`, `Network(t)`, `PreconditionFailed`, `RateLimited`, `TooLarge`, `BadSignature` |
 | MC10 | A time or a duration is a `U64` of milliseconds, in a field whose name ends in `_ms` (a module converts to seconds with `Time.seconds_up`, rounded up). A size, an offset or a length of data is in bytes, in a field whose name ends in `_bytes`. A length that the Workers API gives in bits (WebCrypto) stays in bits, in a field whose name ends in `_bits`. The module converts (KV `expirationTtl` is in seconds). Exceptions: table "Exceptions to MC10 and MC12" below. | `{ ttl_ms: 60_000 }`, `size_bytes`, `length_bits` |
 | MC11 | A read into wasm memory has a limit, because wasm memory never gets smaller (`PLAN.md` problem 4). The default limit is 1 MiB (`Body.default_max`). A larger read names its limit. Large data stays a `Body` stream in JS. Each typed read has the default limit: a body, `Kv.get!`, `D1.all!`, `first!`, `rows!` and `batch!`, `Object.Self.sql!` and `sql_rows!`. JS checks the size before the copy, and a read above the limit is `Err(TooLarge)`. The `_with` form takes `max_bytes`. A queue batch has the limit of the Queues config (6). A tail batch drops log lines past the limit (3). | `req.json!()`, `req.bytes_with!({ max_bytes: 30_000_000 })`, `db.all_with!(sql, params, { max_bytes: 8_000_000 })` |
 | MC12 | Names are the Workers names in snake_case, so the Workers docs apply. A name changes only for a Roc reason. Each name that changes is in the table "Exceptions to MC10 and MC12" below, with its reason. | `kv.get_with_metadata!` for `getWithMetadata`, `queue.send_batch!` for `sendBatch`, `cache.get!` for `match` (a keyword) |
@@ -32,7 +32,7 @@ Limits of MC5:
 
 | Item | Rule |
 | --- | --- |
-| Large integers | CBOR keeps 64-bit integers exact in both directions. JS gets an integer above 2^53 as a `BigInt`. Two places lose them: D1 gives every number as an f64 (use `CAST(x AS TEXT)` in SQL), and `Queue.json` cannot send a `BigInt` (`JSON.stringify` throws, use `Queue.v8`). |
+| Large integers | CBOR keeps 64-bit integers exact in both directions. JS gets an integer above 2^53 as a `BigInt`. Two places lose them: D1 gives every number as an f64 (use `CAST(x AS TEXT)` in SQL: a typed read gives `BadData` for a rounded value, and reads the text into an integer field, 5.1), and `Queue.json` cannot send a `BigInt` (`JSON.stringify` throws, use `Queue.v8`). |
 | Cost | 200 D1 rows into typed records, native (`research/api-probe/cbor/`): JSON 265 to 363 µs (JS 23, Roc `Json.parse` 242 to 340), CBOR 216 µs (JS 79, Roc `Cbor.parse` 137). About 70 µs of the 137 is the record matching of the derived parser. `db.rows!` (no types, a `Js` tree from the Zig host) costs about 82 µs, but it is for columns that are not known at compile time, not for speed (5.1). |
 | Field names | A record field is a column name or a JSON key. Roc fields are snake_case, so SQL columns are too. `Cbor.parse_camel` reads camelCase keys, for a JS peer. |
 | Bytes | A `List(U8)` field reads a CBOR byte string or an array. It writes an array of numbers, because the derived encoder has no hook for bytes. So JS gets an `Array`, not a `Uint8Array`. A field that must reach JS as bytes (a `Uint8Array` for a JS callee, a binary queue message) has the type `Cbor.Bytes` (`Cbor.Bytes := List(U8)`). Its hand-written `parser_for` and `encoder_for` use `parse_bytes` and `encode_bytes` of the `Cbor` format: CBOR major type 2 in both directions (`research/api-probe/cbor/Cbor.roc`). `Cbor.Bytes.(list)` makes one, and `bytes.to_list()` gives the list. It reads only a byte string, and it has no `Json` codec. |
@@ -59,7 +59,7 @@ Named error tags (MC9). The read function of the `Io` of the module maps the `Er
 
 | Module | JS throw | Tag | Source of the text |
 | --- | --- | --- | --- |
-| `D1`, `D1.Session`, `Object.Self` SQL | The message has `constraint failed` | `Constraint(message)` | SQLite text after `D1_ERROR: ` (workerd source, `d1-api.ts`). Local D1 gives `UNIQUE constraint failed: t.k: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)` (wrangler 4.151.0). |
+| `D1`, `D1.Session`, `Object.Self` SQL | The message ends in `: SQLITE_CONSTRAINT`, or in `: SQLITE_CONSTRAINT (extended: <code>)` | `Constraint({ kind, message })`, with `kind` from the extended code (5.1, table "Constraint kinds") | SQLite text after `D1_ERROR: ` (workerd source, `d1-api.ts`). The error has no code field: its own properties are `message` and `cause` (an `Error` with the text after `D1_ERROR: `). Local D1 gives `UNIQUE constraint failed: t.k: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)` (wrangler 4.151.0), and for a trigger `RAISE(ABORT, 'label-conflict')` it gives `label-conflict: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)` (Miniflare 5.20261012.0-beta, 2026-10-16). |
 | `Http` | `name` is `TypeError` | `HttpErr(Thrown)`: the request is bad (URL, scheme, header) | workerd source, `api/http.c++`, `api/headers.c++` |
 | `Http` | Any other throw of `fetch` | `Network(Thrown)`: no response | workerd source, `jsg/util.c++` ("Network connection lost."). The Cloudflare docs name only this text. Local (Miniflare 5, workerd 2026-10-12, `PLAN.md` 8d): a closed port is `Error: Network connection lost.`, a host that does not exist is `Error: internal error; reference = <id>`, `timeout_ms` is `TimeoutError: The operation was aborted due to timeout`, and `"not a url"` is `TypeError: Invalid URL: not a url` (`HttpErr`). |
 | Each module | Any other throw | `<Module>Err(Thrown)` | |
@@ -283,7 +283,9 @@ Body := [Empty, Text(Str), Bytes(List(U8)), Stream(Js.Ref)].{
 	## The writable side of a writer! stream. It holds a ref, so it is good for one task (MC13).
 	Writer :: { ... }.{
 		write! : Body.Writer, List(U8) => Try({}, [BodyErr(Thrown)])   # one wait: until the stream takes the chunk
+		write : Body.Writer, List(U8) -> Io({}, [BodyErr(Thrown)])      # the twin (MC3), built in PLAN.md 8c
 		write_text! : Body.Writer, Str => Try({}, [BodyErr(Thrown)])   # the text as UTF-8
+		write_text : Body.Writer, Str -> Io({}, [BodyErr(Thrown)])
 		close! : Body.Writer => {}                                     # no wait: the body is complete (API.md 10.2)
 	}
 }
@@ -320,14 +322,14 @@ As built in `PLAN.md` 8b (first half and second half) (`platform/Request.roc`, `
 | `chunk!` | The next chunk as JS gives it, cut to `default_max` (the rest comes at the next call). `Empty` is `End`, and `Text` and `Bytes` are one `Chunk` with no crossing. `chunk!` and a later `bytes!` of the same stream share one reader: `bytes!` gives the rest. | MC11: each read into wasm has a limit. The table above gives no limit for `chunk!`, and a JS chunk can be large (a stream made from one big array). |
 | A second read | A stream that a read took to its end, or that `tee!` or another reader holds, gives `BodyErr` (`TypeError`) | RS3 |
 | `sha256!` | A stream: `crypto.DigestStream` (one wait, no byte in wasm). Where it is missing (Node tests), the chunks in JS and `crypto.subtle.digest`. `Empty`, `Text`, `Bytes`: the builtin `Crypto.SHA256` in wasm, no crossing. | No crossing for bytes that are in wasm already |
-| `writer!` | `pf.writer()` gives the readable side and the writer (`getWriter()`) of a `TransformStream`. `Body.Writer :: { writer : Js.Ref }`. `write!` waits on `writer.write(chunk)`: it settles when the reader takes the chunk, so a `write!` before `respond!` waits for the response. `write_text!` sends UTF-8 bytes. `close!` is `pf.close` (no wait). | A response stream of Workers takes bytes only |
+| `writer!` | `pf.writer()` gives the readable side and the writer (`getWriter()`) of a `TransformStream`. `Body.Writer :: { writer : Js.Ref }`. `write!` waits on `writer.write(chunk)`: it settles when the reader takes the chunk, so a `write!` before `respond!` waits for the response. `write_text!` sends UTF-8 bytes. `close!` is `pf.close` (no wait). The twins `write` and `write_text` give an `Io` (MC3, `PLAN.md` 8c RO1). A `write` is queued in JS at once and settles when the reader takes the chunk, so `Io.start!` of writes, then `close!`, then a read in the same task (`R2.put_with!` with `length_bytes`) feeds a stream with the public API. A branch of `Io.both!` or `Io.race!` with a `write` cannot also `close!`: a branch has no sequence of two `Io` values. | A response stream of Workers takes bytes only |
 | An open writer at the end of the task | Closed when the task returned, aborted after a trap or a cancel | The client sees the end of the body. The table above does not say. |
 | `compress!`, `decompress!` | `pf.transform(body, kind, format)`. The output of a writer stream counts as a stream of that writer, so a response with it is complete at `close!`. | API.md 10.2 |
 | Limits | `text!`, `json!`, `bytes!` apply `default_max` to `Text` and `Bytes` too: `TooLarge` over it | MC11, one rule for each body |
 | `query` | Percent-decoded, `+` is a space | Query strings of forms |
 | `cookie` | The value of a pair of the `Cookie` header | |
 | `from_http`, `to_http!` | Not built | No package of the platform uses `http` types yet |
-| `cf` | Crosses in the event as a `Js` tree in the tag form (`{ "Ok": v }`, `{ "Err": "Missing" }`), not as `Packed` | No `Cbor` module in the platform yet (`PLAN.md` 8c). The shim format stays the same for `Packed`. |
+| `cf` | Crosses in the event as a `Js` tree in the tag form (`{ "Ok": v }`, `{ "Err": "Missing" }`), not as `Packed` | Built before the platform had `Cbor` (`PLAN.md` 8b). The shim format stays the same for `Packed`. |
 
 As built in `PLAN.md` 8c, wave 1 (`platform/Http.roc`):
 
@@ -346,14 +348,14 @@ As built in `PLAN.md` 8c, wave 1 (`platform/Http.roc`):
 ```roc
 D1 :: { name : Str }.{
 	binding : Str -> D1
-	all! : D1, Str, List(Sql) => Try(rows, [D1Err(Thrown), Constraint(Str), BadData(Str), TooLarge]) where [rows.Parseable]
-	all_with! : D1, Str, List(Sql), { max_bytes : U64 } => Try(rows, [D1Err(Thrown), Constraint(Str), BadData(Str), TooLarge]) where [rows.Parseable]
-	first! : D1, Str, List(Sql) => Try(row, [NotFound, D1Err(Thrown), Constraint(Str), BadData(Str), TooLarge]) where [row.Parseable]
-	run! : D1, Str, List(Sql) => Try(Sql.Info, [D1Err(Thrown), Constraint(Str)])
-	rows! : D1, Str, List(Sql) => Try(Sql.Rows, [D1Err(Thrown), Constraint(Str), TooLarge])
-	batch! : D1, List(Sql.Stmt) => Try(List(D1.Result), [D1Err(Thrown), Constraint(Str), TooLarge])
+	all! : D1, Str, List(Sql) => Try(rows, [D1Err(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Parseable]
+	all_with! : D1, Str, List(Sql), { max_bytes : U64 } => Try(rows, [D1Err(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Parseable]
+	first! : D1, Str, List(Sql) => Try(row, [NotFound, D1Err(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [row.Parseable]
+	run! : D1, Str, List(Sql) => Try(Sql.Info, [D1Err(Thrown), Constraint(Sql.Constraint)])
+	rows! : D1, Str, List(Sql) => Try(Sql.Rows, [D1Err(Thrown), Constraint(Sql.Constraint), TooLarge])
+	batch! : D1, List(Sql.Stmt) => Try(List(D1.Result), [D1Err(Thrown), Constraint(Sql.Constraint), TooLarge])
 	first_with!, rows_with!, batch_with!                 # as all_with!: the same, with a last { max_bytes : U64 }
-	exec! : D1, Str => Try({}, [D1Err(Thrown), Constraint(Str)])
+	exec! : D1, Str => Try({}, [D1Err(Thrown), Constraint(Sql.Constraint)])
 	with_session! : D1, [Primary, Any, After(Str)] => Try(D1.Session, [D1Err(Thrown)])   # withSession, sync
 
 	## A D1 session (Sessions API). It holds a ref, so it is good for one task (MC13).
@@ -372,22 +374,53 @@ D1 :: { name : Str }.{
 Sql := [Null, Int(I64), Real(F64), Text(Str), Blob(List(U8))].{
 	stmt : Str, List(Sql) -> Sql.Stmt
 	Stmt : { sql : Str, params : List(Sql) }
-	Info : { changes : U64, last_row_id : I64, rows_read : U64, rows_written : U64, duration_ms : F64 }
+	Info : { changes : U64, last_row_id : Try(I64, [Rounded]), rows_read : U64, rows_written : U64, duration_ms : F64 }
 	Rows : { columns : List(Str), rows : List(List(Sql)) }
+	Constraint : { kind : [PrimaryKey, Unique, ForeignKey, Check, NotNull, Trigger, Datatype, Other], message : Str }
 }
 ```
 
 | Item | Rule |
 | --- | --- |
 | `all!`, `first!` | D1 `all()`, rows as objects. JS sends them as CBOR in the same crossing, and `Cbor.parse` reads them into the type of the call (MC7). A `where` clause cannot name `List(a)`, so `all!` takes the type of the whole result: the caller writes `List(Pkg)` (section 15). |
+| Integers in rows | D1 gives each number as a JS `Number`. So an INTEGER of size 2^53 or more comes back rounded, with no error: 2^53 + 1 and -(2^53 + 1) come back as 2^53 and -2^53, and `meta.last_row_id` is rounded too (Talon `research/d1-int-keys/` K3 and K10, local D1 2026-10-16). `pf.pack` writes each `Number` that is not a safe integer as an f64 (`js/values.js:63`). The typed reads (`all!`, `first!`, `D1.Result.all`, `D1.Result.first`, `Object.Self.sql!`) parse with `Cbor.parse_with(bytes, { fields: Snake, int_from_text: Bool.True })` of `roc-cbor`. (1) An integer field reads a float only when it has no fraction and a size of 2^53 - 1 or less (the default of `roc-cbor`), so a rounded value is an error. (2) An integer field also reads text that is a canonical decimal integer in the range of its type, so `CAST(x AS TEXT)` goes straight into an `I64` field. The module turns `InvalidCbor(pos)` into `BadData`, with the column name from `Cbor.path_at(bytes, pos)`: `BadData("column x: integer above 2^53, use CAST(x AS TEXT)")` when the item at `pos` is an f64 with no fraction and a size of 2^53 or more, else `BadData("column x: the value does not fit the type")`. `MissingRequiredField(x)` is `BadData("column x: missing")`. So a 64-bit id is a plain `I64` field, read with `CAST(id AS TEXT)`. A read with no cast is `BadData` for each id of size 2^53 or more, and an id below that is exact. `rows!` (no types) gives such a value as `Real(F64)`. `Info.last_row_id` is `Err(Rounded)` when `meta.last_row_id` has a size of 2^53 or more: the module reads `meta` with `last_row_id : F64` and makes the `I64` itself (decision 2026-10-16). |
 | Objects, not arrays (`API.md` AQ9) | Rows as arrays with one list of column names (`raw()`) were measured (`research/api-probe/cbor/`): 198 µs in total into the same records (JS 52, Roc 146), against 216 µs as objects (JS 79, Roc 137). The Roc side is not faster: its cost is in the record matching, not in the keys. The 8 % gain is in JS only, and it needs a column mode in the format in which a row value must be a scalar. So the typed functions read objects. |
 | `rows!` | D1 `raw({ columnNames: true })` as `Sql` values, with no types. For columns that are not known at compile time: an admin tool, a SQL console, a generic export. |
 | `batch!` | One transaction and one crossing (`API.md` 6.2). One `D1.Result` for each statement, in order. A write batch uses only `info`. A read in a batch gives its rows with `result.all()` or `result.first()`, typed by the annotation at the use (MC7), because each statement can have another row type. A batch has no branch (`API.md` RF4). |
-| Parameters | `Sql` values. D1 takes no BigInt, so `Int` goes as a number, and as text above 2^53 (`API.md` 7). |
+| Parameters | `Sql` values. D1 takes no `BigInt` (`D1_TYPE_ERROR`), so an `Int` in ±(2^53 - 1) goes as a number, and an `Int` outside it goes as decimal text (`API.md` 7). A text parameter is text in SQL. It becomes an integer only where SQLite converts it: an insert into an INTEGER column, a compare with an INTEGER column, arithmetic (`id = ? + 0`), or `CAST(? AS INTEGER)`. A compare with no column (`? = ? + 0`) compares text with an integer, and it is false (Talon K10, local D1 2026-10-16). |
 | `with_session!` | `withSession("first-primary")` for `Primary`, `"first-unconstrained"` for `Any`, the bookmark for `After(b)`. It gives a `D1.Session`, its own type: a session holds a ref, and a binding never does (MC1, MC13). So `D1` stays a constant, and a `D1.Session` is good for one task. It has the query functions of `D1` (not `exec!`: the session of Workers has only `prepare` and `batch`). A bad bookmark is `D1Err` (`D1_SESSION_ERROR`, workerd source). Keep `bookmark!` in a cookie or a header, and give it to `After` in the next request. |
 | Size (MC11) | `all!`, `first!`, `rows!` and `batch!` read at most 1 MiB of rows. `pf.pack` stops at the limit, so a larger result is `TooLarge` with no copy into wasm memory. The `_with` form names the limit. |
-| `Constraint(Str)` (MC9) | A throw whose message has `constraint failed` (the SQLite text, after `D1_ERROR: `) is `Constraint(message)`: a `UNIQUE`, `PRIMARY KEY`, `FOREIGN KEY`, `CHECK` or `NOT NULL` failure. Local D1 (wrangler 4.151.0) gives `UNIQUE constraint failed: t.k: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)`. The docs give no example, so `PLAN.md` 8d checks the text on the edge. `Object.Self` SQL uses the same tag. |
+| `Constraint(Sql.Constraint)` (MC9) | A throw whose message ends in `: SQLITE_CONSTRAINT` or in `: SQLITE_CONSTRAINT (extended: <code>)` is `Constraint({ kind, message })`. `kind` comes from the extended code in the message text (table "Constraint kinds"): the D1 error has no code field. `message` is the SQLite text with no `D1_ERROR: ` at the start and no `: SQLITE_CONSTRAINT ...` at the end. For `Trigger`, it is the `RAISE` text. A `RAISE` text that looks like another failure (`UNIQUE constraint failed: x`) still gives `Trigger`. `exec!` gives `D1_EXEC_ERROR: Error in line <n>: <sql>: <text>: SQLITE_CONSTRAINT (extended: <code>)`, so its `message` starts with `Error in line <n>: <sql>: `. The docs give no example, so `PLAN.md` 8d checks the texts on the edge. `Object.Self` SQL uses the same tag. Its message has no `D1_ERROR: ` and the error has no `cause`. |
 | Same types for objects | `Object.Self` uses `Sql` and `Sql.Rows` (7). Its `sql_run!` gives `Object.SqlInfo`, because the SQL cursor of an object has fewer fields than D1 `meta`. |
+
+As built (`PLAN.md` 8c, "Status of step 8c, D1, Sql and Memo"), where the code differs from the table above or adds to it:
+
+| Item | Built | Reason |
+| --- | --- | --- |
+| `first!` | D1 `first()`, then `pf.pack`: a `null` (CBOR `f6`) is `NotFound` | `first()` sends one row to wasm, not all rows |
+| `rows!` | `raw({ columnNames: true })` as a `Js` tree, with the limit of the new helper `pf.limit` (API.md 6.4), not `pf.pack` | `rows!` has no types, so no `Cbor.parse` (section 15). A blob comes as an array of numbers (local D1) and is `Blob`. |
+| `batch!` | `pf.packEach` twice: `results`, then `meta`. The limit is for the rows of all statements together. | `meta` reads with `Cbor.parse_with` (`last_row_id : F64`), as for `run!`. MC11 counts the bytes that go into wasm. |
+| `D1.Result.first` | The module cuts the first row out of the CBOR array (a loop over the heads) and parses it as a `row` | A `where` clause cannot name `List(row)` (section 15), so `Cbor.parse` of `List(row)` does not compile |
+| `MissingRequiredField(x)` | Read from its `Str.inspect` text | A `match` on the tag closes the error union of the `where` clause (`[InvalidCbor(U64), ..errs]`): the type of the function does not compile ("type mismatch") |
+| `run!` | A `meta` that does not fit `{ changes : U64, last_row_id : F64, rows_read : U64, rows_written : U64, duration : F64 }` is `D1Err` with the name `BadData` | `run!` has no `BadData` tag. A shape that D1 changes is a `D1Err`, not a crash. |
+| Twins | Each function that waits has its twin, also `exec`. `with_session!` and `bookmark!` do not wait, so they have none (MC3). | MC3 |
+| `D1.Session` | `Session :: { ref : Js.Ref }`: each program starts at the ref (no `Get` of `env`) | MC13 |
+| `bookmark!` | A JS throw is a crash: the type has only `NotFound` | |
+| `with_session!(After(b))` with a bad bookmark | Local D1 does not throw, also not at the next query (`research/d1-shapes/`). The edge is 11c. | |
+| `Object.Self` SQL | Not built (phase B, 8f). The map of `Constraint` is the pure function `constraint_of` of `platform/D1.roc`, with 8 `expect`s. | |
+
+Constraint kinds. The messages are from local D1 (Miniflare 5.20261012.0-beta, 2026-10-16), after `D1_ERROR: `. `run!` and `batch!` give the same text. `Object.Self` SQL gives the same text with no `D1_ERROR: `.
+
+| Extended code | `kind` | Message | `message` of the tag |
+| --- | --- | --- | --- |
+| `SQLITE_CONSTRAINT_PRIMARYKEY` | `PrimaryKey` | `UNIQUE constraint failed: t.id: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)` | `UNIQUE constraint failed: t.id` |
+| `SQLITE_CONSTRAINT_UNIQUE` | `Unique` | `UNIQUE constraint failed: t.u: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_UNIQUE)` | `UNIQUE constraint failed: t.u` |
+| `SQLITE_CONSTRAINT_FOREIGNKEY` | `ForeignKey` | `FOREIGN KEY constraint failed: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_FOREIGNKEY)` | `FOREIGN KEY constraint failed` |
+| `SQLITE_CONSTRAINT_CHECK` | `Check` | `CHECK constraint failed: c >= 0: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_CHECK)` | `CHECK constraint failed: c >= 0` |
+| `SQLITE_CONSTRAINT_NOTNULL` | `NotNull` | `NOT NULL constraint failed: t.n: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_NOTNULL)` | `NOT NULL constraint failed: t.n` |
+| `SQLITE_CONSTRAINT_TRIGGER` | `Trigger` | `label-conflict: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)`, for `RAISE(ABORT, 'label-conflict')` and for `RAISE(FAIL, ...)` | `label-conflict` |
+| `SQLITE_CONSTRAINT_DATATYPE` | `Datatype` | `cannot store TEXT value in INTEGER column s.v: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_DATATYPE)` (a `STRICT` table) | `cannot store TEXT value in INTEGER column s.v` |
+| Another code (`ROWID`, `FUNCTION`, `COMMITHOOK`, `VTAB`, `PINNED`), or no extended code | `Other` | Not seen | The text before `: SQLITE_CONSTRAINT` |
 
 ```roc
 results = db.batch!([
@@ -593,11 +626,11 @@ Inside: a class is a record of handlers, all optional, as for `Worker`.
 
 	Self := { ... }.{
 		id : Object.Self -> Str
-		sql! : Object.Self, Str, List(Sql) => Try(rows, [SqlErr(Thrown), Constraint(Str), BadData(Str), TooLarge]) where [rows.Parseable]
-		sql_with! : Object.Self, Str, List(Sql), { max_bytes : U64 } => Try(rows, [SqlErr(Thrown), Constraint(Str), BadData(Str), TooLarge]) where [rows.Parseable]
-		sql_run! : Object.Self, Str, List(Sql) => Try(Object.SqlInfo, [SqlErr(Thrown), Constraint(Str)])
-		sql_rows! : Object.Self, Str, List(Sql) => Try(Sql.Rows, [SqlErr(Thrown), Constraint(Str), TooLarge])
-		sql_rows_with! : Object.Self, Str, List(Sql), { max_bytes : U64 } => Try(Sql.Rows, [SqlErr(Thrown), Constraint(Str), TooLarge])
+		sql! : Object.Self, Str, List(Sql) => Try(rows, [SqlErr(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Parseable]
+		sql_with! : Object.Self, Str, List(Sql), { max_bytes : U64 } => Try(rows, [SqlErr(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Parseable]
+		sql_run! : Object.Self, Str, List(Sql) => Try(Object.SqlInfo, [SqlErr(Thrown), Constraint(Sql.Constraint)])
+		sql_rows! : Object.Self, Str, List(Sql) => Try(Sql.Rows, [SqlErr(Thrown), Constraint(Sql.Constraint), TooLarge])
+		sql_rows_with! : Object.Self, Str, List(Sql), { max_bytes : U64 } => Try(Sql.Rows, [SqlErr(Thrown), Constraint(Sql.Constraint), TooLarge])
 		set_alarm! : Object.Self, U64 => Try({}, [StorageErr(Thrown)])                 # setAlarm: a promise, one wait
 		get_alarm! : Object.Self => Try(U64, [NotFound, StorageErr(Thrown)])           # getAlarm: a promise, one wait
 		delete_alarm! : Object.Self => Try({}, [StorageErr(Thrown)])                   # deleteAlarm: a promise, one wait
@@ -735,9 +768,10 @@ keys = jwks.get!()?    # the first call in an isolate runs load_jwks!, later cal
 
 | Item | Rule |
 | --- | --- |
-| Content | CBOR bytes (MC5). JS does not parse them. No JS objects. A key needs no `Memo`: `WebCrypto` imports it in the same crossing as its use (10), so RN6 keeps the JWKS as data. For a JS object, use `Js.pin!` (RS2). |
+| Content | CBOR bytes (MC5). JS does not parse them. No JS objects. A key needs no `Memo`: `WebCrypto` imports it in the same crossing as its use (10), so RN6 keeps the JWKS as data. For a JS object, use `Js.pin!` (RS2). As built, `Js.pin!` is `Io.pin!` (`API.md` RS2). |
 | Two tasks at once | Both can run `load!`. The second pin replaces the first. So `load!` must give an equal value each time. |
 | Instance replace (`PLAN.md` M1) | The pin table is in JS, so the values stay. |
+| As built (`PLAN.md` 8c) | `Memo(a, e) := { name, max_age_ms, load!, write, read }`: `new` keeps the two functions of the `Cbor` format (MC6). `get!` is one `call!` of `pf.pinned` (no wait); a hit is parsed with `Cbor.parse`. A miss runs `load!`, then one `call!` of `pf.pin(name, bytes, max_age_ms)`. A pinned value that does not parse (an older type with the same name) loads again. A pin that fails (a full pin table, `pinLimit`) does not fail `get!`: the value is a cache. The name is the name in the pin table, with no prefix, so a `Memo` and a `Js.pin!` of the same name share an entry. |
 
 ## 10. Security: `WebCrypto`, `Env`, `Secret`, `RateLimit`
 
@@ -1055,7 +1089,7 @@ Each follows MC1 to MC13. Most functions are one `Call` op.
 | `D1.batch!` | `List({ info, rows : Sql.Rows })` | `List(D1.Result)`, with typed `all` and `first` | The rows of a batch are typed at the use |
 | Object sockets | `message!`, `close!`, `accept!(req, { tags })` | `web_socket_message!`, `web_socket_close!`, `web_socket_error!` (MC12), `accept!(req)` and `accept_with!` (MC4), `sockets_with!`, auto responses, typed attachments (12.1) | The Workers names, and the short form with no options |
 | `WebCrypto` waits (7) | sign, verify, encrypt wait. The others do not. | Each `crypto.subtle` function waits once. Only `timing_safe_equal!`, `random!` and `random_uuid!` are sync. Also `generate_key!`, `export_key!`, RSA-OAEP, ECDH, X25519 and P-521 (10). | Each `crypto.subtle` method gives a promise (Cloudflare docs) |
-| Error tags | `D1Err(Thrown)`, `HttpErr(Thrown)` only | Also `Constraint(Str)` for D1 and object SQL, and `Network(Thrown)` for `Http` (MC9, "Named error tags") | RF4 and `PLAN.md` 8d need a constraint tag |
+| Error tags | `D1Err(Thrown)`, `HttpErr(Thrown)` only | Also `Constraint(Sql.Constraint)` (a kind and the message) for D1 and object SQL, and `Network(Thrown)` for `Http` (MC9, "Named error tags") | RF4 and `PLAN.md` 8d need a constraint tag |
 | R2 multipart (5.3) | `upload!` gives a ref | `R2.Upload` is data: `create_multipart_upload!`, `resume_multipart_upload`, `upload_part!`, `complete!`, `abort!` | An upload can span requests |
 | D1 sessions (5.1) | `session!` gives a `D1` with a ref | `with_session!` gives a `D1.Session` | A binding never holds a ref (MC1, MC13) |
 | Names (MC12) | `send_all!`, `session!`, `upload!`, `import!`, `equal!`, `uuid!` | `send_batch!`, `with_session!`, `create_multipart_upload!`, `import_key!`, `timing_safe_equal!`, `random_uuid!`. The other changed names are in the table "Exceptions to MC10 and MC12". | The Workers names, so the Workers docs apply |
@@ -1069,7 +1103,7 @@ Each follows MC1 to MC13. Most functions are one `Call` op.
 | Object events (7) | `Alarm`, no `init!` | `Init` in `blockConcurrencyWhile`, `Alarm({ retry_count, is_retry })`, `id!` as one `call!` | Schema setup before the first event, and an end to alarm retries |
 | Named entry points (8) | RPC methods only | `EntrypointFetch`, and `makeHandler` gives a `WorkerEntrypoint` subclass | Workers sends RPC only to a `WorkerEntrypoint` |
 | Tail (3) | `Tail(List(Js))` | `Tail(List(Worker.TraceItem))`, typed (MC8) | No untyped `Js` that can be null in a handler (AG1) |
-| Object SQL (7) | `sql!` with no limit, `SqlErr` only | `sql_with!`, `sql_rows_with!`, `TooLarge`, `Constraint(Str)` | MC11 and MC9, as for `D1` |
+| Object SQL (7) | `sql!` with no limit, `SqlErr` only | `sql_with!`, `sql_rows_with!`, `TooLarge`, `Constraint(Sql.Constraint)` | MC11 and MC9, as for `D1` |
 
 ## 15. Prototype
 
@@ -1086,6 +1120,7 @@ The prototype differs from this file:
 | `Header` | From `roc-lang/http` | `(Str, Str)` | The prototype has no copy of `roc-lang/http` |
 | A second `respond!` | `InvalidState` | Not checked | The fake JS side has no state |
 | Reads that the platform does as a `Js` tree (`Http.send!`, `Object.fetch!`, `R2.put_with!`, `D1.run!`, `unique_with!`) | No `BadData` | A fake value that does not fit is the throw "BadData" in the tag of the module | The fake JS side gives CBOR for all results |
+| `Constraint` | `Constraint(Sql.Constraint)`, the kind from the extended code (5.1) | `Constraint(Str)`, found by `constraint failed` | The kind came after the prototype (2026-10-16) |
 | `Sql` codecs | None: `rows!` reads a `Js` tree (5.1) | `parser_for : _` and `encoder_for : _` | The fake JS side sends `Sql.Rows` as CBOR |
 | The limit throw of `pf.pack` and `readUpTo` | An error that the module turns into `TooLarge` (`API.md` 6.4) | The throw name `TooLarge`. Each limited read sends `max:<bytes>`. | `API.md` 6.4 does not give the name |
 | Modules | `Cache`, `Service`, `Log`, `Tcp`, `RateLimit`, `Email` and the bindings of 13 | Not in the prototype | Their signatures are not a compile risk that the other modules do not already show |
@@ -1109,7 +1144,7 @@ Lessons from the compiler (nightlies 10-09 and 10-12):
 | A one-field record pun needs a comma: `{ binding, }` | none |
 | A nominal type nested in the block of the format (`Cbor.Bytes := List(U8)`) takes a hand-written `parser_for` and `encoder_for` with `where` clauses on `parse_bytes` and `encode_bytes`, and the derived codec of a record uses them for a field (`research/api-probe/cbor/`) | Bytes cross as a CBOR byte string (MC5) |
 | An optional field with a type variable of a `where` clause (`metadata ?: m`) compiles when the caller leaves it out. A parsed type variable with no annotation at the call is "type not determined" (`research/api-probe/options-check/`). | `put_with!` takes typed metadata. `Kv.Key` keeps it as CBOR, parsed at the use (5.2). |
-| A format in a module of the app (`Cbor`, with its own `Parseable` and `Encodable` aliases) works with derived codecs, also through a `where` clause in another module (`D1.all!`, `Rpc.call!`) | The platform ships `Cbor` as an ordinary module |
+| A format in a module of the app (`Cbor`, with its own `Parseable` and `Encodable` aliases) works with derived codecs, also through a `where` clause in another module (`D1.all!`, `Rpc.call!`) | The platform ships `Cbor` as an ordinary module. As built (`PLAN.md` 8c): `Cbor` is the package `roc-cbor` 0.1.0 by release URL, in the `packages` of the platform header. A platform cannot list a module of a package in `exposes` ("package module is private", `research/cbor-in-platform/`), so an app that names `Cbor` (a row type of its own codec, `Cbor.Bytes`) adds the same URL to its own header and imports `cbor.Cbor`, as it does for `http`. The same URL gives the same types. An app that only calls `D1.all!` needs no `cbor` entry. |
 | A function with no annotation that gives a value parsed by `Json` (`res.json!()`), given to a function that needs `Cbor` on the same type (`Memo.new`), is "type not determined". An annotation on the function fixes it. The trigger is a `parser_for` constraint of two formats on one value. Repro: `research/roc-bugs/` (also on nightly 10-14). | The `Memo` example in the docs has an annotated `load!`. Reported: roc-lang/roc#12310. |
 | Two modules cannot import each other | `Response.web_socket` is a ref, not a `WebSocket` (4) |
 | A nominal record with an optional field (`web_socket ?: U32`) can be built with or without the field | `Response` keeps its short forms |

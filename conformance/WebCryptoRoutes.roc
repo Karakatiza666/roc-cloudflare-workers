@@ -32,7 +32,7 @@ WebCryptoRoutes :: [].{
 			["rs256_sign"] => reply(rs256_sign!(from_hex(Q.text(req, "pkcs8")), data))
 			["jwk_import"] => reply(jwk_import!(Q.text(req, "priv"), Q.text(req, "pub"), data))
 			["hmac"] => reply(hmac!(Q.text(req, "key").to_utf8(), data))
-			# A key pinned by one request (`pf.pin`), used by a later one (API.md RS2).
+			# A key pinned by one request (`Io.pin!`), used by a later one (API.md RS2).
 			["pin", name] => reply(pin!(name))
 			["use", name] => reply(use!(name, data))
 			_ => Response.from_text(404, "no route")
@@ -250,26 +250,26 @@ hmac! = |key, data| {
 	Ok("sign=${to_hex(signature)} roc=${to_hex(roc)} same=${Str.inspect(WebCrypto.timing_safe_equal!(signature, roc))} verify=${show_unit(good)} changed=${show_unit(changed)}")
 }
 
-## RS2: the key of `import_key!` is a ref of this request. `pf.pin` keeps the `CryptoKey` for a later request.
+## RS2: the key of `import_key!` is a ref of this request. `Io.pin!` keeps the `CryptoKey` for a later request.
 pin! : Str => Try(Str, E)
 pin! = |name| {
 	key = match WebCrypto.import_key!(Hmac(Sha256), Raw("pin-secret".to_utf8()))? {
 		Imported(ref) => ref
 		_ => return Err(Odd("not imported"))
 	}
-	match Io.call!([Call(Root("pf"), "pin", [Lit(Text(name)), Lit(Ref(key))])]) {
-		Ok(_) => Ok("pinned")
-		Err(t) => Err(CryptoErr(t))
+	match Io.pin!(name, Ref(key), { max_age_ms: 600_000 }) {
+		Ok({}) => Ok("pinned")
+		Err(PinErr(t)) => Err(CryptoErr(t))
 	}
 }
 
-## A later request gets the key with `pf.pinned` (a new ref of this request), and signs and verifies with it.
+## A later request gets the key with `Io.pinned!` (a new ref of this request), and signs and verifies with it.
 use! : Str, List(U8) => Try(Str, E)
 use! = |name, data| {
-	key = match Io.call!([Call(Root("pf"), "pinned", [Lit(Text(name))]), Keep(Slot(0))]) {
+	key = match Io.pinned!(name) {
 		Ok(Ref(ref)) => Imported(ref)
 		Ok(other) => return Err(Odd("pinned gave ${Str.inspect(other)}"))
-		Err(t) => return Err(CryptoErr(t))
+		Err(NotPinned) => return Err(Odd("NotPinned"))
 	}
 	signature = WebCrypto.sign!({ alg: Hmac(Sha256), key, data })?
 	good = WebCrypto.verify!({ alg: Hmac(Sha256), key, signature, data })

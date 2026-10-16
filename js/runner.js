@@ -27,7 +27,7 @@ function importsOf(cell, tasks, budget, shim = SHIM0) {
   };
 }
 // The shim of an instance that no runner made (tests).
-const SHIM0 = { ops: {}, pins: makePins(), log: (text) => console.warn(text) };
+const SHIM0 = { ops: {}, pins: makePins(), log: (text) => console.warn(text), crossings: { await: 0, call: 0 } };
 
 // A new instance counts in the budget at once, and its grow step is the shim option.
 function register(x, budget) {
@@ -95,8 +95,10 @@ export function makeRunner(module, opts = {}) {
   };
   const tasks = makeTaskTable({ ...opts, log, onCancel: (t) => hostCancel(t.inst.x, t, cancelTrap) });
   // API.md 6.4: the JS functions of the app (root `ops`), the pin table of the isolate (RS2, `pinLimit`).
-  const shim = { ops: opts.ops ?? {}, pins: makePins(opts.pinLimit ?? 1000, opts.now), log };
+  // `crossings`: the calls of `js_await` and `js_call` of all instances (PLAN.md 8c: "one crossing" tests).
+  const shim = { ops: opts.ops ?? {}, pins: makePins(opts.pinLimit ?? 1000, opts.now), log, crossings: { await: 0, call: 0 } };
   stats.pins = shim.pins.stats;
+  stats.crossings = shim.crossings;
   const seen = (x) => {
     stats.memBytes = x.memory.buffer.byteLength;
     if (stats.memBytes > stats.maxMemBytes) stats.maxMemBytes = stats.memBytes;

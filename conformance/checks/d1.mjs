@@ -1,0 +1,192 @@
+// `D1` and `Sql` (MODULES.md 5.1): routes of conformance/D1Routes.roc on the local D1 database `DB` of Miniflare. The
+// first check makes the tables (with the binding of Miniflare, not with the module). Each check gives the text that
+// the route answered. The constraint checks are the local part of PLAN.md 8d: the edge part is for 11c.
+import { answer, eq, ok } from '../assert.mjs';
+
+export const options = { d1Databases: ['DB'] };
+
+const q = encodeURIComponent;
+const route = (t, name, sql, p = '', extra = '') => t.get(`/d1/${name}?sql=${q(sql)}&p=${q(p)}${extra}`);
+const P53 = 2n ** 53n;
+const I64_MAX = 2n ** 63n - 1n;
+
+// The JS `name` and `message` of each constraint failure (PLAN.md 8d: the docs do not give them). `bench/README.md` has them.
+export const seen = {};
+
+export const checks = [
+  ['d1 setup (the tables, with the binding of Miniflare)', async (t) => {
+    const db = await t.mf.getD1Database('DB');
+    for (const sql of [
+      'CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT)',
+      "INSERT INTO people (id, name) VALUES (1, 'ann'), (2, 'bob'), (3, 'cy')",
+      'CREATE TABLE ints (k TEXT PRIMARY KEY, v INTEGER)',
+      'CREATE TABLE bigids (k INTEGER PRIMARY KEY, id INTEGER)',
+      'CREATE TABLE nums (k INTEGER PRIMARY KEY, i INTEGER, x REAL)',
+      'CREATE TABLE release (grp TEXT, version TEXT)',
+      'CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT)',
+      'CREATE TABLE blobs (x TEXT)',
+      'CREATE TABLE rid (id INTEGER PRIMARY KEY, v TEXT)',
+      'CREATE TABLE p (id INTEGER PRIMARY KEY)',
+      'CREATE TABLE t (id INTEGER PRIMARY KEY, u TEXT UNIQUE, n INTEGER NOT NULL, c INTEGER CHECK (c >= 0), p INTEGER REFERENCES p(id))',
+      'CREATE TABLE s (id INTEGER PRIMARY KEY, v INTEGER) STRICT',
+      "CREATE TRIGGER g BEFORE INSERT ON t WHEN NEW.id = 99 BEGIN SELECT RAISE(ABORT, 'label-conflict'); END",
+      "CREATE TRIGGER g3 BEFORE INSERT ON t WHEN NEW.id = 97 BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: x'); END",
+      "INSERT INTO t (id, u, n, c) VALUES (1, 'a', 1, 1)",
+    ]) await db.prepare(sql).run();
+    const big = [I64_MAX, -I64_MAX, -2687166099708853831n];
+    for (let i = 0; i < big.length; i++) await db.prepare('INSERT INTO bigids (k, id) VALUES (?, CAST(? AS INTEGER))').bind(i, String(big[i])).run();
+    await db.prepare('INSERT INTO nums (k, i, x) VALUES (1, ?, ?)').bind(Number(P53 - 1n), 2 ** 60).run();
+    // 12 rows of 100,000 bytes: 1.2 MB of rows, above the 1 MiB limit of MC11.
+    for (let i = 0; i < 12; i++) await db.prepare('INSERT INTO blobs (x) VALUES (?)').bind('x'.repeat(100000)).run();
+  }],
+  // PLAN.md 8c: `all!` gives rows of the type of the call; a query with 3 rows gives 3 rows.
+  ['d1 all!', async (t) => {
+    const r = await route(t, 'all', 'SELECT id, name FROM people ORDER BY id');
+    answer(r, 'Ok [{ id: 1, name: "ann" }, { id: 2, name: "bob" }, { id: 3, name: "cy" }]');
+    eq(r.waits, 1, 'waits');
+  }],
+  ['d1 all (Io twin), all_with! and twin', async (t) => {
+    const want = 'Ok [{ id: 1, name: "ann" }, { id: 2, name: "bob" }, { id: 3, name: "cy" }]';
+    answer(await route(t, 'all_io', 'SELECT id, name FROM people ORDER BY id'), want);
+    answer(await route(t, 'all_with', 'SELECT id, name FROM people ORDER BY id', '', '&max=1000'), want);
+    answer(await route(t, 'all_with_io', 'SELECT id, name FROM people ORDER BY id', '', '&max=1000'), want);
+  }],
+  ['d1 first!: a row, and NotFound for no row', async (t) => {
+    answer(await route(t, 'first', 'SELECT id, name FROM people WHERE id = ?', 'i:2'), 'Ok { id: 2, name: "bob" }');
+    answer(await route(t, 'first', 'SELECT id, name FROM people WHERE id = ?', 'i:9'), 'Err NotFound');
+    answer(await route(t, 'first_io', 'SELECT id, name FROM people WHERE id = ?', 'i:9'), 'Err NotFound');
+    answer(await route(t, 'first_with', 'SELECT id, name FROM people WHERE id = ?', 'i:3', '&max=1000'), 'Ok { id: 3, name: "cy" }');
+    answer(await route(t, 'first_with_io', 'SELECT id, name FROM people WHERE id = ?', 'i:3', '&max=1000'), 'Ok { id: 3, name: "cy" }');
+  }],
+  ['d1 run!, run (Io twin): the info of an insert; last_row_id Ok(5)', async (t) => {
+    answer(await route(t, 'run', 'INSERT INTO rid (id, v) VALUES (?, ?)', 'i:5,t:five'), 'Ok changes=1 last_row_id=Ok(5) rows_read=1 rows_written=1');
+    answer(await route(t, 'run_io', 'INSERT INTO rid (id, v) VALUES (?, ?)', 'i:6,t:six'), 'Ok changes=1 last_row_id=Ok(6) rows_read=1 rows_written=1');
+  }],
+  // MODULES.md 5.1: D1 gives `meta.last_row_id` rounded for a rowid of size 2^53 or more.
+  ['d1 run!: last_row_id of a 64-bit rowid is Err(Rounded)', async (t) => {
+    answer(await route(t, 'run', 'INSERT INTO rid (id, v) VALUES (?, ?)', 'i:-2687166099708853831,t:big'), 'Ok changes=1 last_row_id=Err(Rounded) rows_read=1 rows_written=1');
+  }],
+  ['d1 rows!, rows (Io twin), rows_with!: columns and Sql values', async (t) => {
+    const want = 'Ok { columns: ["id", "name"], rows: [[Int(1), Text("ann")], [Int(2), Text("bob")]] }';
+    answer(await route(t, 'rows', 'SELECT id, name FROM people WHERE id < 3 ORDER BY id'), want);
+    answer(await route(t, 'rows_io', 'SELECT id, name FROM people WHERE id < 3 ORDER BY id'), want);
+    answer(await route(t, 'rows_with', 'SELECT id, name FROM people WHERE id < 3 ORDER BY id', '', '&max=1000'), want);
+    answer(await route(t, 'rows_with_io', 'SELECT id, name FROM people WHERE id < 3 ORDER BY id', '', '&max=1000'), want);
+    // A blob, a real, a null, and a 64-bit integer with no cast (an f64: Real).
+    answer(await route(t, 'rows', "SELECT x'0102' AS b, 1.5 AS r, NULL AS n, id FROM bigids WHERE k = 0"), 'Ok { columns: ["b", "r", "n", "id"], rows: [[Blob([1, 2]), Real(1.5), Null, Real(9.223372036854776e18)]] }');
+  }],
+  ['d1 exec!, exec (Io twin)', async (t) => {
+    answer(await route(t, 'exec', 'CREATE TABLE e1 (a INTEGER); INSERT INTO e1 VALUES (1)'), 'Ok {}');
+    answer(await route(t, 'exec_io', 'INSERT INTO e1 VALUES (2)'), 'Ok {}');
+    answer(await route(t, 'all', 'SELECT count(*) AS n FROM e1', '', '&type=count'), 'Ok [{ n: 2 }]');
+  }],
+  // PLAN.md 8c: an `Int` of 2^53 + 1 and of -(2^53 + 1) stores the exact value: it goes as text (5.1, "Parameters").
+  ['d1 an Int parameter outside ±(2^53 - 1) stores the exact value', async (t) => {
+    for (const [k, v] of [['pos', P53 + 1n], ['neg', -(P53 + 1n)], ['max', I64_MAX]]) {
+      const r = await route(t, 'run', 'INSERT INTO ints (k, v) VALUES (?, ?)', `t:${k},i:${v}`);
+      ok(r.body.startsWith('Ok changes=1 '), `insert ${k}: got ${r.body}`);
+      answer(await route(t, 'first', 'SELECT CAST(v AS TEXT) AS t FROM ints WHERE k = ?', `t:${k}`, '&type=text'), `Ok { t: "${v}" }`);
+    }
+    const db = await t.mf.getD1Database('DB');
+    eq((await db.prepare("SELECT typeof(v) AS ty FROM ints WHERE k = 'neg'").first()).ty, 'integer', 'the type in SQLite');
+    return 'pos, neg and 2^63 - 1 read back exact, and SQLite has an integer';
+  }],
+  // MODULES.md 5.1, "Integers in rows": `CAST(id AS TEXT)` into an I64 field.
+  ['d1 all! of CAST(id AS TEXT) into { id : I64 } gives the exact ids', async (t) => {
+    answer(await route(t, 'all', 'SELECT CAST(id AS TEXT) AS id FROM bigids ORDER BY k', '', '&type=id'),
+      'Ok [{ id: 9223372036854775807 }, { id: -9223372036854775807 }, { id: -2687166099708853831 }]');
+  }],
+  ['d1 all! with no cast: BadData with the column, for a positive and a negative id', async (t) => {
+    answer(await route(t, 'all', 'SELECT id FROM bigids WHERE k = 0', '', '&type=id'), 'Err BadData("column id: integer above 2^53, use CAST(id AS TEXT)")');
+    answer(await route(t, 'all', 'SELECT id FROM bigids WHERE k = 2', '', '&type=id'), 'Err BadData("column id: integer above 2^53, use CAST(id AS TEXT)")');
+    answer(await route(t, 'first', 'SELECT id FROM bigids WHERE k = 1', '', '&type=id'), 'Err BadData("column id: integer above 2^53, use CAST(id AS TEXT)")');
+  }],
+  ['d1 D1.Result.first of a batch! with no cast: BadData with the column', async (t) => {
+    answer(await t.get(`/d1/batch_first?type=id&sql=${q('SELECT id FROM bigids WHERE k = 2')}`), 'Err BadData("column id: integer above 2^53, use CAST(id AS TEXT)")');
+    answer(await t.get(`/d1/batch_first?type=id&sql=${q('SELECT CAST(id AS TEXT) AS id FROM bigids WHERE k = 2')}`), 'Ok { id: -2687166099708853831 }');
+  }],
+  ["d1 the text '01' and '9223372036854775808' into an I64 field give BadData", async (t) => {
+    answer(await route(t, 'all', "SELECT '01' AS id", '', '&type=id'), 'Err BadData("column id: the value does not fit the type")');
+    answer(await route(t, 'all', "SELECT '9223372036854775808' AS id", '', '&type=id'), 'Err BadData("column id: the value does not fit the type")');
+  }],
+  ['d1 a missing column gives BadData("column id: missing")', async (t) => {
+    answer(await route(t, 'all', 'SELECT name FROM people WHERE id = 1', '', '&type=id'), 'Err BadData("column id: missing")');
+  }],
+  ['d1 an I64 column of 2^53 - 1 and an F64 column of 2^60 (no cast) read as numbers', async (t) => {
+    answer(await route(t, 'first', 'SELECT i AS id FROM nums WHERE k = 1', '', '&type=id'), 'Ok { id: 9007199254740991 }');
+    answer(await route(t, 'first', 'SELECT x FROM nums WHERE k = 1', '', '&type=real'), 'Ok { x_as_integer: Ok(1152921504606846976) }');
+  }],
+  // PLAN.md 8c: 2 inserts and a select in one batch: 3 results, and `first()` of the third reads the count. One crossing.
+  ['d1 batch! of 2 inserts and a select: 3 results, first() of the third reads the count; one crossing', async (t) => {
+    const r = await t.get('/d1/batch_count?grp=g1');
+    answer(r, 'Ok results=3 written=1,1 count=Ok({ n: 2 }) all=Ok([{ n: 2 }])');
+    eq(r.awaits, 1, 'crossings with a wait (js_await)');
+    eq(r.calls, 0, 'crossings with no wait (js_call)');
+    return `${r.awaits} js_await, ${r.calls} js_call`;
+  }],
+  ['d1 batch (Io twin), batch_with! and twin', async (t) => {
+    const sql = 'SELECT 1 AS n;SELECT 2 AS n';
+    for (const name of ['batch', 'batch_io', 'batch_with', 'batch_with_io']) {
+      const r = await route(t, name, sql, '', '&max=1000');
+      ok(r.status === 200 && r.body.startsWith('Ok results=2 '), `${name}: got ${r.body}`);
+    }
+  }],
+  // MC11: a read above the limit is TooLarge, before any copy into wasm.
+  ['d1 all! of rows above 1 MiB is TooLarge, all_with! with max_bytes of 2 MiB gives the rows', async (t) => {
+    answer(await route(t, 'all', 'SELECT x FROM blobs', '', '&type=big'), 'Err TooLarge');
+    answer(await route(t, 'all_with', 'SELECT x FROM blobs', '', `&type=big&max=${2 * 1024 * 1024}`), 'Ok rows=12');
+    answer(await route(t, 'rows', 'SELECT x FROM blobs'), 'Err TooLarge');
+    ok((await route(t, 'rows_with', 'SELECT x FROM blobs', '', `&max=${2 * 1024 * 1024}`)).body.startsWith('Ok { columns: ["x"]'), 'rows_with! with 2 MiB');
+    answer(await route(t, 'batch', 'SELECT x FROM blobs WHERE rowid <= 6;SELECT x FROM blobs WHERE rowid > 6'), 'Err TooLarge');
+    ok((await route(t, 'batch_with', 'SELECT x FROM blobs WHERE rowid <= 6;SELECT x FROM blobs WHERE rowid > 6', '', `&max=${2 * 1024 * 1024}`)).body.startsWith('Ok results=2 '), 'batch_with! with 2 MiB');
+  }],
+  // PLAN.md 8c: `with_session!(Primary)`: NotFound before a query, Ok after an insert, and `After(bookmark)` reads the row.
+  ['d1 with_session!: bookmark! before and after a query, and After(bookmark)', async (t) => {
+    const r = await t.get('/d1/session?k=s1');
+    const m = /^before=Err\(NotFound\) insert=Ok\(\{\}\) after=(\S+)$/.exec(r.body);
+    ok(r.status === 200 && m && m[1] !== 'none' && m[1] !== '', `got ${r.status} ${r.body}`);
+    answer(await t.get(`/d1/session_after?b=${q(m[1])}&k=s1`), 'Ok { t: "session" }');
+    return `bookmark ${m[1]}`;
+  }],
+  // PLAN.md 8d: constraint failures (MODULES.md 5.1, table "Constraint kinds"). Each check keeps the JS text in `seen`.
+  ...[
+    ['a primary key', 'PrimaryKey', "INSERT INTO t (id, u, n, c) VALUES (1, 'b', 1, 1)", 'UNIQUE constraint failed: t.id'],
+    ['a UNIQUE column', 'Unique', "INSERT INTO t (id, u, n, c) VALUES (2, 'a', 1, 1)", 'UNIQUE constraint failed: t.u'],
+    ['NOT NULL', 'NotNull', "INSERT INTO t (id, u, n, c) VALUES (3, 'c', NULL, 1)", 'NOT NULL constraint failed: t.n'],
+    ['CHECK', 'Check', "INSERT INTO t (id, u, n, c) VALUES (4, 'd', 1, -1)", 'CHECK constraint failed: c >= 0'],
+    ['a foreign key', 'ForeignKey', "INSERT INTO t (id, u, n, c, p) VALUES (5, 'e', 1, 1, 42)", 'FOREIGN KEY constraint failed'],
+    ['a STRICT column', 'Datatype', "INSERT INTO s (id, v) VALUES (1, 'x')", 'cannot store TEXT value in INTEGER column s.v'],
+    ["a trigger RAISE(ABORT, 'UNIQUE constraint failed: x')", 'Trigger', "INSERT INTO t (id, u, n, c) VALUES (97, 'y', 1, 1)", 'UNIQUE constraint failed: x'],
+  ].map(([what, kind, sql, message]) => [`d1 8d: ${what} gives Constraint ${kind}`, async (t) => {
+    answer(await route(t, 'run', sql), `Err Constraint({ kind: ${kind}, message: "${message}" })`);
+    seen[kind] = await jsError(t, sql);
+    return seen[kind];
+  }]),
+  ["d1 8d: a trigger RAISE(ABORT, 'label-conflict') in a batch! gives Trigger, and the batch writes nothing", async (t) => {
+    const sql = "INSERT INTO t (id, u, n, c) VALUES (50, 'w', 1, 1);INSERT INTO t (id, u, n, c) VALUES (99, 'z', 1, 1)";
+    answer(await route(t, 'batch', sql), 'Err Constraint({ kind: Trigger, message: "label-conflict" })');
+    const db = await t.mf.getD1Database('DB');
+    eq((await db.prepare('SELECT count(*) AS n FROM t WHERE id = 50').first()).n, 0, 'rows of the first insert');
+    seen.batchTrigger = await jsError(t, null, sql);
+    return seen.batchTrigger;
+  }],
+  ['d1 8d: exec! of a primary key failure gives PrimaryKey, with the line and the SQL in the message', async (t) => {
+    const sql = "INSERT INTO t (id, u, n, c) VALUES (1, 'q', 1, 1)";
+    answer(await route(t, 'exec', sql), `Err Constraint({ kind: PrimaryKey, message: "Error in line 1: ${sql}: UNIQUE constraint failed: t.id" })`);
+  }],
+  ['d1 a syntax error is D1Err', async (t) => {
+    answer(await route(t, 'run', 'SELEC 1'), 'Err D1Err({ message: "D1_ERROR: near \\"SELEC\\": syntax error at offset 0: SQLITE_ERROR", name: "Error" })');
+  }],
+];
+
+// The `name: message` that the binding throws for `sql` (one statement), or for a batch of `batch` (split at `;`).
+async function jsError(t, sql, batch) {
+  const db = await t.mf.getD1Database('DB');
+  try {
+    if (batch) await db.batch(batch.split(';').map((s) => db.prepare(s)));
+    else await db.prepare(sql).run();
+    return 'no throw';
+  } catch (e) {
+    return `${e.name}: ${e.message}`;
+  }
+}

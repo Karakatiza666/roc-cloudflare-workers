@@ -47,25 +47,30 @@ export const checks = [
     answer(r, 'ok=True exported=True calls=12');
     eq(r.waits, 12, 'waits');
   }],
-  // PLAN.md 8c: `timing_safe_equal!`, `random!` and `random_uuid!` run in `call!`: no wait.
+  // PLAN.md 8c: `timing_safe_equal!`, `random!` and `random_uuid!` run in `call!`: no wait. Crossings (the counter of
+  // the shim, Q2): one `js_call` for each call (2 `random!(16)`, 2 `timing_safe_equal!`, `random_uuid!`), 2 for
+  // `random!(100000)` (two chunks, C5), and none for `short` (lists of two lengths, C4): 7 in all.
   ['webcrypto timing_safe_equal!, random!, random_uuid! (call!, no wait)', async (t) => {
     const r = await t.get('/webcrypto/sync');
     const m = /^equal=True differ=False short=False random=16 big=100000 distinct=True uuid=([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/.exec(r.body);
     ok(r.status === 200 && m, `got ${r.status} ${r.body}`);
     eq(r.waits, 0, 'waits');
-    return `${r.waits} waits, uuid ${m[1]}`;
+    eq(r.awaits, 0, 'crossings with a wait (js_await)');
+    eq(r.calls, 7, 'crossings with no wait (js_call)');
+    return `${r.waits} waits, ${r.awaits} js_await, ${r.calls} js_call, uuid ${m[1]}`;
   }],
-  // RN6: RS256 `verify` of a JWT signature with the public key as a JWK, in one crossing: one wait. The control imports
-  // the key first (`import_key!`, then `verify!`): two waits.
+  // RN6: RS256 `verify` of a JWT signature with the public key as a JWK, in one crossing (the counter of the shim): one
+  // `js_await`. The control imports the key first (`import_key!`, then `verify!`): two.
   ['webcrypto verify! RS256 of a JWT with a JWK (one crossing)', async (t) => {
     const url = (route, sig, data) => `/webcrypto/${route}?jwk=${q(JSON.stringify(publicJwk))}&sig=${sig.toString('hex')}&data=${q(data)}`;
     const r = await t.get(url('rs256_verify', jwtSignature, jwtInput));
     answer(r, 'Ok');
+    eq(r.awaits + r.calls, 1, 'crossings');
     eq(r.waits, 1, 'waits');
     const control = await t.get(url('rs256_verify_two', jwtSignature, jwtInput));
     answer(control, 'Ok');
-    eq(control.waits, 2, 'waits of import_key! then verify!');
-    return `verify! with a JWK: ${r.waits} wait; import_key! then verify!: ${control.waits}`;
+    eq(control.awaits + control.calls, 2, 'crossings of import_key! then verify!');
+    return `verify! with a JWK: ${r.awaits + r.calls} crossing; import_key! then verify!: ${control.awaits + control.calls}`;
   }],
   ['webcrypto verify! with a JWK: a wrong signature, a wrong text', async (t) => {
     const bad = Buffer.from(jwtSignature);
@@ -111,6 +116,6 @@ export const checks = [
     const want = createHmac('sha256', 'pin-secret').update(body).digest('hex');
     answer(await t.get(`/webcrypto/use/k1?data=${body}`), `sig=${want} verify=Ok roc=${want}`);
     const none = await t.get(`/webcrypto/use/never?data=${body}`);
-    ok(none.body.startsWith('CryptoErr TypeError'), `an unknown name: ${none.body}`);
+    answer(none, 'Odd NotPinned');
   }],
 ];

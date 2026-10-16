@@ -88,7 +88,7 @@ try {
   process.exit(1);
 }
 
-// What a check gets: `get(path)` gives { status, body, waits, ms }, `logs` (the structured log lines of workerd since
+// What a check gets: `get(path)` gives { status, body, waits, awaits, calls, ms } (`awaits`, `calls`: the crossings), `logs` (the structured log lines of workerd since
 // the start), `server` (the URL of the local server), `mf` (the Miniflare instance).
 const t = {
   server: serverUrl,
@@ -96,7 +96,8 @@ const t = {
   logs,
   async get(path, init) {
     const res = await mf.dispatchFetch(`http://localhost${path}`, init);
-    return { status: res.status, body: await res.text(), waits: Number(res.headers.get('x-waits')), ms: Number(res.headers.get('x-ms')) };
+    const n = (h) => Number(res.headers.get(h));
+    return { status: res.status, body: await res.text(), waits: n('x-waits'), awaits: n('x-awaits'), calls: n('x-calls'), ms: n('x-ms') };
   },
 };
 

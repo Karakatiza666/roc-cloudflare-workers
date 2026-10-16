@@ -1,5 +1,5 @@
 // node conformance/reverts.mjs [name-filter]   (env: ROC; MINIFLARE as run.mjs)
-// Revert checks of PLAN.md 8c (wave 1, R2 and Cache) and 8d. Each revert is a real edit of a source file, a build of the conformance app
+// Revert checks of PLAN.md 8c (wave 1, WebCrypto, R2 and Cache, D1, Sql and Memo) and 8d. Each revert is a real edit of a source file, a build of the conformance app
 // into .cache/conformance-reverts/ when a .roc file changed, a run of the test that must catch it, and a restore of the
 // file. A change that finds no text to replace is an error (the code moved: update this list).
 // The conformance app is on the bench platform, so a Roc edit is in bench/platform/ (the copy of platform/). The MC10
@@ -114,6 +114,59 @@ const reverts = [
   // 10a with R2: the body is read into wasm before the response.
   R('10a: the R2 body is copied into wasm (conformance/R2Routes.roc)', 'conformance', ['r2 10a: a 50 MB object through get! to the response, wasm memory grows by less than 1 MB'],
     ['conformance/R2Routes.roc', 'Ok(obj) => Response.from_body(200, "application/octet-stream", obj.body)\n\tErr(e) => Response.from_text(200, "Err ${Str.inspect(e)}")\n}', 'Ok(obj) => match obj.body.bytes_with!({ max_bytes: 100_000_000 }) {\n\t\tOk(b) => Response.from_bytes(200, "application/octet-stream", b)\n\t\tErr(e) => Response.from_text(200, "Err ${Str.inspect(e)}")\n\t}\n\tErr(e) => Response.from_text(200, "Err ${Str.inspect(e)}")\n}']),
+  // PLAN.md 8c, D1, Sql and Memo. A wrong JS method name in one function: its route fails.
+  R('D1.all: all is called "allx"', 'conformance', ['d1 all!', 'd1 all (Io twin), all_with! and twin'], [BP + 'D1.roc', 'Call(Slot(s), "all", [])', 'Call(Slot(s), "allx", [])']),
+  R('D1.first: first is called "firstx"', 'conformance', ['d1 first!: a row, and NotFound for no row'], [BP + 'D1.roc', 'Call(Slot(s), "first", [])', 'Call(Slot(s), "firstx", [])']),
+  R('D1.run: run is called "runx"', 'conformance', ['d1 run!, run (Io twin): the info of an insert; last_row_id Ok(5)'], [BP + 'D1.roc', 'Call(Slot(s), "run", [])', 'Call(Slot(s), "runx", [])']),
+  R('D1.rows: raw is called "rawx"', 'conformance', ['d1 rows!, rows (Io twin), rows_with!: columns and Sql values'], [BP + 'D1.roc', 'Call(Slot(s), "raw", [', 'Call(Slot(s), "rawx", [']),
+  R('D1.batch: batch is called "batchx"', 'conformance', ['d1 batch! of 2 inserts and a select: 3 results, first() of the third reads the count; one crossing', 'd1 batch (Io twin), batch_with! and twin'], [BP + 'D1.roc', 'Call(at.obj, "batch", [Slot(n)])', 'Call(at.obj, "batchx", [Slot(n)])']),
+  R('D1.exec: exec is called "execx"', 'conformance', ['d1 exec!, exec (Io twin)'], [BP + 'D1.roc', 'Call(Slot(0), "exec", [', 'Call(Slot(0), "execx", [']),
+  R('D1.with_session!: withSession is called "withSessionx"', 'conformance', ['d1 with_session!: bookmark! before and after a query, and After(bookmark)'], [BP + 'D1.roc', '"withSession"', '"withSessionx"']),
+  // The tests of PLAN.md 8c.
+  R('D1: an Int parameter is sent as a BigInt', 'conformance', ['d1 an Int parameter outside ±(2^53 - 1) stores the exact value'], [BP + 'D1.roc', 'Int(i) => if i > max_safe or i < -max_safe Text(i.to_str()) else Int(i)', 'Int(i) => Int(i)']),
+  R('D1: an Int parameter goes as text only above 2^53', 'conformance', ['d1 an Int parameter outside ±(2^53 - 1) stores the exact value'], [BP + 'D1.roc', 'if i > max_safe or i < -max_safe Text(', 'if i > max_safe Text(']),
+  R('D1: typed rows parse with no int_from_text (Cbor.parse)', 'conformance', ['d1 all! of CAST(id AS TEXT) into { id : I64 } gives the exact ids', 'd1 D1.Result.first of a batch! with no cast: BadData with the column'],
+    [BP + 'D1.roc', 'Cbor.parse_with(bytes, { fields: Snake, int_from_text: Bool.True })', 'Cbor.parse(bytes)']),
+  R('D1: BadData is Str.inspect of the parse error (no column)', 'conformance', ['d1 all! with no cast: BadData with the column, for a positive and a negative id', 'd1 D1.Result.first of a batch! with no cast: BadData with the column', "d1 the text '01' and '9223372036854775808' into an I64 field give BadData", 'd1 a missing column gives BadData("column id: missing")'],
+    [BP + 'D1.roc', 'Err(InvalidCbor(pos)) => Err(BadData(bad_data(bytes, pos)))\n\tErr(other) => Err(BadData(missing(Str.inspect(other))))', 'Err(InvalidCbor(pos)) => Err(BadData(Str.inspect(InvalidCbor(pos))))\n\tErr(other) => Err(BadData(Str.inspect(other)))']),
+  R('D1.all: no Get "results" (API.md 6.2)', 'conformance', ['d1 all!'], [BP + 'D1.roc', 'Get(Slot(s + 1), "results"), Call(Root("pf"), "pack", [Slot(s + 2), Lit(Int(limit(max)))])', 'Call(Root("pf"), "pack", [Slot(s + 1), Lit(Int(limit(max)))])']),
+  R('D1.all: no limit in pf.pack', 'conformance', ['d1 all! of rows above 1 MiB is TooLarge, all_with! with max_bytes of 2 MiB gives the rows'], [BP + 'D1.roc', '"pack", [Slot(s + 2), Lit(Int(limit(max)))]', '"pack", [Slot(s + 2)]']),
+  R('D1.Session.bookmark!: getBookmark of null read as text', 'conformance', ['d1 with_session!: bookmark! before and after a query, and After(bookmark)'], [BP + 'D1.roc', 'Ok(Null) => Err(NotFound)', 'Ok(Null) => Ok("")']),
+  R('Sql.Info: an I64 field in the meta parse', 'conformance', ['d1 run!: last_row_id of a 64-bit rowid is Err(Rounded)'],
+    [BP + 'D1.roc', 'Meta : { changes : U64, last_row_id : F64,', 'Meta : { changes : U64, last_row_id : I64,'], [BP + 'D1.roc', 'last_row_id: row_id(m.last_row_id)', 'last_row_id: row_id(m.last_row_id.to_f64())']),
+  R('D1.batch!: a crossing before the batch', 'conformance', ['d1 batch! of 2 inserts and a select: 3 results, first() of the third reads the count; one crossing'],
+    [BP + 'D1.roc', 'batch! = |db, stmts| Io.run!(batch(db, stmts))', 'batch! = |db, stmts| {\n\t\t_ = Io.call!([Get(Root("env"), db.name)])\n\t\tIo.run!(batch(db, stmts))\n\t}']),
+  // PLAN.md 8d, D1.
+  R('D1: the old map (constraint failed in the message)', 'conformance', ["d1 8d: a trigger RAISE(ABORT, 'label-conflict') in a batch! gives Trigger, and the batch writes nothing"],
+    [BP + 'D1.roc', 'thrown = |t| match constraint_of(t.message) {', 'thrown = |t| match (if t.message.contains("constraint failed") constraint_of(t.message) else Err(NotConstraint)) {']),
+  R('D1: the kind from the first words of the text', 'conformance', ['d1 8d: a primary key gives Constraint PrimaryKey'],
+    [BP + 'D1.roc', 'Ok({ kind: kind_of(after.drop_suffix(")")), message: before })', 'Ok({ kind: if before.starts_with("UNIQUE") Unique else kind_of(after.drop_suffix(")")), message: before })']),
+  R('D1: message keeps the code at the end', 'conformance', ["d1 8d: a trigger RAISE(ABORT, 'label-conflict') in a batch! gives Trigger, and the batch writes nothing"],
+    [BP + 'D1.roc', 'Ok({ kind: kind_of(after.drop_suffix(")")), message: before })', 'Ok({ kind: kind_of(after.drop_suffix(")")), message: text })']),
+  R('D1: no map (D1Err for each throw)', 'conformance', ['d1 8d: a primary key gives Constraint PrimaryKey', 'd1 8d: a UNIQUE column gives Constraint Unique', 'd1 8d: NOT NULL gives Constraint NotNull', 'd1 8d: CHECK gives Constraint Check', 'd1 8d: a foreign key gives Constraint ForeignKey', 'd1 8d: a STRICT column gives Constraint Datatype', "d1 8d: a trigger RAISE(ABORT, 'UNIQUE constraint failed: x') gives Constraint Trigger"],
+    [BP + 'D1.roc', 'thrown = |t| match constraint_of(t.message) {', 'thrown = |t| match constraint_of("") {']),
+  R('D1 (roc test): the kind from the first words of the text', 'roc test', [], ['platform/D1.roc', 'Ok({ kind: kind_of(after.drop_suffix(")")), message: before })', 'Ok({ kind: if before.starts_with("UNIQUE") Unique else kind_of(after.drop_suffix(")")), message: before })']),
+  R('D1 (roc test): an Int parameter goes as text only above 2^53', 'roc test', [], ['platform/D1.roc', 'if i > max_safe or i < -max_safe Text(', 'if i > max_safe Text(']),
+  // MC11 in the shim: pf.limit (rows!) and the budget of pf.packEach (batch!).
+  R('pf.limit: no limit', 'conformance', ['d1 all! of rows above 1 MiB is TooLarge, all_with! with max_bytes of 2 MiB gives the rows'], ['js/values.js', 'w.limit = Math.min(saved, w.n + v.maxBytes);', 'w.limit = saved;']),
+  R('pf.packEach: a limit for each item, not for all', 'conformance', ['d1 all! of rows above 1 MiB is TooLarge, all_with! with max_bytes of 2 MiB gives the rows'], ['js/helpers.js', 'new Packed(item?.[key], Infinity, budget)', 'new Packed(item?.[key], maxBytes ?? Infinity)']),
+  // Memo.
+  R('Memo.get!: pf.pinned is called "pinnedx"', 'conformance', ['memo get!: a second request gets the value with no load!'], [BP + 'Memo.roc', 'Call(Root("pf"), "pinned",', 'Call(Root("pf"), "pinnedx",']),
+  R('Memo.get!: the pinned value is not read', 'conformance', ['memo get!: a second request gets the value with no load!'], [BP + 'Memo.roc', 'Ok(Bytes(bytes)) => read(bytes)', 'Ok(Bytes(_)) => Err("not pinned")']),
+  R('Memo.get!: the pin has no age', 'conformance', ['memo max_age_ms: a get! after the age loads again'], [BP + 'Memo.roc', 'Lit(Bytes(write(v))), Lit(Int(age))', 'Lit(Bytes(write(v))), Lit(Undefined)']),
+  R('Memo.clear!: pf.unpin is called "unpinx"', 'conformance', ['memo clear!: the next get! loads again'], [BP + 'Memo.roc', '"unpin"', '"unpinx"']),
+  // The pin table (API.md RS2): Io.pin!, pinned!, unpin! (Js.pin! and its pair in API.md).
+  R('Io.pin!: pf.pin is called "pinx"', 'conformance', ['pin pin!, pinned!, unpin!: one call! each, no wait', 'webcrypto a pinned CryptoKey used by a later request'],
+    [BP + 'Io.roc', 'Call(Root("pf"), "pin", [Lit(Text(name)), Lit(value), Lit(Int(age))])', 'Call(Root("pf"), "pinx", [Lit(Text(name)), Lit(value), Lit(Int(age))])']),
+  R('Io.pinned!: undefined is a value (no NotPinned)', 'conformance', ['pin pin!, pinned!, unpin!: one call! each, no wait', 'pin pinned! of a name with no entry is NotPinned'], [BP + 'Io.roc', 'Ok(Undefined) => Err(NotPinned)', 'Ok(Undefined) => Ok(Undefined)']),
+  R('Io.pin!: the age is not sent', 'conformance', ['pin max_age_ms: pinned! after the age is NotPinned'], [BP + 'Io.roc', 'Lit(value), Lit(Int(age))', 'Lit(value), Lit(Undefined)']),
+  R('Io.unpin!: pf.unpin is called "unpinx"', 'conformance', ['pin pin!, pinned!, unpin!: one call! each, no wait'], [BP + 'Io.roc', 'Call(Root("pf"), "unpin", [Lit(Text(name))])', 'Call(Root("pf"), "unpinx", [Lit(Text(name))])']),
+  R('Io.pin!: a throw is Ok (no PinErr)', 'conformance', ['pin pin! to a full table is PinErr'], [BP + 'Io.roc', 'Err(t) => Err(PinErr(t))', 'Err(_) => Ok({})']),
+  // The crossing counter of the shim (PLAN.md 8c, WebCrypto Q2).
+  R('shim: js_call is not counted', 'conformance', ['webcrypto timing_safe_equal!, random!, random_uuid! (call!, no wait)', 'memo get!: a second request gets the value with no load!'], ['js/bridge.js', '    crossings.call++;\n', '']),
+  R('shim: js_await is not counted', 'conformance', ['webcrypto verify! RS256 of a JWT with a JWK (one crossing)', 'd1 batch! of 2 inserts and a select: 3 results, first() of the third reads the count; one crossing'], ['js/bridge.js', '    crossings.await++;\n', '']),
+  // Body.Writer.write (the twin, RO1): the route of RC13 writes with it.
+  R('Body.Writer.write: no bytes are written', 'conformance', ['r2 put_with! of a stream with length_bytes stores the bytes'], [BP + 'Body.roc', '[Call(Ref(writer), "write", [Lit(Bytes(bytes))])]', '[Call(Ref(writer), "write", [Lit(Bytes([]))])]']),
 ];
 
 const filter = process.argv[2];

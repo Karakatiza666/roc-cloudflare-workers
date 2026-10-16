@@ -13,15 +13,15 @@ flowchart LR
 
 | File | What |
 | --- | --- |
-| `app.roc` | The dispatcher: `/<module>/...` goes to `<Module>Routes.route!` (one `import` line and one `match` line for each module) |
+| `app.roc` | The dispatcher: `/<module>/...` goes to `<Module>Routes.route!` (one `import` line and one `match` line for each module). Its header has the package `cbor` (`roc-cbor`, the same URL as the platform), for the `where` clauses of `D1Routes.roc`. |
 | `<Module>Routes.roc` | The routes of one module: `route! : Request, List(Str) => Response`. Each route gives a text that the check compares. |
 | `Q.roc` | Query parameters: `Q.text(req, name)`, `Q.num(req, name)` |
-| `worker.js` | `makeHandler` of the app, the option `ops`, and the headers `x-waits` (waits of the task) and `x-ms` on each response. `GET /__stats`: the task table. |
+| `worker.js` | `makeHandler` of the app, the option `ops`, and the headers `x-waits` (waits of the task), `x-awaits` and `x-calls` (the crossings: calls of `js_await` and `js_call`, from `stats.crossings` of the runner) and `x-ms` on each response. `GET /__stats`: the task table. |
 | `run.mjs` | Starts a local HTTP server and Miniflare, runs each check of `checks/*.mjs` (in name order), then the check `end` (no task, ref, context, alarm or live byte). One line for each check: `PASS <name>` or `FAIL <name>: <why>`. Exit 1 on a failure. |
 | `checks/<module>.mjs` | `options`: the Miniflare options of the module (its bindings). `checks`: a list of `[name, async (t) => detail]`. |
 | `assert.mjs` | `eq`, `ok`, `answer(r, text)` (a 200 with that body) |
 | `reverts.mjs` | The revert checks: a real edit, a build, a run, a restore (`PLAN.md` 8c, "Status of step 8c, wave 1") |
-| `must-not-compile.sh`, `must-not-compile/` | A `Secret` in `Log` fields and in a CBOR encode does not compile; the controls with `s.reveal()` do |
+| `must-not-compile.sh`, `must-not-compile/` | A `Secret` in `Log` fields and in a CBOR encode (`Cbor` of the package `roc-cbor`) does not compile; the controls with `s.reveal()` do |
 
 Run:
 
@@ -36,7 +36,7 @@ What a check gets (`t`):
 
 | Field | What |
 | --- | --- |
-| `t.get(path, init)` | `{ status, body, waits, ms }` of `dispatchFetch` |
+| `t.get(path, init)` | `{ status, body, waits, awaits, calls, ms }` of `dispatchFetch`. `awaits` and `calls` count the crossings of the request ("one crossing" tests). |
 | `t.server` | The URL of the local server: `/hello`, `/ten`, `/slow` (2 s), `/echo` (method, header `x-test`, body), `/status/<n>` |
 | `t.logs` | The structured log lines of workerd (`{ level, message }`) since the start |
 | `t.mf` | The Miniflare instance (`getD1Database`, `getR2Bucket`, ... to set up or read data) |

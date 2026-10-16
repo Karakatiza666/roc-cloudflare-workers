@@ -51,6 +51,8 @@ step "idle-test.mjs (4h leak counter, 4j idle reset, 12e suspect)" node bench/id
 step "handler-test.mjs (9a: makeHandler, options, resumeCheck off on the production build)" node bench/handler-test.mjs bench/out/app.wasm bench/out/app_prod.wasm
 step "context-test.mjs (9b: the context of each task)" node bench/context-test.mjs bench/out/app.wasm
 step "context-workerd.mjs (9b)" node bench/context-workerd.mjs
+# rows.json is a generated fixture (git-ignored): make it in a fresh checkout.
+[ -f research/api-probe/cbor/rows.json ] || node research/api-probe/cbor/cbor-test.mjs >/dev/null
 step "cbor-js-test.mjs (8a: JS codec, RFC 8949 vectors, J1 to J7, refs, Packed, fuzz)" node bench/cbor-js-test.mjs
 # The bridge (PLAN.md 8a)
 step "cbor_test.zig (8a: the Zig codec, native: HD5 fuzz, HD6, HD7)" sh -c 'cd host && "$ZIG" test cbor_test.zig'
