@@ -1702,6 +1702,100 @@ Open points:
 | O3 | Found: two closed error unions of two modules join in `Io.both!` (`Http.get(url)` and `limiter.limit(key)` compiled and built): a non-empty union in the `Io` of a return type is open (the compiler warns that `..` there is redundant). Only the empty `[]` does not join (MODULES.md 15). |
 | O4 | A `Log` line has the fields in the order of the derived JSON encoder (by name), after `level` and `msg`. |
 
+### Status of step 8c, R2 and Cache (2026-10-16)
+
+Done: the modules `R2` (with multipart and `R2.Upload` as data) and `Cache`, their `Io` twins, the helper `pf.r2list`, the conformance routes and checks in Miniflare (local R2 and Cache API), 17 revert checks, and the 10a test with an R2 object. The edge parts stay for 11c (list below). `bench/test-all.sh` gives ALL PASS (49 step lines). `node conformance/run.mjs`: 70 checks and `end`, PASS (was 32). `roc test platform/main.roc`: 26 `expect`s (was 23). `bench/program-test.mjs`: 14 tests (was 13).
+
+```mermaid
+flowchart LR
+    A["app: bucket.get!(key)"] --> P["R2.roc: one program"]
+    P -->|"env[name].get(key, options)"| J["JS: R2Object or null"]
+    J -->|"Fields (OP7): meta, range, body, and Fields of checksums"| R["{ meta, checksums }, or undefined"]
+    R -->|"Roc reads the Js tree"| O["R2.Object { meta, body: Stream(Ref) }, or NotFound"]
+    O -->|"Response.from_body"| W["the Response: no copy into wasm (10a)"]
+```
+
+| Part | What | Main files |
+| --- | --- | --- |
+| `R2` | `get!`, `get_with!` (`range`, `only_if`), `head!`, `put!`, `put_with!` (`only_if`, `http`, `custom`, `checksum`, `length_bytes`), `delete!`, `list!`, `create_multipart_upload!`, `create_multipart_upload_with!`, `resume_multipart_upload` (pure), and on `R2.Upload`: `upload_part!`, `upload_part_with!`, `complete!`, `abort!`. Each one has its `Io` twin. One program for each call: `Get(env, name)`, the pieces of the options, the call, then `read_ops`. A time is a `Date` (a `New` op). A stream with `length_bytes` goes through `FixedLengthStream` (`New`, then `pipeThrough` on the ref). | `platform/R2.roc` |
+| `Cache` | `default`, `named`, `get!`, `put!`, `delete!` and the twins. `caches.default`, or `caches.open(name)` in the same program. `get!` reads `Fields` of the `match` result (OP7). `put!` builds `new Response(body, { status, headers })` in the program. `delete!` gives `NotFound` for `false`. | `platform/Cache.roc` |
+| Helper | `pf.r2list(result)`: a list has one object for each key, and a program has no loop (OP4). It gives `{ objects: [{ meta, checksums }], prefixes, truncated, cursor }`, all plain data. | `js/helpers.js` |
+| Headers | `R2` and `Cache` in `exposes` and imported in both headers. The copies in `bench/platform/` are equal (`exports-test.mjs`). | `platform/main.roc`, `bench/platform/` |
+| Conformance | `R2Routes.roc` and `CacheRoutes.roc` (one route for each function and its twin), `checks/r2.mjs` and `checks/cache.mjs`, `/__mem` in `worker.js` (wasm memory, for 10a) | `conformance/` |
+| Probe | The shapes that local R2 and the Cache API give (the design of the programs) | `research/r2-cache-shapes/` |
+
+Tests: `node conformance/run.mjs` (names are the check names). Reverts: `ROC=... node conformance/reverts.mjs R2` (and `Cache`, `OP7`, `10a`): each one a real edit, a build, a run and a restore. All 17 new reverts are caught (the 14 before: unchanged).
+
+| Test | Result | Revert | Revert result |
+| --- | --- | --- | --- |
+| `r2 get!`, `get (Io twin)`: `Ok size=5 range=none text=hello`, 2 waits (the get, then the body stream) | PASS | `get` is called `getx` | FAIL: 6 checks (`R2Err TypeError: o[name] is not a function`) |
+| `r2 head!`, `head (Io twin)`: 1 wait | PASS | `head` is called `headx` | FAIL: 8 checks |
+| `r2 list!`: `list`, `start_after`, `limit`, `delimiter` | PASS | `pf.r2list` is called `r2listx` | FAIL: 4 checks |
+| `cache put!`, `get!` and twins (named cache and default cache are apart) | PASS | `match` is called `matchx` | FAIL: 6 checks |
+| `r2 get!` and `r2 head!` of a missing key give `NotFound`; `cache get!` of a missing key gives `NotFound` | PASS | No OP7: `Get` and `Fields` on `null` throw | FAIL: 11 checks. `R2Err` and `CacheErr` (`Cannot read properties of undefined (reading 'status')`) |
+| `r2 put_with!` with a wrong `etag_matches` is `PreconditionFailed`, with the right one `Ok`; `put_with` twin | PASS | `only_if` not sent | FAIL: `Ok` (4 checks) |
+| `r2 put_with!` with `R2.absent` on a key that exists is `PreconditionFailed`, on a new key `Ok` | PASS | `only_if` not sent | FAIL (same revert) |
+| `r2 put_with!` with two fields: a right `etag_matches` and `uploaded_after_ms` in the future is `PreconditionFailed` | PASS | The module sends only the first field | FAIL: `Ok` |
+| `r2 put_with!` with a right `etag_matches` and `uploaded_before_ms` in the past (the pair of the plan) | Miniflare gives `Ok` (RC11). The edge part is for 11c. | | |
+| `r2 get_with!` with a wrong `etag_matches` is `PreconditionFailed` (R2 gives the object with no body) | PASS | | |
+| `r2 multipart`: request 1 (`create_multipart_upload!`, `upload_part!(1, 5 MiB)`) gives the `Upload` and the `Part` as JSON. Request 2 (`upload_part!(2, 1 KB)`) and request 3 (`complete!`, then `get!`): 5 MiB + 1 KB, part 1 all `A`, part 2 all `B`. Twins: the same. | PASS: 5,243,904 bytes | Each function of `Upload` calls `createMultipartUpload` for `resumeMultipartUpload` | FAIL: `R2Err` already at `upload_part!` of request 1 (`createMultipartUpload` takes no upload id: "parameter 2 is not of type 'MultipartOptions'") |
+| `r2 multipart`: `resume_multipart_upload` is pure (0 waits), `abort!` stops the upload (`R2Err` for a later part), `upload_part_with!`, `create_multipart_upload_with!` | PASS | | |
+| `put_with!` of a `Body.writer!` stream is `R2Err` with "known length"; with `length_bytes` 11 it stores `hello world` | PASS | No `FixedLengthStream` | FAIL: `R2Err` with `length_bytes` too |
+| `put_with!` `http: { cache_control }`: `head!` has it, `list!` has an empty `http`, `list!` with `include: [Http]` has it. `custom` and `include: [Custom]` the same. | PASS | `include` not sent | FAIL: an empty `http` (2 checks) |
+| `list!` with `start_after: "sa/b"` gives `sa/c` | PASS | Not sent | FAIL: `sa/a`, `sa/b`, `sa/c` |
+| `get_with!` with `range: From({ offset_bytes: 2, length_bytes: 3 })`: 3 bytes (`llo`) and `obj.?range` is the same range. `Suffix(2)`: `lo`, range `From` 3, 2. | PASS | The module does not read `range` | FAIL: `range=none` (2 checks) |
+| `put_with!` with a wrong `Sha256` is `R2Err`, with the right one `meta.checksums` has it | PASS | The checksum is not sent | FAIL: `Ok` |
+| `put!` with no checksum has an MD5 (16 bytes) | PASS | `md5` not read | FAIL: 3 checks (`md5=none`) |
+| `cache put!` of a 206 response is `CacheErr` | PASS: `TypeError: Cannot cache response to a range request (206 Partial Content).` | The status is always 200 | FAIL: `Ok` |
+| `cache delete!` of a key that is not cached is `NotFound`, of a cached key `Ok` | PASS | `false` is `Ok` | FAIL: `Ok deleted` |
+| `cache put!` of a `Stream` body (the body of a `fetch`) | PASS | | |
+| 10a: a 50 MB R2 object through `R2.get!` to the response (a stream): the bytes come back, wasm memory grows by less than 1 MB | PASS: 0 bytes | The route reads the body into wasm first (`bytes_with!`) | FAIL: an OOM trap (the answer is 18 bytes of text) |
+| `r2 put (Io twin)`, `delete!` and twin, `put_with` twin, `get_with` twin, `list` twin | PASS | | |
+| `end`: no task, ref, context, alarm or live byte | PASS | | |
+
+Edge parts for 11c (Miniflare differs from the edge, or the plan says "on the edge"):
+
+| Part | What to run on the edge | Local result |
+| --- | --- | --- |
+| `R2.absent` on a key that exists | `PreconditionFailed` (the wildcard is in the workerd source only) | PASS locally |
+| `list!` with `start_after` | gives only the keys after it (in the workerd source only) | PASS locally |
+| `only_if`: a right `etag_matches` and `uploaded_before_ms` in the past | The plan expects `PreconditionFailed`. Miniflare gives `Ok`: `ifUnmodifiedSince` is true when a right `etagMatches` is there (`bucket.worker.js`, `_testR2Conditional`). | `Ok` |
+| `only_if`: a right `etag_matches` and `uploaded_after_ms` in the future | Same rule: Miniflare gives `PreconditionFailed` | `PreconditionFailed` |
+| A put with no checksum | MD5 only (Cloudflare docs). Miniflare gives all five hashes, and `put_with!` with a `Sha256` has `sha256`. The test checks only the MD5. | MD5 present |
+| A read with no `range` | Does the edge give `range` for a whole read? Miniflare gives `{ offset: 0, length: size }`. The module reads `range` only when the call had a `range` (RC2). | |
+| 10a with a 50 MB object of a real bucket | wasm memory grows by less than 1 MB | 0 bytes |
+| A stream through `FixedLengthStream` into `put_with!` (`upload_part_with!` is tested with `Bytes` only) | stores the bytes; a stream of another length is `R2Err` | PASS locally |
+| `get_with!` with a failed condition | an object with no body (`PreconditionFailed`) | PASS locally |
+| `Cache` | The cache of one data center (RF1): `put!`, then `get!`; a response with no `cache-control` is not cached (local: `match` gives `undefined`); `delete!` of a key that is not cached is `NotFound` | PASS locally |
+| Error texts (8d) | see `bench/README.md`, "Error texts of R2 and Cache" | |
+
+Choices I made (the plan does not say):
+
+| # | Choice |
+| --- | --- |
+| RC1 | `R2` reads each result as a `Js` tree and decodes it in Roc: the platform has no `Cbor` module yet (O1 of wave 1), and MODULES.md 15 already says that the platform reads `R2.put_with!` as a `Js` tree. Each optional field of `R2.Http` and `R2.Checksums` is set with a record update (`{ ..h, cache_control: s }`: a probe, `research/r2-cache-shapes/opt.roc`). A shape that is not the shape of the program is a crash (a platform bug), not `BadData`. |
+| RC2 | `obj.?range` is there only for a call with a `range` option. Miniflare gives a range for each read (`{ offset: 0, length: size }`), and a `Suffix` call gives `offset` and `length`, so `Suffix(n)` comes back as `From`. If R2 reports a `suffix`, it is `Suffix`. |
+| RC3 | `pf.r2list` (a platform helper, API.md 6.4): a list result has one class instance for each object, and each would be a ref. The helper gives plain `{ meta, checksums }` records, the same two parts as the program of `get!`. |
+| RC4 | The checksums of an object: `Fields` of `Get(object, "checksums")` (the hashes are `ArrayBuffer`, so `Bytes`). The object `Checksums` is a class instance, and `toJSON()` would throw on a `null` result (no OP7 for `Call`). |
+| RC5 | A time (`uploaded_before_ms`, `uploaded_after_ms`, `cache_expiry_ms`) is a `Date`, made by a `New` op before the record that uses it. R2 takes `Date` only. |
+| RC6 | `length_bytes` is used only for a `Stream` body. A `Text` or a `Bytes` body has a known length. |
+| RC7 | `put!` (no options) cannot see `null` (R2 gives `null` only for a failed condition): a `null` is a crash. A `get!` result with no body is a crash. `get_with!` with no body is `PreconditionFailed`. |
+| RC8 | `Cache` is `{ which : [Default, Named(Str)] }`. The key is the URL as a string: the Cache API takes a string as a `GET` request. `get!` gives a `Response` with a `Stream` body (as `Http.open!`). `put!` builds the `Response` from `status`, `headers` and `body` of the Roc value (`web_socket` is not given). |
+| RC9 | Twins that MODULES.md 5.3 does not list: `list` (the options record is not optional: there is no `list_with`, as in 5.3), `upload_part`, `upload_part_with`, `complete`, `abort`. MC3 asks for them. |
+| RC10 | An error of R2 or of the Cache is `R2Err(Thrown)` or `CacheErr(Thrown)`, with no named tag but `PreconditionFailed` (a `null` of `put`) and `NotFound`. The texts are in `bench/README.md`. |
+| RC11 | The test of the plan, a right `etag_matches` and `uploaded_before_ms` in the past, gives `Ok` in Miniflare (above). The local test uses `uploaded_after_ms` in the future, which Miniflare does fail, and it has a revert (the module sends only the first field). The plan's pair is run on the edge in 11c. |
+| RC12 | The multipart route of the conformance app puts the upload and the parts in the query string as JSON (`Json.to_str`, `Json.parse` of the derived codecs of `R2.Upload`). The parts are 5 MiB of `A` and 1 KB of `B`, so a swap of the parts shows. |
+| RC13 | The `Body.writer!` stream with `length_bytes` is fed in the other branch of `Io.race!` (the put and the feed). The feed waits 1.5 s at its end, so the put wins. `Io.both!` hangs when the put fails at once (the writer waits for a reader that never comes). |
+| RC14 | The 10a test reads wasm memory with the new route `/__mem` of `conformance/worker.js` (`x.memory.buffer.byteLength`, as `stream-test.mjs`). |
+
+Open points:
+
+| # | Point |
+| --- | --- |
+| RO1 | `Body.Writer` is opaque and `write!` has no `Io` twin (MC3), so a conformance route cannot feed a writer in the branch of `Io.both!` with the public API. The route builds the same stream with `pf.writer` (RC13). A twin `Body.Writer.write` (and `write_text`) would fix it: a question for the next change of `Body`. |
+| RO2 | A race where one branch never settles (a `write` with no reader) leaves a pending JS promise. The task ends and the writer is aborted at the end of the task (C7 of 8b), so there is no leak (`end` passes), but the lost branch is not stopped before. |
+| RO3 | MODULES.md 5.3 says that `R2.Meta` is typed data (CBOR). It is a `Js` tree decode in the platform (RC1). When `Cbor` is in the platform, the decode can become a derived parser: the shim would give `pf.pack` of the plain meta. Not needed now. |
+
 ## 9. JS shim
 
 | Gap | Now |

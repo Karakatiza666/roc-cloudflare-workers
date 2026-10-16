@@ -372,6 +372,7 @@ The platform helpers (root `pf`) that this file names. Each one is a loop or a b
 | `transform(body, kind, format)` | The body (a stream, bytes, text or `null`) through a `CompressionStream` or a `DecompressionStream` | `Body.compress!`, `decompress!` |
 | `respond(outcome)` | The outcome `Respond` as a Workers `Response`, given to the entry now (10.2). An `InvalidStateError` when the entry gave no hook, or on a second call. | `Ctx.respond!` |
 | `passThrough()` | `ctx.passThroughOnException()` in the `fetch` of a Worker, else an `InvalidStateError` | `Ctx.pass_through!` |
+| `r2list(result)` | The result of `bucket.list()` as `{ objects: [{ meta, checksums }], prefixes, truncated, cursor }`, all plain data (built in `PLAN.md` 8c). A list has one object for each key, and a program has no loop (OP4). A class instance for each object would be a ref for each. | `R2.list!` |
 | `pin(name, value, maxAgeMs)`, `pinned(name)`, `unpin(name)` | The pin table (RS2). `pinned` gives `undefined` for a name with no entry or an entry past its age (8a; `Js.pinned!` makes it `NotPinned` in 8c). | `Js.pin!`, `pinned!`, `unpin!`, `Memo` |
 
 The app is trusted code: it is the developer's own Worker. A program can reach only the roots of OP3, and Workers does not allow `eval` or `new Function`.

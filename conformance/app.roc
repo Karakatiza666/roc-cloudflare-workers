@@ -13,6 +13,8 @@ import LogRoutes
 import RateLimitRoutes
 import CfRoutes
 import ShimRoutes
+import R2Routes
+import CacheRoutes
 
 fetch! : Request => Try(Response, [])
 fetch! = |req| {
@@ -24,6 +26,8 @@ fetch! = |req| {
 		["ratelimit", .. as rest] => RateLimitRoutes.route!(req, rest)
 		["cf", .. as rest] => CfRoutes.route!(req, rest)
 		["shim", .. as rest] => ShimRoutes.route!(req, rest)
+		["r2", .. as rest] => R2Routes.route!(req, rest)
+		["cache", .. as rest] => CacheRoutes.route!(req, rest)
 		_ => Response.from_text(404, "no route")
 	}
 	Ok(res)
