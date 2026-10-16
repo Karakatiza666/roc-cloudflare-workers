@@ -23,7 +23,7 @@ In the signatures, `a.Encodable` stands for `a.Cbor.Encodable([])` and `a.Parsea
 | MC7 | When the type changes from call to call (a D1 query), the annotation at the call gives it. | `pkg : Pkg`, `pkg = db.first!(sql, params)?` |
 | MC8 | There is no null. A missing value is `Err(NotFound)`, so `?` returns it and `??` gives a default. | `theme.get!() ?? default_prefs` |
 | MC9 | Errors are open tag unions, so the errors of two modules join (`?`, `Io.both!`). A throw in JS is `<Module>Err(Thrown)`. A value that does not fit its type is `BadData(Str)`. A known result has its own tag. A known throw has its own tag too: the module maps it by the `name` and `message` of the JS error (table "Named error tags" below). Each other throw stays `<Module>Err(Thrown)`. | `D1Err(t)`, `Constraint(msg)`, `Network(t)`, `PreconditionFailed`, `RateLimited`, `TooLarge`, `BadSignature` |
-| MC10 | A time or a duration is a `U64` of milliseconds, in a field whose name ends in `_ms`. A size, an offset or a length of data is in bytes, in a field whose name ends in `_bytes`. A length that the Workers API gives in bits (WebCrypto) stays in bits, in a field whose name ends in `_bits`. The module converts (KV `expirationTtl` is in seconds). Exceptions: table "Exceptions to MC10 and MC12" below. | `{ ttl_ms: 60_000 }`, `size_bytes`, `length_bits` |
+| MC10 | A time or a duration is a `U64` of milliseconds, in a field whose name ends in `_ms` (a module converts to seconds with `Time.seconds_up`, rounded up). A size, an offset or a length of data is in bytes, in a field whose name ends in `_bytes`. A length that the Workers API gives in bits (WebCrypto) stays in bits, in a field whose name ends in `_bits`. The module converts (KV `expirationTtl` is in seconds). Exceptions: table "Exceptions to MC10 and MC12" below. | `{ ttl_ms: 60_000 }`, `size_bytes`, `length_bits` |
 | MC11 | A read into wasm memory has a limit, because wasm memory never gets smaller (`PLAN.md` problem 4). The default limit is 1 MiB (`Body.default_max`). A larger read names its limit. Large data stays a `Body` stream in JS. Each typed read has the default limit: a body, `Kv.get!`, `D1.all!`, `first!`, `rows!` and `batch!`, `Object.Self.sql!` and `sql_rows!`. JS checks the size before the copy, and a read above the limit is `Err(TooLarge)`. The `_with` form takes `max_bytes`. A queue batch has the limit of the Queues config (6). A tail batch drops log lines past the limit (3). | `req.json!()`, `req.bytes_with!({ max_bytes: 30_000_000 })`, `db.all_with!(sql, params, { max_bytes: 8_000_000 })` |
 | MC12 | Names are the Workers names in snake_case, so the Workers docs apply. A name changes only for a Roc reason. Each name that changes is in the table "Exceptions to MC10 and MC12" below, with its reason. | `kv.get_with_metadata!` for `getWithMetadata`, `queue.send_batch!` for `sendBatch`, `cache.get!` for `match` (a keyword) |
 | MC13 | A value that holds a ref (a `Body` stream, a `D1.Session`, a socket, an imported key) is good for one task (RS1). All other module values are plain data: a test can make them and compare them. A value that holds a ref has its own type. It is never a binding (MC1). | `db.with_session!(Primary)` gives a `D1.Session`, not a `D1` |
@@ -61,7 +61,7 @@ Named error tags (MC9). The read function of the `Io` of the module maps the `Er
 | --- | --- | --- | --- |
 | `D1`, `D1.Session`, `Object.Self` SQL | The message has `constraint failed` | `Constraint(message)` | SQLite text after `D1_ERROR: ` (workerd source, `d1-api.ts`). Local D1 gives `UNIQUE constraint failed: t.k: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)` (wrangler 4.151.0). |
 | `Http` | `name` is `TypeError` | `HttpErr(Thrown)`: the request is bad (URL, scheme, header) | workerd source, `api/http.c++`, `api/headers.c++` |
-| `Http` | Any other throw of `fetch` | `Network(Thrown)`: no response | workerd source, `jsg/util.c++` ("Network connection lost."). The Cloudflare docs name only this text. |
+| `Http` | Any other throw of `fetch` | `Network(Thrown)`: no response | workerd source, `jsg/util.c++` ("Network connection lost."). The Cloudflare docs name only this text. Local (Miniflare 5, workerd 2026-10-12, `PLAN.md` 8d): a closed port is `Error: Network connection lost.`, a host that does not exist is `Error: internal error; reference = <id>`, `timeout_ms` is `TimeoutError: The operation was aborted due to timeout`, and `"not a url"` is `TypeError: Invalid URL: not a url` (`HttpErr`). |
 | Each module | Any other throw | `<Module>Err(Thrown)` | |
 
 `PLAN.md` 8d tests each row locally and on the edge, because the docs do not give the texts.
@@ -328,6 +328,16 @@ As built in `PLAN.md` 8b (first half and second half) (`platform/Request.roc`, `
 | `cookie` | The value of a pair of the `Cookie` header | |
 | `from_http`, `to_http!` | Not built | No package of the platform uses `http` types yet |
 | `cf` | Crosses in the event as a `Js` tree in the tag form (`{ "Ok": v }`, `{ "Err": "Missing" }`), not as `Packed` | No `Cbor` module in the platform yet (`PLAN.md` 8c). The shim format stays the same for `Packed`. |
+
+As built in `PLAN.md` 8c, wave 1 (`platform/Http.roc`):
+
+| Item | Built as | Why |
+| --- | --- | --- |
+| Twins | `send`, `send_with`, `open`, `get` give an `Io` (MC3) | WR2 |
+| One program | The `RequestInit` as a `Record` op (method, headers as pairs, body, `cf`, and `signal` of `AbortSignal.timeout(timeout_ms)`), `fetch`, then for `send`: `pf.readUpTo` of the body, the status and the headers in one `Record`; for `open`: `Fields` of the status, the headers and the body (a ref) | One crossing. No new helper: `Headers` cross as pairs (J rules), and `readUpTo` gives no bytes for a `null` body (a 204) |
+| The task signal | Not given to `fetch` | The stream of `open!` can be the body of the response, which Workers reads after the task ends |
+| `timeout_ms` | `AbortSignal.timeout`: a timeout is `Network(TimeoutError)` | It is a throw that is not a `TypeError` |
+| An empty body | `send!` gives `Empty` | |
 
 ## 5. Data: `D1`, `Sql`, `Kv`, `R2`, `Cache`
 
@@ -761,6 +771,7 @@ Env :: [].{
 }
 
 Secret :: { text : Str }.{
+	from_str : Str -> Secret                               # Env.secret! makes one; an app can wrap a text that it must not log
 	reveal : Secret -> Str
 	to_inspect : Secret -> Str                             # "Secret(...)"
 }
@@ -782,6 +793,15 @@ RateLimit :: { name : Str }.{
 | Webhook HMAC (RN9) | `hmac_sha256(secret, body)` in Roc, then `timing_safe_equal!` with the header value. No wait. |
 | `Secret` | `Str.inspect` shows `Secret(...)`. `Secret` has no codec, so a `Log` line with a secret in its fields is a compile error, and so is a secret in typed data that goes to JS (an RPC argument, a queue message). Only `reveal` gives the text. The backing is a record: an opaque type over a bare `Str` gets the codecs of `Str`, for `Json` and for `Cbor` (section 15). |
 | `limit!` | `Ok({})` or `Err(RateLimited)`, so `limiter.limit!(ip)?` stops the handler. |
+
+As built in `PLAN.md` 8c, wave 1 (`platform/Env.roc`, `Secret.roc`, `RateLimit.roc`):
+
+| Item | Built as | Why |
+| --- | --- | --- |
+| `Env` | Each function is one `call!` of `Get(Root("env"), name)`, no wait, so no `Io` twin (MC3). `var!` of a var that is not text (a JSON var) is `MissingEnv`. `json!` parses a text var as JSON text, and an object var through `JSON.stringify` (a second `call!`). | The Wrangler config gives a JSON var as an object, and a secret as text |
+| `Secret.from_str` | Public | `Env` must make a `Secret`, and the type is opaque (`::`) |
+| `RateLimit.limit` | The twin of `limit!`: `env[name].limit({ key })`, then `Get "success"`. A `success` that is not a `Bool` is `LimitErr` with the name `BadData`. | MC3. The type has no `BadData`. |
+| Must not compile | A `Secret` in `Log` fields and in a CBOR encode: `conformance/must-not-compile/`, with a control that compiles | Each check shows that the error is the secret |
 
 The builtin `Crypto` of Roc and `WebCrypto` do different work:
 
@@ -809,6 +829,7 @@ Time :: [].{
 	now_ms! : {} => U64                               # coarse on the edge: it moves at I/O
 	sleep! : U64 => {}                                # scheduler.wait(ms): one wait
 	sleep : U64 -> Io({}, e)                          # the twin, for a timeout with Io.race! (API.md 6.5)
+	seconds_up : U64 -> U64                           # MC10: ms to whole seconds, rounded up (1,001 ms gives 2 s)
 }
 
 Log :: [].{
@@ -825,7 +846,7 @@ Log :: [].{
 | `pass_through!` | `ctx.passThroughOnException()`. Only in the `Fetch` of a Worker. Elsewhere the shim gives status 1, and the function gives `InvalidState`. After it, an `Err` of `fetch!` makes the shim throw, and Workers sends the request to the origin (`API.md` 10.1). Workers cannot send a request body that the handler already read (Cloudflare docs, Context API). |
 | `sleep!`, `sleep` | `scheduler.wait(ms)`. On the edge, a timer does not move during CPU work, only at I/O (Cloudflare docs, scheduler). A sleep is a wait, so the deadlines of `API.md` 10.2 apply. A timeout is a race: `Io.race!([op.map(Done), Time.sleep(ms).map(\|_\| TimedOut)])` (`API.md` 6.5). |
 
-As built in `PLAN.md` 8b (second half) and 9c (`platform/Ctx.roc`, `js/helpers.js`, `js/index.js`). `Time` and `Log` are 8c.
+As built in `PLAN.md` 8b (second half) and 9c (`platform/Ctx.roc`, `js/helpers.js`, `js/index.js`). `Time` and `Log` are 8c (the table after this one).
 
 | Item | Built as | Why |
 | --- | --- | --- |
@@ -836,6 +857,15 @@ As built in `PLAN.md` 8b (second half) and 9c (`platform/Ctx.roc`, `js/helpers.j
 | `wait_until!` | One `call!`: `Start` of `pf.spawn` with the ops of the `Io`, then `ctx.waitUntil` of that promise. A failed call is a `crash` (a platform bug). | MC3: no wait |
 | The context of a started program | The task table keeps it after the task ends, until the last started program settles. The `waitUntil` limit: `afterRespondMs` (30 s) after the response is complete, or after the end of the task when the response was complete then. The deadline sweep of each new request checks it (no timer, `PLAN.md` 3b), frees the context, and writes the log line `task context freed at the waitUntil limit: ...`. The signal of the program aborts then. | RS1, API.md 6.5 |
 
+
+As built in `PLAN.md` 8c, wave 1 (`platform/Time.roc`, `platform/Log.roc`):
+
+| Item | Built as | Why |
+| --- | --- | --- |
+| `now_ms!` | `Date.now()`, one `call!` | No wait |
+| `sleep!`, `sleep` | `scheduler.wait(ms, { signal })` with the root `signal`: a lost branch of `Io.race!` stops the timer (OP8). `sleep!` gives `{}`, also when the wait is aborted. | OP8 |
+| `seconds_up` | Public in `Time`. `roc test` checks 1 ms, 1,000 ms, 1,001 ms, 0 and `U64.highest`. | MC10: `Kv`, `Queue` and `Ai` (phase B) use it, and an app can use it for a `max-age` |
+| `Log` | `console.info`, `console.warn` or `console.error` with the line `{"level":..,"msg":..,<fields>}`. The fields are in the order of the derived JSON encoder. A value that is not a record goes in the field `fields`. A throw of `console` is a crash. | Workers Logs takes the level from the console method |
 
 `Log.info!("published", { pkg: name, ms: 12 })`. The fields are a record, so Workers Logs can filter on them. A record with a `Secret` in it does not compile here (10).
 
@@ -1069,6 +1099,8 @@ Lessons from the compiler (nightlies 10-09 and 10-12):
 | Two modules cannot import each other | `Response.web_socket` is a ref, not a `WebSocket` (4) |
 | A nominal record with an optional field (`web_socket ?: U32`) can be built with or without the field | `Response` keeps its short forms |
 | `Time.sleep : U64 -> Io({}, [])` does not compile in `Io.race!([ws.receive().map(...), Time.sleep(ms).map(...)])`: the closed `[]` does not join the errors of the other branch. `U64 -> Io({}, e)` compiles and runs. | Done: `Io({}, e)` in 11 |
+| A non-empty tag union in the `Io` of a return type is open: the compiler warns that a `..` there is redundant. So `Io.both!(Http.get(url), limiter.limit(key))` compiles and builds (`PLAN.md` 8c, wave 1). Only the empty `[]` does not join. | The modules write closed unions, as in this file |
+| An opaque type over a bare `Str` is made with `Secret.(text)` and read with `match s { Secret.(t) => t }` (the revert of `Secret :: Str` in `conformance/reverts.mjs`) | none |
 | `?` on a field of the type `Try(a, [Missing])` (`Kv.Key.metadata`, the fields of `Request.Cf` and `Worker.TraceItem`) does not compile in a function whose error union is larger: the `[Missing]` of a type annotation is closed, and `?` cannot add its tags to another union. `(key.metadata ? \|_\| Missing).parse()?` compiles: it makes a new tag. | Done: the example of 5.2. The other `Try(_, [Missing])` fields have the same rule. |
 | A nominal record (`Worker.TraceItem := { ... }`) has no derived parser until its block has `parser_for : _` ("missing method parser_for") | Done: `TraceItem` has `.{ parser_for : _ }` in 3 |
 | An opaque type over a bare `U32` (`Js.Ref :: U32`) gets the codecs of `U32`, as `Secret :: Str` gets the codecs of `Str`: `Cbor.encode` writes a ref as a number, so a ref can go into typed data (against MC13). With a record backing (`Js.Ref :: { id : U32 }`), the encode is a compile error (`ref_cbor.roc`), and the derived `is_eq` still works (`peer == socket`). | Done: `Js.Ref :: { id : U32 }` in `API.md` 5. The same compiler bug: roc-lang/roc#12309. |

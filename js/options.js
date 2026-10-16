@@ -7,6 +7,7 @@ const isNum = (v) => typeof v === 'number' && !Number.isNaN(v);
 const isInt = (v) => Number.isSafeInteger(v);
 const isFn = (v) => typeof v === 'function';
 const isBool = (v) => typeof v === 'boolean';
+const isOp = (v) => isFn(v) || (v !== null && typeof v === 'object');
 const ms = [(v) => isNum(v) && v > 0, 'a number of ms above 0'];
 const fn = [isFn, 'a function'];
 
@@ -26,8 +27,9 @@ const RULES = {
   wallMs: ms,
   initMs: ms,
   afterRespondMs: ms,
-  // API.md 6.4: `ops`, the JS functions of the app (the root `ops` of a program). RS2: the most entries of the pin table.
-  ops: [(v) => v !== null && typeof v === 'object' && !Array.isArray(v) && Object.values(v).every(isFn), 'an object of functions'],
+  // API.md 6.4: `ops`, the JS functions of the app (the root `ops` of a program). A value is a function or an object (a
+  // library, a binding): a program reaches its methods with `Get` and `Call` (PLAN.md 8a O4). RS2: the size of the pin table.
+  ops: [(v) => v !== null && typeof v === 'object' && !Array.isArray(v) && Object.values(v).every(isOp), 'an object whose values are functions or objects'],
   pinLimit: [(v) => isInt(v) && v >= 0, 'an integer, 0 or more'],
   // API.md 10.1: the Workers handler names that reach the app as `Other` (for example "queue" in phase A).
   other: [(v) => Array.isArray(v) && new Set(v).size === v.length && v.every((n) => typeof n === 'string' && /^[A-Za-z_$][\w$]*$/.test(n) && !RESERVED.has(n)), 'an array of handler names, each once, not fetch, scheduled or constructor'],

@@ -104,8 +104,10 @@ export function makeHelpers(t, c, shim, tasks) {
     },
     // Reads a stream to `max` bytes, from where `chunk` stopped. Past `max`: a TooLarge (the module turns it into
     // `TooLarge`), and the stream is cancelled, before any copy into wasm (MC11). Gives the bytes. A stream that was
-    // read to its end, or that another reader holds, is a TypeError (RS3: a stream can be read once).
+    // read to its end, or that another reader holds, is a TypeError (RS3: a stream can be read once). A null body (the
+    // body of a 204 response of `fetch`, `Http.send!`) is no bytes.
     async readUpTo(stream, max) {
+      if (stream === null) return new Uint8Array(0);
       const r = readerOf(stream, 'readUpTo');
       if (r.consumed) throw new TypeError('readUpTo: the body was read already');
       r.consumed = true;

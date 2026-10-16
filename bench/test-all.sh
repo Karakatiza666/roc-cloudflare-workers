@@ -73,6 +73,9 @@ step "stream-workerd.mjs (8b, 9c, 10a, 10b in workerd: 50 MB bodies, BodyErr aft
 # Native (PLAN.md 8e)
 step "native_test.zig (8e: zstd, BLAKE3, SHA-256, the handle table; native)" "$ZIG" test hostlib/native/native_test.zig --cache-dir .cache/native-test
 step "native-test.mjs (8e: Native in app_native.wasm: decode, limit, hashes, stream, handles, other task, end of task, OOM, deep stack)" node bench/native-test.mjs bench/out/app_native.wasm
+# Phase A modules (PLAN.md 8c, 8d): the conformance app in Miniflare, and the must-not-compile checks of `Secret`
+step "conformance/run.mjs (8c, 8d: a route for each function and Io twin in Miniflare)" node conformance/run.mjs bench/out/conformance.wasm
+step "conformance/must-not-compile.sh (8c: a Secret in Log fields and in a CBOR encode does not compile)" conformance/must-not-compile.sh
 rm -f ".cache/test-all-$$.log"
 [ "$rc" -eq 0 ] && echo "ALL PASS" || echo "FAIL"
 exit "$rc"
