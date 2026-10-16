@@ -1,17 +1,15 @@
 #!/usr/bin/env bash
 # Build everything and run every test of the platform, each with `timeout 600`. One line for each test:
 # the exit code and the name. Exit 1 when one fails.
-# Env: ZIG (Zig 0.17, required), WORKERD (the workerd binary, required), ROC (default: bench/get-roc.sh),
-# ROC09 (nightly 10-09, data-first: default `bench/get-roc.sh nightly-2026-10-09-258ab27`).
-# The 10-09 apps go to bench/out09 (the test of PLAN.md 4f). `bench/build.sh` copies the glue of its
-# compiler into host/: the build with 10-09 runs first and the build with the pinned nightly last,
-# so host/roc_platform_abi.zig is the glue of the pinned nightly at the end (checked against its state at the start).
+# Env: ZIG (Zig 0.17, required), WORKERD (the workerd binary, required), ROC (default: bench/get-roc.sh).
+# `bench/build.sh` copies the glue of its compiler into host/: the step after the build checks that
+# host/roc_platform_abi.zig is still the glue of the pinned nightly (as at the start).
+# The data-first module of bench/layout-test.mjs is the committed bench/fixtures/data-first-10-09.wasm.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 : "${ZIG:?set ZIG to the Zig 0.17 binary}"
 : "${WORKERD:?set WORKERD to the workerd binary}"
 export ZIG WORKERD
-ROC09=${ROC09:-$(bench/get-roc.sh nightly-2026-10-09-258ab27)}
 rc=0
 step() { # name, command...
   local name=$1
@@ -23,14 +21,14 @@ step() { # name, command...
 }
 mkdir -p .cache
 glue0=$(cat host/roc_platform_abi.zig | md5sum)
-step "build 10-09 (bench/out09)" env ROC="$ROC09" OUT=bench/out09 bench/build.sh
-step "build (bench/build.sh)" bench/build.sh
+step "build (bench/build.sh, layout check of the outputs)" bench/build.sh
 step "glue is the glue of the pinned nightly (as at the start)" test "$(cat host/roc_platform_abi.zig | md5sum)" = "$glue0"
 
 step "exports-test.mjs (7a: the two export lists, requests on the production build)" node bench/exports-test.mjs bench/out/app_prod.wasm bench/out/app.wasm
 step "alloc-test.sh (allocator, grow.mjs, counters.mjs)" bench/alloc-test.sh
 step "node-test.mjs" node bench/node-test.mjs bench/out/app.wasm
-step "overflow-test.mjs --expect-shared" node bench/overflow-test.mjs bench/out/app_deep.wasm --expect-shared
+step "layout-test.mjs (1b: a data-first module throws at the first event, no fallback)" node bench/layout-test.mjs bench/out/app.wasm
+step "overflow-test.mjs" node bench/overflow-test.mjs bench/out/app_deep.wasm
 step "strloop-test.mjs" node bench/strloop-test.mjs bench/out/app_strloop.wasm
 for t in log-test oom-test wait-test trapclean-test tasktable-test deadline-test oneinstance-test resume-test; do
   step "$t.mjs" node "bench/$t.mjs" bench/out/app.wasm
@@ -42,12 +40,10 @@ step "tasks-test.mjs" node bench/tasks-test.mjs
 step "cpu-test.mjs" node bench/cpu-test.mjs
 step "cancel-test.mjs (--expose-gc)" node --expose-gc --no-concurrent-sparkplug --no-concurrent-recompilation bench/cancel-test.mjs bench/out/app.wasm
 step "signal-workerd.mjs" node bench/signal-workerd.mjs
-# Memory (PLAN.md 4b to 4f)
+# Memory (PLAN.md 4b to 4e)
 step "budget-test.mjs (4b, 4c, 4d, 4e; --expose-gc)" node --expose-gc --no-concurrent-sparkplug --no-concurrent-recompilation bench/budget-test.mjs bench/out/app.wasm
 # The two flags: without them `process.exit` hangs in about 1 of 12 runs (a V8 shutdown deadlock, PLAN.md 8e).
-step "fallback-budget-test.mjs (4f; --expose-gc)" node --expose-gc --no-concurrent-sparkplug --no-concurrent-recompilation bench/fallback-budget-test.mjs bench/out09/app.wasm
 step "budget-workerd.mjs (4e)" node bench/budget-workerd.mjs
-step "fallback-workerd.mjs (4f in workerd: 40 requests at once, 3 rounds, no hung request)" node bench/fallback-workerd.mjs
 # Log lines, counters, the idle reset (PLAN.md 4g, 4h, 4j). The allocator part (counters.mjs, grow.mjs) is in alloc-test.sh.
 step "events-test.mjs (4g, M11 lines and counters; trap in task_cancel)" node bench/events-test.mjs bench/out/app.wasm
 step "idle-test.mjs (4h leak counter, 4j idle reset, 12e suspect)" node bench/idle-test.mjs bench/out/app.wasm

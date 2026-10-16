@@ -9,7 +9,7 @@ const module = new WebAssembly.Module(readFileSync(process.argv[2]));
 const steps = process.argv.slice(3).map(Number);
 let failed = false;
 for (const n of steps.length ? steps : [5000, 10000, 80000]) {
-  const r = makeRunner(module, 'b', async () => 'x');
+  const r = makeRunner(module, async () => 'x');
   const res = await r.run(String(n));
   let want = '';
   for (let i = 0; i < n; i++) want += `,${i}`;

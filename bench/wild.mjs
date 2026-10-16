@@ -26,7 +26,7 @@ const io = async (kind, a, b) => {
 const lines = {};
 // One count per kind of log line. A failed check: per check code (`heap check failed (why): <code> <name>`).
 const log = (text) => { const k = text.startsWith('heap check failed') ? text.split(';')[0] : text.split(':')[0]; lines[k] = (lines[k] ?? 0) + 1; };
-const r = makeRunner(module, 'b', io, { resumeCheck, noFallback: true, log });
+const r = makeRunner(module, io, { resumeCheck, log });
 let seed = 7, i = 0;
 const s = { good: 0, badBody: 0, wild: 0, alarmSum: 0, alarmBlock: 0, trap: 0, cancelled: 0, otherErr: 0 };
 async function worker() {

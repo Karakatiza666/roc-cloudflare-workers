@@ -12,7 +12,6 @@ export const BUDGET_OPTS = {
   maxInstanceBytes: Infinity, // M5: a hard cap for one instance, none by default
   growStepBytes: PAGE, // M4, H9
   graceMs: 1000, // M7 step 2
-  queueLimit: 100, // M9
 };
 
 const size = (m) => m.buffer.byteLength;
@@ -31,9 +30,7 @@ export function makeBudget(opts = {}) {
   let lastId = 0;
   let droppedBytes = 0;
   let deniedAt = -Infinity;
-  let loneNext = false; // the next instance starts with no live instance (`startIdle`)
-  let lone = null; // that instance, while it lives
-  const stats = { asked: 0, denied: 0, deniedCap: 0, deniedBudget: 0, dropped: 0, collected: 0, idleStarts: 0, maxTotal: 0 };
+  const stats = { asked: 0, denied: 0, deniedCap: 0, deniedBudget: 0, dropped: 0, collected: 0, maxTotal: 0 };
   // M10: a dropped instance counts until V8 collects it. The callback only needs the id: it must not
   // hold the memory.
   const registry = new FinalizationRegistry((id) => {
@@ -66,17 +63,12 @@ export function makeBudget(opts = {}) {
     // A new instance with memory `m`. Its first pages count at once.
     add(m) {
       live.add(m);
-      if (loneNext) {
-        lone = m;
-        loneNext = false;
-      }
       const t = total();
       if (t > stats.maxTotal) stats.maxTotal = t;
     },
     // M10: instance `m` is dropped. Its bytes stay in the budget until the callback.
     drop(m) {
       if (!live.delete(m)) return;
-      if (m === lone) lone = null;
       const id = ++lastId;
       const n = size(m);
       dropped.set(id, n);
@@ -89,7 +81,7 @@ export function makeBudget(opts = {}) {
       stats.asked++;
       const add = pages * PAGE;
       const mine = size(m);
-      const t = lone === m && live.size === 1 ? mine : total();
+      const t = total();
       let why = '';
       if (mine + add > o.maxInstanceBytes) {
         why = `instance ${mb(mine)} MB + ${mb(add)} MB is over maxInstanceBytes ${mb(o.maxInstanceBytes)} MB`;
@@ -115,27 +107,6 @@ export function makeBudget(opts = {}) {
     // New requests wait for the callback (a shed). Not when no instance is dropped: the budget is too small for one instance.
     crowded() {
       return droppedBytes > 0 && total() > limit;
-    },
-    // M9, M10: no instance is live, so the dropped ones have no task: they are garbage that V8 frees under memory
-    // pressure. The fallback queue starts one instance then, even when the dropped bytes say no: a request must
-    // never wait for a GC (workerd cancels it as "hung"). While it is the only live instance, its grows do not count
-    // the dropped bytes. Call it right before the instance is added (`add`). Returns false when an instance is live.
-    startIdle() {
-      if (live.size > 0) return false;
-      if (droppedBytes > 0) {
-        loneNext = true;
-        stats.idleStarts++;
-        log(`no instance is live: an instance starts although ${mb(droppedBytes)} MB of dropped instances are not collected`);
-      }
-      return true;
-    },
-    // M9: may a new instance start? `n`: the bytes that an instance needs, the largest size seen. Each live
-    // instance keeps at least `n` for itself, so the grows of a running request are not denied by the start
-    // of another one. One instance may always start when nothing else holds memory.
-    fits(n) {
-      let held = droppedBytes;
-      for (const m of live) held += Math.max(size(m), n);
-      return held + n <= limit || total() === 0;
     },
   };
   return api;

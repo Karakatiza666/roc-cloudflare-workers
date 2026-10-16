@@ -1,6 +1,6 @@
-// Stack overflow test: node bench/overflow-test.mjs <app_deep.wasm> [--no-fallback] [--expect-shared]
+// Stack overflow test: node bench/overflow-test.mjs <app_deep.wasm>
 // Requests with deeper recursion until one traps, without and with an allocation per level.
-// Stack-first module (one shared instance):
+// One shared instance on a stack-first module (a data-first module is refused: bench/layout-test.mjs):
 //   - no request returns a body while the canary is broken, and each body is correct;
 //   - the trap without allocation (out of bounds, wrapped stack pointer) is clean after 4-pre
 //     (PLAN.md 4-pre, V1): the instance stays, live bytes are 0;
@@ -13,16 +13,11 @@
 //   - V2: a trap at normal stack depth (a forced out-of-bounds write, a forced unreachable) is
 //     still unclean: an alarm (PLAN.md 12c). `task_abort` gives -1, the alarm counter of the host
 //     goes up, the global check passes, and the instance stays (no replace).
-// Data-first module: the runner must fall back to an instance per request.
-// --no-fallback keeps the shared instance on a data-first module. Then the test must fail.
-// --expect-shared: fail when the runner falls back (CI, after check-layout.mjs found STACK-FIRST).
 // Exit 1 on a failure.
 import { readFileSync } from 'node:fs';
 import { makeRunner } from './core.js';
 
 const file = process.argv[2];
-const noFallback = process.argv.includes('--no-fallback');
-const expectShared = process.argv.includes('--expect-shared');
 const module = new WebAssembly.Module(readFileSync(file));
 
 // down() of bench/app_deep.roc. free: down_free(), the base record has a = salt + 5.
@@ -47,22 +42,18 @@ const fail = (msg) => { failures.push(msg); console.log('FAIL', msg); };
 // Cold code (the first request of a fresh module, before any other test runs): the engine
 // stack ends first, with a RangeError (V1). Later requests run warm code and trap out of bounds.
 {
-  const c = makeRunner(module, 'b', async () => 'x', { noFallback });
-  if (!c.stats.fallback) {
-    const res = await c.run('100000');
-    console.log('cold depth 100000 trap:', String(res.trap).slice(0, 60), '| retired', c.stats.retired > 0, '| alarms', c.stats.alarms);
-    if (res.body !== undefined) fail('cold 100000: no trap');
-    else if (!/RangeError/.test(res.trap)) fail(`cold 100000: not a RangeError (${res.trap}): the test proves nothing`);
-    if (c.stats.retired || c.stats.alarms) fail('cold 100000: a RangeError was not clean on a stack-first instance');
-    if (c.x.live_bytes() !== 0) fail(`cold 100000: live bytes ${c.x.live_bytes()}`);
-    const a = await c.run('5');
-    if (a.body !== ref(5, false)) fail(`cold 100000: next request gave ${a.body ?? a.trap}`);
-  }
+  const c = makeRunner(module, async () => 'x');
+  const res = await c.run('100000');
+  console.log('cold depth 100000 trap:', String(res.trap).slice(0, 60), '| retired', c.stats.retired > 0, '| alarms', c.stats.alarms);
+  if (res.body !== undefined) fail('cold 100000: no trap');
+  else if (!/RangeError/.test(res.trap)) fail(`cold 100000: not a RangeError (${res.trap}): the test proves nothing`);
+  if (c.stats.retired || c.stats.alarms) fail('cold 100000: a RangeError was not clean on a stack-first instance');
+  if (c.x.live_bytes() !== 0) fail(`cold 100000: live bytes ${c.x.live_bytes()}`);
+  const a = await c.run('5');
+  if (a.body !== ref(5, false)) fail(`cold 100000: next request gave ${a.body ?? a.trap}`);
 }
-const r = makeRunner(module, 'b', async () => 'x', { noFallback });
-const shared = !r.stats.fallback;
-const first = r.x;
-console.log(file, shared ? 'shared instance' : 'fallback: one instance per request');
+const r = makeRunner(module, async () => 'x');
+console.log(file, 'shared instance');
 
 const small = async (what) => {
   const a = await r.run('5');
@@ -70,13 +61,10 @@ const small = async (what) => {
   return a;
 };
 
-if (expectShared && !shared) fail('the runner fell back, but a shared instance was expected');
-// 1b: a stack-first module shares one instance, a data-first one does not.
+// 1b: a stack-first module shares one instance.
 const s1 = await small('start');
 const s2 = await small('start');
-if (shared && s1.x !== s2.x) fail('shared runner used two instances');
-if (!shared && s1.x === s2.x) fail('fallback runner used one instance twice');
-if (shared && first.stack_first() !== 1 && !noFallback) fail('shared on a data-first module');
+if (s1.x !== s2.x) fail('shared runner used two instances');
 
 for (const alloc of [false, true]) {
   let trapped = false;
@@ -87,26 +75,25 @@ for (const alloc of [false, true]) {
     if (res.body !== undefined) {
       const canary = res.x.stack_canary_ok();
       console.log(tag, 'ok, canary', canary);
-      // Fallback: the overflow can only hit the instance of this request. That risk is known.
-      if (shared && canary !== 1) fail(`${tag}: a body with a broken canary`);
-      if (shared && res.body !== ref(d, alloc)) fail(`${tag}: wrong body ${res.body}`);
+      if (canary !== 1) fail(`${tag}: a body with a broken canary`);
+      if (res.body !== ref(d, alloc)) fail(`${tag}: wrong body ${res.body}`);
       continue;
     }
     trapped = true;
     const isRetired = r.stats.retired + r.stats.alarms > retired;
     console.log(tag, 'trap:', res.trap.slice(0, 60), '| retired or alarm', isRetired);
     // 4-pre: a stack-first overflow wrote nothing but the stack, so the trap is clean.
-    if (shared && isRetired) fail(`${tag}: an overflow trap was not clean on a stack-first instance`);
-    if (shared && res.x.live_bytes() !== 0) fail(`${tag}: live bytes ${res.x.live_bytes()} after the trap`);
+    if (isRetired) fail(`${tag}: an overflow trap was not clean on a stack-first instance`);
+    if (res.x.live_bytes() !== 0) fail(`${tag}: live bytes ${res.x.live_bytes()} after the trap`);
     const next = await small(tag);
-    if (shared && next.x.stack_canary_ok() !== 1) fail(`${tag}: canary broken after the trap`);
+    if (next.x.stack_canary_ok() !== 1) fail(`${tag}: canary broken after the trap`);
     break;
   }
   if (!trapped) fail(`no trap up to depth 20000${alloc ? ' alloc' : ''}: the test proves nothing`);
 }
 // Free mode, on a fresh runner (an intact canary): depths up to the first trap, 2 frames apart.
-if (shared) {
-  const f = makeRunner(module, 'b', async () => 'x', { noFallback });
+{
+  const f = makeRunner(module, async () => 'x');
   let d = 3000, res, bodies = 0;
   for (; d <= 20000; d += d < 4000 ? 500 : 2) {
     res = await f.run(`${d} free`);
@@ -130,7 +117,7 @@ if (shared) {
 // V2: a trap at normal depth must stay unclean, also in a stack-first build. After 12c it is an
 // alarm: `task_abort` gives -1, the alarm counter of the host goes up, and the instance stays
 // while the global check passes.
-if (shared) {
+{
   if (r.stats.walkFailed !== 0) fail(`an overflow trap was unclean (${r.stats.walkFailed})`);
   for (const [kind, what] of [[1, 'out-of-bounds write'], [2, 'unreachable']]) {
     const x = r.x;
@@ -148,6 +135,6 @@ if (shared) {
   }
 }
 const live = r.x.live_bytes();
-if (shared && live !== 0) fail(`live bytes ${live} at the end`);
+if (live !== 0) fail(`live bytes ${live} at the end`);
 console.log(failures.length ? `FAIL (${failures.length})` : 'PASS', JSON.stringify(r.stats));
 process.exit(failures.length ? 1 : 0);

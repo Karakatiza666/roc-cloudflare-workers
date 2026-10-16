@@ -61,7 +61,7 @@ async function part(key, mode) {
   const whenIdle = revert ? false : mode === 'idle';
   const lines = [];
   let startedAtFail = -1;
-  const r = makeRunner(module, 'b', io, {
+  const r = makeRunner(module, io, {
     heapCheckEvery: every,
     heapCheckWhenIdle: whenIdle,
     log: (t) => {

@@ -1,12 +1,17 @@
 // The runner: instances, the tasks that run on them, and the alarm and check paths (PLAN.md 1 to 5, 12).
-// Variant "a": a new instance for each request. Variant "b": one shared
-// instance, the host copies the shadow stack at each wait.
+// One shared instance: the host copies the shadow stack at each wait.
 import { makeTaskTable } from './tasks.js';
 import { makeBudget } from './budget.js';
 import { hostCancel } from './wait.js';
 import { makeBridge } from './bridge.js';
 import { makePins } from './helpers.js';
 import { SUM_MODES, ALARM_OF, CHECK_NAMES, CHECK_BUSY, CAUSE_CPU, CAUSE_OOM, HEAP_CHECK_EVERY, TERMINATED, LOG_CRASH, readFlag, readOutcome, drainLog, hostCounters, freeMark, isStackError, encEvent, eventBytes } from './host.js';
+
+// The error for a module that is not stack-first (PLAN.md 1b): the platform has no fallback.
+const NOT_STACK_FIRST =
+  'the module is not stack-first: its shadow stack lies above its data (stack_first() is 0), so a stack overflow can write over data. ' +
+  'The platform needs a stack-first build and has no fallback. Build with a Roc nightly that puts the stack first ' +
+  '(compat/last-stack-first-nightly) and check the file with bench/check-layout.mjs.';
 
 // The imports of an instance. `js_grow(pages)` (PLAN.md M4): 1 when the budget allows the grow, else 0.
 // No budget: always 1.
@@ -30,18 +35,7 @@ function register(x, budget) {
   if (budget) x.set_grow_step(budget.options.growStepBytes);
 }
 
-export function instanceA(module, tasks, budget, cancelTrap, shim) {
-  const cell = { x: null, cancelTrap };
-  const inst = new WebAssembly.Instance(module, importsOf(cell, tasks, budget, shim));
-  cell.x = inst.exports;
-  register(cell.x, budget);
-  freeMark(cell.x);
-  cell.x.init(0);
-  return cell.x;
-}
-
-
-// A shared instance (variant B): the host copies the stack at each wait.
+// A shared instance: the host copies the stack at each wait.
 // `slots`: the most tasks in flight on it (PLAN.md 2c).
 function instanceB(module, tasks, sumMode, budget, shim) {
   const cell = { x: null, cancelTrap: null };
@@ -61,25 +55,24 @@ function instanceB(module, tasks, sumMode, budget, shim) {
 // A trap result with `status: 503` is a shed (`shed: true`, all task slots in use) or a
 // cancel (`cancelled`: the reason, PLAN.md 3b, 3c). kind: the event kind (default 'Fetch').
 // signal: `request.signal`; the task is cancelled when it aborts.
-// Variant "b" falls back to "a" when the module is not stack-first (`stack_first()`
-// is 0): there a stack overflow can write over data, so an instance runs only
-// one request. opts.noFallback keeps "b" (only for the overflow test).
+// A module that is not stack-first (`stack_first()` is 0) is refused with an error at the first instance:
+// there a stack overflow can write over data, and the platform has no fallback (PLAN.md 1b).
 // opts: also the deadlines of `tasks.js` (taskDeadlineMs, wallMs, initMs, afterRespondMs),
 // `resumeCheck` ("always", the default, or "afterAlarm"; see SUM_MODES), the global check of 12e
 // (`heapCheckEvery`, default HEAP_CHECK_EVERY, 0: off; `heapCheckWhenIdle`, default true), and
 // `log(text)`: the log lines of the shim (M11; default console.warn), and the memory options of
-// `budget.js` (isolateBytes, jsReserveBytes, maxInstanceBytes, growStepBytes, graceMs, queueLimit).
+// `budget.js` (isolateBytes, jsReserveBytes, maxInstanceBytes, growStepBytes, graceMs).
 // ro (of run): also `hooks` (`js/tasks.js`: what the entry gives to the platform helpers), `ctx`: the idle check runs in `ctx.waitUntil` when it is given. `env`, `ctx`, `event` (the request)
 // are the context of the task (PLAN.md 9b): the task table keeps them, and a program gets them as its roots (API.md 6.2, OP3).
 // opts.ops: the JS functions of the app (the root `ops`), opts.pinLimit: the size of the pin table (API.md 6.4, RS2).
 // An alarm (an unclean trap, or a resume check that failed) gives `{ status: 503, alarm: 'trap' | 'sum' | 'block' }`.
-// Memory (PLAN.md 4b to 4f): a task that a denied grow stopped gives `{ status: 503, cause: 'oom' }`. A request that
-// memory pressure refuses gives `{ status: 503, shed: true, reason }` (M7 step 2; variant "a": the queue is full).
-export function makeRunner(module, variant, opts = {}) {
+// Memory (PLAN.md 4b to 4e): a task that a denied grow stopped gives `{ status: 503, cause: 'oom' }`. A request that
+// memory pressure refuses gives `{ status: 503, shed: true, reason }` (M7 step 2).
+export function makeRunner(module, opts = {}) {
   const sumMode = SUM_MODES[opts.resumeCheck ?? 'always'];
   if (sumMode === undefined) throw new Error(`resumeCheck: ${opts.resumeCheck}`);
   const stats = {
-    served: 0, traps: 0, freed: 0, walkFailed: 0, alarms: 0, byAlarm: {}, retired: 0, terminated: 0, cpu: 0, shed: 0, cancelled: 0, memBytes: 0, maxMemBytes: 0, fallback: false, oom: 0, shedMem: 0, queued: 0, replaces: {},
+    served: 0, traps: 0, freed: 0, walkFailed: 0, alarms: 0, byAlarm: {}, retired: 0, terminated: 0, cpu: 0, shed: 0, cancelled: 0, memBytes: 0, maxMemBytes: 0, oom: 0, shedMem: 0, replaces: {},
     heapChecks: 0, heapCheckMs: 0, heapCheckMaxMs: 0, heapFails: 0, heapBusy: 0, byCheck: {},
     doubleFrees: 0, deallocMiss: 0, idleResets: 0, idleResetsSkipped: 0, idleResetBytes: 0,
   };
@@ -137,15 +130,9 @@ export function makeRunner(module, variant, opts = {}) {
       e.dm = dm;
     }
   };
-  let cur = variant === 'a' ? null : instanceB(module, tasks, sumMode, budget, shim);
+  let cur = instanceB(module, tasks, sumMode, budget, shim);
   let runner;
-  if (cur && !cur.x.stack_first() && !opts.noFallback) {
-    console.warn('module is not stack-first: one instance per request');
-    stats.fallback = true;
-    // The probe instance is dropped: it counts until it is collected (M10).
-    budget.drop(cur.x.memory);
-    cur = null;
-  }
+  if (!cur.x.stack_first()) throw new Error(NOT_STACK_FIRST);
   // The result of a clean trap: the host says why (the CPU signal, 5b, or out of memory, M6).
   // `crash`: the text of a Roc `crash` from the log of the host (8a O2), or undefined.
   const cleanTrap = (x, e, crash) => {
@@ -177,122 +164,12 @@ export function makeRunner(module, variant, opts = {}) {
       return { fail: { trap: `the event cannot cross: ${e.message}`, status: 500, x } };
     }
   };
-  // A request that memory pressure refuses (M7 step 2, M9): a 503, one log line.
+  // A request that memory pressure refuses (M7 step 2): a 503, one log line.
   const shedMem = (reason, x) => {
     stats.shedMem++;
     log(`request shed: ${reason}`);
     return { trap: `shed: ${reason}`, status: 503, shed: true, reason, x };
   };
-  if (!cur) {
-    // M9: one instance for each request. A new instance starts only when its initial memory fits
-    // the budget (`budget.fits`). Else the request waits in the queue, up to `queueLimit` requests, and
-    // starts when a live instance ends or no instance is live (`fits`, M10), or leaves at its deadline
-    // (`taskDeadlineMs`) or when its signal aborts. In workerd a request that waits only on a promise of
-    // the isolate is cancelled as "hung" at once, so each waiting request also holds a timer (its deadline).
-    const queue = [];
-    let initBytes = 0; // the memory that a request needs: the largest size of an instance seen
-    const note = (x) => {
-      initBytes = Math.max(initBytes, x.memory.buffer.byteLength);
-    };
-    const start = () => {
-      const x = instanceA(module, tasks, budget, cancelTrap, shim);
-      note(x);
-      return x;
-    };
-    // Nothing is live: the dropped instances are garbage, so one instance starts although they count (`budget.startIdle`).
-    const canStart = () => budget.fits(initBytes) || budget.startIdle();
-    const pump = () => {
-      while (queue.length && canStart()) queue.shift().done({ x: start() });
-    };
-    // `pump` runs at each end of a request and at each new request, never in the callback of the collection:
-    // there workerd refuses an instance start (`freeMark` makes a random value), and a request must not wait for a GC.
-    // The instance now, or the promise of one. `{ fail: reason }`: the request leaves.
-    const admit = (signal) => {
-      pump();
-      if (queue.length === 0 && canStart()) return { x: start() };
-      if (queue.length >= budget.options.queueLimit) return { fail: 'queue is full' };
-      stats.queued++;
-      let timer;
-      return new Promise((resolve) => {
-        const e = { done: null };
-        const leave = (reason) => {
-          queue.splice(queue.indexOf(e), 1);
-          e.done({ fail: reason });
-        };
-        const onAbort = () => leave('request was cancelled in the queue');
-        timer = setTimeout(() => leave('queue wait is over the deadline'), tasks.deadlines.taskDeadlineMs);
-        e.done = (v) => {
-          signal?.removeEventListener('abort', onAbort);
-          resolve(v);
-        };
-        if (signal?.aborted) return e.done({ fail: 'request was cancelled in the queue' });
-        signal?.addEventListener('abort', onAbort, { once: true });
-        queue.push(e);
-        // The timer is cleared by the waiting request (below): `done` can run in a GC callback, where workerd refuses it.
-      }).finally(() => clearTimeout(timer));
-    };
-    return {
-      stats,
-      tasks,
-      budget,
-      x: null,
-      // The counters of the host for the last instance that ran (variant a: one per request).
-      counters() {
-        return this.x ? hostCounters(this.x) : null;
-      },
-      get queued() {
-        return queue.length;
-      },
-      async run(req, ro = {}) {
-        tasks.sweep();
-        let got = admit(ro.signal);
-        if (got instanceof Promise) got = await got;
-        if (got.fail) return shedMem(got.fail, null);
-        const x = got.x;
-        const t = tasks.begin({ x }, ro);
-        try {
-          const ev = encode(req, t, x);
-          if (ev.fail) return ev.fail;
-          const arg = encEvent(x, ev.bytes);
-          if (!arg) {
-            stats.oom++;
-            return { trap: 'out of memory: request block', status: 503, cause: 'oom', x };
-          }
-          try {
-            const running = WebAssembly.promising(x.handle)(...arg, t.id);
-            // The task ran up to its first wait: the next request sees how much memory a request takes.
-            note(x);
-            const blk = await running;
-            t.ok = true;
-            stats.served++;
-            seen(x);
-            this.x = x;
-            const outcome = readOutcome(x, blk, t.refs);
-            drain(x);
-            return { outcome, x };
-          } catch (e) {
-            this.x = x;
-            if (t.ended5) return cancelled(t, x);
-            stats.traps++;
-            seen(x);
-            // A new instance for each request: no task_abort, but the log lines are still read.
-            let crash;
-            try {
-              crash = drain(x);
-            } catch {}
-            return cleanTrap(x, e, crash);
-          }
-        } finally {
-          tasks.end(t);
-          hostEvents(x);
-          note(x);
-          // M10: the dropped instance counts until it is collected. Its memory is not free for the queue yet.
-          budget.drop(x.memory);
-          pump();
-        }
-      },
-    };
-  }
   // Each instance counts the requests since its last global check, and `dirty`: a task started since
   // then. `checkDue`: an alarm happened, and the check did not run yet (12c).
   const fresh = (it) => {

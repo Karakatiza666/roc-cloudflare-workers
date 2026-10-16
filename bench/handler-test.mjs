@@ -1,6 +1,6 @@
 // PLAN.md 9a: `makeHandler(module, opts)` of js/index.js. No workerd.
 // node bench/handler-test.mjs bench/out/app.wasm bench/out/app_prod.wasm
-// 1. The handler class has `fetch`, and serves requests (200 at once, a trap gives a 500) on both variants. Since 8b
+// 1. The handler class has `fetch`, and serves requests (200 at once, a trap gives a 500). Since 8b
 //    `makeHandler` gives a class (a `WorkerEntrypoint` subclass): the test makes an instance with `(ctx, env)`.
 // 2. An unknown option and a bad value throw at `makeHandler` time and name the option (8a: `io` is gone, so it is
 //    an unknown option).
@@ -45,22 +45,21 @@ const throwsWith = (what, re, f) => {
 };
 
 // 1
-for (const variant of ['a', 'b']) {
-  const H = makeHandler(bench, { variant, ops, isolateBytes: 2 ** 40 });
+{
+  const H = makeHandler(bench, { ops, isolateBytes: 2 ** 40 });
   const h = new H({}, {});
-  if (typeof h.fetch !== 'function') fail(`${variant}: no fetch`);
+  if (typeof h.fetch !== 'function') fail('no fetch');
   const ids = Array.from({ length: 50 }, (_, i) => String(100 + i));
   const res = await Promise.all(ids.map((id) => h.fetch(post(`${id} 0 5`))));
   const bodies = await Promise.all(res.map((r) => r.text()));
   const bad = ids.filter((id, i) => res[i].status !== 200 || !check(id, bodies[i], 5)).length;
   const trapped = await h.fetch(post('999 1 5'));
   const tt = await trapped.text();
-  // Variant a drops the instance of a trap with no task_abort: only the shared instance shows 0.
-  const live = variant === 'b' ? H.runner.x.live_bytes() : 0;
-  console.log(variant, { bad, trap: [trapped.status, tt.slice(0, 40)], live });
-  if (bad) fail(`${variant}: ${bad} bad responses`);
-  if (trapped.status !== 500 || !tt.startsWith('trap ')) fail(`${variant}: a trap must give a 500 with "trap ..."`, trapped.status, tt);
-  if (live !== 0) fail(`${variant}: live bytes are not 0`);
+  const live = H.runner.x.live_bytes();
+  console.log({ bad, trap: [trapped.status, tt.slice(0, 40)], live });
+  if (bad) fail(`${bad} bad responses`);
+  if (trapped.status !== 500 || !tt.startsWith('trap ')) fail(`a trap must give a 500 with "trap ..."`, trapped.status, tt);
+  if (live !== 0) fail('live bytes are not 0');
 }
 
 // 2
@@ -78,7 +77,10 @@ const bad = {
   maxInstanceBytes: [{ ops, maxInstanceBytes: 0 }, /"maxInstanceBytes"/],
   growStepBytes: [{ ops, growStepBytes: 1.5 }, /"growStepBytes"/],
   graceMs: [{ ops, graceMs: -5 }, /"graceMs"/],
-  queueLimit: [{ ops, queueLimit: 1.5 }, /"queueLimit"/],
+  // The fallback is removed (PLAN.md 1b): its options are unknown now.
+  'queueLimit (removed 2026-10-16)': [{ ops, queueLimit: 5 }, /unknown option "queueLimit"/],
+  'variant (removed 2026-10-16)': [{ ops, variant: 'b' }, /unknown option "variant"/],
+  'noFallback (removed 2026-10-16)': [{ ops, noFallback: true }, /unknown option "noFallback"/],
   resumeCheck: [{ ops, resumeCheck: 'sometimes' }, /"resumeCheck".*"always"/],
   heapCheckEvery: [{ ops, heapCheckEvery: -1 }, /"heapCheckEvery"/],
   heapCheckWhenIdle: [{ ops, heapCheckWhenIdle: 'yes' }, /"heapCheckWhenIdle"/],
@@ -88,7 +90,7 @@ const bad = {
 };
 for (const [what, [opts, re]] of Object.entries(bad)) throwsWith(what, re, () => makeHandler(bench, opts));
 throwsWith('module is not a Module', /WebAssembly.Module/, () => makeHandler({}, { ops }));
-const good = { isolateBytes: 2 ** 40, jsReserveBytes: 0, maxInstanceBytes: Infinity, growStepBytes: 65536, graceMs: 0, queueLimit: 5, resumeCheck: 'afterAlarm', heapCheckEvery: 0, heapCheckWhenIdle: false, taskDeadlineMs: 1000, pinLimit: 10, ops: { ...ops, f: () => 1 } };
+const good = { isolateBytes: 2 ** 40, jsReserveBytes: 0, maxInstanceBytes: Infinity, growStepBytes: 65536, graceMs: 0, resumeCheck: 'afterAlarm', heapCheckEvery: 0, heapCheckWhenIdle: false, taskDeadlineMs: 1000, pinLimit: 10, ops: { ...ops, f: () => 1 } };
 const G = makeHandler(bench, { ...good, other: ['queue', 'email'] });
 const gr = await new G({}, {}).fetch(post('7 0 5'));
 if (gr.status !== 200 || !check('7', await gr.text(), 5)) fail('a handler with all options set gave a bad response');

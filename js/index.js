@@ -28,7 +28,7 @@ import { isBenchHost } from './host.js';
 // `opts.ops`: the JS functions of the app (API.md 6.4). The class has the static `runner` for tests and the bench.
 export function makeHandler(module, opts = {}) {
   if (!(module instanceof WebAssembly.Module)) throw new TypeError('makeHandler: module must be a WebAssembly.Module');
-  const { variant = 'b', other = [], ...runnerOpts } = checkOptions(opts);
+  const { other = [], ...runnerOpts } = checkOptions(opts);
   const log = runnerOpts.log ?? ((text) => console.warn(text));
   // workerd forbids random values at global scope (the free mark of an instance, `freeMark`), and the default export
   // is made there. So the runner and its first instance start at the first use (an event, or a read of `runner`), and
@@ -36,7 +36,7 @@ export function makeHandler(module, opts = {}) {
   // checks it again with `set_sum` at the first instance.
   if (runnerOpts.resumeCheck === 'off' && !isBenchHost(module)) throw new Error('resumeCheck "off" needs the bench host: the production host refuses it');
   let runner = null;
-  const runnerOf = () => (runner ??= makeRunner(module, variant, runnerOpts));
+  const runnerOf = () => (runner ??= makeRunner(module, runnerOpts));
 
   // Run one event as a task. A trap gives `{ trap, status }`; its log line has the text of a Roc `crash` (8a O2).
   // `ro`: the task context (PLAN.md 9b, API.md 6.2 OP3): `kind`, `signal`, `env`, `ctx` and `event` (the root `event`).

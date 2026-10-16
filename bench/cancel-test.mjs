@@ -32,7 +32,7 @@ const rssMB = async () => { for (let i = 0; i < 3; i++) { gc(); await sleep(10);
 
 // 1.
 {
-  const r = makeRunner(module, 'b', io);
+  const r = makeRunner(module, io);
   let cancels = 0, bad = 0, pending = 0, rssWarm = 0;
   // A task that waits for the whole run keeps the page of the wait records in the host,
   // so a new wait record reuses the record of a cancelled task (else that page goes back).
@@ -72,7 +72,7 @@ const rssMB = async () => { for (let i = 0; i < 3; i++) { gc(); await sleep(10);
 {
   let collected = false;
   const reg = new FinalizationRegistry(() => (collected = true));
-  const r = makeRunner(module, 'b', io);
+  const r = makeRunner(module, io);
   const ps = Array.from({ length: 10 }, (_, i) => r.run(`${990000 + i} 0 5 10`).then((x) => ({ status: x.status, cancelled: x.cancelled })));
   await waitFor(() => r.x.task_waiting() === 10);
   const waiting = r.x.task_waiting();

@@ -88,7 +88,7 @@ export function makeBridge(cell, tasks, shim) {
       const c = contextOf(t);
       let res;
       try {
-        // Read before the first await: in variant B the block is in memory that other tasks use next.
+        // Read before the first await: the block is in memory that other tasks use next.
         const prog = read(x, ap, al, c);
         const running = runAwait(prog, c).then((v) => [OK, v], (e) => [statusOf(e), errorOf(e)]);
         if (t) {

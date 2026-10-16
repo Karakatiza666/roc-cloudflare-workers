@@ -17,7 +17,6 @@ const RULES = {
   maxInstanceBytes: [(v) => isNum(v) && v > 0, 'a number of bytes above 0 (Infinity: no cap)'],
   growStepBytes: [(v) => isInt(v) && v > 0, 'an integer number of bytes above 0'],
   graceMs: [(v) => isNum(v) && v >= 0 && v < Infinity, 'a number of ms, 0 or more'],
-  queueLimit: [(v) => isInt(v) && v >= 0, 'an integer, 0 or more'],
   resumeCheck: [(v) => typeof v === 'string' && Object.hasOwn(SUM_MODES, v), `one of ${Object.keys(SUM_MODES).map((k) => `"${k}"`).join(', ')}`],
   heapCheckEvery: [(v) => isInt(v) && v >= 0, 'an integer, 0 (off) or more'],
   heapCheckWhenIdle: [isBool, 'true or false'],
@@ -35,8 +34,6 @@ const RULES = {
   log: fn,
   onLog: fn,
   now: fn,
-  noFallback: [isBool, 'true or false'],
-  variant: [(v) => v === 'a' || v === 'b', '"a" or "b"'],
 };
 
 // Names that `other` cannot take: the class has these methods already.

@@ -1,6 +1,6 @@
 // PLAN.md 4e in workerd: a dropped instance counts in the budget until the FinalizationRegistry callback.
 // WORKERD=<path> node bench/budget-workerd.mjs
-// Config bench/config-m.capnp: variant b, isolateBytes 64 MB, jsReserveBytes 0, graceMs 0.
+// Config bench/config-m.capnp: isolateBytes 64 MB, jsReserveBytes 0, graceMs 0.
 // 1. A request holds 30 MB: the instance is 32 MB.
 // 2. /replace drops the instance (M1). The budget shows 32 MB of dropped instance.
 // 3. A request that holds 40 MB gets a 503 (32 + 2 + 40 is over 64 MB). Both instances together stay at or under 64 MB.

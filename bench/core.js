@@ -15,8 +15,8 @@ export { benchOps };
 // `db` of the bench apps (bench/ops.js). opts.ops: more ops (they win over the two).
 // PLAN.md 8b: `run(text, ro)` sends the text as the body of a `Fetch` event (`benchEvent`) and gives the body of the
 // `Respond` outcome as `body` (text), as before 8b. An object is sent as the event itself.
-export function makeRunner(module, variant, io, opts = {}) {
-  const r = makeRunnerOf(module, variant, { ...opts, ops: { ...(io ? benchOps(io) : {}), ...opts.ops } });
+export function makeRunner(module, io, opts = {}) {
+  const r = makeRunnerOf(module, { ...opts, ops: { ...(io ? benchOps(io) : {}), ...opts.ops } });
   const run = r.run;
   r.run = async function (req, ro) {
     const res = await run.call(r, typeof req === 'string' ? benchEvent(req) : req, ro);

@@ -33,6 +33,5 @@ done
 sed '1s|platform "platform/main.roc"|platform "../platform/main.roc"|' bench/app.roc > bench/app_prod.roc
 "$ROC" build --opt=speed --target=wasm32 --no-cache --output="$OUT/app_prod.wasm" bench/app_prod.roc || [ $? -eq 2 ]
 ls -l "$OUT"
-# The layout check warns only. CI (bench/ci-layout.sh) fails on it.
-node bench/check-layout.mjs --header platform/main.roc "$OUT"/app.wasm "$OUT"/app_pad.wasm "$OUT"/app_deep.wasm "$OUT"/app_prod.wasm ||
-  echo "WARNING: a build is not stack-first. The platform falls back to an instance per request." >&2
+# The layout check fails the build: the platform has no fallback for a data-first module (js/runner.js).
+node bench/check-layout.mjs --header platform/main.roc "$OUT"/app.wasm "$OUT"/app_pad.wasm "$OUT"/app_deep.wasm "$OUT"/app_prod.wasm

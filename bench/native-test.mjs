@@ -49,12 +49,8 @@ const ops = {
   },
 };
 const logs = [];
-const newRunner = () => makeRunner(module, 'b', null, { ops, isolateBytes: 2 ** 40, log: (t) => logs.push(t), onLog: (level, t) => logs.push(t) });
+const newRunner = () => makeRunner(module, null, { ops, isolateBytes: 2 ** 40, log: (t) => logs.push(t), onLog: (level, t) => logs.push(t) });
 let r = newRunner();
-if (r.stats.fallback) {
-  console.log('FAIL: the module is not stack-first');
-  process.exit(1);
-}
 const show = (x) => x.body ?? `trap ${x.status ?? ''} ${x.cause ?? x.alarm ?? ''} ${x.trap}`;
 const tests = [];
 const test = (name, f) => tests.push([name, f]);

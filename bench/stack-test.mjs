@@ -10,14 +10,10 @@ import { makeRunner } from './core.js';
 const module = new WebAssembly.Module(readFileSync(process.argv[2]));
 const rounds = Number(process.argv[3] ?? 5);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const r = makeRunner(module, 'b', async () => {
+const r = makeRunner(module, async () => {
   await sleep(Math.random() * 10);
   return 'x';
 });
-if (r.stats.fallback) {
-  console.log('FAIL: the module is not stack-first');
-  process.exit(1);
-}
 let bad = 0, tasks = 0, minD = Infinity, maxD = 0;
 for (let k = 0; k < rounds; k++) {
   const depths = Array.from({ length: 64 }, (_, i) => (i === 0 ? 10 : i === 1 ? 4000 : 10 + Math.floor(Math.random() * 3991)));

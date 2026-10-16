@@ -1,4 +1,4 @@
-// PLAN.md 4h, 4j and the decided point of 12e on the app (variant b): the counters of the host, the idle
+// PLAN.md 4h, 4j and the decided point of 12e on the app: the counters of the host, the idle
 // reset after a passed idle check, and the end of the suspicion of an alarm at that check.
 // node bench/idle-test.mjs bench/out/app.wasm
 // 4h  `leak_next(n)` makes one task keep a block: `leaked_at_end` shows its bytes (class of 100: 128, 10,000:
@@ -29,7 +29,7 @@ const wave = async (r, n, pick) => (await Promise.all(Array.from({ length: n }, 
 
 // 4h: the leak counter, the peak, the heap bytes
 {
-  const r = makeRunner(module, 'b', io, { heapCheckEvery: 0, heapCheckWhenIdle: false, log: () => {} });
+  const r = makeRunner(module, io, { heapCheckEvery: 0, heapCheckWhenIdle: false, log: () => {} });
   const x = r.x;
   const bad = await wave(r, 200, (i) => [[5, 20, 200][i % 3], 3 + (i % 10)]);
   const c0 = r.counters();
@@ -56,7 +56,7 @@ const MIX = (i) => [[5, 20, 200, 2000][i % 4], 3 + (i % 25)];
   const lines = [];
   const waits = [];
   const ctx = { waitUntil: (p) => waits.push(p) };
-  const r = makeRunner(module, 'b', io, { heapCheckEvery: 0, heapCheckWhenIdle: true, log: (t) => lines.push(t) });
+  const r = makeRunner(module, io, { heapCheckEvery: 0, heapCheckWhenIdle: true, log: (t) => lines.push(t) });
   const x = r.x;
   // Warm: the first requests, and the first idle reset. Its `heap_used` is the base.
   await r.run(`1 0 3 5`, { ctx });
@@ -84,7 +84,7 @@ const MIX = (i) => [[5, 20, 200, 2000][i % 4], 3 + (i % 25)];
 }
 // A block that stays live (a JS block, outside the tasks): no reset, no damage.
 {
-  const r = makeRunner(module, 'b', io, { heapCheckEvery: 0, heapCheckWhenIdle: true, log: () => {} });
+  const r = makeRunner(module, io, { heapCheckEvery: 0, heapCheckWhenIdle: true, log: () => {} });
   const x = r.x;
   await go(r);
   await sleep(10);
@@ -115,7 +115,7 @@ const MIX = (i) => [[5, 20, 200, 2000][i % 4], 3 + (i % 25)];
 // A task that waits: `idle_reset` is refused, and the task ends with a correct body.
 {
   const gates = new Map();
-  const r = makeRunner(module, 'b', (k, a, b) => {
+  const r = makeRunner(module, (k, a, b) => {
     const id = k === 1 ? new URL(b).searchParams.get('id') : a.split(' ')[1];
     return new Promise((res) => gates.set(`${k}:${id}`, () => res(k === 1 ? `f:${id}` : `d:${id}`)));
   }, { heapCheckEvery: 0, heapCheckWhenIdle: false, log: () => {} });
@@ -156,7 +156,7 @@ const MIX = (i) => [[5, 20, 200, 2000][i % 4], 3 + (i % 25)];
     const res = await p;
     return !res.trap && check(id, res.body, 3);
   };
-  const r = makeRunner(module, 'b', gated, { resumeCheck: 'afterAlarm', heapCheckEvery: 0, heapCheckWhenIdle: true, log: (t) => lines.push(t) });
+  const r = makeRunner(module, gated, { resumeCheck: 'afterAlarm', heapCheckEvery: 0, heapCheckWhenIdle: true, log: (t) => lines.push(t) });
   const x = r.x;
   x.fault_next_wait(2); // an unclean trap: an alarm, and `set_suspect(1)`
   const a = await r.run(`${seq++} 0 3 5`);

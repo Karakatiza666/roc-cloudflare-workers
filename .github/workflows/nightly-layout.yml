@@ -1,6 +1,7 @@
 # Check each new Roc nightly with bench/ci-layout.sh.
 # Pass: commit the nightly to compat/last-stack-first-nightly (releases pin it).
 # Fail: the job fails and opens an issue here. Then open the upstream issue at roc-lang/roc.
+# A data-first nightly cannot be used at all: the platform has no fallback (js/runner.js refuses the module).
 # A failed nightly does not block a release: the file keeps the last nightly that passed.
 name: nightly-layout
 on:
@@ -52,4 +53,4 @@ jobs:
         run: |
           title='Nightly check failed: ${{ steps.tag.outputs.tag }}'
           gh issue list --state open --search "$title in:title" --json number -q '.[0].number' | grep -q . ||
-            gh issue create --title "$title" --body "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. If check-layout.mjs says DATA-FIRST, open the upstream issue at roc-lang/roc. Releases keep $(cat compat/last-stack-first-nightly)."
+            gh issue create --title "$title" --body "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}. If check-layout.mjs says DATA-FIRST, the platform cannot use this nightly (no fallback): open the upstream issue at roc-lang/roc. Releases keep $(cat compat/last-stack-first-nightly)."

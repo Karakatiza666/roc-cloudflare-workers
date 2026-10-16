@@ -17,7 +17,7 @@ const io = async (kind, a, b) => (kind === 1 ? 'f:' + new URL(b).searchParams.ge
 
 async function run(module, mode, conc, items, depth = 50) {
   let id = 1;
-  const r = makeRunner(module, 'b', io, { resumeCheck: mode });
+  const r = makeRunner(module, io, { resumeCheck: mode });
   let bad = 0;
   const batch = async () => {
     const ids = Array.from({ length: conc }, () => String(id++));

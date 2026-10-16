@@ -1,4 +1,4 @@
-// PLAN.md 4b to 4e: the memory budget of the isolate (Node, variant b).
+// PLAN.md 4b to 4e: the memory budget of the isolate.
 // node --expose-gc bench/budget-test.mjs bench/out/app.wasm
 // 4b: `js_grow` asks the budget before each grow. isolateBytes 16 MB, jsReserveBytes 0: a request that
 //     holds 20 MB gets a 503 (cause oom), the other requests are correct, live bytes return to 0, the
@@ -37,7 +37,7 @@ const mem = (r) => r.x.memory.buffer.byteLength;
 // 4b
 {
   const lines = [];
-  const r = makeRunner(module, 'b', ioOf(), { isolateBytes: 16 * MB, jsReserveBytes: 0, graceMs: 0, log: (t) => lines.push(t) });
+  const r = makeRunner(module, ioOf(), { isolateBytes: 16 * MB, jsReserveBytes: 0, graceMs: 0, log: (t) => lines.push(t) });
   const x0 = r.x;
   const warm = await Promise.all(Array.from({ length: 20 }, () => go(r)));
   // 10 good requests wait in the instance when the big one starts. Its OOM trap is at its start, in the
@@ -65,7 +65,7 @@ const mem = (r) => r.x.memory.buffer.byteLength;
 // 4b: the grow step (M4, H9): `growStepBytes` is the least that one grow adds.
 {
   const run = async (step) => {
-    const r = makeRunner(module, 'b', ioOf(), { isolateBytes: 64 * MB, jsReserveBytes: 0, growStepBytes: step, log: () => {} });
+    const r = makeRunner(module, ioOf(), { isolateBytes: 64 * MB, jsReserveBytes: 0, growStepBytes: step, log: () => {} });
     const m0 = mem(r);
     // 3,000 items: a heap of a few MB, built in many small allocations.
     const id = String(seq++);
@@ -82,10 +82,10 @@ const mem = (r) => r.x.memory.buffer.byteLength;
 }
 // 4c
 {
-  const capped = makeRunner(module, 'b', ioOf(), { isolateBytes: 64 * MB, jsReserveBytes: 0, graceMs: 0, maxInstanceBytes: 8 * MB, log: () => {} });
+  const capped = makeRunner(module, ioOf(), { isolateBytes: 64 * MB, jsReserveBytes: 0, graceMs: 0, maxInstanceBytes: 8 * MB, log: () => {} });
   const a = await go(capped, 20);
   const smallOk = await go(capped, 2);
-  const free = makeRunner(module, 'b', ioOf(), { isolateBytes: 64 * MB, jsReserveBytes: 0, graceMs: 0, log: () => {} });
+  const free = makeRunner(module, ioOf(), { isolateBytes: 64 * MB, jsReserveBytes: 0, graceMs: 0, log: () => {} });
   const b = await go(free, 20);
   console.log('4c', JSON.stringify({ capped: kind(a), capMem: mem(capped), small2: kind(smallOk), noCap: kind(b), noCapMem: mem(free), deniedCap: capped.stats.budget.deniedCap }));
   if (a.status !== 503 || a.cause !== 'oom') fail('4c: with the cap of 8 MB the request must fail:', kind(a));
@@ -99,7 +99,7 @@ const mem = (r) => r.x.memory.buffer.byteLength;
 {
   const lines = [];
   const GRACE = 300;
-  const r = makeRunner(module, 'b', ioOf(60), { isolateBytes: 16 * MB, jsReserveBytes: 0, graceMs: GRACE, log: (t) => lines.push(t) });
+  const r = makeRunner(module, ioOf(60), { isolateBytes: 16 * MB, jsReserveBytes: 0, graceMs: GRACE, log: (t) => lines.push(t) });
   const x0 = r.x;
   const wave = Array.from({ length: 64 }, () => go(r, 1));
   // The wave is running. A new request now is shed (a grow was denied in the last graceMs).
@@ -128,7 +128,7 @@ const mem = (r) => r.x.memory.buffer.byteLength;
 // 4e
 {
   const lines = [];
-  const r = makeRunner(module, 'b', ioOf(), { isolateBytes: 64 * MB, jsReserveBytes: 0, graceMs: 0, log: (t) => lines.push(t) });
+  const r = makeRunner(module, ioOf(), { isolateBytes: 64 * MB, jsReserveBytes: 0, graceMs: 0, log: (t) => lines.push(t) });
   let old = r.x;
   const first = await go(r, 30);
   const oldBytes = old.memory.buffer.byteLength;
@@ -159,7 +159,7 @@ const mem = (r) => r.x.memory.buffer.byteLength;
 // (not an OOM trap) until the callback.
 {
   const lines = [];
-  const r = makeRunner(module, 'b', ioOf(), { isolateBytes: 34 * MB, jsReserveBytes: 0, graceMs: 0, log: (t) => lines.push(t) });
+  const r = makeRunner(module, ioOf(), { isolateBytes: 34 * MB, jsReserveBytes: 0, graceMs: 0, log: (t) => lines.push(t) });
   let old = r.x;
   const first = await go(r, 30);
   r.replace('test');

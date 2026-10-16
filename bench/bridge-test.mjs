@@ -58,7 +58,7 @@ const ops = {
 };
 const logs = [];
 // The log lines of the shim and of the app.
-r = makeRunner(module, 'b', null, { ops, isolateBytes: 2 ** 40, log: (t) => logs.push(t), onLog: (level, t) => logs.push(t) });
+r = makeRunner(module, null, { ops, isolateBytes: 2 ** 40, log: (t) => logs.push(t), onLog: (level, t) => logs.push(t) });
 
 // One request: the body (or the trap), the time and the waits of the task.
 async function run(req, ro) {

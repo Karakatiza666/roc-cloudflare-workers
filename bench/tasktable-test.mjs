@@ -83,7 +83,7 @@ async function allocsBetween(victim) {
     if (kind === 2 && id === victim) c2 = r.x.alloc_count();
     return (kind === 1 ? 'f:' : 'd:') + id;
   };
-  r = makeRunner(module, 'b', io0);
+  r = makeRunner(module, io0);
   await r.run(`${victim} 0 5 10`);
   return c2 - c1;
 }
@@ -98,7 +98,7 @@ for (const [n, what] of [[d - 1, 'the Wait record'], [d, 'the stack copy']]) {
     if (kind === 2 && id === victim) dbCalls++;
     return (kind === 1 ? 'f:' : 'd:') + id;
   };
-  r = makeRunner(module, 'b', io2);
+  r = makeRunner(module, io2);
   const x0 = r.x;
   const ids = Array.from({ length: 20 }, (_, i) => String(7000 + i));
   const res = await Promise.all(ids.map((id) => r.run(`${id} 0 5 10`)));
@@ -116,7 +116,7 @@ for (const [n, what] of [[d - 1, 'the Wait record'], [d, 'the stack copy']]) {
 
 // 3. 400 requests at once, each waits 30 ms.
 {
-  const r = makeRunner(module, 'b', async (kind, a, b) => { await sleep(30); return io(kind, a, b); });
+  const r = makeRunner(module, async (kind, a, b) => { await sleep(30); return io(kind, a, b); });
   const x0 = r.x;
   const slots = x0.task_slots();
   const ids = Array.from({ length: 400 }, (_, i) => String(10000 + i));

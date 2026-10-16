@@ -7,7 +7,7 @@ import { makeRunner, check } from './core.js';
 
 const mods = { on: new WebAssembly.Module(readFileSync(process.argv[2])), off: new WebAssembly.Module(readFileSync(process.argv[3])) };
 const io = async (kind, a, b) => (kind === 1 ? 'f:' + new URL(b).searchParams.get('id') : 'd:' + a.split(' ')[1]);
-const inst = (m) => makeRunner(m, 'b', io).x;
+const inst = (m) => makeRunner(m, io).x;
 const med = (a) => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)];
 const time = (f) => { const t = performance.now(); f(); return performance.now() - t; };
 
@@ -37,7 +37,7 @@ for (const size of [24, 200, 3000, 20000]) {
 // 3. us per request, one at a time, depth 30, 200 JSON items (about 300 KB of heap work).
 {
   let id = 1;
-  const runner = { on: makeRunner(mods.on, 'b', io), off: makeRunner(mods.off, 'b', io) };
+  const runner = { on: makeRunner(mods.on, io), off: makeRunner(mods.off, io) };
   const go = async (r, n) => { let bad = 0; for (let i = 0; i < n; i++) { const k = String(id++); const v = await r.run(`${k} 0 30 200`); if (!check(k, v.body ?? '', 30)) bad++; } return bad; };
   const t = { on: [], off: [] };
   let bad = 0;

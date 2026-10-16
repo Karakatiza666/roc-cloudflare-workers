@@ -109,9 +109,11 @@ Checked (2026-10-13):
 
 ### What happens when the stack is not first
 
-The platform does not stop. It falls back to variant A: a new instance for each request, and never more than one request in an instance. An overflow can then corrupt only the instance of that one request. The instance is dropped when the request ends. The request that overflowed can still return a wrong body without an error. Only a stack-first build removes that risk.
+Removed 2026-10-16: stack-first is guaranteed by the compiler. A module that is not stack-first is refused: `makeHandler` throws at the first instance, and the message names the layout and `bench/check-layout.mjs`. `bench/layout-test.mjs` tests it with a committed data-first fixture (`bench/fixtures/data-first-10-09.wasm`). The text below is measured history.
 
-Cost of variant A with the v7 allocator (6e), full app (`research/alloc/README.md`, "Benchmarks"):
+Was: the platform did not stop. It fell back to variant A: a new instance for each request, and never more than one request in an instance. An overflow can then corrupt only the instance of that one request. The instance is dropped when the request ends. The request that overflowed can still return a wrong body without an error. Only a stack-first build removes that risk.
+
+Cost of variant A (removed) with the v7 allocator (6e), full app (`research/alloc/README.md`, "Benchmarks"):
 
 | | 200 items | 2,000 items |
 |---|---|---|
@@ -119,7 +121,7 @@ Cost of variant A with the v7 allocator (6e), full app (`research/alloc/README.m
 | Memory per request in flight | 2.4 MB (each instance has the 0.9 MB unit tables) | 3.6 MB |
 | Memory, 64 requests at once | 152 MB | 232 MB |
 
-So the fallback must limit the instances to the budget (M9).
+The fallback had to limit the instances to the budget (M9, removed).
 
 | Layout | Instances | Requests per instance |
 |---|---|---|
@@ -130,19 +132,19 @@ So the fallback must limit the instances to the budget (M9).
 
 | Step | Change | Test |
 |---|---|---|
-| 1a | `bench/check-layout.mjs` (done, see above). `bench/build.sh` runs it on each output and prints a warning when a result is not STACK-FIRST. It does not fail the build. | The table above |
-| 1a-ci | CI job on each new nightly: build the bench app and `app_deep.roc`, run the script, run `bench/overflow-test.mjs`. On STACK-FIRST, write the nightly to `compat/last-stack-first-nightly` (the newest nightly that passed). On DATA-FIRST or UNKNOWN, the job fails and notifies us: we open the upstream issue. A release of the platform and of talon pins the nightly in that file, so a regression in a nightly never blocks a release. | Run the job on 10-09 (must fail) and 10-12 (must pass and record) |
-| 1b | Run time check, the safety net for a module built in some other way. `init` finds the layout: the stack is first when the stack address is below the address of a host global. This is exact for any stack size. ("floor == 0" was wrong for a data-first build with a stack smaller than `STACK_SIZE`.) Add the export `stack_first()`, and list it in `platform/main.roc`. JS uses the fallback above when it returns 0. Cost: one comparison per instance in `init`, and one choice per module load in JS. There is no cost per request. Only the fallback costs, and only when it is used. | 10-09 build: each request gets a new instance. 10-12 build: one shared instance. |
-| 1c | A canary trap is clean only when the stack is first. Otherwise it is unclean. | `bench/overflow-test.mjs` with `app_deep.roc` at depths 1000 to 20000, on the 10-12 build: no request returns a body while the canary is broken. The first trap is unclean (`task_abort` returns -1). After 4-pre (problem 4), an overflow with no alloc on a stack-first build is clean, and the instance is kept. On the 10-09 build with the fallback off, the test must fail. |
+| 1a | `bench/check-layout.mjs` (done, see above). `bench/build.sh` runs it on each output and prints a warning when a result is not STACK-FIRST. It did not fail the build. Changed 2026-10-16: it fails the build, because a data-first module is refused. | The table above |
+| 1a-ci | CI job on each new nightly: build the bench app and `app_deep.roc`, run the script, run `bench/overflow-test.mjs`. On STACK-FIRST, write the nightly to `compat/last-stack-first-nightly` (the newest nightly that passed). On DATA-FIRST or UNKNOWN, the job fails and notifies us: we open the upstream issue. A data-first nightly cannot be used at all: the platform has no fallback (2026-10-16). A release of the platform and of talon pins the nightly in that file, so a regression in a nightly never blocks a release. | Run the job on 10-09 (must fail) and 10-12 (must pass and record) |
+| 1b | Removed 2026-10-16: stack-first is guaranteed by the compiler. JS throws at the first instance when `stack_first()` is 0 (the message names the layout and `bench/check-layout.mjs`). Test: `bench/layout-test.mjs`. The export `stack_first()` and the run time check stay. History: Run time check, the safety net for a module built in some other way. `init` finds the layout: the stack is first when the stack address is below the address of a host global. This is exact for any stack size. ("floor == 0" was wrong for a data-first build with a stack smaller than `STACK_SIZE`.) Add the export `stack_first()`, and list it in `platform/main.roc`. JS uses the fallback above when it returns 0. Cost: one comparison per instance in `init`, and one choice per module load in JS. There is no cost per request. Only the fallback costs, and only when it is used. | 10-09 build: each request gets a new instance. 10-12 build: one shared instance. |
+| 1c | A canary trap is clean only when the stack is first. Otherwise it is unclean. | The 10-09 part is removed 2026-10-16 (the test has no data-first run; stack-first is guaranteed by the compiler). History: `bench/overflow-test.mjs` with `app_deep.roc` at depths 1000 to 20000, on the 10-12 build: no request returns a body while the canary is broken. The first trap is unclean (`task_abort` returns -1). After 4-pre (problem 4), an overflow with no alloc on a stack-first build is clean, and the instance is kept. On the 10-09 build with the fallback off, the test must fail. |
 | 1d | First pinned nightly: 2026-10-12 (10-11 also passes; there is no 10-10 nightly). Move `bench/build.sh` to nightly 10-12 and rerun `bench/node-test.mjs`. Fix `bench/README.md:175`. Open the upstream issue above. | |
 
 ### Status of step 1 (2026-10-13)
 
 | Step | State | Where |
 |---|---|---|
-| 1a | Done | `bench/build.sh` (uses `bench/get-roc.sh`, builds `app_deep.wasm` too, warns) |
+| 1a | Done | `bench/build.sh` (uses `bench/get-roc.sh`, builds `app_deep.wasm` too, warns; since 2026-10-16 it fails the build) |
 | 1a-ci | Done. Not run on GitHub yet: the repo has no GitHub remote. | `bench/ci-layout.sh`, `.github/workflows/nightly-layout.yml`. Local: 10-09 exit 1, file not changed. 10-12 exit 0, file written. |
-| 1b | Done | `hostlib/canary.zig` (`STACK_FIRST`, `stack_first()`), `bench/core.js` (`makeRunner`: fallback, `opts.noFallback`) |
+| 1b | Removed 2026-10-16: stack-first is guaranteed by the compiler. Now `makeRunner` throws at a module that is not stack-first. History: Done | `hostlib/canary.zig` (`STACK_FIRST`, `stack_first()`), `bench/core.js` (`makeRunner`: fallback, `opts.noFallback`) |
 | 1c | Done | `hostlib/canary.zig` (`check`). `bench/core.js` also gives new requests a new instance after `task_abort` returns -1 (before, it only counted it). |
 | 1d | Done. Upstream issue: roc-lang/roc#12270 | `compat/last-stack-first-nightly`, `bench/README.md` |
 
@@ -151,8 +153,8 @@ Tests:
 | Build | `overflow-test.mjs` | `node-test.mjs` |
 |---|---|---|
 | 10-12 | PASS. 4500: out of bounds, clean (4-pre), instance kept, live bytes 0, next request correct. 4500 alloc: canary trap, clean, instance kept. A cold V8 RangeError (first request, depth 100000) is clean too. V2: a forced trap at normal depth retires the instance. | PASS |
-| 10-09 | PASS with the fallback (one instance per request) | PASS (variant b falls back) |
-| 10-09, `--no-fallback` | FAIL: bodies at 4500 and 5000 with a broken canary | |
+| Removed 2026-10-16: stack-first is guaranteed by the compiler. 10-09 | PASS with the fallback (one instance per request) | PASS (variant b falls back) |
+| Removed 2026-10-16: stack-first is guaranteed by the compiler. 10-09, `--no-fallback` | FAIL: bodies at 4500 and 5000 with a broken canary | |
 
 `app_deep.roc` now takes `<depth> alloc`, so the overflow test covers the canary trap. The test computes each expected body in JS. Depths 4500 and 5000 were added: on 10-09 the silent overwrite happens only while the stack is past the canary and still above the data.
 
@@ -160,12 +162,12 @@ Revert checks (each test must fail):
 
 | Revert | Build | Result |
 |---|---|---|
-| 1c: the canary trap is always clean | 10-09, `--no-fallback` | FAIL: the unclean trap did not retire the instance |
+| Removed 2026-10-16: stack-first is guaranteed by the compiler. 1c: the canary trap is always clean | 10-09, `--no-fallback` | FAIL: the unclean trap did not retire the instance |
 | 1b: `STACK_FIRST = true` | 10-09 | FAIL: the next request traps |
 | 1b: `STACK_FIRST = false` | 10-12, `--expect-shared` | FAIL: the runner fell back |
 | No retire in `core.js` | 10-12 | FAIL (after 4-pre, with the forced trap at normal depth, V2): the unclean trap did not retire the instance. Before 4-pre it was the overflow at depth 4500. |
 
-The canary check at each wait from the first version of this plan is dropped. The CI check with the pinned nightly, the run time check and the fallback replace it.
+The canary check at each wait from the first version of this plan is dropped. The CI check with the pinned nightly, the run time check and the fallback replace it. The fallback is removed (2026-10-16).
 
 Change after 12c: an unclean trap no longer retires the instance. It gives an alarm and the global check (problem 12). So the tests and revert checks above that look for "retired" or "a new instance" must look for the alarm instead: `task_abort` returns -1 and the alarm counter (M11) goes up. 12c makes this change in `overflow-test.mjs`. Done (2026-10-16): see "Status of steps 12d, 12c, 12e".
 
@@ -409,7 +411,7 @@ Decided on 2026-10-13. This replaces the old pool rules ("up to 16 per instance"
 | M6 | A grow that cannot be served gives a clean OOM trap to the task that asked (6d). That request gets a 503, its pages are freed (owner tags), and the instance stays in use. Memory never stops the whole isolate on purpose. |
 | M7 | Under pressure, the steps below run in order, from the least severe to the most severe. |
 | M8 | Removed (2026-10-14): it chose between an active and a draining instance. There is no draining instance. |
-| M9 | Fallback (variant A, one instance per request, problem 1): each instance is a live request. An instance that needs memory waits up to `graceMs` for other requests to end, then gets a clean OOM. A new instance starts only when its initial memory fits the budget, or when no instance is live (the dropped ones are garbage: one instance starts although they count). Else the request waits in the queue. With v7, an instance starts at about 2.4 MB (the unit tables are 0.9 MB), so about 33 instances fit in the default budget of 80 MB. A smaller unit table for the fallback build (a lower `MAX_UNITS`) is an option. |
+| M9 | Removed 2026-10-16: stack-first is guaranteed by the compiler. Fallback (variant A, one instance per request, problem 1): each instance is a live request. An instance that needs memory waits up to `graceMs` for other requests to end, then gets a clean OOM. A new instance starts only when its initial memory fits the budget, or when no instance is live (the dropped ones are garbage: one instance starts although they count). Else the request waits in the queue. With v7, an instance starts at about 2.4 MB (the unit tables are 0.9 MB), so about 33 instances fit in the default budget of 80 MB. A smaller unit table for the fallback build (a lower `MAX_UNITS`) is an option. |
 | M10 | A dropped instance counts in the budget until a `FinalizationRegistry` callback reports it collected (workerd has it, 3.0). There is no `collectWaitMs`. An instance with a suspended task is never collected, so a drop first cancels all its tasks (3c). |
 | M11 | One log line, with the sizes or the cause, for each: denied grow, shed request, alarm (12c), failed global check (12d, 12e), replace (M1), cancel (3b, 3c), caught double free (`double_frees`), missed free (`dealloc_miss`). Each kind also has a counter export (H3). So the developer can see why the app is slow or fails. |
 
@@ -474,8 +476,8 @@ Done or not needed:
 | `jsReserveBytes` | 48 MB (3.0: the JS heap peaks at 46 MB in use) | The part of the budget for JS |
 | `maxInstanceBytes` | none | Optional hard cap per instance (M5) |
 | `growStepBytes` | 64 KB (H9) | M4 |
-| `graceMs` | 1000 | Pressure step 2, and M9 |
-| `queueLimit` | 100 | The queue of the fallback (M9) |
+| `graceMs` | 1000 | Pressure step 2 (and M9, removed 2026-10-16) |
+| `queueLimit` | 100 | Removed 2026-10-16: stack-first is guaranteed by the compiler. The queue of the fallback (M9) |
 | `resumeCheck` | `"always"` | 12b. `"afterAlarm"`: check at resume only after an alarm (sum mode 1). It costs less, but misses a wild write with no trap. |
 | `heapCheckEvery` | 100 (12e: from the check time of 12d, `bench/checkcost.mjs`; the first value was 1,000) | 12e. Run the shared-memory check after this many requests. 0: off. |
 | `heapCheckWhenIdle` | `true` | 12e. Run the shared-memory check when the instance becomes idle |
@@ -494,7 +496,7 @@ Done or not needed:
 | 4c | `maxInstanceBytes` (M5) | Cap 8 MB: the same request fails at 8 MB. No cap: it passes with `isolateBytes` 64 MB and `jsReserveBytes` 0. Revert (no cap check): it passes with the cap. |
 | 4d | The steps under pressure (M7): reclaim, shed, fail the requester | `isolateBytes` 16 MB, `jsReserveBytes` 0, 64 requests of 1 MB each: the requests that do not fit get a 503, new requests get a 503 for `graceMs`, the others are correct, live bytes return to 0. Revert the shed: new requests trap with OOM. |
 | 4e | Count dropped instances until collected (M10) | workerd: drop an instance of 30 MB (a replace), then grow. The budget shows the 30 MB until the callback. Revert (count only the live instance): the budget drops at once, and the grow goes over `isolateBytes`. |
-| 4f | Budget for the fallback (M9) | 10-09 build (data-first): 64 requests at once with `isolateBytes` 32 MB and `jsReserveBytes` 0. Requests wait and then pass. None goes over the budget. Revert (no budget for the fallback): memory goes over 32 MB. |
+| 4f | Removed 2026-10-16: stack-first is guaranteed by the compiler. Budget for the fallback (M9) | 10-09 build (data-first): 64 requests at once with `isolateBytes` 32 MB and `jsReserveBytes` 0. Requests wait and then pass. None goes over the budget. Revert (no budget for the fallback): memory goes over 32 MB. |
 | 4g | Log lines and counters (M11) | Each case in 3b, 3c, 4b to 4f and 12c to 12e writes its line, and its counter goes up. Revert (remove one line): its test fails. |
 | 4h | H3 counters | Values match a manual walk. Revert (a counter that is not updated): no match. |
 | 4i | Done by 6e (v7: join, split, empty pages back at once) | |
@@ -523,8 +525,8 @@ Tests (nightly 10-12, Node 26.7):
 | 4-pre | same, a cold RangeError: the first request of a fresh module (before any other run), depth 100000 | PASS: `RangeError: Maximum call stack size exceeded`, clean, instance kept, live bytes 0, next request correct |
 | 4-pre | same, V2: `fault_next_wait(1)` (out-of-bounds write at normal depth) and `fault_next_wait(2)` (`unreachable`) | PASS: both unclean, the instance is replaced, the next request is correct |
 | 4a | `node bench/oneinstance-test.mjs bench/out/app.wasm`, part 1 (variant b): 1,000 requests, 25 at a time, every 100th makes an unclean trap (`fault_next_wait(1)`), then the runner replaces the instance while the other tasks of the wave wait | PASS: max 1 instance with a task (sampled at each wait and each start), 0 bad bodies, 10 own traps, 10 replaces, 367 tasks cancelled by a replace (503 `replace`), 0 other ends, table empty, live bytes 0 |
-| 4a | same, part 2 (variant a, the fallback): 1,000 requests with 1 % clean traps | PASS: 0 bad bodies, 10 traps, table empty |
-| 10-09 (data-first) | `overflow-test.mjs bench/out09/app_deep.wasm`, `node-test.mjs bench/out09/app.wasm`, `oneinstance-test.mjs` (part 1 is skipped: the runner falls back) | PASS: one instance per request. `overflow-test.mjs --no-fallback`: FAIL (bodies at 4500 and later with a broken canary, and the cold RangeError retired the instance) |
+| 4a | Removed 2026-10-16: stack-first is guaranteed by the compiler. same, part 2 (variant a, the fallback): 1,000 requests with 1 % clean traps | PASS: 0 bad bodies, 10 traps, table empty |
+| Removed 2026-10-16: stack-first is guaranteed by the compiler. 10-09 (data-first) | `overflow-test.mjs bench/out09/app_deep.wasm`, `node-test.mjs bench/out09/app.wasm`, `oneinstance-test.mjs` (part 1 is skipped: the runner falls back) | PASS: one instance per request. `overflow-test.mjs --no-fallback`: FAIL (bodies at 4500 and later with a broken canary, and the cold RangeError retired the instance) |
 | All | The old tests (list in the task), also `signal-workerd.mjs` | PASS |
 
 Revert checks (each test must fail):
@@ -557,15 +559,17 @@ Open points of 4-pre:
 
 ### Status of steps 4b to 4f (2026-10-16)
 
+Removed 2026-10-16: stack-first is guaranteed by the compiler. The 4f parts below (the queue, `budget.fits`, `queueLimit`, `bench/fallback-budget-test.mjs`) are history. 4b to 4e stay.
+
 | Step | State | Where |
 |---|---|---|
 | 4b | Done. `poolGrow` calls the import `js_grow(pages)` before each grow and grows only on 1. It grows by `max(needed, growStepBytes)`: `GROW_CHUNKS` is now a variable, set by the new export `set_grow_step(bytes)` before `init`. JS keeps the budget: `isolateBytes - jsReserveBytes` against the `memory.buffer.byteLength` of each live instance and of each dropped instance (4e). A "no" is pressure step 1 (`takeRun` gives the page reserve back and searches again), then step 3: the clean OOM trap. The trap has a cause now: `trap_cause()` 2. The task gets `{ status: 503, cause: 'oom' }`. | `hostlib/alloc.zig` (`poolGrow`, `js_grow`, `set_grow_step`, `ask_js` build option), `hostlib/cpu.zig` (`CAUSE_OOM`, `oom`), `host/host.zig`, `build.zig`, `platform/main.roc`, `bench/budget.js` (new), `bench/core.js` (`importsOf`, `register`, `cleanTrap`), `bench/app.roc` (request field 6: hold N MB across the waits) |
 | 4c | Done. `maxInstanceBytes`: `ask` denies a grow when the instance would go over it. | `bench/budget.js` (`ask`) |
 | 4d | Done. Step 1 (reclaim) is in the allocator (4b). Step 2 (shed): a new request gets `{ status: 503, shed: true }` while a grow was denied in the last `graceMs`, and while the new instance of a replace does not fit next to the dropped one (M1, `crowded`). Step 3: 4b. | `bench/core.js` (`shedMem`, `run`), `bench/budget.js` (`pressure`, `crowded`) |
 | 4e | Done. `drop(memory)` counts the dropped instance until a `FinalizationRegistry` callback reports it collected. `replace()` drops the old instance after it cancels its tasks (3c). The bench worker has `GET /replace` and `GET /h?mb=N`, and reads the options from bindings (`config-m.capnp`). | `bench/budget.js` (`drop`, the registry), `bench/core.js` (`replace`), `bench/worker.js`, `bench/config-m.capnp` |
-| 4f | Done. The fallback (variant a) has the budget: a new instance starts only when `budget.fits` says so, else the request waits in a queue (`queueLimit`, a wait of `taskDeadlineMs` at most with a timer, it leaves at the abort of its signal; it starts at the end of an instance, or when no instance is live: "Fallback queue in workerd"). The instance of a finished request is dropped and counts until it is collected (M10). `makeRunner` drops the probe instance of the stack-first check too. | `bench/core.js` (the block `if (!cur)`), `bench/budget.js` (`fits`) |
+| 4f | Removed 2026-10-16: stack-first is guaranteed by the compiler. Done. The fallback (variant a) has the budget: a new instance starts only when `budget.fits` says so, else the request waits in a queue (`queueLimit`, a wait of `taskDeadlineMs` at most with a timer, it leaves at the abort of its signal; it starts at the end of an instance, or when no instance is live: "Fallback queue in workerd"). The instance of a finished request is dropped and counts until it is collected (M10). `makeRunner` drops the probe instance of the stack-first check too. | `bench/core.js` (the block `if (!cur)`), `bench/budget.js` (`fits`) |
 | M11 | Lines and counters for what is built (the rest was done in 4g: see "Status of steps 4g, 4h, 4j"): `grow denied` (`stats.budget.denied`, `deniedCap`, `deniedBudget`), `request shed` (`stats.shedMem`), `replace` (`stats.replaces[reason]`, `stats.retired`), and `stats.oom`, `stats.queued`, `stats.budget.{asked, dropped, collected, maxTotal}`. A failed heap check still writes its one line (it says "new instance"): `replace(reason, logged)` does not write a second one. | `bench/core.js`, `bench/budget.js` |
-| `test-all.sh` | Builds the 10-09 apps (`bench/out09`), then the pinned nightly (so the glue is the glue of the pinned nightly), runs all tests with `timeout 600`, one line for each, exit 1 when one fails. `ZIG` and `WORKERD` are required. | `bench/test-all.sh` |
+| `test-all.sh` | Builds with the pinned nightly and checks the glue (removed 2026-10-16: the 10-09 build in `bench/out09`), runs all tests with `timeout 600`, one line for each, exit 1 when one fails. `ZIG` and `WORKERD` are required. | `bench/test-all.sh` |
 
 Tests (nightly 10-12, Node 26.7, workerd 2026-10-12):
 
@@ -579,11 +583,11 @@ Tests (nightly 10-12, Node 26.7, workerd 2026-10-12):
 | 4e | same, 4e (Node): a request holds 30 MB (instance 32.2 MB), `replace()` | PASS: `droppedBytes` = 32.2 MB. A request of 40 MB gets 503 `oom` while the test holds the old instance (the two instances together: 34.4 MB). After the test lets go and runs `gc()`, the callback comes in 40 ms and the same request passes. |
 | 4e | same, M1: `isolateBytes` 34 MB, replace after 30 MB | PASS: a new request is shed ("the old instance is not collected", one line) and passes after the callback |
 | 4e | `WORKERD=... node bench/budget-workerd.mjs` (config-m: 64 MB, reserve 0) | PASS: instance 32.3 MB, `/replace`: the budget shows 32.3 MB, `/h?mb=40` gets 503 (one denied grow, the line is in the log), the two instances stay at or under 64 MB. Load of 64 requests at once (71 rounds): the callback came after 2.6 s and 2.7 s in 2 runs. The budget showed the dropped instance in all 70 samples before it. Then the request of 40 MB passes (budget 46.3 MB, live bytes 0). |
-| 4f | `node --expose-gc bench/fallback-budget-test.mjs bench/out09/app.wasm` (10-09, data-first; `gc()` every 25 ms stands for the GC of workerd), part 1: 64 requests at once, `isolateBytes` 32 MB, reserve 0 | PASS (5 runs): 64 pass, 51 waited in the queue, 0 OOM, 0 denied grows, 65 instances made, at most 14 at once. The memory of the instances that exist (WeakRef of each memory, sampled each ms and at each wait) peaked at 30.6 MB, the budget at 30.6 MB (limit 32 MB). |
-| 4f | same, part 2: `queueLimit` 10 | PASS: 23 pass, 41 get 503 (`queue is full`), counter 41 |
-| 4f | same, part 3: 40 requests, 20 abort their signal | PASS: 20 left the queue with 503, 20 passed, the queue is empty at the end |
+| 4f | Removed 2026-10-16: stack-first is guaranteed by the compiler. `node --expose-gc bench/fallback-budget-test.mjs bench/out09/app.wasm` (10-09, data-first; `gc()` every 25 ms stands for the GC of workerd), part 1: 64 requests at once, `isolateBytes` 32 MB, reserve 0 | PASS (5 runs): 64 pass, 51 waited in the queue, 0 OOM, 0 denied grows, 65 instances made, at most 14 at once. The memory of the instances that exist (WeakRef of each memory, sampled each ms and at each wait) peaked at 30.6 MB, the budget at 30.6 MB (limit 32 MB). |
+| 4f | Removed 2026-10-16: stack-first is guaranteed by the compiler. same, part 2: `queueLimit` 10 | PASS: 23 pass, 41 get 503 (`queue is full`), counter 41 |
+| 4f | Removed 2026-10-16: stack-first is guaranteed by the compiler. same, part 3: 40 requests, 20 abort their signal | PASS: 20 left the queue with 503, 20 passed, the queue is empty at the end |
 | Old tests | `bench/test-all.sh` (`ZIG`, `WORKERD` set): the build, the 10-09 build and the glue check, `alloc-test.sh`, `node-test.mjs`, `overflow-test.mjs --expect-shared`, `strloop-test.mjs`, `log-test.mjs`, `oom-test.mjs`, `wait-test.mjs`, `trapclean-test.mjs`, `tasktable-test.mjs`, `deadline-test.mjs`, `oneinstance-test.mjs`, `resume-test.mjs`, `wild.mjs` 16, 256, 4096, `checkheap-test.mjs`, `checkevery-test.mjs`, `stack-test.mjs`, `tasks-test.mjs`, `cpu-test.mjs`, `cancel-test.mjs`, `signal-workerd.mjs` and the 3 new tests | PASS (ALL PASS, about 1 minute). After the 10-09 build and the last build, `host/roc_platform_abi.zig` is the same file as before (it differs from the commit by the 7 lines of earlier work, not by this work). |
-| 10-09 | `overflow-test.mjs`, `node-test.mjs`, `oneinstance-test.mjs` on `bench/out09`; `overflow-test.mjs --no-fallback` | PASS, PASS, PASS; FAIL as before (the PLAN 1c check) |
+| 10-09 | Removed 2026-10-16: stack-first is guaranteed by the compiler. `overflow-test.mjs`, `node-test.mjs`, `oneinstance-test.mjs` on `bench/out09`; `overflow-test.mjs --no-fallback` | PASS, PASS, PASS; FAIL as before (the PLAN 1c check) |
 | Memory map | `research/memmap/build.sh`, `memmap.mjs` on `app` and `app_deep` | PASS (exit 0). The new global has a rule, and the flip check found 5,097 of 5,097 bytes (4 more). `research/memmap/results/*.md` are not made again. |
 
 Revert checks (each test must fail):
@@ -601,11 +605,11 @@ Revert checks (each test must fail):
 | 4e: `drop` does not count the dropped instance (count only the live one) | `budget-test.mjs` | FAIL: `droppedBytes` 0, the 40 MB request passes and the two instances reach 74.4 MB (limit 64 MB), M1 request not shed |
 | 4e: same | `budget-workerd.mjs` | FAIL: `dropped` 0, no denied grow, the request of 40 MB gets no 503 |
 | 4e, M1: `crowded()` always false | `budget-test.mjs` | FAIL: the new request gets an OOM trap, not a shed |
-| 4f: the fallback instance has no budget (no `js_grow` ask) | `fallback-budget-test.mjs` | FAIL: part 1: 142 MB of instances, no request waited |
-| 4f: the instance always starts (no `fits`) | `fallback-budget-test.mjs` | FAIL: part 1: 13 pass and 51 get an OOM, 138.9 MB |
-| 4f: `fits` keeps no room for the growth of a running instance | `fallback-budget-test.mjs` | FAIL: part 1: 25 pass and 39 get an OOM |
-| 4f: no `queueLimit` | `fallback-budget-test.mjs` | FAIL: part 2: all 64 pass (nothing shed) |
-| 4f: no abort of a queued request | `fallback-budget-test.mjs` | FAIL: part 3: no request left the queue at its abort |
+| Removed 2026-10-16: stack-first is guaranteed by the compiler. 4f: the fallback instance has no budget (no `js_grow` ask) | `fallback-budget-test.mjs` | FAIL: part 1: 142 MB of instances, no request waited |
+| Removed 2026-10-16: stack-first is guaranteed by the compiler. 4f: the instance always starts (no `fits`) | `fallback-budget-test.mjs` | FAIL: part 1: 13 pass and 51 get an OOM, 138.9 MB |
+| Removed 2026-10-16: stack-first is guaranteed by the compiler. 4f: `fits` keeps no room for the growth of a running instance | `fallback-budget-test.mjs` | FAIL: part 1: 25 pass and 39 get an OOM |
+| Removed 2026-10-16: stack-first is guaranteed by the compiler. 4f: no `queueLimit` | `fallback-budget-test.mjs` | FAIL: part 2: all 64 pass (nothing shed) |
+| Removed 2026-10-16: stack-first is guaranteed by the compiler. 4f: no abort of a queued request | `fallback-budget-test.mjs` | FAIL: part 3: no request left the queue at its abort |
 | M11: no log line at a denied grow, at a shed request, at a replace | `budget-test.mjs` | FAIL each (4b: 2 grows and 0 lines; 4d: 52 shed and 0 lines; 4e: no replace line) |
 | M11: no counter of shed requests, of replaces | `budget-test.mjs` | FAIL each |
 | 12d: the grow step is not in the sum of constant data | `memmap.mjs` | FAIL (exit 1): 4 flipped bytes not found |
@@ -615,13 +619,13 @@ Choices I made:
 | Question | Answer |
 |---|---|
 | The status of an OOM trap | M6 says the requester gets a 503, but a clean trap had no status (a Roc `crash` must stay a 500). The host sets `trap_cause()` 2 at each OOM trap of a task (`cpu.oom`), and the runner turns it into `{ status: 503, cause: 'oom' }`. A failed `js_alloc` for the request block gives the same. |
-| `js_grow` cannot wait | M9 says an instance that needs memory waits up to `graceMs`. `js_grow` is a synchronous import, so it cannot wait. In the fallback a denied grow is a clean OOM at once. The queue holds back only the start of an instance. |
-| How much a new fallback instance needs (`fits`) | M9: "its initial memory". A request grows the instance after its start, and the admission by the initial size alone gave 39 OOM traps of 64 requests. `fits(n)`: `n` is the largest instance size seen (also after the first synchronous part of a request and at its end). Each live instance keeps at least `n` for itself, and one instance may always start when nothing holds memory. The first request starts with `n` = its initial size. |
-| Wait in the queue | A request waits until it fits (an instance ends, or none is live: "Fallback queue in workerd"), at most `taskDeadlineMs`, and it leaves at the abort of its signal. The plan has no limit for the wait. The deadline is a timer of the waiting request: workerd cancels a request with no pending I/O as "hung". |
-| Step 2 (shed) for the fallback | Only variant b sheds on pressure. In the fallback the queue is the shed: a full queue gives 503. |
+| `js_grow` cannot wait | Removed 2026-10-16: stack-first is guaranteed by the compiler. M9 says an instance that needs memory waits up to `graceMs`. `js_grow` is a synchronous import, so it cannot wait. In the fallback a denied grow is a clean OOM at once. The queue holds back only the start of an instance. |
+| How much a new fallback instance needs (`fits`) | Removed 2026-10-16: stack-first is guaranteed by the compiler. M9: "its initial memory". A request grows the instance after its start, and the admission by the initial size alone gave 39 OOM traps of 64 requests. `fits(n)`: `n` is the largest instance size seen (also after the first synchronous part of a request and at its end). Each live instance keeps at least `n` for itself, and one instance may always start when nothing holds memory. The first request starts with `n` = its initial size. |
+| Wait in the queue | Removed 2026-10-16: stack-first is guaranteed by the compiler. A request waits until it fits (an instance ends, or none is live: "Fallback queue in workerd"), at most `taskDeadlineMs`, and it leaves at the abort of its signal. The plan has no limit for the wait. The deadline is a timer of the waiting request: workerd cancels a request with no pending I/O as "hung". |
+| Step 2 (shed) for the fallback | Removed 2026-10-16: stack-first is guaranteed by the compiler. Only variant b sheds on pressure. In the fallback the queue is the shed: a full queue gives 503. |
 | `replace` and the log line | `replace(reason, logged)` writes one line (M11). The failed heap check already writes its line (it says "new instance"), so it passes `logged` and the test of 12d still sees one line. |
-| Instances that wait for a GC in Node | Nothing frees a dropped instance in Node without a GC. The tests that use variant a for correctness (`node-test.mjs`, `log-test.mjs`, `oneinstance-test.mjs` part 2) set `isolateBytes: 2 ** 40`, else 200 requests at once wait for a collection that does not come. `fallback-budget-test.mjs` runs `gc()` every 25 ms. A test that keeps the result of a request keeps `x` and so the instance: it drops `x`. |
-| The probe instance of the stack-first check | In the fallback it is dropped and counts until it is collected. |
+| Instances that wait for a GC in Node | Removed 2026-10-16: stack-first is guaranteed by the compiler. Nothing frees a dropped instance in Node without a GC. The tests that use variant a for correctness (`node-test.mjs`, `log-test.mjs`, `oneinstance-test.mjs` part 2) set `isolateBytes: 2 ** 40`, else 200 requests at once wait for a collection that does not come. `fallback-budget-test.mjs` runs `gc()` every 25 ms. A test that keeps the result of a request keeps `x` and so the instance: it drops `x`. |
+| The probe instance of the stack-first check | Removed 2026-10-16: stack-first is guaranteed by the compiler. In the fallback it is dropped and counts until it is collected. |
 | Same-tick start after a trap | A task that traps clean in the call of `handle` itself (an OOM at the start) and a `handle` of another request in the same tick, before the catch of the first: the first trap is an alarm (the state of the task is stale, 12c "A check while the catch of a trapped task is still in the job queue"). Workerd starts each request in its own task, so the catch runs first. The 4b test starts the big request after the others. |
 | Reclaim in `takeLow` | Not needed: a small page takes a page of the reserve first. Only `takeRun` (large blocks) must give the reserve back. |
 | The grow step is in the sum of constant data | JS sets it before `init`, so 12d covers it (`set_grow_step` after `init` fails the check). |
@@ -633,14 +637,16 @@ Open points:
 
 | Point | Detail |
 |---|---|
-| Fallback queue and idle collection | Settled 2026-10-16: see "Fallback queue in workerd". When no instance is live, one request starts although the dropped bytes count, and a queued request holds a timer. The RSS check passed. |
+| Fallback queue and idle collection | Removed 2026-10-16: stack-first is guaranteed by the compiler. Settled 2026-10-16: see "Fallback queue in workerd". When no instance is live, one request starts although the dropped bytes count, and a queued request holds a timer. The RSS check passed. |
 | A grow that would pass with a smaller step | A step larger than the room that is left (`growStepBytes` 4 MB, 1 MB free) is denied. The plan does not say to retry with the needed size only. With the default of 64 KB the difference is small. Decided 2026-10-16: retry once with the needed size only. Done in 4g to 4j (`poolGrow`, `bench/grow.mjs` case 5). |
-| First wave of the fallback | The first request gives `n`. A later part of a request can grow more than the first part, and then a grow can be denied (an OOM trap). Not seen in the test. |
+| First wave of the fallback | Removed 2026-10-16: stack-first is guaranteed by the compiler. The first request gives `n`. A later part of a request can grow more than the first part, and then a grow can be denied (an OOM trap). Not seen in the test. |
 | JS reserve | `jsReserveBytes` only lowers the budget. Nothing measures the JS heap. |
 | 4g | The counters are in `runner.stats` (JS). The counter exports of the host (H3, M11) are 4g and 4h. Done in 4g to 4j: see "Status of steps 4g, 4h, 4j". |
 | `research/memmap/results` | The result files are not made again (their addresses move by 8 bytes with the new global). |
 
 ### Fallback queue in workerd (2026-10-16)
+
+Removed 2026-10-16: stack-first is guaranteed by the compiler. The whole section is history: variant a, its queue and `bench/fallback-workerd.mjs` are gone.
 
 The defect: with `config-a.capnp` (variant a), 40 requests at once with the default budget: 6 failed in round 1 and all 40 in round 2. workerd logged "detected that your Worker's code had hung". Test: `bench/fallback-workerd.mjs` (variant a, 40 requests at once, 3 rounds, default options; it fails on a bad body, a status other than 200, a client timeout of 30 s, and a "hung" line in the log).
 
@@ -825,7 +831,7 @@ Choices I made:
 | Cancel lines in a replace | A replace writes its own line with the count, and no line for each task (a replace of an instance with 100 tasks would write 101 lines). The counters count each cancel. |
 | Cause `cancel` of an alarm | A trap in `task_cancel` (a damaged instance): `raise` and `due` as for the other alarms. The task is still cancelled and gets its 503. The host `alarms()` counter does not count it (the host cannot count a call that trapped); `stats.alarms` does. |
 | The retry of a grow | `poolGrow` asks again once, for the needed pages, only when that is fewer pages than the step. When both are denied, one failed allocation writes 2 `grow denied` lines and counts 2 denied grows. |
-| Variant a (an instance per request) | `hostEvents` runs at the end of each request. The idle reset and the end of the suspicion are only for variant b: an instance of variant a ends after its request. |
+| Variant a (an instance per request) | Removed 2026-10-16: stack-first is guaranteed by the compiler. `hostEvents` runs at the end of each request. The idle reset and the end of the suspicion are only for variant b: an instance of variant a ends after its request. |
 | `checkevery-test.mjs`, break T | Before this change it failed in about 40 % of the runs (3 of 6 on the tree before this work, 5 of 12 after the other changes of this work): the damage to the free bit of a used page (`break_table` 2) sometimes gave one page to two tasks, a sum differed, and the check of the alarm replaced the instance while requests ran ("a check failed while requests ran"). T is now `break_table` 15 (the count of used units): no task reads it, so no sum differs. 0 of 12 runs failed after. C is the same. |
 | `bench/worker.js` | `/stats` has `host`: all counters of the host (`runner.counters()`) |
 
@@ -888,7 +894,7 @@ Tests (nightly 10-12, Node 26.7, workerd 2026-10-12): `node bench/cpu-test.mjs` 
 | 5b B | `app_wait` (one wait, no allocation by the app), signal 24 before the request: the `waitBegin` check alone | PASS: same |
 | 5b C | `app.wasm`, 30 tasks wait, the io of one victim writes 24 and the test clears it after the victim ends | PASS: the victim 503 `cpu`, the 30 other tasks that resumed while it was set also 503 `cpu` (the signal is for the instance), 0 bad bodies, 0 unclean traps, instance kept, live bytes 0, 0 waiting tasks, 30 requests after the clear all correct |
 | 5c | `app_deep.wasm`: a task trapped with a wrapped stack pointer (`fault_next_wait(3)`), no `task_abort`, flag 1 written. Control: no flag, no replace. | PASS: the next request is correct on a new instance, 1 replace, no second replace, the new instance starts with 0xFFFF |
-| All | The old tests, `bench/oneinstance-test.mjs`, the 10-09 fallback | PASS |
+| All | The old tests, `bench/oneinstance-test.mjs`, the 10-09 fallback (removed 2026-10-16) | PASS |
 
 Revert checks (each test must fail):
 
@@ -909,7 +915,7 @@ Choices for 5a to 5c:
 |---|---|
 | Which values are "set" | Signal: exactly 24 (SIGXCPU). Terminated: exactly 1. 0 and 0xFFFF are not set. The plan gives these values only. |
 | Where the signal is checked | `roc_alloc`, `roc_realloc` (the app's allocations) and `waitBegin`. Not in `hostAllocFor`: a host allocation (the Wait record, the stack copy) in `waitBegin` would then hide a missing `waitBegin` check, and no test could fail. A host call from JS (`OWNER` 0, no task) never traps on the signal. |
-| Cause to JS | The new export `trap_cause()`: 1 after a clean trap from the signal, then 0. `handle` clears it. In the production list of 7a. For variant a (no `task_abort`), the runner reads it in the catch. |
+| Cause to JS | The new export `trap_cause()`: 1 after a clean trap from the signal, then 0. `handle` clears it. In the production list of 7a. For variant a (no `task_abort`), the runner reads it in the catch (variant a removed 2026-10-16). |
 | 5c in JS | The plan allows JS before `handle` or the host. JS: `readFlag` at the start of `run`, before the deadlines sweep, so the old tasks are cancelled with `replace('terminated')` (they get a 503). Cost: one `DataView` read for each request. Variant a needs no check: each request has a new instance. |
 | Who clears the signal | The runtime ("then 0 to clear it", table above). The host does not. The tests clear it by hand. If the runtime never clears it, each task of the instance traps on its next allocation. |
 | `app_wait.roc` | New bench app: one wait, no allocation. `bench/build.sh` builds it. It is the only way to test the `waitBegin` check alone (`app_deep` allocates before its first wait). |
@@ -1107,7 +1113,7 @@ Choices for 6a and 6d:
 | `OWNER = 0` around the calls (the plan) | Not done. The functions take the owner: `hostAllocFor(0, ...)`. `OWNER` is never changed, so an out-of-memory trap in these calls leaves `OWNER` as the task that runs. With a window, the trap would leave `OWNER` 0, `task_abort` would call `freeOwner(0)`, and the task would leak. Same effect on the blocks. |
 | `handleImpl` (response block) | Uses `allocHostOrTrap` for the same reason (it had the window). |
 | `log_clear` | Frees the entries and the buffer, and resets `LOG`. Needed for "live bytes 0" (H2 says the same). |
-| Where JS reads the log | `drainLog` in `bench/core.js`: after each `handle` and after each `task_abort` that is clean (the heap is trusted). Variant a has no `task_abort`: it reads the log after a trap too, in a try/catch. `opts.onLog(level, text)` gets each line. |
+| Where JS reads the log | `drainLog` in `bench/core.js`: after each `handle` and after each `task_abort` that is clean (the heap is trusted). Variant a has no `task_abort`: it reads the log after a trap too, in a try/catch (variant a removed 2026-10-16). `opts.onLog(level, text)` gets each line. |
 | `dbg` request option | `bench/app.roc`: `<id> <trap> <depth> <items> dbg` writes 200 lines after its waits, then crashes. 200 lines are 600 words: the `LOG` buffer grows once (512 words at first). |
 | `bench/build.sh` and `research/alloc/build.sh` | `roc build` exits 2 for warnings (the `dbg` in an optimized build). Both scripts accept exit 2 and still fail on exit 1. |
 | Export list | `log_ptr`, `log_len` and `log_clear` were not in the list of `platform/main.roc`: added with `fail_next_alloc`. |
@@ -1336,7 +1342,7 @@ Open points:
 
 | # | Point |
 | --- | --- |
-| O1 | Settled in 8e: the bound of the test was wrong, not the code ("Fallback queue in workerd"). Was: `fallback-budget-test.mjs` part 1 is flaky: it failed 3 of 3 runs at load average 4 and 1 of 5 at load average 2 ("the budget went over 32 MB and one instance": 16 instances). Two idle starts in a row with no collection between them go over by two instances. The JS of the budget did not change in 8a. |
+| O1 | Removed 2026-10-16: stack-first is guaranteed by the compiler. Settled in 8e: the bound of the test was wrong, not the code ("Fallback queue in workerd"). Was: `fallback-budget-test.mjs` part 1 is flaky: it failed 3 of 3 runs at load average 4 and 1 of 5 at load average 2 ("the budget went over 32 MB and one instance": 16 instances). Two idle starts in a row with no collection between them go over by two instances. The JS of the budget did not change in 8a. |
 | O2 | Closed in 8b: `LOG_CRASH` is on, and the shim writes the crash text in the log line of the trap. Was: the host does not log the text of a Roc `crash` (`hostlib/roc.zig` `LOG_CRASH` is off), so a status 3 crash ("bad program: ...") shows only as a trap |
 | O3 | In workerd, a request that waits only on a promise with no I/O is cancelled as hung with no abort of `request.signal`. The task then stays until the deadline sweep (3b) |
 | O4 | `ops` must be an object of functions (option check). A D1 binding as an op is an object: give it as a function with methods, or change the check in 8c |
@@ -1352,7 +1358,7 @@ Done. `bench/test-all.sh` has 45 steps (2 new: `native_test.zig` and `native-tes
 | 2 | The `Native` module: `Native.zstd_decode!`, `Native.ZstdStream` (`open!`, `open_with!`, `push!`, `close!`), `Native.Blake3` and `Native.Sha256` (`new!`, `update!`, `final!`). Handles are opaque types with a record backing (`{ handle : U32 }`, MC13, MODULES.md 15). Errors are closed tag unions for each function (MC9): `OutputLimit`, `WindowTooLarge`, `BadFrame`, `Truncated`, `Unsupported`, `BadHandle`, `WrongTask`, `TooManyHandles`, `NoTask`, `BadArgument`. Exposed from both platform headers, with equal copies in `bench/platform/` (`exports-test.mjs` checks it). | `platform/Native.roc`, `platform/main.roc`, `bench/platform/` |
 | 3 | The op table, the codes, the caps, `push_limit`, the window limit of 8 MiB and the stack rule in `API.md` 8 | `API.md` |
 | 4 | The tests below | `bench/app_native.roc`, `bench/native-test.mjs`, `bench/native-reverts.mjs`, `bench/test-all.sh`, `bench/build.sh` |
-| 5 | The flaky test: see "Fallback queue in workerd". Cause: the bound of the test, not the code. Under load (`bench/flaky-load.sh`): before 6 of 10, then 8 of 10 and 17 of 20 with the exit-hang flags (O1); after 9 of 10, then 20 of 20 with the flags. | `bench/fallback-budget-test.mjs`, `research/fallback-idle/probe.mjs`, `bench/flaky-load.sh` |
+| 5 | Removed 2026-10-16: stack-first is guaranteed by the compiler. The flaky test: see "Fallback queue in workerd". Cause: the bound of the test, not the code. Under load (`bench/flaky-load.sh`): before 6 of 10, then 8 of 10 and 17 of 20 with the exit-hang flags (O1); after 9 of 10, then 20 of 20 with the flags. | `bench/fallback-budget-test.mjs`, `research/fallback-idle/probe.mjs`, `bench/flaky-load.sh` |
 
 Tests (`node bench/native-test.mjs bench/out/app_native.wasm`; the data is `research/native/data/`; `zstd -d` and the `.sha256` and `hashes.txt` files are the references). Each revert is a real edit of the source, a build, a run and a restore: `node bench/native-reverts.mjs` (`ZIG`, `ROC` set) does all of them in turn and ends with a clean build.
 
@@ -1389,13 +1395,13 @@ Choices made in 8e (the plan does not say):
 | C3 | Each function has its own closed error union. A code that `Native.roc` does not expect (`wrong_kind`, `out_of_memory`) is a crash, a platform bug. |
 | C4 | `canary.reserve(need)` before an op (the smallest fix that keeps decision 3 true: "never damage"). The need is 300 KB for `zstd_decode` and `zstd_stream_push` (274 KB measured, 10 percent more) and 16 KB for the others. |
 | C5 | Bench-only exports `native_slots` (handles in use) and `native_reown(from, to)`. A Roc app cannot make a handle of another task (the type is opaque, and no API gives a number), so `native_reown` gives the slots of one task to another. The test then checks the check of the owner in `lookup`: a handle that a task made is used by another owner. |
-| C6 | `fallback-budget-test.mjs` runs with `--no-concurrent-sparkplug --no-concurrent-recompilation` in `test-all.sh`: see the open point. |
+| C6 | Removed 2026-10-16: stack-first is guaranteed by the compiler. `fallback-budget-test.mjs` runs with `--no-concurrent-sparkplug --no-concurrent-recompilation` in `test-all.sh`: see the open point. |
 
 Open points:
 
 | # | Point |
 | --- | --- |
-| O1 | `fallback-budget-test.mjs` (and any Node run with `--expose-gc` that ends with `process.exit`) hangs at exit in about 1 of 12 runs: 5 hangs in 60 runs. gdb shows a V8 shutdown deadlock: the main thread is in `NodePlatform::Shutdown` and joins the worker threads. Two workers (a concurrent Maglev job and a concurrent Sparkplug job) wait in `CollectionBarrier::AwaitCollectionBackground` for a collection that nobody runs any more. With `--no-concurrent-sparkplug --no-concurrent-recompilation` (and with `--single-threaded`): 0 hangs in 60 runs. The two flags are in `test-all.sh` and `flaky-load.sh` for this test. `cancel-test.mjs` and `budget-test.mjs` also use `--expose-gc` and did not hang, but they were not run in a loop. |
+| O1 | `fallback-budget-test.mjs` (removed 2026-10-16: stack-first is guaranteed by the compiler; the flags stay for `budget-test.mjs` and `cancel-test.mjs`) (and any Node run with `--expose-gc` that ends with `process.exit`) hangs at exit in about 1 of 12 runs: 5 hangs in 60 runs. gdb shows a V8 shutdown deadlock: the main thread is in `NodePlatform::Shutdown` and joins the worker threads. Two workers (a concurrent Maglev job and a concurrent Sparkplug job) wait in `CollectionBarrier::AwaitCollectionBackground` for a collection that nobody runs any more. With `--no-concurrent-sparkplug --no-concurrent-recompilation` (and with `--single-threaded`): 0 hangs in 60 runs. The two flags are in `test-all.sh` and `flaky-load.sh` for this test. `cancel-test.mjs` and `budget-test.mjs` also use `--expose-gc` and did not hang, but they were not run in a loop. |
 | O2 | The stack reserve of 300 KB is a constant of the platform. A new zstd version or a deeper decoder changes it: `research/native/README.md` 7 says how to measure it (`harness/sizes.sh`). The `deep` test finds a reserve that is too small: a body with a broken canary. |
 | O3 | The test name `wrongtask` uses `native_reown`, not a real second task that holds a number of the first. No Roc code can do that. If the manager wants that, the handle types need a way to make a handle from a number (a change to `Native.roc`). |
 
@@ -1576,7 +1582,7 @@ Tests that changed what they check:
 | `program-test.mjs` (`pf: readUpTo ...`) | `pf.writer()` gives `{ readable, writer }` (a `WritableStreamDefaultWriter`), not `{ readable, writable }` |
 | `entry-reverts.mjs` | The revert "the body crosses as a Str" edits `fetchEvent` (`bodyIn` is not async now). Same tests catch it. |
 | `handler-test.mjs` | The bench app reads its text from the body stream: one wait more for each request. Same checks. |
-| The workerd tests of `bench/worker.js` (`signal-workerd.mjs`, `budget-workerd.mjs`, `fallback-workerd.mjs`, `context-workerd.mjs`, `bench.mjs`) | `worker.js` sends the text in the header `x-bench-text`, not as the body. Same checks, same waits. With the body as a stream (one wait before the work), `fallback-workerd.mjs` and `context-workerd.mjs` variant a failed: 26 of 40 requests in round 0 were OOM traps (O6). |
+| The workerd tests of `bench/worker.js` (`signal-workerd.mjs`, `budget-workerd.mjs`, `fallback-workerd.mjs` (removed 2026-10-16), `context-workerd.mjs`, `bench.mjs`) | `worker.js` sends the text in the header `x-bench-text`, not as the body. Same checks, same waits. With the body as a stream (one wait before the work), `fallback-workerd.mjs` and `context-workerd.mjs` variant a failed: 26 of 40 requests in round 0 were OOM traps (O6). |
 
 Choices I made (the plan does not say):
 
@@ -1607,7 +1613,7 @@ Open points:
 | O2 | The cancel of a writer stream by its reader is tested only in Node (`stream-test.mjs` `cancel`): local workerd does not cancel the stream when the client goes away (O1). The edge run of 11c can show if production does. |
 | O3 | `respond!` gives `InvalidState` in `EntrypointFetch` and in the `Fetch` of an object: their entries come in 8f, which must give the `respond` hook (and for an object, no `waitUntil`: API.md 10.2). |
 | O4 | The numbers in `bench/README.md` "Results" are older still (O3 of the first half). |
-| O6 | Variant a (an instance for each request, the fallback of a build that is not stack-first) admits a new instance by the memory of an instance at the first wait of a task (`note` in `js/runner.js`). An app that waits before its work (a read of a body stream first) gives a small number there, so at a burst too many instances start and the requests trap with OOM (seen in `fallback-workerd.mjs` with the body as a stream: 26 of 40 in round 0; round 1 and 2 were good). The bench avoids it (the header), but an app can do it. A better estimate (for example the largest end size of a task) is for 4f to decide. |
+| O6 | Removed 2026-10-16: stack-first is guaranteed by the compiler. Variant a (an instance for each request, the fallback of a build that is not stack-first) admits a new instance by the memory of an instance at the first wait of a task (`note` in `js/runner.js`). An app that waits before its work (a read of a body stream first) gives a small number there, so at a burst too many instances start and the requests trap with OOM (seen in `fallback-workerd.mjs` with the body as a stream: 26 of 40 in round 0; round 1 and 2 were good). The bench avoids it (the header), but an app can do it. A better estimate (for example the largest end size of a task) is for 4f to decide. |
 | O5 | `stream-workerd.mjs` sends the two 50 MB uploads of `10b` with a raw socket: the app answers after the first chunk, and workerd closes the connection while the client still sends, so `fetch` of Node can fail with "terminated" (1 of 4 runs). A Worker that answers before it reads the whole body has the same effect on a client. |
 
 ## 9. JS shim
@@ -1630,7 +1636,7 @@ Older statuses name `bench/core.js`, `bench/tasks.js` and `bench/budget.js`. The
 |---|---|
 | `js/index.js` | `makeHandler(module, opts)`: checks the options, makes the runner (so the first instance too), gives `{ runner, fetch }`. A comment marks where `scheduled` and the other handlers (8b) and `objectClass`, `entrypointClass` (8f) go. |
 | `js/options.js` | The option table: a test and the text of a good value for each name. `checkOptions` throws for an unknown name, a bad value, and `jsReserveBytes` not below `isolateBytes`. |
-| `js/runner.js` | `makeRunner`, `instanceA`, the two variants, alarm and check paths (the old `bench/core.js` without the parts below). |
+| `js/runner.js` | `makeRunner`, alarm and check paths (`instanceA` and variant a removed 2026-10-16) (the old `bench/core.js` without the parts below). |
 | `js/wait.js` | `makeWait` (the `js_wait` import, now with `io(kind, a, b, id)`), `hostCancel`, the end of a cancelled task. |
 | `js/host.js` | Readers and constants of the host exports: log, counters, CPU flags, sum modes, check names. |
 | `js/tasks.js` | The task table (from `bench/tasks.js`). Each entry now has `env`, `ctx`, `event` and `refs`. |
@@ -1646,9 +1652,9 @@ Tests:
 
 | Test | Result |
 |---|---|
-| `node bench/handler-test.mjs bench/out/app.wasm bench/out/app_prod.wasm` (9a). Both variants: 50 requests at once give 200 and the right bodies, a trap gives a 500 with `trap ...`, live bytes 0. 16 bad option cases (unknown name, `pinLimit` not built, a bad value for each built option, reserve over isolate, no `io`, `opts` not an object) and a module that is not a `WebAssembly.Module` each throw and name the option. All options set to good values serve a request. `resumeCheck: "off"` on `app_prod.wasm` throws at `makeHandler` time (no request) with "bench host" in the message. The bench build accepts it and serves. | PASS |
-| `node bench/context-test.mjs bench/out/app.wasm` (9b, Node). Both variants: 50 requests at once, each with its own `x-ctx-id` header, `env` and `ctx`. `io` gets the task id and reads the context. It answers from the header. Every body is right, each effect sees the `env`, `ctx` and request of the request that made it, each task has an own empty `Map` as ref table (50 tables), up to 50 effects wait together, the task table is empty at the end. | PASS |
-| `node bench/context-workerd.mjs` (9b, workerd). `worker.js` with `config-a.capnp` (10 requests at once, 2 rounds) and `config-b.capnp` (40 requests at once, 2 rounds). The effect sends the header of its task to the echo service, which answers with it. | PASS |
+| `node bench/handler-test.mjs bench/out/app.wasm bench/out/app_prod.wasm` (9a). Both variants (variant a removed 2026-10-16: now one): 50 requests at once give 200 and the right bodies, a trap gives a 500 with `trap ...`, live bytes 0. 16 bad option cases (unknown name, `pinLimit` not built, a bad value for each built option, reserve over isolate, no `io`, `opts` not an object) and a module that is not a `WebAssembly.Module` each throw and name the option. All options set to good values serve a request. `resumeCheck: "off"` on `app_prod.wasm` throws at `makeHandler` time (no request) with "bench host" in the message. The bench build accepts it and serves. | PASS |
+| `node bench/context-test.mjs bench/out/app.wasm` (9b, Node). Both variants (variant a removed 2026-10-16: now one): 50 requests at once, each with its own `x-ctx-id` header, `env` and `ctx`. `io` gets the task id and reads the context. It answers from the header. Every body is right, each effect sees the `env`, `ctx` and request of the request that made it, each task has an own empty `Map` as ref table (50 tables), up to 50 effects wait together, the task table is empty at the end. | PASS |
+| `node bench/context-workerd.mjs` (9b, workerd). `worker.js` with `config-a.capnp` (variant a, removed 2026-10-16 with the file; 10 requests at once, 2 rounds) and `config-b.capnp` (40 requests at once, 2 rounds). The effect sends the header of its task to the echo service, which answers with it. | PASS |
 | `bench/test-all.sh` | ALL PASS (the 3 new tests are in it) |
 
 Revert checks (each done for real, then restored):
@@ -1668,17 +1674,17 @@ Choices I made:
 |---|---|
 | How does `fetch` make the string for the app? (G1: no request type before 8b) | The option `requestText(request, env)`, default: the request body as text. `bench/worker.js` makes the string from the URL. Gone in 8b: the app gets a `Request`. |
 | Where do the effects come from? (8a replaces `io`) | The required option `io(kind, a, b, taskId)`. It finds the context with `handler.runner.tasks.get(taskId)`. It goes away in 8a. |
-| Variant `"a"` and the hooks that the tests use | The options `variant` (default `"b"`), `log`, `onLog`, `now`, `noFallback`, `wallMs`, `initMs`, `afterRespondMs` are accepted and checked like the table options. A production app does not need them. |
+| Variant `"a"` and the hooks that the tests use | Removed 2026-10-16: stack-first is guaranteed by the compiler. The options `variant` (default `"b"`), `log`, `onLog`, `now`, `noFallback`, `wallMs`, `initMs`, `afterRespondMs` are accepted and checked like the table options. A production app does not need them. |
 | Options of the PLAN.md 4 table that the runner has not got (`pinLimit`, `ops`, `other`) | An error that names the step (8a, 8b), not "unknown option" |
 | `jsReserveBytes` not below `isolateBytes` | An error at `makeHandler` time: the memory for wasm would be 0 or less |
-| `resumeCheck: "off"` | No new code: the first instance (`set_sum(0)` gives 0 on the production host) is made in `makeHandler`, so the existing error ("needs the bench host") comes at load. The runner of variant `"a"` makes no instance at start, and variant a has no sums, so there it is not checked. |
+| `resumeCheck: "off"` | No new code: the first instance (`set_sum(0)` gives 0 on the production host) is made in `makeHandler`, so the existing error ("needs the bench host") comes at load. (Variant `"a"` is removed 2026-10-16.) |
 | `handler.runner` | The handler object has the extra property `runner` (tests and the bench). Since 8b: a static getter of the class (`Handler.runner`), which starts the runner. |
 | The ref table of a task is not freed at its end | Not done: 8a fills it, 10c and 9c free it. Today it is always empty. |
 | Where the old modules went | `bench/tasks.js` and `bench/budget.js` are moved to `js/`. The Node tests import them from `../js/`. `bench/core.js` stays as a re-export, so the older tests and `research/` scripts keep their imports. |
 
 Not checked: `bench/deploy.sh` (needs `wrangler login`). It copies `js/*.js` to `js/` of each Worker and lists `check.js` and `js/*.js` in the `rules`. The local workerd runs the same module names through the capnp configs.
 
-Observation (not caused by 9a, 9b): in workerd with `config-a.capnp` (variant a), 40 requests at once with the default budget: 6 of 40 failed in round 1, and all 40 in round 2 ("hung"). Cause and fix: "Fallback queue in workerd" (4b to 4f). `context-workerd.mjs` uses 40 requests for variant a again.
+Removed 2026-10-16: stack-first is guaranteed by the compiler. Observation (not caused by 9a, 9b): in workerd with `config-a.capnp` (variant a), 40 requests at once with the default budget: 6 of 40 failed in round 1, and all 40 in round 2 ("hung"). Cause and fix: "Fallback queue in workerd" (4b to 4f). `context-workerd.mjs` uses 40 requests for variant a again.
 
 ## 10. Body handles
 
@@ -1702,7 +1708,7 @@ Observation (not caused by 9a, 9b): in workerd with `config-a.capnp` (variant a)
 |---|---|---|
 | 11a | A release workflow: build the production host (7a) with the pinned nightly (`compat/last-stack-first-nightly`), bundle the platform with `roc bundle`, and attach the bundle and the `js/` package to a GitHub Release | Run on a test tag. A new app builds with the release URL. |
 | 11b | Publish `js/` (npm, or a file in the release that the app copies) | A new Worker project uses it with wrangler |
-| 11c | An example Worker app with a wrangler config (with the compatibility flag `enable_request_signal`, for 3b), deployed by CI. 5d (CPU limit on the edge) runs on it. Also check what the edge does at 128 MB: is only the isolate stopped, and do the requests in flight fail? Also check the facts of API.md 10.2 on the edge: does `request.signal` fire when the client goes away after the response body is complete, and does a `Body.writer!` stream keep the request past 30 s while the task writes? The cron edge test of API.md AQ12: two cron triggers (`*/2 * * * *` and `1-59/2 * * * *`). The `scheduled!` handler writes a row (`cron`, `time_ms`, the time of the run) to D1 for each run, then gives `Err`. For the second cron it calls `no_retry!` first. It runs for 1 hour. The jurisdiction of MODULES.md 7 on the edge (local workerd does not have it). The fallback (variant a, a 10-09 build) under `bench/fallback-workerd.mjs` load on the edge: the isolate is not stopped ("Fallback queue in workerd"). | The deployed example answers. 5d and the 128 MB check give their results. The two facts of API.md 10.2 give their results, and API.md 10.2 is changed if they differ. AQ12: the rows show for each `time_ms` how many runs each cron got. More than one run for a `time_ms` of the first cron, and one for the second, shows that production retries and that `noRetry` stops it. Write the answer in MODULES.md 3 and settle AQ12. Revert (the handler gives `Ok`): one run for each `time_ms` of both crons. `counters.jurisdiction(Eu).named("x").id!()` differs from `counters.named("x").id!()`. Revert (the jurisdiction is not sent): they are equal. |
+| 11c | An example Worker app with a wrangler config (with the compatibility flag `enable_request_signal`, for 3b), deployed by CI. 5d (CPU limit on the edge) runs on it. Also check what the edge does at 128 MB: is only the isolate stopped, and do the requests in flight fail? Also check the facts of API.md 10.2 on the edge: does `request.signal` fire when the client goes away after the response body is complete, and does a `Body.writer!` stream keep the request past 30 s while the task writes? The cron edge test of API.md AQ12: two cron triggers (`*/2 * * * *` and `1-59/2 * * * *`). The `scheduled!` handler writes a row (`cron`, `time_ms`, the time of the run) to D1 for each run, then gives `Err`. For the second cron it calls `no_retry!` first. It runs for 1 hour. The jurisdiction of MODULES.md 7 on the edge (local workerd does not have it). (The item "the fallback under load on the edge" is removed 2026-10-16: stack-first is guaranteed by the compiler.) | The deployed example answers. 5d and the 128 MB check give their results. The two facts of API.md 10.2 give their results, and API.md 10.2 is changed if they differ. AQ12: the rows show for each `time_ms` how many runs each cron got. More than one run for a `time_ms` of the first cron, and one for the second, shows that production retries and that `noRetry` stops it. Write the answer in MODULES.md 3 and settle AQ12. Revert (the handler gives `Ok`): one run for each `time_ms` of both crons. `counters.jurisdiction(Eu).named("x").id!()` differs from `counters.named("x").id!()`. Revert (the jurisdiction is not sent): they are equal. |
 
 ## 12. One instance per isolate: check memory at resume
 

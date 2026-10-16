@@ -8,7 +8,7 @@ import { check } from './core.js';
 const EDGE = process.env.EDGE;
 const N = Number(process.argv[2] || 1000);
 const DEPTHS = (process.env.DEPTHS || '0,130,530').split(',').map(Number);
-const VARIANTS = (process.env.VARIANTS || 'j,a,b').split(',');
+const VARIANTS = (process.env.VARIANTS || 'j,b').split(',');
 const base = (v) => `https://talon-bench-${v}.${EDGE}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const q = (xs, p) => xs[Math.min(xs.length - 1, Math.floor(p * xs.length))];
@@ -72,24 +72,7 @@ function server(r) {
   return { ...rest, traced: ev.length, cpuMean: mean(cpu), cpuP50: q(cpu, 0.5), cpuP99: q(cpu, 0.99), wallP50: q(wall, 0.5), wallP99: q(wall, 0.99), notOk };
 }
 
-// Instantiate cost: server cpuTime of /inst?n=K minus /inst?n=0, per instance (us).
-async function inst(pad, k, reps = 5) {
-  const one = async (n) => {
-    const url = `${base('a')}/inst?n=${n}&pad=${pad}&r=${nextId++}`;
-    await (await fetch(url)).text();
-    return url;
-  };
-  const u0 = [], uk = [];
-  for (let i = 0; i < reps; i++) { u0.push(await one(0)); uk.push(await one(k)); }
-  return { u0, uk, pad, k };
-}
-function instResult({ u0, uk, pad, k }) {
-  const c = (us) => us.map((u) => events.get(u)?.cpu).filter((x) => x !== undefined).sort((a, b) => a - b);
-  const c0 = c(u0), ck = c(uk);
-  return { inst: true, pad, k, cpu0: c0, cpuK: ck, usPerInstance: Math.round(((q(ck, 0.5) - q(c0, 0.5)) * 1000) / k) };
-}
-
-const tails = ['a', 'b', 'j'].map(tail);
+const tails = ['b', 'j'].map(tail);
 await sleep(30000); // tail needs some seconds to connect, and it drops events (best effort)
 const rows = [];
 for (const v of VARIANTS) {
@@ -98,13 +81,11 @@ for (const v of VARIANTS) {
     for (const c of [1, 16, 64]) rows.push(await load(v, c, c === 1 ? Math.min(N, 200) : N, depth));
   }
 }
-const insts = [await inst(0, 200), await inst(1, 50)];
-// Memory of the shared instance (B): /stats of the isolates that answer.
+// Memory of the shared instance: /stats of the isolates that answer.
 const stats = [];
 for (let i = 0; i < 30; i++) stats.push(await (await fetch(`${base('b')}/stats?r=${nextId++}`)).json());
 await sleep(20000); // let the last tail events arrive
 tails.forEach((p) => p.kill());
 for (const r of rows) console.log(JSON.stringify(server(r)));
-for (const x of insts) console.log(JSON.stringify(instResult(x)));
 const served = stats.map((s) => s.served);
 console.log(JSON.stringify({ stats: true, samples: stats.length, isolatesSeen: new Set(stats.map((s) => `${s.served}`)).size, maxMem: Math.max(...stats.map((s) => s.mem || 0)), maxSavedPeak: Math.max(...stats.map((s) => s.saved_peak || 0)), served }));

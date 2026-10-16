@@ -10,7 +10,7 @@ import { toJs, Refs } from '../js/values.js';
 import { rng, gen, mutate } from './jsgen.js';
 
 const module = new WebAssembly.Module(readFileSync(process.argv[2]));
-const x = makeRunner(module, 'b', async () => '', { isolateBytes: 2 ** 40 }).x;
+const x = makeRunner(module, async () => '', { isolateBytes: 2 ** 40 }).x;
 const roc = process.env.ROC || execFileSync('bench/get-roc.sh', { encoding: 'utf8' }).trim();
 const H = (s) => Uint8Array.from(Buffer.from(s.replace(/\s/g, ''), 'hex'));
 

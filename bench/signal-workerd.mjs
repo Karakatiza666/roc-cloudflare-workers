@@ -3,7 +3,7 @@
 // WORKERD=<path> node bench/signal-workerd.mjs
 // 20 requests whose fetch answers after 10 min ("hang" ids). The client resets each socket
 // after 300 ms. Expect: 20 cancels by the signal, 0 waiting tasks, live bytes 0, and good
-// requests before and after are correct. Config: bench/config-s.capnp (variant b, the flag).
+// requests before and after are correct. Config: bench/config-s.capnp (the flag).
 // Also (PLAN.md 5a): workerd registered the instance. It zeroes the CPU signal at registration,
 // so the signal reads 0 (not 0xFFFF), and the terminated flag stays 0xFFFF.
 import { spawn } from 'node:child_process';

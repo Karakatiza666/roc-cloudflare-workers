@@ -31,7 +31,7 @@ function timeCheck(x, k = 200) {
 async function checkTime(items) {
   const gates = [];
   const gated = (kind, a, b) => new Promise((res) => gates.push(() => res(io(kind, a, b))));
-  const r = makeRunner(module, 'b', gated, { heapCheckEvery: 0, heapCheckWhenIdle: false });
+  const r = makeRunner(module, gated, { heapCheckEvery: 0, heapCheckWhenIdle: false });
   const x = r.x;
   const idleMs = timeCheck(x);
   const runs = Array.from({ length: CONC }, (_, i) => r.run(`${i + 1} 0 ${DEPTH} ${items}`));
@@ -52,7 +52,7 @@ async function checkTime(items) {
 // 2. and 4. -----------------------------------------------------------------------------------
 async function reqTime(items, every) {
   let id = 1, bad = 0;
-  const r = makeRunner(module, 'b', io, { heapCheckEvery: every, heapCheckWhenIdle: false });
+  const r = makeRunner(module, io, { heapCheckEvery: every, heapCheckWhenIdle: false });
   const batch = async () => {
     const ids = Array.from({ length: CONC }, () => String(id++));
     const res = await Promise.all(ids.map((k) => r.run(`${k} 0 ${DEPTH} ${items}`)));

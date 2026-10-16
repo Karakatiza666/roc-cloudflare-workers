@@ -1,4 +1,4 @@
-// PLAN.md 3b: deadlines and request.signal, with the real app (variant b).
+// PLAN.md 3b: deadlines and request.signal,.
 // node bench/deadline-test.mjs bench/out/app.wasm
 // 1. taskDeadlineMs 100, io that never resolves for one request. The next request cancels
 //    it: it gets a 503, and live bytes return to 0.
@@ -40,7 +40,7 @@ const ticker = (r) => {
 
 // 1.
 {
-  const r = makeRunner(module, 'b', io, { taskDeadlineMs: 100 });
+  const r = makeRunner(module, io, { taskDeadlineMs: 100 });
   plan.set('8001', 'never');
   const a = r.run('8001 0 5 10');
   await sleep(150);
@@ -57,7 +57,7 @@ const ticker = (r) => {
 }
 // 2.
 {
-  const r = makeRunner(module, 'b', io);
+  const r = makeRunner(module, io);
   plan.set('8101', 'never');
   const ac = new AbortController();
   const a = r.run('8101 0 5 10', { signal: ac.signal });
@@ -74,7 +74,7 @@ const ticker = (r) => {
 }
 // 3.
 for (const [kind, wallMs, want] of [['Scheduled', undefined, 'body'], ['Queue', undefined, 'body'], ['Scheduled', 200, 'cancel'], ['Queue', 200, 'cancel'], ['Fetch', undefined, 'cancel']]) {
-  const r = makeRunner(module, 'b', io, { taskDeadlineMs: 100, wallMs });
+  const r = makeRunner(module, io, { taskDeadlineMs: 100, wallMs });
   const id = String(8200 + Math.floor(Math.random() * 1000));
   plan.set(id, 300);
   const stop = ticker(r);

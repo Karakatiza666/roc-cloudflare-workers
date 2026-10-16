@@ -4,7 +4,7 @@
 // 2. The production header lists exactly PRODUCTION (below), and the bench header lists PRODUCTION and more.
 // 3. The export section of the production build has PRODUCTION and nothing else (no bench name), and the
 //    production host object (platform/targets/wasm32/host.wasm) has no symbol of a bench name.
-// 4. The production build serves requests as bench/node-test.mjs does (200 + 200 at once, 4 traps, both variants)
+// 4. The production build serves requests as bench/node-test.mjs does (200 + 200 at once, 4 traps)
 //    with the runner of bench/core.js: it needs no bench export. The runner refuses `resumeCheck: "off"` there.
 // 5. With a bench build: its export section is the bench header list, and the runner accepts "off".
 // Exit 1 on a failure.
@@ -87,33 +87,31 @@ const io = async (kind, a, b) => {
   return 'd:' + a.split(' ')[1];
 };
 const module = new WebAssembly.Module(readFileSync(prodFile));
-for (const v of ['a', 'b']) {
-  const r = makeRunner(module, v, io, { isolateBytes: 2 ** 40 });
-  const one = await r.run('123 0');
-  if (!one.body || !check('123', one.body)) fail(`${v}: first request: ${JSON.stringify(one).slice(0, 100)}`);
-  let bad = 0;
-  let traps = 0;
-  for (const [base, withTraps] of [[1000, true], [2000, false]]) {
-    const ids = Array.from({ length: 200 }, (_, i) => String(base + i));
-    const res = await Promise.all(ids.map((id, i) => r.run(`${id} ${withTraps && i % 50 === 7 ? 1 : 0}`)));
-    res.forEach((x, i) => {
-      if (x.trap) traps++;
-      else if (!check(ids[i], x.body)) bad++;
-    });
-  }
-  // The counters of the runner read the counter exports only. The global check passes.
-  const c = r.counters();
-  const live = r.x.live_bytes();
-  const checkCode = v === 'b' ? r.x.check_heap() : 0;
-  console.log(v, { bad, traps, live, alarms: r.stats.alarms, retired: r.stats.retired, heapFails: r.stats.heapFails, heapChecks: r.stats.heapChecks, check_heap: checkCode, heapUsed: c.heapUsed });
-  if (bad !== 0 || traps !== 4 || live !== 0) fail(`${v}: bad ${bad}, traps ${traps}, live bytes ${live}`);
-  if (r.stats.alarms !== 0 || r.stats.retired !== 0 || r.stats.heapFails !== 0) fail(`${v}: an alarm, a replace or a failed check`);
-  if (checkCode !== 0) fail(`${v}: check_heap gave ${checkCode}`);
+const r = makeRunner(module, io, { isolateBytes: 2 ** 40 });
+const one = await r.run('123 0');
+if (!one.body || !check('123', one.body)) fail(`first request: ${JSON.stringify(one).slice(0, 100)}`);
+let bad = 0;
+let traps = 0;
+for (const [base, withTraps] of [[1000, true], [2000, false]]) {
+  const ids = Array.from({ length: 200 }, (_, i) => String(base + i));
+  const res = await Promise.all(ids.map((id, i) => r.run(`${id} ${withTraps && i % 50 === 7 ? 1 : 0}`)));
+  res.forEach((x, i) => {
+    if (x.trap) traps++;
+    else if (!check(ids[i], x.body)) bad++;
+  });
 }
+// The counters of the runner read the counter exports only. The global check passes.
+const c = r.counters();
+const live = r.x.live_bytes();
+const checkCode = r.x.check_heap();
+console.log({ bad, traps, live, alarms: r.stats.alarms, retired: r.stats.retired, heapFails: r.stats.heapFails, heapChecks: r.stats.heapChecks, check_heap: checkCode, heapUsed: c.heapUsed });
+if (bad !== 0 || traps !== 4 || live !== 0) fail(`bad ${bad}, traps ${traps}, live bytes ${live}`);
+if (r.stats.alarms !== 0 || r.stats.retired !== 0 || r.stats.heapFails !== 0) fail(`an alarm, a replace or a failed check`);
+if (checkCode !== 0) fail(`check_heap gave ${checkCode}`);
 // The sum mode "off" is bench only: the production host refuses it (`set_sum(0)` gives 0).
 let refused = false;
 try {
-  makeRunner(module, 'b', io, { resumeCheck: 'off' });
+  makeRunner(module, io, { resumeCheck: 'off' });
 } catch (e) {
   refused = /bench host/.test(String(e));
 }
@@ -125,7 +123,7 @@ if (benchFile) {
   const names = wasmExports(benchFile);
   if (!same(names, benchList ?? [])) fail(`the bench build exports differ from bench/platform/main.roc: extra [${diff(names, benchList ?? [])}], missing [${diff(benchList ?? [], names)}]`);
   try {
-    const r = makeRunner(new WebAssembly.Module(readFileSync(benchFile)), 'b', io, { resumeCheck: 'off' });
+    const r = makeRunner(new WebAssembly.Module(readFileSync(benchFile)), io, { resumeCheck: 'off' });
     const x = await r.run('7 0');
     if (!x.body || !check('7', x.body)) fail('bench build, resumeCheck "off": bad body');
     console.log(`${benchFile}: ${names.length} exports, resumeCheck "off" accepted`);

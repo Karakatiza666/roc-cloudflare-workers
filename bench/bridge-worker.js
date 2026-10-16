@@ -46,7 +46,7 @@ const ops = {
 export default {
   async fetch(req, env, ctx) {
     const u = new URL(req.url);
-    handler ??= makeHandler(app, { variant: 'b', ops });
+    handler ??= makeHandler(app, { ops });
     if (u.pathname === '/b') {
       const q = u.searchParams.get('q');
       const x = handler.runner.x;

@@ -74,7 +74,7 @@ fn stack_floor() callconv(.c) usize {
     return CANARY_BASE;
 }
 
-/// 1: stack first, one instance can run many requests. 0: JS must use an instance per request.
+/// 1: stack first, one instance can run many requests. 0: not stack-first, JS refuses the module (js/runner.js).
 export fn stack_first() u32 {
     return @intFromBool(STACK_FIRST);
 }

@@ -1,5 +1,5 @@
 // PLAN.md 4g (M11): each event writes one log line and has a counter. The case of each row of M11, in 3b,
-// 3c, 4b to 4f and 12c to 12e, runs on the app (variant b), and the test counts the lines and the counter:
+// 3c, 4b to 4e and 12c to 12e, runs on the app, and the test counts the lines and the counter:
 //   grow denied (4b)   request shed (4d)   alarm trap, alarm sum (12c)   failed global check, every and idle (12d, 12e)
 //   replace (4e, M1)   cancel by deadline, by signal (3b), by a replace (3c)   double free caught, free refused (6e)
 // Also the decided point of 12c: a trap in `task_cancel` is an alarm (`cancel` in the alarm counters).
@@ -46,7 +46,7 @@ function expectEvent(tag, lines, re, counter, min = 1) {
 // grow denied (4b) and request shed (4d)
 {
   const lines = [];
-  const r = makeRunner(module, 'b', io, { isolateBytes: 16 * MB, jsReserveBytes: 0, graceMs: 300, log: (t) => lines.push(t) });
+  const r = makeRunner(module, io, { isolateBytes: 16 * MB, jsReserveBytes: 0, graceMs: 300, log: (t) => lines.push(t) });
   const big = req(20);
   const res = await r.run(big.text);
   if (res.cause !== 'oom') fail('grow denied: the 20 MB request is not an OOM 503', res.trap);
@@ -60,7 +60,7 @@ function expectEvent(tag, lines, re, counter, min = 1) {
 {
   const lines = [];
   const gates = new Map();
-  const r = makeRunner(module, 'b', gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: (t) => lines.push(t) });
+  const r = makeRunner(module, gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: (t) => lines.push(t) });
   const x = r.x;
   x.fault_next_wait(2); // the next wait traps with `unreachable`: unclean
   const a = await r.run(req().text);
@@ -83,7 +83,7 @@ function expectEvent(tag, lines, re, counter, min = 1) {
 // failed global check: every N requests (12e), and at idle (12e)
 for (const mode of ['every', 'idle']) {
   const lines = [];
-  const r = makeRunner(module, 'b', io, { heapCheckEvery: mode === 'every' ? 2 : 0, heapCheckWhenIdle: mode === 'idle', log: (t) => lines.push(t) });
+  const r = makeRunner(module, io, { heapCheckEvery: mode === 'every' ? 2 : 0, heapCheckWhenIdle: mode === 'idle', log: (t) => lines.push(t) });
   const x0 = r.x;
   for (let i = 0; i < 3; i++) await good(r, {});
   if (x0.break_table(14, 0) !== 1) fail(`failed check ${mode}: no target`); // live byte count + 16
@@ -96,7 +96,7 @@ for (const mode of ['every', 'idle']) {
 // replace (M1)
 {
   const lines = [];
-  const r = makeRunner(module, 'b', io, { log: (t) => lines.push(t) });
+  const r = makeRunner(module, io, { log: (t) => lines.push(t) });
   r.replace('test');
   expectEvent('replace', lines, /^replace \(test\)/, r.stats.replaces.test);
 }
@@ -105,7 +105,7 @@ for (const mode of ['every', 'idle']) {
 {
   const lines = [];
   const gates = new Map();
-  const r = makeRunner(module, 'b', gated(gates), { taskDeadlineMs: 50, heapCheckEvery: 0, heapCheckWhenIdle: false, log: (t) => lines.push(t) });
+  const r = makeRunner(module, gated(gates), { taskDeadlineMs: 50, heapCheckEvery: 0, heapCheckWhenIdle: false, log: (t) => lines.push(t) });
   // 3b, deadline: a wait that never ends. The next request cancels it.
   const stuck = req();
   const pStuck = r.run(stuck.text);
@@ -142,7 +142,7 @@ for (const mode of ['every', 'idle']) {
 // double free caught and free refused: counters of the host (6e), one line each (M11)
 {
   const lines = [];
-  const r = makeRunner(module, 'b', io, { log: (t) => lines.push(t) });
+  const r = makeRunner(module, io, { log: (t) => lines.push(t) });
   const x = r.x;
   await good(r, {});
   x.bad_free(1);
@@ -164,7 +164,7 @@ for (const mode of ['every', 'idle']) {
 {
   const lines = [];
   const gates = new Map();
-  const r = makeRunner(module, 'b', gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: (t) => lines.push(t) });
+  const r = makeRunner(module, gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: (t) => lines.push(t) });
   const x0 = r.x;
   x0.js_alloc(16); // a JS block that stays: a JS page exists
   const ac = new AbortController();
@@ -190,7 +190,7 @@ for (const mode of ['every', 'idle']) {
 // A cancel with no trap is no alarm.
 {
   const gates = new Map();
-  const r = makeRunner(module, 'b', gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: () => {} });
+  const r = makeRunner(module, gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: () => {} });
   const ac = new AbortController();
   const q = req();
   const p = r.run(q.text, { signal: ac.signal });

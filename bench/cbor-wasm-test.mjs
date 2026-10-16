@@ -10,7 +10,7 @@ import { toJs, fromJs, Refs } from '../js/values.js';
 import { rng, gen, things, mutate } from './jsgen.js';
 
 const module = new WebAssembly.Module(readFileSync(process.argv[2]));
-const r = makeRunner(module, 'b', async () => '', { isolateBytes: 2 ** 40 });
+const r = makeRunner(module, async () => '', { isolateBytes: 2 ** 40 });
 const x = r.x;
 let failed = false;
 const fail = (...m) => {

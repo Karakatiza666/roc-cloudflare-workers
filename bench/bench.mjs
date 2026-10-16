@@ -1,6 +1,6 @@
 // Load generator and driver. Each rep starts a fresh workerd for the variant.
 // WORKERD=<path> node bench/bench.mjs [reps=3] [n=5000]          latency, throughput, copy bytes by depth (DEPTHS, VARIANTS)
-// WORKERD=<path> node bench/bench.mjs leak [n=10000] [rate=0.01] the trap leak test, both variants
+// WORKERD=<path> node bench/bench.mjs leak [n=10000] [rate=0.01] the trap leak test
 // WORKERD=<path> RESUME_CHECK=off|afterAlarm|always ITEMS=<n> CONCS=64 VARIANTS=b DEPTHS=50 node bench/bench.mjs 5 3000
 //   the cost of the checks in workerd (12f). RESUME_CHECK and ITEMS: see worker.js. CONCS: the concurrencies (default 1,16,64).
 //   Each row also has cpuUsPerReq: the CPU time of the workerd process (utime + stime) per request.
@@ -71,23 +71,10 @@ async function load(conc, n, trapRate = 0, depth = 50) {
 
 const stats = async () => (await fetch(BASE + '/stats')).json();
 
-// Wall time of /inst?n=N minus /inst?n=0, from the client (workerd freezes the clock inside a request).
-async function instCost(pad, n = 500) {
-  const t = async (k) => {
-    const s = performance.now();
-    await (await fetch(`${BASE}/inst?n=${k}&pad=${pad}`)).text();
-    return performance.now() - s;
-  };
-  await t(20);
-  const t0 = Math.min(await t(0), await t(0), await t(0));
-  const tn = await t(n);
-  return +(((tn - t0) * 1000) / n).toFixed(1);
-}
-
 const mode = process.argv[2];
 if (mode === 'leak') {
   const n = Number(process.argv[3] || 10000), rate = Number(process.argv[4] || 0.01);
-  for (const v of ['a', 'b']) {
+  for (const v of ['b']) {
     for (const r of [rate, 0]) {
       const p = await start(v);
       await load(16, 500);
@@ -104,7 +91,7 @@ if (mode === 'leak') {
   const reps = Number(mode || 3), n = Number(process.argv[3] || 5000);
   const depths = (process.env.DEPTHS || '0,30,130,530').split(',').map(Number);
   for (let rep = 1; rep <= reps; rep++) {
-    for (const v of (process.env.VARIANTS || 'j,a,b').split(',')) {
+    for (const v of (process.env.VARIANTS || 'j,b').split(',')) {
       const p = await start(v);
       const rssStart = rssKB(p.pid);
       await load(16, 1000); // warmup
@@ -119,8 +106,7 @@ if (mode === 'leak') {
           console.log(JSON.stringify({ rep, variant: v, depth, ...r, cpuUsPerReq, rssKB: rssKB(p.pid), memBytes: s.mem, savedMax: s.saved_max, savedPeak: s.saved_peak, waits: s.waits }));
         }
       }
-      const extra = v === 'a' ? { instUs: await instCost(0), instPadUs: await instCost(1), rssAfterInstKB: rssKB(p.pid) } : {};
-      console.log(JSON.stringify({ rep, variant: v, rssStartKB: rssStart, rssWarmKB: rssWarm, rssEndKB: rssKB(p.pid), stats: await stats(), ...extra }));
+      console.log(JSON.stringify({ rep, variant: v, rssStartKB: rssStart, rssWarmKB: rssWarm, rssEndKB: rssKB(p.pid), stats: await stats() }));
       await stop(p);
     }
   }

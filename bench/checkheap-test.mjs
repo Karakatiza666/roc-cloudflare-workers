@@ -1,6 +1,6 @@
 // PLAN.md 12d: the global check (`check_heap`).
 // node bench/checkheap-test.mjs bench/out/app.wasm [bench/out/alloc_driver.wasm]
-// A. App, variant b. For each kind of the test export `break_table` (one wild write into a table
+// A. App. For each kind of the test export `break_table` (one wild write into a table
 //    entry of the shared memory, with no trap): 30 requests end (free runs, reserve pages), 10 wait
 //    (task pages, wait records, adopted JS blocks). The check passes, then `break_table`, then the
 //    runner check: it must fail, write one log line, and replace the instance (the 10 waiting tasks
@@ -85,7 +85,7 @@ async function open(gates, key) {
 async function partA(kind, name, arg = 0) {
   const gates = new Map();
   const lines = [];
-  const r = makeRunner(module, 'b', gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: (t) => lines.push(t) });
+  const r = makeRunner(module, gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: (t) => lines.push(t) });
   const x0 = r.x;
   const runs = [];
   // Every 5th request makes 400 items (large blocks).
@@ -168,7 +168,7 @@ for (const [kind, name] of OVERLAP) {
 {
   const gates = new Map();
   const lines = [];
-  const r = makeRunner(module, 'b', gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: (t) => lines.push(t) });
+  const r = makeRunner(module, gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: (t) => lines.push(t) });
   const x0 = r.x;
   const runs = [];
   for (let i = 0; i < 5; i++) runs.push(r.run(`${6000 + i} 0 6 20`).catch((e) => ({ threw: String(e) })));
@@ -191,7 +191,7 @@ for (const [kind, name] of OVERLAP) {
 
 {
   const gates = new Map();
-  const r = makeRunner(module, 'b', gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: () => {} });
+  const r = makeRunner(module, gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: () => {} });
   const x0 = r.x;
   const p = r.run(`6100 0 6 20 - 0 ${'p'.repeat(64)}`).catch((e) => ({ threw: String(e) }));
   // At the second wait: the request (a JS block that the task adopted) is live.
@@ -208,7 +208,7 @@ for (const [kind, name] of OVERLAP) {
 
 {
   const gates = new Map();
-  const r = makeRunner(module, 'b', gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: () => {} });
+  const r = makeRunner(module, gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: () => {} });
   const x0 = r.x;
   const p = r.run('6200 0 6 20').catch((e) => ({ threw: String(e) }));
   if (x0.break_table(18, r.tasks.stats.started) !== 1) fail('C3: no target for the break');
@@ -225,7 +225,7 @@ for (const [kind, name] of OVERLAP) {
 {
   const gates = new Map();
   const lines = [];
-  const r = makeRunner(module, 'b', gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: (t) => lines.push(t) });
+  const r = makeRunner(module, gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: (t) => lines.push(t) });
   const x0 = r.x;
   const pb = r.run('6300 0 6 20');
   const tb = r.tasks.stats.started;
@@ -248,7 +248,7 @@ for (const [kind, name] of OVERLAP) {
 
 {
   const gates = new Map();
-  const r = makeRunner(module, 'b', gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: () => {} });
+  const r = makeRunner(module, gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: () => {} });
   const x0 = r.x;
   const pb = r.run('6400 0 6 20');
   const tb = r.tasks.stats.started;
@@ -276,7 +276,7 @@ for (const [kind, name] of OVERLAP) {
 
 {
   const gates = new Map();
-  const r = makeRunner(module, 'b', gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: () => {} });
+  const r = makeRunner(module, gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: () => {} });
   const x0 = r.x;
   const pb = r.run('6500 0 6 20');
   const tb = r.tasks.stats.started;

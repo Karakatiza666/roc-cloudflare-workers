@@ -42,7 +42,7 @@ for (const f of ['app.wasm', 'app_deep.wasm', 'app_strloop.wasm', 'app_wait.wasm
 
 // 5b A: an allocation after the signal. app_strloop has no wait: only the allocation check can trap.
 {
-  const r = makeRunner(load('app_strloop.wasm'), 'b', io);
+  const r = makeRunner(load('app_strloop.wasm'), io);
   const x = r.x;
   writeFlag(x, '__instance_signal', SIGXCPU);
   const res = await r.run('100');
@@ -58,7 +58,7 @@ for (const f of ['app.wasm', 'app_deep.wasm', 'app_strloop.wasm', 'app_wait.wasm
 
 // 5b B: a wait after the signal. app_wait allocates nothing in the app: only the check in waitBegin can trap.
 {
-  const r = makeRunner(load('app_wait.wasm'), 'b', io);
+  const r = makeRunner(load('app_wait.wasm'), io);
   const x = r.x;
   const first = await r.run('x');
   if (first.body !== 'ok') fail(`5b B: control run gave ${first.body ?? first.trap}`);
@@ -87,7 +87,7 @@ for (const f of ['app.wasm', 'app_deep.wasm', 'app_strloop.wasm', 'app_wait.wasm
     }
     return io(kind, a, b);
   };
-  r = makeRunner(m, 'b', sigIo);
+  r = makeRunner(m, sigIo);
   const x = r.x;
   const ids = Array.from({ length: 30 }, (_, i) => String(100 + i));
   const others = ids.map((id) => r.run(`${id} 0 5 20`).then((res) => ({ id, res })));
@@ -112,7 +112,7 @@ for (const f of ['app.wasm', 'app_deep.wasm', 'app_strloop.wasm', 'app_wait.wasm
 // 5c: a kill leaves a stale state. `fault_next_wait(3)` traps a task with a wrapped stack pointer,
 // and nobody calls task_abort. Then the runtime writes the flag.
 {
-  const r = makeRunner(load('app_deep.wasm'), 'b', io);
+  const r = makeRunner(load('app_deep.wasm'), io);
   const x0 = r.x;
   // Negative control: no flag, the instance stays.
   const a = await r.run('5');

@@ -29,7 +29,7 @@ function gatedRunner(opts = {}) {
     const v = kind === 1 ? `f:${id}:${'x'.repeat(40)}` : `d:${id}`;
     return new Promise((res) => gates.set(`${kind}:${id}`, () => res(v)));
   };
-  const r = makeRunner(module, 'b', io, { resumeCheck, ...opts });
+  const r = makeRunner(module, io, { resumeCheck, ...opts });
   // Start a task. It runs up to its first wait in this call. In a fresh runner, task ids are 1, 2, ...
   r.start = (id, extra = '') => {
     const p = r.run(`${id} 0 5 10${extra}`);
