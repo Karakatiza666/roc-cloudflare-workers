@@ -20,8 +20,9 @@ EOF
 (cd $S/echo && wrangler deploy)
 for v in a b j; do
   d=$S/$v; mkdir -p $d
-  cp $B/worker.js $B/core.js $B/out/app.wasm $B/out/app_pad.wasm $d/
-  # no_bundle: upload the modules as they are, named as in the capnp configs ('app.wasm', 'core.js').
+  cp $B/worker.js $B/check.js $B/out/app.wasm $B/out/app_pad.wasm $d/
+  mkdir -p $d/js && cp $B/../js/*.js $d/js/
+  # no_bundle: upload the modules as they are, named as in the capnp configs ('app.wasm', 'js/index.js').
   cat > $d/wrangler.toml <<EOF
 name = "talon-bench-$v"
 main = "worker.js"
@@ -29,7 +30,7 @@ compatibility_date = "2026-10-01"
 workers_dev = true
 no_bundle = true
 rules = [
-  { type = "ESModule", globs = ["core.js"] },
+  { type = "ESModule", globs = ["check.js", "js/*.js"] },
   { type = "CompiledWasm", globs = ["*.wasm"] },
 ]
 services = [{ binding = "ECHO", service = "talon-bench-echo" }]

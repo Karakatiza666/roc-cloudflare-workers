@@ -12,7 +12,8 @@ const io = async (kind, a, b) => {
 };
 let failed = false;
 for (const v of ['a', 'b']) {
-  const r = makeRunner(module, v, io);
+  // No memory budget here (PLAN.md 4f): variant a would queue 200 requests at once and wait for a GC.
+  const r = makeRunner(module, v, io, { isolateBytes: 2 ** 40 });
   const one = await r.run('123 0');
   console.log(v, one.body?.slice(0, 40), one.body?.slice(-60), check('123', one.body ?? ''));
   let bad = 0, traps = 0;

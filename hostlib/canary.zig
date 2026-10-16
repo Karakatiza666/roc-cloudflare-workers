@@ -46,9 +46,15 @@ pub fn overflowed(sp: usize, top: usize) bool {
 
 /// Trap when the stack is below the limit. The allocator calls this on each allocation.
 pub inline fn check() void {
+    reserve(0);
+}
+
+/// Trap as `check` when fewer than `need` bytes of stack are left above the limit. PLAN.md 8e: a Native op
+/// that uses a big frame (zstd, `native.stackNeed`) calls this first, so its frame never reaches the canary.
+pub inline fn reserve(need: usize) void {
     var probe: u32 = 0;
     std.mem.doNotOptimizeAway(&probe);
-    if (@intFromPtr(&probe) < STACK_LIMIT) {
+    if (@intFromPtr(&probe) < STACK_LIMIT +| need) {
         @as(*volatile u32, @ptrFromInt(CANARY_BASE)).* = 0;
         // Data first: a frame can skip the canary and write over data, so the trap is not clean.
         if (STACK_FIRST) mem.trapClean() else mem.trap();
@@ -64,7 +70,7 @@ pub fn sumConst(acc: u64) u64 {
     return if (CANARY_BASE == 0) a else mem.sumBytes(CANARY_BASE, CANARY_BYTES, a);
 }
 
-export fn stack_floor() usize {
+fn stack_floor() callconv(.c) usize {
     return CANARY_BASE;
 }
 
@@ -73,11 +79,19 @@ export fn stack_first() u32 {
     return @intFromBool(STACK_FIRST);
 }
 
-export fn stack_canary_ok() u32 {
+fn stack_canary_ok() callconv(.c) u32 {
     if (CANARY_BASE == 0) return 1;
     var p = CANARY_BASE;
     while (p < CANARY_BASE + CANARY_BYTES) : (p += 4) {
         if (mem.rd32(p) != CANARY_WORD) return 0;
     }
     return 1;
+}
+
+// PLAN.md 7a: test exports, in the bench host only.
+comptime {
+    if (@import("build_options").bench) {
+        @export(&stack_floor, .{ .name = "stack_floor" });
+        @export(&stack_canary_ok, .{ .name = "stack_canary_ok" });
+    }
 }

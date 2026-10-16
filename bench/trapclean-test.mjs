@@ -2,9 +2,10 @@
 // node bench/trapclean-test.mjs bench/out/app.wasm
 // `task_abort` gives -1 when the last trap was not clean, else the bytes it freed.
 import { readFileSync } from 'node:fs';
-import { makeWait } from './core.js';
+import { benchOps, eventBlock } from './core.js';
+import { makeBridge } from '../js/bridge.js';
+import { makePins } from '../js/helpers.js';
 const module = new WebAssembly.Module(readFileSync(process.argv[2]));
-const enc = new TextEncoder();
 let failed = false;
 const row = (name, got, want) => {
   const pass = got === want;
@@ -14,18 +15,18 @@ const row = (name, got, want) => {
 const io = async (kind, a, b) => (kind === 1 ? 'f:1' : 'd:1');
 const instance = () => {
   const cell = { x: null };
-  const ex = new WebAssembly.Instance(module, { env: { js_wait: new WebAssembly.Suspending(makeWait(cell, io)) } }).exports;
+  const b = makeBridge(cell, null, { ops: benchOps(io), pins: makePins(), log: () => {} });
+  const ex = new WebAssembly.Instance(module, { env: { js_await: new WebAssembly.Suspending(b.js_await), js_call: b.js_call, js_grow: () => 1 } }).exports;
   cell.x = ex;
   ex.set_free_mark(crypto.getRandomValues(new Uint32Array(1))[0] | 1);
   ex.init(1);
   return ex;
 };
 let lastId = 0;
+// PLAN.md 8b: the request text is the body of a `Fetch` event.
 const start = (ex, req) => {
-  const bytes = enc.encode(req);
-  const p = ex.js_alloc(bytes.length);
-  new Uint8Array(ex.memory.buffer).set(bytes, p);
-  return WebAssembly.promising(ex.handle)(p, bytes.length, ++lastId);
+  const [p, len] = eventBlock(ex, req);
+  return WebAssembly.promising(ex.handle)(p, len, ++lastId);
 };
 
 // 1. A trap in a host call from JS (no task runs) is not clean: `alloc_bench` fails its

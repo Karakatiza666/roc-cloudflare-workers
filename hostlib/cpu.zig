@@ -17,6 +17,8 @@ export var __instance_terminated: u32 = 0xFFFF;
 /// Why the last trap happened, for JS (`trap_cause`).
 pub const CAUSE_NONE: u32 = 0;
 pub const CAUSE_CPU: u32 = 1;
+/// A grow was denied or memory is out (PLAN.md M6): the task gets a 503, not a 500.
+pub const CAUSE_OOM: u32 = 2;
 var CAUSE: u32 = CAUSE_NONE;
 
 inline fn load(p: *u32) u32 {
@@ -32,7 +34,13 @@ pub inline fn check() void {
     }
 }
 
-/// The cause of the last trap (1: the CPU signal), then clear it. `handle` clears it too.
+/// Clean trap for the task that runs when memory is out (M6). A host call from JS (OWNER 0) has no task.
+pub fn oom() noreturn {
+    if (alloc.OWNER != 0) CAUSE = CAUSE_OOM;
+    mem.trapClean();
+}
+
+/// The cause of the last trap (1: the CPU signal, 2: out of memory), then clear it. `handle` clears it too.
 export fn trap_cause() u32 {
     const c = CAUSE;
     CAUSE = CAUSE_NONE;
@@ -41,7 +49,7 @@ export fn trap_cause() u32 {
 
 /// For the global check (PLAN.md 12d).
 pub fn causeOk() bool {
-    return CAUSE <= CAUSE_CPU;
+    return CAUSE <= CAUSE_OOM;
 }
 
 /// The lowest address of the globals of this file with a start value (in `.data`).

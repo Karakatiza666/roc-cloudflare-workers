@@ -167,7 +167,7 @@ Revert checks (each test must fail):
 
 The canary check at each wait from the first version of this plan is dropped. The CI check with the pinned nightly, the run time check and the fallback replace it.
 
-Change after 12c: an unclean trap no longer retires the instance. It gives an alarm and the global check (problem 12). So the tests and revert checks above that look for "retired" or "a new instance" must look for the alarm instead: `task_abort` returns -1 and the alarm counter (M11) goes up. 12c makes this change in `overflow-test.mjs`.
+Change after 12c: an unclean trap no longer retires the instance. It gives an alarm and the global check (problem 12). So the tests and revert checks above that look for "retired" or "a new instance" must look for the alarm instead: `task_abort` returns -1 and the alarm counter (M11) goes up. 12c makes this change in `overflow-test.mjs`. Done (2026-10-16): see "Status of steps 12d, 12c, 12e".
 
 ## 2. A JS import throws into a waiting task
 
@@ -347,10 +347,10 @@ PLAN tests of 3b that wait for later steps (the table logic is in `bench/tasks.j
 |---|---|
 | A `Scheduled` and a `Queue` task end with `Done` (today: the `kind` of the table and the body) | 8b (events, `Outcome`) |
 | A `Fetch` task that waits 300 ms in `receive!` is not cancelled; revert (a socket wait has the deadline) | 8f (`WebSocket.receive!`), and the import must say that a wait is on a socket (`waitStart(t, true)`) |
-| After `respond!` (30 s limit at 100 ms): a `Bytes` body, then a wait of 300 ms, is cancelled | 8b (`Ctx.respond!`), which calls `tasks.respond(t)` |
-| A `Body.writer!` stream for 300 ms is not cancelled, a wait after `close!` is cancelled 100 ms later; revert (the limit starts at `respond!`) | 8b (`Body.writer!`): `respond(t, true)`, then `bodyComplete(t)` at `close!` |
+| After `respond!` (30 s limit at 100 ms): a `Bytes` body, then a wait of 300 ms, is cancelled | Done in 8b (second half): `bench/stream-test.mjs` `deadline` |
+| A `Body.writer!` stream for 300 ms is not cancelled, a wait after `close!` is cancelled 100 ms later; revert (the limit starts at `respond!`) | Done in 8b (second half): `stream-test.mjs` `writer` (cancelled 113 ms after `close!`) |
 | A 101 task stays while its socket is open, and ends when it closes | 8f (`WebSocket.accept!`): `respond(t, true)`, `bodyComplete(t)` at the close |
-| The client cancels a `Body.writer!` stream: the task is cancelled at once; revert (no cancel on the stream) | 8b: `cancel(t, 'stream')` from the `cancel` of the stream |
+| The client cancels a `Body.writer!` stream: the task is cancelled at once; revert (no cancel on the stream) | Done in 8b (second half) in Node: `stream-test.mjs` `cancel` (the reader cancels the stream). Local workerd does not cancel the stream when the client goes away (the open point below): there `request.signal` ends the task (`stream-workerd.mjs` `away`). |
 | The close of the socket of the task cancels it | 8f: `cancel(t, 'socket')` |
 | The `Init` deadline of 30 s | 8f (`init!` of an object). API.md 10.2 gives it, so the table has `initMs`. |
 | Edge facts of API.md 10.2 | 11c |
@@ -378,7 +378,7 @@ Open questions:
 | API.md 4.1: "The import has no task argument. JS knows the task that runs." | JS knows the task at `handle`, but not at a resume: which stack resumes depends on the order of promise jobs, and other jobs can run first. Today the host gives the id as an argument of `js_wait`. 8a must keep an id argument for `js_await` and `js_call`, or change API.md 4.1. | Settled 2026-10-16: API.md 4.1 changed, `js_await` takes `task_id` first. |
 | `task_slots` in the production list of 7a | JS needs it. 7a lists `task_cancel` but not `task_slots`. | Settled: added to 7a. |
 | An unclean trap keeps its host slot | `task_abort` gives -1 and does not call `freeOwner`, so the task slot of that task stays in use in the host, while JS frees its slot at the end of `run`. Today the instance is replaced, so this has no effect. After 12c the instance stays: then JS and the host count differently, and `taskOf` can trap again. 12c must free the slot (or JS must count it as used). | Settled: 12c frees the slot (12c row). |
-| A wait that never settles after `respond!` while a stream is open | Only the signal or the stream cancel ends it (no deadline in API.md 10.2). Is that wanted? | Open. The edge run of 11c checks how Workers ends such a request, then API.md 10.2 decides. |
+| A wait that never settles after `respond!` while a stream is open | Only the signal or the stream cancel ends it (no deadline in API.md 10.2). Is that wanted? | Local part found in 8b (second half, `research/stream-cancel/probe.mjs`, results in `research/stream-cancel/results.json`). The client reads 2 KB of an open stream, then goes away (an abort of `fetch`, a TCP reset, a socket close). With `enable_request_signal`: `request.signal` aborts at once (203 to 307 ms after the start, the client left at about 200 ms), so the shim cancels the task. The response stream is not cancelled: `writer.closed` does not reject, and the pending `write` never settles (checked for 5 s). The request stays while `ctx.waitUntil` holds it. With no flag: no event at all, so the task waits forever (no deadline while the stream is open). When the client goes away after the body is complete, `request.signal` does not abort, and the work in `ctx.waitUntil` runs to its end. So locally the flag is required, and the stream cancel of API.md 10.2 never comes from workerd. Still open: the edge part (11c), and a deadline for one wait while a stream is open when the flag is not set (API.md 10.2 decides). |
 
 
 ## 4. Memory management
@@ -409,7 +409,7 @@ Decided on 2026-10-13. This replaces the old pool rules ("up to 16 per instance"
 | M6 | A grow that cannot be served gives a clean OOM trap to the task that asked (6d). That request gets a 503, its pages are freed (owner tags), and the instance stays in use. Memory never stops the whole isolate on purpose. |
 | M7 | Under pressure, the steps below run in order, from the least severe to the most severe. |
 | M8 | Removed (2026-10-14): it chose between an active and a draining instance. There is no draining instance. |
-| M9 | Fallback (variant A, one instance per request, problem 1): each instance is a live request. An instance that needs memory waits up to `graceMs` for other requests to end, then gets a clean OOM. A new instance starts only when its initial memory fits the budget. Else the request waits in the queue. With v7, an instance starts at about 2.4 MB (the unit tables are 0.9 MB), so about 33 instances fit in the default budget of 80 MB. A smaller unit table for the fallback build (a lower `MAX_UNITS`) is an option. |
+| M9 | Fallback (variant A, one instance per request, problem 1): each instance is a live request. An instance that needs memory waits up to `graceMs` for other requests to end, then gets a clean OOM. A new instance starts only when its initial memory fits the budget, or when no instance is live (the dropped ones are garbage: one instance starts although they count). Else the request waits in the queue. With v7, an instance starts at about 2.4 MB (the unit tables are 0.9 MB), so about 33 instances fit in the default budget of 80 MB. A smaller unit table for the fallback build (a lower `MAX_UNITS`) is an option. |
 | M10 | A dropped instance counts in the budget until a `FinalizationRegistry` callback reports it collected (workerd has it, 3.0). There is no `collectWaitMs`. An instance with a suspended task is never collected, so a drop first cancels all its tasks (3c). |
 | M11 | One log line, with the sizes or the cause, for each: denied grow, shed request, alarm (12c), failed global check (12d, 12e), replace (M1), cancel (3b, 3c), caught double free (`double_frees`), missed free (`dealloc_miss`). Each kind also has a counter export (H3). So the developer can see why the app is slow or fails. |
 
@@ -477,7 +477,7 @@ Done or not needed:
 | `graceMs` | 1000 | Pressure step 2, and M9 |
 | `queueLimit` | 100 | The queue of the fallback (M9) |
 | `resumeCheck` | `"always"` | 12b. `"afterAlarm"`: check at resume only after an alarm (sum mode 1). It costs less, but misses a wild write with no trap. |
-| `heapCheckEvery` | 1,000 at first. 12e sets it from the check time of 12d. | 12e. Run the shared-memory check after this many requests. 0: off. |
+| `heapCheckEvery` | 100 (12e: from the check time of 12d, `bench/checkcost.mjs`; the first value was 1,000) | 12e. Run the shared-memory check after this many requests. 0: off. |
 | `heapCheckWhenIdle` | `true` | 12e. Run the shared-memory check when the instance becomes idle |
 | `taskDeadlineMs` | 120,000 | 3b. A wait of a `Fetch` task before `Ctx.respond!` (and of a kind with no Workers limit) that is longer is cancelled. `Scheduled`, `Queue` and `Alarm` tasks, the time after `respond!` and socket waits have other deadlines (API.md 10.2). |
 | `pinLimit` | 1,000 | API.md RS2: the number of entries in the pin table |
@@ -554,6 +554,289 @@ Open points of 4-pre:
 | Point | Detail |
 |---|---|
 | Free path and the canary | Settled (2026-10-16, with 12b): `roc_dealloc` calls `canary.check()` first, so an overflow traps before the free changes a table. Test: the free mode of `overflow-test.mjs`. The internal frees of the host (`hostDealloc`) have no check: they run in host frames at a known depth. |
+
+### Status of steps 4b to 4f (2026-10-16)
+
+| Step | State | Where |
+|---|---|---|
+| 4b | Done. `poolGrow` calls the import `js_grow(pages)` before each grow and grows only on 1. It grows by `max(needed, growStepBytes)`: `GROW_CHUNKS` is now a variable, set by the new export `set_grow_step(bytes)` before `init`. JS keeps the budget: `isolateBytes - jsReserveBytes` against the `memory.buffer.byteLength` of each live instance and of each dropped instance (4e). A "no" is pressure step 1 (`takeRun` gives the page reserve back and searches again), then step 3: the clean OOM trap. The trap has a cause now: `trap_cause()` 2. The task gets `{ status: 503, cause: 'oom' }`. | `hostlib/alloc.zig` (`poolGrow`, `js_grow`, `set_grow_step`, `ask_js` build option), `hostlib/cpu.zig` (`CAUSE_OOM`, `oom`), `host/host.zig`, `build.zig`, `platform/main.roc`, `bench/budget.js` (new), `bench/core.js` (`importsOf`, `register`, `cleanTrap`), `bench/app.roc` (request field 6: hold N MB across the waits) |
+| 4c | Done. `maxInstanceBytes`: `ask` denies a grow when the instance would go over it. | `bench/budget.js` (`ask`) |
+| 4d | Done. Step 1 (reclaim) is in the allocator (4b). Step 2 (shed): a new request gets `{ status: 503, shed: true }` while a grow was denied in the last `graceMs`, and while the new instance of a replace does not fit next to the dropped one (M1, `crowded`). Step 3: 4b. | `bench/core.js` (`shedMem`, `run`), `bench/budget.js` (`pressure`, `crowded`) |
+| 4e | Done. `drop(memory)` counts the dropped instance until a `FinalizationRegistry` callback reports it collected. `replace()` drops the old instance after it cancels its tasks (3c). The bench worker has `GET /replace` and `GET /h?mb=N`, and reads the options from bindings (`config-m.capnp`). | `bench/budget.js` (`drop`, the registry), `bench/core.js` (`replace`), `bench/worker.js`, `bench/config-m.capnp` |
+| 4f | Done. The fallback (variant a) has the budget: a new instance starts only when `budget.fits` says so, else the request waits in a queue (`queueLimit`, a wait of `taskDeadlineMs` at most with a timer, it leaves at the abort of its signal; it starts at the end of an instance, or when no instance is live: "Fallback queue in workerd"). The instance of a finished request is dropped and counts until it is collected (M10). `makeRunner` drops the probe instance of the stack-first check too. | `bench/core.js` (the block `if (!cur)`), `bench/budget.js` (`fits`) |
+| M11 | Lines and counters for what is built (the rest was done in 4g: see "Status of steps 4g, 4h, 4j"): `grow denied` (`stats.budget.denied`, `deniedCap`, `deniedBudget`), `request shed` (`stats.shedMem`), `replace` (`stats.replaces[reason]`, `stats.retired`), and `stats.oom`, `stats.queued`, `stats.budget.{asked, dropped, collected, maxTotal}`. A failed heap check still writes its one line (it says "new instance"): `replace(reason, logged)` does not write a second one. | `bench/core.js`, `bench/budget.js` |
+| `test-all.sh` | Builds the 10-09 apps (`bench/out09`), then the pinned nightly (so the glue is the glue of the pinned nightly), runs all tests with `timeout 600`, one line for each, exit 1 when one fails. `ZIG` and `WORKERD` are required. | `bench/test-all.sh` |
+
+Tests (nightly 10-12, Node 26.7, workerd 2026-10-12):
+
+| Step | Test | Result |
+|---|---|---|
+| 4b | `node --expose-gc bench/budget-test.mjs bench/out/app.wasm`, 4b: `isolateBytes` 16 MB, `jsReserveBytes` 0, `graceMs` 0. 20 good requests, then 10 good requests in flight and one that holds 20 MB, then one that holds 8 MB, then a good one | PASS: the 20 MB request gets 503 with cause `oom`, the other 10 are correct, the 8 MB request passes, live bytes 0, the instance stays (0 retired), memory 10.6 MB (at most 16 MB), 2 denied grows and 2 log lines, `oom` counter 1 |
+| 4b | same, step: a request with 3,000 items, `growStepBytes` 64 KB against 4 MB | PASS: 20 asks and 1.8 MB of growth, against 1 ask and 4.2 MB |
+| 4b | `bench/grow.mjs` (the driver `alloc_driver_grow.wasm`, which asks JS; `bench/alloc-test.sh` builds it) | PASS: each grow is asked first, for `max(needed, step)` pages (1, 4, 2 pages in the case), memory grows only on yes, a step of 1 MB asks 16 pages, a denied grow gives `js_alloc` 0 and leaves memory as it was, and the reserve of 150 small pages joins into a block of 300 KB when the grow is denied (the ask happens once) |
+| 4c | same, 4c: `maxInstanceBytes` 8 MB, `isolateBytes` 64 MB | PASS: the 20 MB request gets 503 `oom` (memory 4.2 MB, the denial counts as `deniedCap`), a 2 MB request passes. No cap: the 20 MB request passes (memory 22.2 MB). |
+| 4d | same, 4d: 64 requests of 1 MB at once (60 ms waits), `isolateBytes` 16 MB, `graceMs` 300 | PASS: 13 pass, 1 gets 503 `oom`, 50 get 503 `shed`. A new request 20 ms later and a 20 MB request right after the wave are shed. After `graceMs` a new request passes. Live bytes 0, memory 15.9 MB (at most 16 MB), the instance stays. 52 shed lines and counter 52. |
+| 4e | same, 4e (Node): a request holds 30 MB (instance 32.2 MB), `replace()` | PASS: `droppedBytes` = 32.2 MB. A request of 40 MB gets 503 `oom` while the test holds the old instance (the two instances together: 34.4 MB). After the test lets go and runs `gc()`, the callback comes in 40 ms and the same request passes. |
+| 4e | same, M1: `isolateBytes` 34 MB, replace after 30 MB | PASS: a new request is shed ("the old instance is not collected", one line) and passes after the callback |
+| 4e | `WORKERD=... node bench/budget-workerd.mjs` (config-m: 64 MB, reserve 0) | PASS: instance 32.3 MB, `/replace`: the budget shows 32.3 MB, `/h?mb=40` gets 503 (one denied grow, the line is in the log), the two instances stay at or under 64 MB. Load of 64 requests at once (71 rounds): the callback came after 2.6 s and 2.7 s in 2 runs. The budget showed the dropped instance in all 70 samples before it. Then the request of 40 MB passes (budget 46.3 MB, live bytes 0). |
+| 4f | `node --expose-gc bench/fallback-budget-test.mjs bench/out09/app.wasm` (10-09, data-first; `gc()` every 25 ms stands for the GC of workerd), part 1: 64 requests at once, `isolateBytes` 32 MB, reserve 0 | PASS (5 runs): 64 pass, 51 waited in the queue, 0 OOM, 0 denied grows, 65 instances made, at most 14 at once. The memory of the instances that exist (WeakRef of each memory, sampled each ms and at each wait) peaked at 30.6 MB, the budget at 30.6 MB (limit 32 MB). |
+| 4f | same, part 2: `queueLimit` 10 | PASS: 23 pass, 41 get 503 (`queue is full`), counter 41 |
+| 4f | same, part 3: 40 requests, 20 abort their signal | PASS: 20 left the queue with 503, 20 passed, the queue is empty at the end |
+| Old tests | `bench/test-all.sh` (`ZIG`, `WORKERD` set): the build, the 10-09 build and the glue check, `alloc-test.sh`, `node-test.mjs`, `overflow-test.mjs --expect-shared`, `strloop-test.mjs`, `log-test.mjs`, `oom-test.mjs`, `wait-test.mjs`, `trapclean-test.mjs`, `tasktable-test.mjs`, `deadline-test.mjs`, `oneinstance-test.mjs`, `resume-test.mjs`, `wild.mjs` 16, 256, 4096, `checkheap-test.mjs`, `checkevery-test.mjs`, `stack-test.mjs`, `tasks-test.mjs`, `cpu-test.mjs`, `cancel-test.mjs`, `signal-workerd.mjs` and the 3 new tests | PASS (ALL PASS, about 1 minute). After the 10-09 build and the last build, `host/roc_platform_abi.zig` is the same file as before (it differs from the commit by the 7 lines of earlier work, not by this work). |
+| 10-09 | `overflow-test.mjs`, `node-test.mjs`, `oneinstance-test.mjs` on `bench/out09`; `overflow-test.mjs --no-fallback` | PASS, PASS, PASS; FAIL as before (the PLAN 1c check) |
+| Memory map | `research/memmap/build.sh`, `memmap.mjs` on `app` and `app_deep` | PASS (exit 0). The new global has a rule, and the flip check found 5,097 of 5,097 bytes (4 more). `research/memmap/results/*.md` are not made again. |
+
+Revert checks (each test must fail):
+
+| Revert | Test | Result |
+|---|---|---|
+| 4b: `poolGrow` grows with no ask | `budget-test.mjs` | FAIL: the 20 MB request passes, memory 22.6 MB (over 16 MB), no denied grow, 4c cap not applied, 4b step: 0 asks |
+| 4b: same | `grow.mjs` | FAIL: no ask in any case, the denied grow still grows memory by 7 pages |
+| 4b: no reclaim in `takeRun` (no `cacheDrain` after a denied grow) | `grow.mjs` | FAIL: case 4: the block of 300 KB does not fit |
+| 4b: `set_grow_step` ignores its argument | `grow.mjs` | FAIL: case 3 asks 1 page, want 16 |
+| 4b: JS does not call `set_grow_step` | `budget-test.mjs` | FAIL: 4b step: the same 20 asks for both steps |
+| 4b: OOM trap with no cause (`CAUSE_OOM` never set) | `budget-test.mjs` | FAIL: 4b, 4c, 4d and 4e: the trap is a `RuntimeError: unreachable` with no cause |
+| 4c: no cap check in `ask` | `budget-test.mjs` | FAIL: 4c: the request passes with the cap, memory 22.2 MB |
+| 4d: no shed (`pressure()`) | `budget-test.mjs` | FAIL: 4d: 0 shed, requests after the OOM trap fail in other ways |
+| 4e: `drop` does not count the dropped instance (count only the live one) | `budget-test.mjs` | FAIL: `droppedBytes` 0, the 40 MB request passes and the two instances reach 74.4 MB (limit 64 MB), M1 request not shed |
+| 4e: same | `budget-workerd.mjs` | FAIL: `dropped` 0, no denied grow, the request of 40 MB gets no 503 |
+| 4e, M1: `crowded()` always false | `budget-test.mjs` | FAIL: the new request gets an OOM trap, not a shed |
+| 4f: the fallback instance has no budget (no `js_grow` ask) | `fallback-budget-test.mjs` | FAIL: part 1: 142 MB of instances, no request waited |
+| 4f: the instance always starts (no `fits`) | `fallback-budget-test.mjs` | FAIL: part 1: 13 pass and 51 get an OOM, 138.9 MB |
+| 4f: `fits` keeps no room for the growth of a running instance | `fallback-budget-test.mjs` | FAIL: part 1: 25 pass and 39 get an OOM |
+| 4f: no `queueLimit` | `fallback-budget-test.mjs` | FAIL: part 2: all 64 pass (nothing shed) |
+| 4f: no abort of a queued request | `fallback-budget-test.mjs` | FAIL: part 3: no request left the queue at its abort |
+| M11: no log line at a denied grow, at a shed request, at a replace | `budget-test.mjs` | FAIL each (4b: 2 grows and 0 lines; 4d: 52 shed and 0 lines; 4e: no replace line) |
+| M11: no counter of shed requests, of replaces | `budget-test.mjs` | FAIL each |
+| 12d: the grow step is not in the sum of constant data | `memmap.mjs` | FAIL (exit 1): 4 flipped bytes not found |
+
+Choices I made:
+
+| Question | Answer |
+|---|---|
+| The status of an OOM trap | M6 says the requester gets a 503, but a clean trap had no status (a Roc `crash` must stay a 500). The host sets `trap_cause()` 2 at each OOM trap of a task (`cpu.oom`), and the runner turns it into `{ status: 503, cause: 'oom' }`. A failed `js_alloc` for the request block gives the same. |
+| `js_grow` cannot wait | M9 says an instance that needs memory waits up to `graceMs`. `js_grow` is a synchronous import, so it cannot wait. In the fallback a denied grow is a clean OOM at once. The queue holds back only the start of an instance. |
+| How much a new fallback instance needs (`fits`) | M9: "its initial memory". A request grows the instance after its start, and the admission by the initial size alone gave 39 OOM traps of 64 requests. `fits(n)`: `n` is the largest instance size seen (also after the first synchronous part of a request and at its end). Each live instance keeps at least `n` for itself, and one instance may always start when nothing holds memory. The first request starts with `n` = its initial size. |
+| Wait in the queue | A request waits until it fits (an instance ends, or none is live: "Fallback queue in workerd"), at most `taskDeadlineMs`, and it leaves at the abort of its signal. The plan has no limit for the wait. The deadline is a timer of the waiting request: workerd cancels a request with no pending I/O as "hung". |
+| Step 2 (shed) for the fallback | Only variant b sheds on pressure. In the fallback the queue is the shed: a full queue gives 503. |
+| `replace` and the log line | `replace(reason, logged)` writes one line (M11). The failed heap check already writes its line (it says "new instance"), so it passes `logged` and the test of 12d still sees one line. |
+| Instances that wait for a GC in Node | Nothing frees a dropped instance in Node without a GC. The tests that use variant a for correctness (`node-test.mjs`, `log-test.mjs`, `oneinstance-test.mjs` part 2) set `isolateBytes: 2 ** 40`, else 200 requests at once wait for a collection that does not come. `fallback-budget-test.mjs` runs `gc()` every 25 ms. A test that keeps the result of a request keeps `x` and so the instance: it drops `x`. |
+| The probe instance of the stack-first check | In the fallback it is dropped and counts until it is collected. |
+| Same-tick start after a trap | A task that traps clean in the call of `handle` itself (an OOM at the start) and a `handle` of another request in the same tick, before the catch of the first: the first trap is an alarm (the state of the task is stale, 12c "A check while the catch of a trapped task is still in the job queue"). Workerd starts each request in its own task, so the catch runs first. The 4b test starts the big request after the others. |
+| Reclaim in `takeLow` | Not needed: a small page takes a page of the reserve first. Only `takeRun` (large blocks) must give the reserve back. |
+| The grow step is in the sum of constant data | JS sets it before `init`, so 12d covers it (`set_grow_step` after `init` fails the check). |
+| `ask_js` build option | The allocator driver of `alloc-test.sh` has no JS: `ask_js` false there. A second driver has it true, for `grow.mjs`. |
+| Old tests that instantiate the app themselves | `cpu-test`, `trapclean-test`, `wait-test`, `tasktable-test`, `micro` and `research/memmap/memmap.mjs` pass `js_grow: () => 1`: the module has the import now. |
+| Files that list the JS modules | `config-{a,b,j,s}.capnp` and `deploy.sh` list `budget.js` (and `deploy.sh` `tasks.js`, which it missed). `.gitignore`: `bench/out09/`. |
+
+Open points:
+
+| Point | Detail |
+|---|---|
+| Fallback queue and idle collection | Settled 2026-10-16: see "Fallback queue in workerd". When no instance is live, one request starts although the dropped bytes count, and a queued request holds a timer. The RSS check passed. |
+| A grow that would pass with a smaller step | A step larger than the room that is left (`growStepBytes` 4 MB, 1 MB free) is denied. The plan does not say to retry with the needed size only. With the default of 64 KB the difference is small. Decided 2026-10-16: retry once with the needed size only. Done in 4g to 4j (`poolGrow`, `bench/grow.mjs` case 5). |
+| First wave of the fallback | The first request gives `n`. A later part of a request can grow more than the first part, and then a grow can be denied (an OOM trap). Not seen in the test. |
+| JS reserve | `jsReserveBytes` only lowers the budget. Nothing measures the JS heap. |
+| 4g | The counters are in `runner.stats` (JS). The counter exports of the host (H3, M11) are 4g and 4h. Done in 4g to 4j: see "Status of steps 4g, 4h, 4j". |
+| `research/memmap/results` | The result files are not made again (their addresses move by 8 bytes with the new global). |
+
+### Fallback queue in workerd (2026-10-16)
+
+The defect: with `config-a.capnp` (variant a), 40 requests at once with the default budget: 6 failed in round 1 and all 40 in round 2. workerd logged "detected that your Worker's code had hung". Test: `bench/fallback-workerd.mjs` (variant a, 40 requests at once, 3 rounds, default options; it fails on a bad body, a status other than 200, a client timeout of 30 s, and a "hung" line in the log).
+
+| Item | Result |
+|---|---|
+| State when it failed (new counters `queueNow`, `liveCount` in `/stats`) | Round 0: 34 instances ran and were dropped (78.6 MB, the budget 80 MB), `collected` 0, `liveCount` 0, `queueNow` 6. The 6 queued requests were the 6 failures. `pump` ran at the end of each request and `fits` said no each time (the dropped bytes). Round 1 and 2: the queue was not empty, so even a new request queued: 40 of 40 failed. |
+| Cause 1 (the one that was probable): the wait is for a GC | Confirmed. With no live instance nothing ran `pump` again, and 3.0 says an idle instance is not collected. |
+| Cause 2 (found by the test): a queued request is cancelled at once | A request that waits only on a promise of the isolate has no pending I/O. workerd cancels it as "hung" at once, not when the isolate is idle. Evidence: with the dropped bytes not counted, `pump` admitted a waiter while 33 instances were live, and the log had "A promise was resolved or rejected from a different request context than the one it was created in. However, the creating request has already been completed or canceled" and the same 6 "hung" lines. So an admission at the end of another request is too late. The waiter needs I/O of its own. |
+| Cause 3: no start of an instance in the callback of the collection | The old `budget.onCollected` called `pump`, and `pump` starts instances. In workerd the callback runs in global scope: `freeMark` (`crypto.getRandomValues`) there throws "Disallowed operation called within global scope". The waiter was removed from the queue and never woke. |
+
+The fix (`js/runner.js` `canStart`, `pump`, `admit`; `js/budget.js` `startIdle`, `lone`):
+
+| Rule | Detail |
+|---|---|
+| A queued request holds a timer | Its deadline (`taskDeadlineMs`): `setTimeout` in `admit`. This is real I/O for workerd, so the request is not "hung". It also replaces the lazy deadline check of `pump`, so the deadline now works with no new request. The waiter clears the timer after its wait (`done` can run in a GC callback, and `clearTimeout` is refused there). |
+| Admit at the end of a live instance and when none is live | `pump` runs at each end of a request (inside a request: I/O-bound) and at each new request. It starts the next waiter when `fits` says yes, or when no instance is live (`budget.startIdle`): one instance starts although the dropped bytes say no. The dropped instances have no task: they are garbage that V8 frees under memory pressure. Only one idle instance is alive at a time, but nothing makes V8 collect between two idle starts: garbage piles up across them, and each idle start puts at most one instance over the limit (8e). |
+| The idle instance can grow | While it is the only live instance, `ask` does not count the dropped bytes for it (`lone`). Else its first allocation was denied (an OOM trap "request block": 6 of 40 in round 0). The others start only when `fits` says yes (the dropped bytes count), so a generation of waiters is serial until V8 collects. |
+| No wake by the collection | `onCollected` is removed. `pump` never runs in the callback of the registry. A collection gives room, and the next end of a request uses it. Liveness: a waiter exists only while a request is live (it ends and pumps) or a request is just starting (`admit` pumps). |
+| Log and counter | One line for each idle start: "no instance is live: an instance starts although N MB of dropped instances are not collected". Counter `stats.budget.idleStarts`. |
+
+The memory check of the rule (decided 2026-10-16: stop if the RSS of workerd passes about 200 MB or keeps growing). `node bench/fallback-workerd.mjs --rss --rounds=10 --items=2000`: 10 rounds of 40 requests, 2,000 items each, workerd 2026-10-12. An idle workerd has an RSS of 60.6 MB.
+
+| Round | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| RSS (MB) | 129.4 | 146.2 | 142.5 | 193.0 | 186.7 | 183.0 | 186.2 | 188.3 | 192.5 | 142.3 |
+| Budget `total` (MB) | 42.8 | 28.5 | 7.1 | 149.6 | 135.4 | 142.5 | 146.1 | 149.6 | 153.2 | 92.6 |
+| Dropped, not collected | 12 | 8 | 2 | 42 | 38 | 40 | 41 | 42 | 43 | 26 |
+| Collected (total) | 28 | 72 | 118 | 118 | 162 | 200 | 239 | 278 | 317 | 374 |
+
+All 400 requests passed. RSS goes up and down (V8 collects in steps) and stays at or under 193 MB: the rule is accepted. `stats.budget.maxTotal` was 169.6 MB: the counted bytes can pass the limit (80 MB) because an idle start adds an instance next to dropped ones, and its grows do not count them. A longer run (30 rounds, same options) had a plateau of 200 to 203 MB for the last 10 rounds (no more growth), so about 200 MB is the level of this load, not a trend. The worst case is about two times the limit (a full instance next to a full set of garbage). V8 frees the garbage, but nothing in the shim forces it. If a lower level is needed: a smaller `isolateBytes`, or a lower `queueLimit` (it does not change the garbage). Accepted (manager, 2026-10-16): the fallback runs only for a build that is not stack-first, and a release pins a stack-first nightly (1a-ci), so this is a safety net, not the normal path. On the edge, the isolate limit of 128 MB makes V8 collect sooner. 11c runs the fallback once on the edge to check that the isolate is not stopped.
+
+Tests and reverts:
+
+| Test | Result |
+|---|---|
+| `node bench/fallback-workerd.mjs` (3 rounds of 40) | PASS: 0 bad requests, no "hung" line. Each round 60 to 120 ms. |
+| Revert: the old code (no timer, no idle start, `onCollected`) | FAIL: round 0: 6 of 40 failed, round 1 and 2: 40 of 40, 86 "hung" lines. |
+| Revert: no idle start (the timer stays) | FAIL: 6 of 40 wait until the client gives up (the queue is not empty, `liveCount` 0). |
+| Revert: no timer in the queue (the idle start stays) | FAIL: 86 "hung" lines, all 40 fail in round 1 and 2. |
+| `node --expose-gc bench/fallback-budget-test.mjs bench/out09/app.wasm` | PASS. Changed: part 1 allowed the memory to go over 32 MB by one instance (the idle start); the old bound failed with 34.4 MB. New part 4: no GC (the results hold each `x`), 64 requests at once, `isolateBytes` 32 MB: all 64 pass and 51 idle starts (before: the requests wait for ever). A watchdog of 60 s fails the test instead of a hang. All other budget checks stay. |
+| Revert: no idle start | `fallback-budget-test.mjs` FAIL: the watchdog fires (part 1 has no wake by the collection any more, part 4 waits). |
+| `node bench/context-workerd.mjs` with 40 requests for variant a (was 10) | PASS (4 rounds, 0 bad). |
+
+Open question 1 of 4b to 4f ("Fallback queue and idle collection") is settled: the queue admits one request when no instance is live, and the memory check above accepted it.
+
+Part 1 of `fallback-budget-test.mjs` under load (8a open point O1, settled in 8e, 2026-10-16). The test said that the budget may go over the limit by one instance. It failed at a load average of 2 to 4: 34.9 MB counted against 32 MB and one instance of 2.1 MB. The question: is the bound wrong, or does the code start a second idle instance before the first one ends? `research/fallback-idle/probe.mjs` runs part 1 and records each idle start (the `add`, `drop` and `startIdle` calls of the budget):
+
+| Fact (5 runs, load average 4) | Result |
+|---|---|
+| Instances live at an idle start (`maxLiveAtIdle`) | 0 in each run. The rule holds: an idle instance starts only when no instance is live. |
+| Idle instances alive at the same time (`maxIdleAlive`) | 1 in each run. No second idle start before the first instance ends. |
+| What the 4 failing runs have in common | Two idle starts in a row with no collection between them (`collected` the same at both). The first starts next to 30.6 MB of dropped instances (32.7 MB counted). It ends, and it is garbage too: 32.8 MB. The second starts next to that: 34.9 MB counted. |
+| The run that passed | The longest run of idle starts with no collection between them was 1 (`longestIdleRunNoGC`), against 2 in each failing run. |
+| Real memory | `peakMB` (the weak references of the test) was 32.8 MB in the failing runs. The counted bytes are higher because the budget keeps a dropped instance until the callback of the registry, and that callback comes after the collection. |
+
+So the code is right and the bound was wrong. The rule says "one idle instance next to garbage at a time". It does not say that V8 collects the garbage between two idle starts, and it cannot: a request must not wait for a collection (cause 2 above). Under load the `gc()` of the test (every 25 ms) and the callback of the registry run late, so garbage piles up across idle starts. Each idle start puts at most one instance over the limit. Without idle starts the budget keeps the total at or under the limit (`fits`, `ask`).
+
+The fix is in the test, not in `js/`. Part 1 now checks the rule on each start and uses the right bound:
+
+| Check | Before | After |
+|---|---|---|
+| Rule | none | `watchIdle` wraps `startIdle`, `add` and `drop` of the budget. At an idle start no instance is live, and at most one idle instance is alive at a time. |
+| Memory | `peak` and `maxTotal` at most the limit and one instance | At most the limit and one instance for each idle start (`stats.budget.idleStarts`) |
+| Revert: `startIdle` does not look at `live.size` (a second idle start while an instance is live) | not tested | FAIL: "an idle start with an instance live: 13", and the 51 other requests get an OOM |
+| Load: `bench/flaky-load.sh` (N runs next to 2 copies of `sumcost.mjs`, load average 1.5 to 5) | 6 of 10 passed: 3 failed the old bound (34.9 MB), 1 hung at exit (see O1 of 8e). With the V8 flags of O1: 8 of 10, then 17 of 20 (5 of 30 failed the old bound). | 9 of 10 passed (the one failure was the hang at exit). With the V8 flags: 20 of 20 |
+
+### Status of steps 4g, 4h, 4j (2026-10-16)
+
+| Step | State | Where |
+|---|---|---|
+| 4g | Done. Each event of M11 has one log line and one counter (table below). The new parts: the cancel line, the lines for a caught double free and a refused free, the cause `cancel` of an alarm, `runner.counters()` (all counters of the host in one record, also in `/stats` of the bench worker), and `double_frees` in the export list of the platform (it was in the allocator but not in the list). | `bench/core.js` (`hostEvents`, `hostCounters`, `raise`, `due`, `cancelTrap`), `bench/tasks.js` (`cancel`), `bench/worker.js`, `platform/main.roc` |
+| 4h | Done. The H3 counters and the leak counter are exports (table below). `handle` ends a task with `taskDone`, which counts the bytes that `taskEnd` had to free. | `hostlib/alloc.zig` (`liveAdd`, `cacheDrain`, `taskDone`, the exports), `host/host.zig` (`handle`) |
+| 4j | Done. `idle_reset` (host) and `idleReset` (allocator). JS calls it in `runner.idleDone`, after a passed idle check (12e), which is the one idle point: the check says the heap is sound, and no task is in flight. | `host/host.zig` (`idle_reset`), `hostlib/alloc.zig` (`idleReset`), `bench/core.js` (`idle`, `idleDone`) |
+| Decided points | All 5 done: (1) a passed idle check clears `set_suspect` (`idleDone`); (2) a trap in `task_cancel` is an alarm (`hostCancel`, `cancelTrap`); (3) a denied grow is asked again once with the needed pages only (`poolGrow`); (4) `research/memmap/results/app.md` and `app_deep.md` are new runs; (5) the 7a row lists the new exports. | see the rows |
+| `test-all.sh` | Two new steps (`events-test.mjs`, `idle-test.mjs`). `counters.mjs` and the new case of `grow.mjs` run in `alloc-test.sh`. | `bench/test-all.sh`, `bench/alloc-test.sh` |
+
+Events of M11 (a line and a counter for each; the event is in JS or in the host):
+
+| Event | Where it is seen | Log line | Counter |
+|---|---|---|---|
+| Denied grow (4b) | JS, `budget.ask` | `grow denied: <why>` | `stats.budget.denied` (`deniedCap`, `deniedBudget`) |
+| Shed request (4d) | JS, `shedMem` | `request shed: <reason>` | `stats.shedMem` |
+| Alarm (12c) | JS, `runner.raise` | `alarm <cause>: task <id>: <error>`. Cause: `trap`, `sum`, `block`, and new: `cancel` (a trap in `task_cancel`) | `stats.alarms`, `stats.byAlarm`. Host: `alarms()` for the traps that the host sees. |
+| Failed global check (12d, 12e) | JS, `checkHeap` | `heap check failed (<why>): <code> <name>; new instance, <n> tasks cancelled` | `stats.heapFails`, `stats.byCheck` |
+| Replace (M1) | JS, `replace` | `replace (<reason>): <n> tasks cancelled, ...` | `stats.replaces[reason]`, `stats.retired` |
+| Cancel (3b, 3c) | JS, `tasks.cancel` | new: `task cancelled (<reason>): task <id>, <kind>, in a wait for <ms> ms`. A replace cancels with no line for each task: its own line has the count. | `tasks.stats.cancels`, `tasks.stats.byReason` |
+| Caught double free | Host (`double_frees`), JS writes the line after each task and each global check | new: `double free caught: <n> new, <total> in this instance (...)` | Host `double_frees()`, `stats.doubleFrees` |
+| Missed free (refused) | Host (`dealloc_miss`), same | new: `free refused: <n> new, <total> in this instance (...)` | Host `dealloc_miss()`, `stats.deallocMiss` |
+
+H3 counters and the leak counter (exports of the host; `hostCounters(x)` in `bench/core.js` reads all of them):
+
+| Export | Value |
+|---|---|
+| `heap_used()` | Bytes of the units in use: tasks, host and JS blocks, the page reserve. Foreign units are not counted. (Existed.) |
+| `heap_bytes()` | New. Bytes of the pool (units in use and free). Memory never gets smaller, so it only grows. For the ratio of H7 (`heap_bytes` / `live_peak`). |
+| `live_bytes()` | The live bytes now. (Existed.) |
+| `live_peak()` | New. The peak of `live_bytes` since the start (`liveAdd`) |
+| `reclaim_walks()`, `reclaim_bytes()` | New. The times that the page reserve gave its pages back to the pool (`cacheDrain`, pressure step 1), and the bytes that it gave back |
+| `leaked_at_end()` | New. The bytes that `taskEnd` freed at the end of tasks that ended by their own return (`taskDone`). A task that leaks shows here. 0 in all tests. |
+| `idle_resets()`, `idle_reset_bytes()` | New. The idle resets (4j) and the bytes of units in use that they gave back |
+
+The idle reset (H2), in the allocator (`idleReset`):
+
+| Rule | Detail |
+|---|---|
+| When | JS calls `idle_reset` after a passed idle check, when no task is in flight. The host refuses (0) when `TASK_TOP`, `OWNER` or a waiting task is set. The allocator refuses (0) when `LIVE_BYTES` is not 0, or a task list (the host, JS, a task) holds a block, or a task slot has an owner. The list check is more than the plan says: a count that is too low (a bug) must never reset over a live block. |
+| What | The free-run lists are made again. Each region (the units between foreign units) becomes one free run. The page reserve is empty. `CHUNKS_USED` is 0. Foreign units stay. Host and JS blocks: with a live block there is no reset at all, so they stay. |
+| Cost | A walk of the unit table of the pool (at most 32,768 units) |
+
+Tests (nightly 10-12, Node 26.7):
+
+| Step | Test | Result |
+|---|---|---|
+| 4g | `node bench/events-test.mjs bench/out/app.wasm`: each case drives the real path and counts the lines and the counter: denied grow (20 MB request, `isolateBytes` 16 MB), shed (request in `graceMs`), alarm `trap` (`fault_next_wait(2)`, also the host counter `alarms()`) and alarm `sum` (`poke_wait` 1), failed check `every` and `idle` (`break_table` 14), replace, cancel by deadline, by signal and by a replace (the replace line says "2 tasks cancelled"), double free (`bad_free(1)`) and free refused (`bad_free(2)`), the `counters()` record, and a trap in `task_cancel` | PASS: each case has the same number of lines and counter (1 each, 2 alarm lines in all). The trap in `task_cancel` (`break_table` 17 makes the walk of the JS pages loop): the task gets a 503 `signal`, `byAlarm.cancel` 1, the check after the alarm replaces the damaged instance, the next request is correct. A normal cancel is no alarm. |
+| 4h | `bench/counters.mjs` 4h-1 (allocator driver): 3,000 random allocs and frees of 11 sizes (16 B to 200 KB) for 6 tasks. The driver gives the unit tables, and the test walks them (free bits, kinds, live counts, classes). A walk after every 250 steps and at the end. | PASS: `heap_bytes` (14,483,456 B), `heap_used` and `live_bytes` equal the walk at 13 walks. `live_peak` 13,964,304 B equals the largest `live_bytes` seen after any single step. A realloc in place and a realloc that moves: `live_bytes` equals the walk. |
+| 4h | same, 4h-2 (driver that asks JS): 150 pages in the reserve (the walk counts them), then a denied grow and a block that needs the reserve | PASS: `reclaim_walks` 0 to 1, `reclaim_bytes` 0 to 614,400 (150 pages), the reserve in the walk is 0 after |
+| 4h | same, 4h-3: task 9 keeps 24 B and 3,000 B, frees 100 B, then `taskDone`. A task that freed all. `taskEnd` (a trap). | PASS: `leaked_at_end` +4,128 (the live bytes of the walk, 32 + 4,096), +0 for the clean task, +0 for `taskEnd` |
+| 4h | `node bench/idle-test.mjs bench/out/app.wasm`, 4h: 200 requests, then `leak_next(100)` and `leak_next(10000)` | PASS: `leaked_at_end` 0 after 200 requests, then +128 and +12,288 (the size classes), live bytes 0 after each, the requests are correct, `live_peak` and `heap_bytes` are set |
+| 4j | `bench/counters.mjs` 4j-1: a heap with 32 foreign units (2 pages that `memory.grow` gave outside), 146 reserve pages and 64 fragmented free runs, no live block. `idle_reset`. | PASS: reset done. After: used units 178 to 32 (only the foreign units), reserve 146 to 0, free runs 64 to 2 (= the 2 regions), the largest run 2,303 to 9,824 units, `heap_used` 0, the pool size is the same, `check_tables` 0, `idle_reset_bytes` 598,016. A block of the size of the largest run fits with no grow of memory. 800 new blocks with patterns: no overlap. |
+| 4j | same, 4j-2: a live host block (owner 0), then a live JS block | PASS: `idle_reset` gives 0, the tables are byte for byte as before (kinds, free bits, used units, runs, reserve), the block and 1,500 new blocks with patterns are intact, `check_tables` 0. After the block is freed, the reset is done. |
+| 4j | same, 4j-3: `break_table` 19 sets `live_bytes` to 0 while a host block is live | PASS: no reset, no damage (1,000 new blocks with patterns) |
+| 4j | `idle-test.mjs`, 4j: 1,000 requests (40 at once, items 5 to 2,000, depth 3 to 27), then idle | PASS: 0 bad bodies. `heap_used` before the idle point 954,368 B, after it 0 (the base of the warm instance: 0). `check_heap` 0, the pool is the same (10,878,976 B), the next request is correct, 1 more reset (983,040 B given back), no replace. |
+| 4j | same: `js_alloc(100)` stays live, 5 waves, idle, 1 more wave, then the block is freed | PASS: 0 resets (2 skipped), `heap_used` the same after the idle point, the block is intact, `check_heap` 0, 0 bad bodies. After the block is freed: 1 reset. |
+| 4j | same: a task waits, `idle_reset()` called from JS | PASS: 0, the task ends with a correct body |
+| 12e (1) | same, `resumeCheck: "afterAlarm"`: an alarm (`fault_next_wait(2)`), a request with 2 resumes (control), an idle check, a request with 2 resumes | PASS: `sum_checks` 0, 2 (control: the suspicion is on), 2 (after the passed idle check: +0) |
+| 12c (2) | `events-test.mjs`, trap in `task_cancel` | PASS (row of 4g) |
+| 4g (3) | `bench/grow.mjs` case 5 (`set_grow_step` 1 MB, `js_grow` says yes for 3 pages at most): a block of 150,000 B (3 pages). Then a block of 400,000 B (7 pages). | PASS: asked [16, 3], the block is given, memory grew 3 pages. Then asked [16, 7], both denied, ptr 0, memory the same. |
+| 4g (4) | `research/memmap/build.sh`, `memmap.mjs out/app.wasm --detail` and `out/app_deep.wasm --detail` (new rules for the new globals in `RULES`) | PASS (exit 0 on both): `check_heap` 0 after all 10 and 8 phases, the flip check found 5,097 of 5,097 and 4,606 of 4,606 constant bytes. `results/app.md` and `results/app_deep.md` are written again. |
+| All | `bench/test-all.sh` (`ZIG`, `WORKERD` set) | ALL PASS (about 1 minute), 30 steps |
+
+Revert checks (each change was reverted in the source, the build and the test were run, and the source was restored):
+
+| Revert | Test | Result |
+|---|---|---|
+| 4g: no `grow denied` line | `events-test.mjs` | FAIL: no log line |
+| 4g: no `request shed` line | same | FAIL |
+| 4g: no `alarm` line | same | FAIL (alarm trap, alarm sum, all alarms, alarm cancel) |
+| 4g: no `heap check failed` line | same | FAIL (every and idle) |
+| 4g: no `replace` line | same | FAIL (replace, and the count in the replace line of the cancel case) |
+| 4g: no `task cancelled` line | same | FAIL (deadline and signal) |
+| 4g: no `double free caught` line, no `free refused` line | same | FAIL each |
+| 4g: `stats.doubleFrees`, `stats.deallocMiss`, `stats.alarms` not counted | same | FAIL each: lines and counter differ |
+| 4g: `double_frees` not in the export list | same | FAIL: `x.double_frees is not a function` |
+| 4g: `DOUBLE_FREES` not counted in the host | same | FAIL: host counter 0, no line |
+| 4g: `ALARMS` not counted for an unclean trap, and for a trap in the host code of a wait | `events-test.mjs`, `checkheap-test.mjs` C3 | FAIL each: the host counter is 0 |
+| 4h: `LIVE_PEAK` not updated | `counters.mjs`, `idle-test.mjs` | FAIL: `live_peak` 0 against 13,964,304 |
+| 4h: `heap_bytes` without the unit shift | `counters.mjs` | FAIL: 336 against 1,376,256 at the first walk |
+| 4h: reclaim counters not updated | `counters.mjs` | FAIL: `reclaim_walks` 0 (want 1), `reclaim_bytes` 0 (want 614,400) |
+| 4h: `taskDone` does not count (`LEAKED`), and `handle` ends with `taskEnd` | `counters.mjs`, `idle-test.mjs` | FAIL each: leak 0 (want 4,128; +128; +12,288) |
+| 4j: `idleReset` never resets | `counters.mjs`, `idle-test.mjs` | FAIL: the heap stays high (used units 178, 146 reserve pages, 64 runs; `heap_used` 954,368 B at the idle point) |
+| 4j: JS does not call `idle_reset` | `idle-test.mjs` | FAIL: `heap_used` stays 954,368 B (want the base 0), no reset counted |
+| 4j: the allocator checks only `LIVE_BYTES` (no list check) | `counters.mjs` 4j-3 | FAIL: reset over a live block, the block is damaged |
+| 4j: no check at all | `counters.mjs` 4j-2, 4j-3, `idle-test.mjs` | FAIL: reset with a live block, the tables change, blocks overlap |
+| 4j: the host does not refuse when a task waits | `idle-test.mjs` | Does not fail: the allocator check refuses too (a waiting task holds blocks). The host check is a second line of defense with no test of its own. |
+| Caught double free lowers `live_bytes` (the old `release`) | `events-test.mjs` | FAIL: `live_bytes` -32 after one caught double free, and the check fails |
+| 12e (1): the passed idle check does not clear `set_suspect` | `idle-test.mjs` | FAIL: 2 sum checks after the idle check (want 0) |
+| 12c (2): `hostCancel` drops the trap of `task_cancel` | `events-test.mjs` | FAIL: no alarm line, `alarms` 0, the damaged instance is not replaced |
+| 4g (3): no retry with the needed size | `grow.mjs` case 5 | FAIL: asked [16] (want [16, 3]), ptr 0 |
+
+New exports (for the lists of 7a; all in `platform/main.roc`):
+
+| Export | Use | List of 7a |
+|---|---|---|
+| `heap_bytes()`, `live_peak()`, `reclaim_walks()`, `reclaim_bytes()`, `leaked_at_end()`, `idle_resets()`, `idle_reset_bytes()` | H3 counters and the leak counter (4h, 4j) | Production (counter exports) |
+| `idle_reset()` | The idle reset (4j). JS calls it. | Production |
+| `double_frees()` | Existed in the allocator, now in the export list (M11) | Production (counter exports) |
+| `leak_next(n)` | Test: the next task keeps a block of `n` bytes (4h) | Bench |
+| `bad_free(kind)` | Test: 1 a double free, 2 a free by a task that is not the owner (4g) | Bench |
+
+Choices I made:
+
+| Question | Answer |
+|---|---|
+| "Heap bytes" in 4j | `heap_used` (the units in use). The pool size cannot go down: memory never gets smaller. So "heap bytes return to the base" is `heap_used`, and the base is 0 plus the units that foreign code holds (they are not counted). `heap_bytes` (the pool) is the new export for the ratio of H7. |
+| "Reclaim walk" in v7 | The only reclaim is the page reserve that gives its pages back (`cacheDrain`, pressure step 1). A walk is one such drain, and its bytes are the pages. The idle reset has its own counters. |
+| Leak counter | Only a task that ends by its own return counts (`handle`). A task that trapped is freed by `freeOwner`, and its blocks are not a leak. A JS block that the task adopted is not freed by `taskEnd`, so it shows in `live_bytes`, not here. |
+| Where JS calls the reset | After a passed idle check (`runner.idleDone`). So it needs `heapCheckWhenIdle` (default `true`). The same point ends `set_suspect`. With `heapCheckWhenIdle` false, neither happens. |
+| A reset with a block that stays | No reset at all, also when the block is far from the free runs. The plan resets "each region" and keeps "host blocks", but a block in a region would split it, and it is cheaper and safer not to reset. A block that nothing frees (a leak) stops the reset for the life of the instance (`stats.idleResetsSkipped` counts it). |
+| List check in `idleReset` | Added to the count check (see the table above). `break_table` 19 is the test hook. |
+| A caught double free and `LIVE_BYTES` | A bug: `release` took the bytes off `LIVE_BYTES` before `smallFree` found the double free, so one caught double free made the count too low (H2 says it can only be too high), and the check of 12d failed. Fixed: `smallFree` says if it freed. |
+| Lines for a host event | The host cannot write a line in the middle of an allocation, so JS reads `double_frees` and `dealloc_miss` after each task and each global check and writes one line when one went up. A host event in a task that is not followed by a task or a check is written at the next one. |
+| Cancel lines in a replace | A replace writes its own line with the count, and no line for each task (a replace of an instance with 100 tasks would write 101 lines). The counters count each cancel. |
+| Cause `cancel` of an alarm | A trap in `task_cancel` (a damaged instance): `raise` and `due` as for the other alarms. The task is still cancelled and gets its 503. The host `alarms()` counter does not count it (the host cannot count a call that trapped); `stats.alarms` does. |
+| The retry of a grow | `poolGrow` asks again once, for the needed pages, only when that is fewer pages than the step. When both are denied, one failed allocation writes 2 `grow denied` lines and counts 2 denied grows. |
+| Variant a (an instance per request) | `hostEvents` runs at the end of each request. The idle reset and the end of the suspicion are only for variant b: an instance of variant a ends after its request. |
+| `checkevery-test.mjs`, break T | Before this change it failed in about 40 % of the runs (3 of 6 on the tree before this work, 5 of 12 after the other changes of this work): the damage to the free bit of a used page (`break_table` 2) sometimes gave one page to two tasks, a sum differed, and the check of the alarm replaced the instance while requests ran ("a check failed while requests ran"). T is now `break_table` 15 (the count of used units): no task reads it, so no sum differs. 0 of 12 runs failed after. C is the same. |
+| `bench/worker.js` | `/stats` has `host`: all counters of the host (`runner.counters()`) |
+
+Open points:
+
+| Point | Detail |
+|---|---|
+| Reset with no idle check | With `heapCheckWhenIdle` false there is no reset. Should an app that turns the idle check off still get the reset? It would reset a heap that nobody checked. |
+| A block that stays live | One live JS or host block stops the reset. If talon (12g) shows such blocks, the reset could keep them and join the free runs between them. That is a different design from H2 (a block in a region, "host blocks stay"), so it needs a measurement first. |
+| Cancel lines in a replace | One line with the count, or one line for each task? |
+| Cost of `live_peak` | It adds one compare at each allocation. Measured in 12f: not measurable in the full app (-0.8 % to +2.4 %, most cells within 1 %). Kept. |
 
 ## 5. The CPU limit stops the instance in a task
 
@@ -784,7 +1067,7 @@ Open points of 6e:
 | Point | Detail | Where to settle |
 |---|---|---|
 | Owner check in realloc | Settled in 12b (2026-10-16): a realloc of a block of another task (a stale pointer) counts in `dealloc_miss` and makes a clean trap, before any change. Test `bench/rowner.mjs`. | Done |
-| Leak counter | `handle` calls `taskEnd`, which frees all blocks of the task. So "live bytes 0" also passes when a task leaks. A check build that adds the bytes that `taskEnd` frees to `LIVE_BYTES` gives 0 today. A counter of these bytes shows a leak. | 4g and 4h (M11, H3) |
+| Leak counter | `handle` calls `taskEnd`, which frees all blocks of the task. So "live bytes 0" also passes when a task leaks. A check build that adds the bytes that `taskEnd` frees to `LIVE_BYTES` gives 0 today. A counter of these bytes shows a leak. | Done in 4h: export `leaked_at_end()` (`taskDone` in `hostlib/alloc.zig`, called by `handle`) |
 | `wild.mjs` on the production host | Done in 12a: `bench/wild.mjs`, test exports `set_wild`, `fault_next_wait(4)` and `(5)` | Done |
 
 ### Status of step 6a, 6d (2026-10-16)
@@ -833,20 +1116,21 @@ Choices for 6a and 6d:
 
 | Risk | Where | Now |
 |---|---|---|
-| R1 | `platform/main.roc:12` | The exports list has bench and test functions: `set_copy`, `copy_bench`, `alloc_bench`, `heap_fill`, `walk_bench`, `stats_reset`. `set_copy(0)` on a shared instance made 24 of 64 requests trap (`bench/README.md:182`). |
+| R1 | `platform/main.roc:12` | Done in 7a: `platform/main.roc` lists the production exports only. Before: the list had bench and test functions: `set_copy`, `copy_bench`, `alloc_bench`, `heap_fill`, `walk_bench`, `stats_reset`. `set_copy(0)` on a shared instance made 24 of 64 requests trap (`bench/README.md:182`). |
 | R3 | `platform/main.roc` | Done in 7b: the stack size and the memory are in the header. `hostlib/canary.zig` reads the layout from the linker. |
 | R4 | `host/roc_platform_abi.zig` | The generated glue (975 lines) is committed. 7c: `bench/ci-layout.sh` fails when a nightly gives other glue. |
 
 | Step | Change | Test |
 |---|---|---|
-| 7a | Two export lists: production (`init`, `handle`, `task_abort`, `task_cancel` (3c), `task_slots` (2c), `js_alloc`, `res_free`, `stack_first`, `set_free_mark` (6e), `check_heap` (12d), the log exports, the counter exports (M11, H3), the CPU globals of 5a and `trap_cause` (5b)) and bench (all others, also the test export `fault_next_wait` (4-pre)). One way: a second platform file `bench/platform/main.roc` that adds the bench exports, and a build option that leaves the bench functions out of the production host. | Read the export section of a production build: no bench export. The bench tests still pass on the bench build. |
+| 7a | Two export lists: production (`init`, `handle`, `task_abort`, `task_cancel` (3c), `task_slots` (2c), `js_alloc`, `res_free`, `stack_first`, `set_free_mark` (6e), `set_grow_step` (4b), `check_heap` (12d), the log exports, the counter exports (M11, H3: `heap_used`, `heap_bytes`, `live_bytes`, `live_peak`, `reclaim_walks`, `reclaim_bytes`, `leaked_at_end`, `idle_resets`, `idle_reset_bytes`, `alarms`, `sum_checks`, `double_frees`, `dealloc_miss`), `idle_reset` (4j), the CPU globals of 5a and `trap_cause` (5b)) and bench (all others, also the test exports `fault_next_wait` (4-pre), `leak_next` (4h) and `bad_free` (4g)). One way: a second platform file `bench/platform/main.roc` that adds the bench exports, and a build option that leaves the bench functions out of the production host. | Read the export section of a production build: no bench export. The bench tests still pass on the bench build. |
 | 7b | Put the stack size and the memory settings in the `targets.wasm32` record of the platform header (`initial_stack_size`, `minimum_memory`, `maximum_memory`; read in `roc:src/compile/targets_config.zig:67-74`). `hostlib/canary.zig` gets `STACK_SIZE` from the same build value. Remove the flags from `bench/build.sh`. | Build with a plain `roc build --target=wasm32`. `check-layout.mjs` gives STACK-FIRST with a 1 MB stack. Remove the header field: the stack size changes. |
 | 7c | `bench/ci-layout.sh` makes the glue again and fails on a diff with the committed file. | Change one line in the committed glue: CI fails. |
 
-### Status of step 7 (2026-10-16, 7b and 7c; 7a is open)
+### Status of step 7 (2026-10-16)
 
 | Step | State | Where |
 |---|---|---|
+| 7a | Done | `build.zig` (`-Dbench`), `hostlib/root.zig` (`BENCH`), `host/host.zig` (the `@export` table at the end, `set_sum`), `hostlib/alloc.zig` (`FAIL_AT`), `hostlib/canary.zig`, `platform/main.roc` (production), `bench/platform/main.roc` and `Wait.roc` (bench), `bench/build.sh` (two hosts, `app_prod.wasm`), `bench/exports-test.mjs`, `bench/core.js` (`set_sum` result), `bench/test-all.sh`, `bench/ci-layout.sh` |
 | 7b | Done | `platform/main.roc` (`initial_stack_size: 1048576`, `minimum_memory: 0`), `hostlib/canary.zig` (no `STACK_SIZE`), `bench/build.sh` (no flags), `bench/check-layout.mjs` (`--header`), `bench/mem-limits.mjs` |
 | 7c | Done | `bench/ci-layout.sh` (glue check before `bench/build.sh`) |
 
@@ -889,6 +1173,76 @@ Choices and checks for 7c:
 | Test: change one line of the committed glue | FAIL, exit 1, the diff is printed, and the committed file is not overwritten. |
 | Restore the line | PASS |
 
+### Step 7a: two export lists (2026-10-16)
+
+The two lists (`bench/exports-test.mjs` has the production list as its spec):
+
+| Group | Production (33, `platform/main.roc`) | Bench only (20, added in `bench/platform/main.roc`) |
+|---|---|---|
+| Task | `init`, `handle`, `task_abort`, `task_cancel`, `task_slots`, `res_free`, `js_alloc` | `task_waiting`, `task_saved`, `task_saved_max`, `task_saved_peak`, `task_waits`, `leak_next` |
+| Memory settings | `set_free_mark`, `set_grow_step`, `set_sum`, `set_suspect`, `stack_first` | `set_copy`, `stack_canary_ok` |
+| Check, reset | `check_heap`, `idle_reset` | `break_table`, `poke_wait` |
+| Log | `log_ptr`, `log_len`, `log_clear` | none |
+| Counters | `heap_used`, `heap_bytes`, `live_bytes`, `live_peak`, `reclaim_walks`, `reclaim_bytes`, `leaked_at_end`, `idle_resets`, `idle_reset_bytes`, `alarms`, `sum_checks`, `double_frees`, `dealloc_miss` | `stats_reset` |
+| CPU | `trap_cause`, `__instance_signal`, `__instance_terminated` | none |
+| Fault and wild-write hooks | none | `fail_next_alloc`, `fail_alloc_at`, `fault_next_wait`, `set_wild`, `bad_free` |
+| Benches | none | `alloc_bench`, `heap_fill`, `walk_bench`, `copy_bench` |
+
+How it works:
+
+| Part | Detail |
+|---|---|
+| Header | Two files with the same `targets` record. `platform/main.roc` has the production `exports`. `bench/platform/main.roc` has the production names, then the bench names. A platform header cannot import another, and the platform directory must hold all its files (`roc` refuses a symlink to `Wait.roc`: "import outside package source root"). So `bench/platform/` has its own `Wait.roc`, a copy. `bench/exports-test.mjs` fails when the two headers differ outside the comment lines and the `exports:` line, or when the two `Wait.roc` files differ. |
+| Host | `zig build` makes the production host (`platform/targets/wasm32/host.wasm`). `zig build -Dbench=true` makes the bench host (`bench/platform/targets/wasm32/host.wasm`, ignored by git). `hostlib.BENCH` is the option. The bench exports are plain functions with `callconv(.c)`. A `comptime` table at the end of `host/host.zig` (and one in `hostlib/canary.zig`) exports them only when `BENCH` is true. Each use of a hook in shared code is behind `if (BENCH and ...)`: `FAULT_NEXT`, `WILD_TRAP`, `POKE_OUT`, `LEAK_NEXT`, `FILL`, `FILLED` (in `checkHost`), `WILD_SEED` and `WILD_WORDS` (in `rodataEnd`) and `FAIL_AT` (`hostlib/alloc.zig`, `allocIn`). The compiler drops them from the production host: its object has no symbol of a bench name, and `FILL` (256 KB) is gone: the initial memory of `app_prod.wasm` is 30 pages, of `app.wasm` 34. |
+| Apps | `bench/app*.roc` use `bench/platform/main.roc`. `bench/build.sh` builds both hosts, and makes `bench/app_prod.roc` (generated, ignored by git: `app.roc` with the production platform) and `bench/out/app_prod.wasm`. The glue is made from `platform/main.roc`: the types are the same in both headers. |
+| `set_sum` mode 0 (12b) | `set_sum(m)` now returns a `u32`: 1 when it set the mode, 0 when the host refused it. The production host refuses mode 0 and keeps mode 2. The bench host accepts it. `instanceB` in `bench/core.js` throws at once when `set_sum` gives 0 ("resumeCheck "off" needs the bench host"), so a production runner cannot run with no sums by mistake. |
+| The runner and bench exports | `bench/core.js` and `bench/worker.js` call production names only (all 33 of them are used) and no bench name: nothing had to be made optional. The tests that read bench exports (`task_saved_max`, `stack_canary_ok` and others) read them from bench builds only. |
+
+Tests (nightly 10-12, Node 26.7):
+
+| Test | Result |
+|---|---|
+| `node bench/exports-test.mjs bench/out/app_prod.wasm bench/out/app.wasm` | PASS. Headers: 33 production and 20 bench names. The production build has 33 exports (memory and 33 names), 0 bench names. The production host object has 0 bench names. Requests as `node-test.mjs` on the production build, variants a and b: 400 requests each, `bad` 0, `traps` 4, live bytes 0, 0 alarms, 0 replaces, 0 failed checks, `check_heap` 0 (variant b runs 4 global checks by itself). `resumeCheck: "off"` is refused there. The bench build has 53 exports (memory and 53 names) and accepts "off". |
+| `bench/test-all.sh` (new step "exports-test.mjs") | ALL PASS (about 70 s) |
+
+Revert checks:
+
+| Revert | Result |
+|---|---|
+| A: `break_table` added to the production list in `platform/main.roc` only | The production build fails to link ("symbol exported via --export not found: break_table"). With the old `app_prod.wasm`, `exports-test.mjs` FAIL: "platform/main.roc exports differ from the production list: extra [break_table]" |
+| B: A, and the `BENCH` condition of the export table changed to `true` | The build links. `exports-test.mjs` FAIL, 3 lines: header differs, "bench exports in the production build: break_table", "the production build exports differ from the list", and the 19 bench names in the host object |
+| C: the header is right, the export table is `true` (the bench code is in the production host) | `exports-test.mjs` FAIL: "bench names in the production host object" (19 names). The linker drops the unlisted exports, so only the host object check sees this. |
+| D: `set_sum` accepts mode 0 in the production host | `exports-test.mjs` FAIL: "the production build accepts resumeCheck "off"" |
+| Restore | PASS. `app_prod.wasm` is the same file as before the reverts (cmp) |
+
+Choices I made:
+
+| Question | Answer |
+|---|---|
+| `set_sum` and `set_suspect` in the production list | The 7a row does not name them, and the 12b status table says "Production" for both. JS (`bench/core.js`) calls both, so they are in the production list. |
+| `sum_checks` | The 7a row lists it as a counter export (production). The 12b status table said "Bench". The runner reads it in `hostCounters`, so it is production, and the 12b row is changed. |
+| `stack_canary_ok`, `task_waiting`, `task_saved*`, `task_waits`, `stack_floor` | Bench (not in the 7a production list). `stack_floor` was in no export list: it is now in the bench host only. |
+| The counters `TASK_SAVED_MAX`, `TASK_SAVED_PEAK`, `TASK_WAITS` | Still counted in the production host (3 stores in `waitBegin`). Only their exports are bench. Removing them was not asked. |
+| Way to refuse `set_sum(0)` | A return value (1 or 0) and a throw in JS. Not a trap: a trap in a setter at start gives no message. `set_sum(m > 2)` is not refused (`break_table` 27 and the check of 12d use such a value). |
+| Two header files with a check, not one generated file | A generated header would hide the bench list from `roc check` and from review. The check keeps both files visible. The price: `Wait.roc` is copied (8a must change both, the test says so). |
+| `platform/targets/` and `bench/platform/targets/` | Both ignored by git. Each build has its own `host.wasm`. |
+| Production `app_prod` | `bench/app.roc` as the app (same requests as `node-test.mjs`). One app, not all. |
+| 7a and `bench/ci-layout.sh` | It checks the layout of `app_prod.wasm` and runs `exports-test.mjs`. |
+
+Research builds:
+
+| Build | State |
+|---|---|
+| `research/memmap/build.sh`, then `memmap.mjs` on `app` and `app_deep` | Exit 0 and 0. `build.sh` now uses `zig build -Dbench=true` and `bench/platform/main.roc` (the map needs the test exports). `app` and `app_deep` have the same bytes as `bench/out`. |
+| `research/alloc/build.sh port` | Built. Before this step it did not build: `hostlib/alloc.zig` reads `ask_js` (4b) and the harness `build.zig` had no such option. The harness `build.zig` now has `ask_js` (false) and `bench` (true). The harness platform header moved to `research/alloc/harness/bench/platform/main.roc` and its host goes to `bench/platform/targets/`, because `bench/app.roc` uses the bench platform now (else the build would link the repo host, not the harness host). The old versions (v0 to v7) were not built. |
+
+Open questions:
+
+| Question | Detail |
+|---|---|
+| The 7a row and the 12b table disagree on `sum_checks` | I took the 7a row. If `sum_checks` is bench only, `hostCounters` in `bench/core.js` must read it as optional. |
+| Production `resumeCheck: "off"` | A throw at the start of a variant b runner. 9a (the real shim) must decide what the user sees. |
+
 ## 8. Platform API
 
 The API is `API.md` (2026-10-15). It replaces draft 1 of this section: kind numbers, a `Worker` record and a scripted record for `roc test`. The scripted record cannot work: an `expect` cannot run a function with `!` (`../research/core-shape/`, API.md RF9).
@@ -910,17 +1264,421 @@ The API is `API.md` (2026-10-15). It replaces draft 1 of this section: kind numb
 | 8f | Phase B modules and events (API.md 7, 10; MODULES.md 5 to 13). The event `Manifest` at load, `objectClass` and `entrypointClass` in `js/`, and the method names from the manifest (API.md AQ10, moved from 8b). The manifest also gives the `default` RPC methods and the `handlers` of each class: a JS method only for a handler that the class has (MODULES.md 3). Durable Objects (MODULES.md 7): SQLite-backed classes only, `init!` in `blockConcurrencyWhile`, `alarm!` with `retry_count` and `is_retry`, the alarm calls with `await!` and `Io` twins, `list!`, `delete_all!`, `Object.SqlInfo`, `id!`, `jurisdiction`, the `_with` forms with `location_hint`. RPC (MODULES.md 8): `Rpc.entrypoint` with `fetch!`, the event `EntrypointFetch`, the RPC limits. `Ctx.respond!` in the `Fetch` of a Durable Object (API.md 10.2). The entry points of `queue`, `email` and `tail` go in a major release (API.md 10.1). `Worker.TraceItem` of the `tail` entry (MODULES.md 3). | One conformance route or event for each. Revert as in 8c. A `Queue(a)` constant sends a message that `each!` reads as the same type. A body that is not an `a` is retried, not acked. An `Rpc` constant calls an object method and a service method, and an unknown method throws. A WebSocket stays open more than 30 s after its 101 response. A Worker gives an upgrade request to a Durable Object with `fetch!`, and the client gets the 101 response of the object. Two clients in one room: a message of one reaches the other and not the sender. Revert (no `==` on sockets): the sender gets it too. The object leaves memory (hibernation), and the next message reads the attachment of its socket. An auto response answers `ping` with no event. `connect!` to a WebSocket echo server sends and receives one message. A request with no `Upgrade` gets 426 from the Worker and `NotUpgrade` from `accept!`. A class in Roc with no export, and an export with no class in Roc, each stop the load with the name of the class. Revert (no check): the load passes, and the first call fails. An RPC method that is only in the manifest is on the prototype. A class with `alarm!` has an `alarm` method on its prototype, and a class with no `alarm!` has none: there, `set_alarm!` in a `fetch!` gives `StorageErr`. Revert (the shim always defines `alarm`): `set_alarm!` gives `Ok`, and the alarm runs 7 times (one log line each). An `init!` that waits 100 ms (`Time.sleep`), then creates a table: two `fetch!` calls sent at the same time to a new object both read the table. Revert (`Init` runs with no `blockConcurrencyWhile`): one of them fails with "no such table". An `init!` that gives `Err` while the local KV key `fail-init` exists: a `fetch!` to the object gets `ObjectErr`. The test deletes the key, and the next `fetch!` passes (a new constructor runs `init!` again). Revert (the shim does not throw on `Err` of `init!`): the first `fetch!` passes. An `init!` that waits longer than the `Init` deadline (API.md 10.2, made smaller for the test) is cancelled, and the `fetch!` gets `ObjectErr` with the name of the task. Revert (no `Init` deadline): the `fetch!` waits until Workers resets the object. An `alarm!` that gives `Err` while `retry_count` is less than 2 runs 3 times and logs `retry_count` and `is_retry`: 0 and false, 1 and true, 2 and true. Revert (the shim always gives `retry_count` 0): it runs 7 times. `get_alarm!` after `set_alarm!(t)` gives `t`. Revert (`call!` in place of `await!`): status 2. With a compatibility date before 2026-02-24: a table, a cell and an alarm, then `delete_all!`: the table is gone, the cell gives `NotFound` and `get_alarm!` gives `NotFound`. Revert (no `deleteAlarm` in the program): `get_alarm!` gives the time. Cells `a1`, `a2` and `b1`: `list_with!(self, { prefix: "a" })` gives `["a1", "a2"]`. Revert (the prefix is not sent): `b1` too. A class in a `new_classes` migration (KV-backed): its first event fails with a message that names the class and `new_sqlite_classes`. Revert (no check in the constructor): the message has no class name. `sql_run!` of an insert of 2 rows into a table with no index gives `rows_written` 2. Revert (the module reads `changes` as for D1): `BadData` or 0. A Tail Worker that gets the trace of a fetch that logs `console.log("a", 1)` and throws: `outcome` is `exception`, `event` has the method and url, the log `message` is `["a",1]`, and `exceptions` has one item. Revert (`event` read for each kind, not only fetch): a scheduled trace gives `BadData`. A trace with 2 MiB of logs: the handler gets the item with fewer logs, and the Tail Worker logs one warning. Revert (no limit): the handler gets all logs. `sql!` of 2 MiB of rows gives `TooLarge`, and `sql_with!` with `max_bytes` of 4 MiB gives the rows. Revert (no `pf.pack` limit for object SQL): `sql!` gives the rows. `counters.named("x").id!()` equals `self.id` in the object. Revert (an id made in Roc from the name): they differ. `counters.jurisdiction(Eu).named("x").id!()` in Miniflare gives `ObjectErr` with "Jurisdiction restrictions are not implemented in workerd." Revert (the jurisdiction is not sent): it gives an id. A service binding RPC call to an `rpc` method of the default export gives the reply. Revert (`makeHandler` gives a plain object): the call throws. `Service.fetch!` on a binding with `entrypoint = "Admin"` reaches the `fetch!` of `Rpc.entrypoint("Admin", ...)`, and not the `fetch!` of the Worker. Revert (the shim sends `Fetch` with no name): the `fetch!` of the Worker answers. A callee that gives `Err(Nope(3))`: the caller gets `RpcErr` with the message `Nope(3)`. Revert (the shim throws a fixed text): the message is not `Nope(3)`. The `Fetch` of an object calls `respond!`, then writes a cell: the Worker gets the response before the write, and a later read of the cell gives the value. Revert (`respond!` gives `InvalidState` in an object): the test fails. `connect!` to a server that answers 200 gives `NotUpgrade` (OP7). `Io.race!` of `receive` and `Time.sleep(50)`, with the message sent at 100 ms: the sleep wins, and the next `receive!` gets the message. Revert (the lost branch takes the message): the next `receive!` does not get it. `Message.ack!` of the second message of a batch acks only it (`pf.findById`). `Queue` (MODULES.md 6): `each!` gives `msg.attempts` 1, then 2 after an `Err`. Revert (the module gives the handler a fixed `Message`): 1 both times. `send_batch_with!` of 3 messages with `delay_ms: 1_000` and `retry_all_with!(batch, { delay_ms: 1_000 })`: all 3 come again with `attempts` 2. Revert (the delay option is not sent): Miniflare gets no `delaySeconds` (the shim logs the options). `send_batch!` of 101 messages gives `QueueErr`. `Kv` (MODULES.md 5.2): `get!` of a 2 MiB value gives `TooLarge`, and `get_with!` with `max_bytes` of 4 MiB gives it. Revert (no `pf.readUpTo`): `get!` gives the value. `put_with!` with `metadata: { owner: "a" }`: `get_with_metadata!` gives it typed, `(key.metadata ? |_| Missing).parse()?` of `list!` gives it, and a key with no metadata gives `Err(Missing)` in the field. Revert (metadata not sent): `Err(Missing)`. Typed bytes (MODULES.md MC5): an RPC argument `{ data : Cbor.Bytes, list : List(U8) }` to a JS callee: `data` is a `Uint8Array` and `list` an `Array`. A `Queue.v8` message with a `Cbor.Bytes` field reaches a JS consumer with a `Uint8Array`. Revert (`Cbor.Bytes` with the derived `encoder_for`): `data` is an `Array`. Object SQL: an insert that breaks a `UNIQUE` index gives `Constraint`. Revert (no map): `SqlErr`. `Email.Mail.forward_with!` with an `X-Test` header: the forwarded mail has it (Miniflare). |
 | 8g | Measure: one crossing with programs of 1, 4 and 16 ops, the decode of 200 D1 rows, `D1.all!` (CBOR, typed) against `D1.rows!` (`Js`, no types) for 20 and 200 rows, and `Crypto.SHA256.hash` (builtin, in wasm) against `crypto.subtle.digest` for 1 KB, 64 KB and 1 MB (the size where `digest` is faster, MODULES.md 10), in the platform (wasm), local and on the edge (AQ4, AQ5) | None: a measurement. Numbers in `bench/README.md`. |
 
+### Status of step 8a (2026-10-16)
+
+Done. `bench/test-all.sh` runs all tests below (one known flaky test: see "Open points"). G2 and G3 are closed for the bridge: the app uses `Io` programs and gets `Error(name, message)` (the typed modules are 8c).
+
+| Phase | What | Main files |
+| --- | --- | --- |
+| 1 | `Js` (12 tags, `Js.Ref :: { id : U32 }`, ops, `Js.program`), `Io` (`new`, `sync`, `map`, `run!`, `await!`, `call!`, `both!`, `all!`, `race!`, `start!`), hosted `await!`, `call!`, `native!` in `Host` (not exposed), both headers, the glue with `Js` | `platform/Js.roc:50`, `platform/Io.roc:33`, `platform/Host.roc`, `platform/main.roc`, `host/roc_platform_abi.zig` |
+| 2 | The CBOR profile in Zig over the glue types: size, encode, a check pass then a build pass (a bad input allocates nothing), the bridge (encode, `js_await` or `js_call`, decode), statuses 1 to 5 | `host/cbor.zig:120,209,523`, `host/host.zig:376-447` |
+| 3 | `js_await` and `js_call` with the task id, the interpreter (all ops, `Race` with abort, OP7), the ref table of each task, the pin table, `pf`, the result straight into a `js_alloc` block (`Writer` with `grow`) | `js/bridge.js:21,61`, `js/program.js:126,157,178`, `js/helpers.js:8,37`, `js/values.js`, `js/cbor.js`, `js/tasks.js` |
+| 4 | `Wait.wait!`, `roc_wait`, `js_wait`, `makeWait` and the option `io` are gone. The bench apps use `Io.await!`; the bench runner (`bench/core.js`, `bench/ops.js`) gives the ops `fetch` and `db` that call the `io` of a test | `bench/app*.roc`, `bench/core.js`, `bench/ops.js`, `bench/worker.js` |
+| 5 | The tests of this step, in Node and in workerd | `bench/app_bridge.roc`, `bench/bridge-test.mjs`, `bench/bridge-reverts.mjs`, `bench/bridge-workerd.mjs` |
+
+| Test | File | Result | Revert | Revert result |
+| --- | --- | --- | --- | --- |
+| HD1 | `host/cbor.zig:66` (comptime) | Build passes | Field order of `JsObj` swapped in the glue | Build fails at the assert. With the assert removed too, the build passes (so the check is what catches it) |
+| HD2 | `bench/ci-layout.sh` | PASS on the pinned nightly | `Null` and `Undefined` numbers swapped in the committed glue | FAIL: "host/roc_platform_abi.zig is not the glue of this nightly" |
+| HD3 | `bridge-test.mjs` `hd3` | 29 fixtures equal after Roc to JS to Roc | Decoder reads 22 as `Undefined` and 23 as `Null` | FAIL: `hd3 false`, 3 fixtures differ |
+| HD4 | `hd4-test.mjs`, `hd4/oracle.roc` | 113,306 inputs (every input of 1 and 2 bytes, edge cases, random, mutated, cut): same bytes or both an error | No UTF-8 check in the Zig check pass | FAIL: 336 inputs differ |
+| HD5 | `host/cbor_test.zig` (200,000 random and mutated inputs, every prefix), `cbor-wasm-test.mjs` (68,959 inputs in the wasm32 host) | A value or one fault, no trap | The cut check of `need` compares with the whole input, not the rest | FAIL: native panic "index out of bounds" |
+| HD6 | `cbor_test.zig`, `cbor-wasm-test.mjs` (10,000 decodes), `bridge-test.mjs` `hd6` (1,000 in a task) | Live bytes 0, `leaked_at_end` 0 | One extra `incref` of each list in the decoder | FAIL in all three: 6 native tests leak; wasm32 live bytes 106,825,360; in a task 3,856,000 B leaked at the end |
+| HD7 | `cbor_test.zig`, `cbor-js-test.mjs` | Pass | (in `cbor-js-reverts.mjs`: 61 of 61 caught) | |
+| Same bytes in Zig and JS | `cbor-wasm-test.mjs` | 41 fixtures and 5,000 random values: equal bytes | Zig writes `Undefined` as 0xf6 | FAIL |
+| Packed of 200 rows, one `List(U8)`, `Cbor.parse` | `bridge-test.mjs` `pack` | `rows=200 ids=19900` | (none asked) | |
+| Two refs of one object equal (RS1) | `refs` | `same=true other=false` | A new id for each ref | FAIL: `same=false` |
+| 4 ops, last value, one wait | `four` | 1 wait | (none asked) | |
+| Promise in `call!`: status 2 | `promise` | `PromiseInCall` | No promise check in `runCall` | FAIL: `ok ref` |
+| `Io.both!` of two 100 ms waits | `both` | 1 wait, 104 ms | `Par` runs the branches one after the other | FAIL: 206 to 209 ms |
+| `js_alloc` fails in a wait: status 4 | `oom` | 503 `oom`, no alarm, same instance, live bytes 0 | JS gives status 1; or the host ignores status 4 | FAIL: an unclean trap, not `oom` (both) |
+| Ref table empty after 10,000 tasks with traps and cancels (10c) | `refs10k` | `refsLive` 0, `contextsLive` 0 (8,000 ok, 1,000 traps, 1,000 cancels) | No ref free at a trap | FAIL: refs left |
+| Pinned `CryptoKey` used by a later task | `pin`, `use` | sign and verify ok | (none asked) | |
+| OP7 | `null` | `Get`, `Fields` on null and undefined: undefined; `Call` on null: `TypeError` | No `?.` in `Get` | FAIL: `get=err TypeError` |
+| OP8 race 50/500 | `race` | index 0, 52 ms, 1 wait, the 500 branch aborted by the race | `Race` as `Par`; or no abort of the losers | FAIL: 505 ms; FAIL: the branch saw only the abort of the task end |
+| `Race` with no branch: status 3 | `program-test.mjs` (status 3), `bridge-test.mjs` `race0` (a clean trap of the task) | Pass | (status 3 in `program-test.mjs`) | |
+| `Io.both!` of two `Io.sync` | `bothsync` | Ok | `call!` when each branch is sync (`Io.roc`) | FAIL: `PromiseInCall` |
+| `pf.packEach`, `pf.findById` | `packeach`, `find` | Pass | `findById` gives the first item; `packEach` does not pack | FAIL (both) |
+| `Io.start!` keeps the context | `start` | 1 context live at the response, 0 after | Free the context at the task end | FAIL |
+| In workerd | `bridge-workerd.mjs` | All of the above but `start` and `hd6`; 300 tasks with refs, client resets: refs 0 | `Race` as `Par`; no ref free at a trap | FAIL: 502 ms; FAIL: 150 refs left |
+
+`bench/bridge-reverts.mjs` runs the JS reverts above (11 of 11 caught). The Zig and Roc reverts need a build, so they were done by hand (a build into `.cache/revert`, then the source restored).
+
+Tests that changed what they check:
+
+| Test | Change |
+| --- | --- |
+| `wait-test.mjs` | It tests `js_await` of `bridge.js` (was `makeWait`). Statuses: a throw or a rejection is 1 (was 0), a throw in `js_alloc` is 4 (was 0: a clean OOM trap of that task now), a bad argument block is 3 (new case). Revert (no catch in `js_await`): FAIL |
+| `resume-test.mjs` B | The adopted JS block is the request (a long request, so `id` keeps it), not the body of the first wait: the bridge frees each result block before the resume |
+| `resume-test.mjs` D | The length of the response block goes up by 1 MB (was 64): a result block is 256 B or more, so a small change stays in its room. A change of 64 is now a status 3 `BadResult` and a crash of that task, not an alarm |
+| `checkheap-test.mjs` C2 | The adopted JS block is the request (as B) |
+| `tasktable-test.mjs` 2 | `fail_alloc_at` aims at allocation d - 1 and d (the Wait record, the stack copy), with d from a control run (`alloc_count`, a new bench export). Was 1 and 2: the result block and the program now allocate first. Revert (the Wait record not freed): FAIL at d |
+| `oom-test.mjs` (roc) | `fail_alloc_at(2)`: allocation 1 is now the result block of the empty body |
+| `context-test.mjs` | The ops get `env`, `ctx`, `event` as arguments (the roots of the task), not the task id. Revert (one shared context): FAIL |
+| `handler-test.mjs` | `io` is an unknown option now; the cases "io is not a function" and "no io" are gone |
+| `cpu-test.mjs` 5b B | Same check. `app_wait.roc` waits with `Io.await!([])`: an empty program, so the app still allocates nothing before the wait |
+
+Choices made in 8a (the plan does not say):
+
+| # | Choice |
+| --- | --- |
+| C1 | `Io.await!` and `Io.call!` in place of `Js.await!` and `Js.call!` (API.md 4): no import cycles in Roc |
+| C2 | The argument block is a block of the task, not a host block in the `Wait` record (API.md 4.1 changed) |
+| C3 | A throw in `js_alloc` is status 4. `pf.pinned` gives `undefined` for no entry. `pin` takes `maxAgeMs` as a number. |
+| C4 | Root `signal` (OP3, OP8). A started program keeps the task context until it settles; the 30 s limit is 9c. `writer()` is minimal (8b). No `cloudflare:*` roots yet |
+| C5 | A result block that is not a value: status 3 `BadResult`. A program deeper than 64: status 1 `RangeError` from the host. An integer outside i64: a decode error |
+| C6 | HD4 oracle: a new Roc file `bench/hd4/oracle.roc`; `research/api-probe/Js.roc` stays. HD5: a seeded fuzz, not `std.testing.fuzz` |
+| C7 | `native!` gives status 1 for each op; no Roc module calls it until 8e, so it has no Roc test. Done in 8e: see "Status of step 8e". |
+| C8 | The bench export `alloc_count` (`hostlib/alloc.zig` `ALLOCS`, bench only) |
+| C9 | `bench/app_stack.roc` waits in `wait_n!`, a recursive function, so it is not inlined: `Io.await!` inlined into `down!` made each frame 1,330 B (was 200 B), and 4,000 frames overflowed the 1 MB stack |
+
+Open points:
+
+| # | Point |
+| --- | --- |
+| O1 | Settled in 8e: the bound of the test was wrong, not the code ("Fallback queue in workerd"). Was: `fallback-budget-test.mjs` part 1 is flaky: it failed 3 of 3 runs at load average 4 and 1 of 5 at load average 2 ("the budget went over 32 MB and one instance": 16 instances). Two idle starts in a row with no collection between them go over by two instances. The JS of the budget did not change in 8a. |
+| O2 | Closed in 8b: `LOG_CRASH` is on, and the shim writes the crash text in the log line of the trap. Was: the host does not log the text of a Roc `crash` (`hostlib/roc.zig` `LOG_CRASH` is off), so a status 3 crash ("bad program: ...") shows only as a trap |
+| O3 | In workerd, a request that waits only on a promise with no I/O is cancelled as hung with no abort of `request.signal`. The task then stays until the deadline sweep (3b) |
+| O4 | `ops` must be an object of functions (option check). A D1 binding as an op is an object: give it as a function with methods, or change the check in 8c |
+| O5 | The numbers in `bench/README.md` "Results" are from before 8a (the old wait import) |
+
+### Status of step 8e (2026-10-16)
+
+Done. `bench/test-all.sh` has 45 steps (2 new: `native_test.zig` and `native-test.mjs`) and gives ALL PASS (1 minute 54 seconds). C7 of 8a is closed: `native!` runs the ops of `research/native/`. O1 of 8a is settled (below).
+
+| Phase | What | Main files |
+| --- | --- | --- |
+| 1 | `hostlib/root.zig` imports `native`. `roc_native(op, bytes)` calls `native.call` with the task owner, frees the input list after the call, releases the result block, makes status 4 a clean OOM trap (`cpu.oom()`), and gives the result bytes as a new `List(U8)` of the task. `alloc.taskEnd` calls `native.endTask(allocator, owner, .forget)` first: a return, a trap and a cancel drop the handles. Before an op the host reserves the stack that the op needs (`canary.reserve(native.stackNeed(op))`: 300 KB for zstd, 16 KB for the others). | `host/host.zig` (`roc_native`), `hostlib/alloc.zig` (`taskEnd`), `hostlib/canary.zig` (`reserve`), `hostlib/native/native.zig` (`stackNeed`, `reown`) |
+| 2 | The `Native` module: `Native.zstd_decode!`, `Native.ZstdStream` (`open!`, `open_with!`, `push!`, `close!`), `Native.Blake3` and `Native.Sha256` (`new!`, `update!`, `final!`). Handles are opaque types with a record backing (`{ handle : U32 }`, MC13, MODULES.md 15). Errors are closed tag unions for each function (MC9): `OutputLimit`, `WindowTooLarge`, `BadFrame`, `Truncated`, `Unsupported`, `BadHandle`, `WrongTask`, `TooManyHandles`, `NoTask`, `BadArgument`. Exposed from both platform headers, with equal copies in `bench/platform/` (`exports-test.mjs` checks it). | `platform/Native.roc`, `platform/main.roc`, `bench/platform/` |
+| 3 | The op table, the codes, the caps, `push_limit`, the window limit of 8 MiB and the stack rule in `API.md` 8 | `API.md` |
+| 4 | The tests below | `bench/app_native.roc`, `bench/native-test.mjs`, `bench/native-reverts.mjs`, `bench/test-all.sh`, `bench/build.sh` |
+| 5 | The flaky test: see "Fallback queue in workerd". Cause: the bound of the test, not the code. Under load (`bench/flaky-load.sh`): before 6 of 10, then 8 of 10 and 17 of 20 with the exit-hang flags (O1); after 9 of 10, then 20 of 20 with the flags. | `bench/fallback-budget-test.mjs`, `research/fallback-idle/probe.mjs`, `bench/flaky-load.sh` |
+
+Tests (`node bench/native-test.mjs bench/out/app_native.wasm`; the data is `research/native/data/`; `zstd -d` and the `.sha256` and `hashes.txt` files are the references). Each revert is a real edit of the source, a build, a run and a restore: `node bench/native-reverts.mjs` (`ZIG`, `ROC` set) does all of them in turn and ends with a clean build.
+
+| Test | Result | Revert | Revert result |
+| --- | --- | --- | --- |
+| `decode`: 4 variants of a package and a `roc bundle` package (`roc-parser`) give the bytes of `zstd -d` (SHA-256 and length) | PASS: 122,880 B ×4, 511,488 B | The result copy drops its last byte | FAIL: `decode` (and 10 other tests): the app traps |
+| `limit`: a 149 B archive of 4 MiB of zeros, limit 256 KB | `err OutputLimit`, the peak of live bytes grew by 4,656 B. The control (limit 4 MiB) is `ok 4194304`, peak +8.5 MB (the output and its copy in a Roc list). One byte under the size is `OutputLimit`. | No output limit in `zstd_decode` (1 GB) | FAIL: `limit`: "got ok 4194304 ..., want err OutputLimit" |
+| `hash`: BLAKE3 and SHA-256 of `pkg.tar`, `multi.tar`, `odd.bin`, `empty.bin` in chunks of 64 KB, 1,000 B and 1 B | PASS: equal to `hashes.txt` (BLAKE3 of the official Python package, `sha256sum`) | BLAKE3 and SHA-256 state reset at each update | FAIL: `hash`, `decode`, `stream` |
+| `stream`: chunks of 1, 7, 4,096 and 65,536 B, a pipe archive, `push_limit` 1,000 B | PASS: same bytes as `zstd -d`; `OutputLimit` at the limit | No `push_limit` check in the stream | FAIL: `stream`: "stream push limit: got ok 4194304 ..., want err OutputLimit" |
+| `handles` (3 checks): a closed handle, the 17th handle, a window limit of 16 MiB | `BadHandle` for a `final!` and an `update!` after `final!`, `TooManyHandles` after 16, `BadArgument` | No check of `used` and `gen` in `lookup` | FAIL: `twice`: the second `final!` gives a digest |
+| | | No cap of 16 handles for a task | FAIL: `many`: "opened 20" |
+| | | No window limit check in `zstd_stream_open` | FAIL: `limits`: "window16M=Ok(<opaque>)" |
+| `wrongtask`: two tasks wait, the test gives the slots of A to B (`native_reown`), A uses its handle | A: `WrongTask`. B: `Ok`. | No owner check in `lookup` | FAIL: `wrongtask`: A got `Ok` |
+| `endtask`: 200 tasks that return with 4 handles open, 100 that trap with handles open, 10 that are cancelled in a wait with 5 handles open | PASS: live bytes 0, no slot, no alarm | No `endTask` call in `taskEnd` | FAIL: `endtask` (and `handles`, `wrongtask`, `oom`): the slots stay (64 after the traps), then each new task fails. Live bytes stay 0: the handle blocks are blocks of the task, so the allocator frees them. Only the slots leak. |
+| `oom`: the n-th allocation after a wait fails, n = 1 to 14, in `new!` and `final!` | PASS: 13 clean 503 `oom` traps, no alarm, live bytes 0, no slot, `check_heap` 0 | Status 4 is not a trap | FAIL: `oom`: "k=2: got trap RuntimeError: unreachable, want a 503 oom trap" |
+| `deep`: README decision 3 (below) | PASS | No stack reserve before the op | FAIL: `deep`: "deep 1125 pkg.tar.zst: a body with a broken canary" |
+
+The stack test (README decision 3). `down!` of `bench/app_native.roc` is the recursion of `bench/app_deep.roc` (a wide record at each level) and calls `zstd_decode!` of `pkg.tar.zst` at depth 0. The body holds the length and the first 4 bytes of the SHA-256 of the output, so a wrong decode changes it. The test finds the first trap depth, then runs every depth from 100 below to 100 above it. Each result is the right body or a clean trap (no alarm, `check_heap` 0, live bytes 0, no slot, the next request is right, the canary is whole).
+
+| Recursion | First depth that traps | Notes |
+| --- | --- | --- |
+| Plain (no `native!`) | 1,555 | About 666 B of shadow stack for each level. Bodies at 1,541 to 1,554 come back with a broken canary: no allocation runs at the bottom, so nothing checks it, and nothing is below the stack (stack-first). The platform did that before 8e. `check_heap` gives 12 (constant data) after such a body, and the runner replaces the instance. |
+| With `zstd_decode!` at depth 0 and no reserve | 1,126 | Bodies at 1,121 to 1,125 came back right, with a broken canary (the 274 KB frame of the decoder is below the last allocation, so no check ran). `check_heap` gave 12 after each, and the runner replaced the instance. Not clean: the test says never damage. |
+| With `zstd_decode!` and `canary.reserve` (300 KB) | 1,066 | Every depth from 966 to 1,166 is right with a whole canary, or a clean trap. 216 right and 211 clean traps in the test. The reserve costs 60 levels (about 40 KB) against the measured 1,126. |
+
+So the 274 KB of stack does not break the platform, with a check of 6 lines before the call (`canary.reserve`). A copy of the std decoder with heap buffers is not needed. The depth of a task that calls `zstd_decode!` is about 490 levels of this recursion (330 KB) less than a task that does not.
+
+Choices made in 8e (the plan does not say):
+
+| # | Choice |
+| --- | --- |
+| C1 | The functions are `zstd_decode!` and not `zstd_decode`: the hosted `native!` is effectful, so a pure function cannot call it. No `Io` twin (MC3 is for a wait, and Native does not wait). API.md 7 already names `zstd_decode!`. |
+| C2 | `Native.zstd_decode!` takes the limit as a `U64` (as in the task) and clamps it to the u32 of the op. Limits of `open_with!` are `window_limit_bytes` and `push_limit_bytes` (MC4, MC10), 0 or absent is the default. |
+| C3 | Each function has its own closed error union. A code that `Native.roc` does not expect (`wrong_kind`, `out_of_memory`) is a crash, a platform bug. |
+| C4 | `canary.reserve(need)` before an op (the smallest fix that keeps decision 3 true: "never damage"). The need is 300 KB for `zstd_decode` and `zstd_stream_push` (274 KB measured, 10 percent more) and 16 KB for the others. |
+| C5 | Bench-only exports `native_slots` (handles in use) and `native_reown(from, to)`. A Roc app cannot make a handle of another task (the type is opaque, and no API gives a number), so `native_reown` gives the slots of one task to another. The test then checks the check of the owner in `lookup`: a handle that a task made is used by another owner. |
+| C6 | `fallback-budget-test.mjs` runs with `--no-concurrent-sparkplug --no-concurrent-recompilation` in `test-all.sh`: see the open point. |
+
+Open points:
+
+| # | Point |
+| --- | --- |
+| O1 | `fallback-budget-test.mjs` (and any Node run with `--expose-gc` that ends with `process.exit`) hangs at exit in about 1 of 12 runs: 5 hangs in 60 runs. gdb shows a V8 shutdown deadlock: the main thread is in `NodePlatform::Shutdown` and joins the worker threads. Two workers (a concurrent Maglev job and a concurrent Sparkplug job) wait in `CollectionBarrier::AwaitCollectionBackground` for a collection that nobody runs any more. With `--no-concurrent-sparkplug --no-concurrent-recompilation` (and with `--single-threaded`): 0 hangs in 60 runs. The two flags are in `test-all.sh` and `flaky-load.sh` for this test. `cancel-test.mjs` and `budget-test.mjs` also use `--expose-gc` and did not hang, but they were not run in a loop. |
+| O2 | The stack reserve of 300 KB is a constant of the platform. A new zstd version or a deeper decoder changes it: `research/native/README.md` 7 says how to measure it (`harness/sizes.sh`). The `deep` test finds a reserve that is too small: a body with a broken canary. |
+| O3 | The test name `wrongtask` uses `native_reown`, not a real second task that holds a number of the first. No Roc code can do that. If the manager wants that, the handle types need a way to make a handle from a number (a change to `Native.roc`). |
+
+### Status of step 8b, first half (2026-10-16)
+
+Done: the entry, the `Worker` wrapper, `Request`, `Response` and `Body` for buffered bodies, `fetch`, `scheduled` and `Other` in `js/`, and the crash text (O2 of 8a). G1 and G4 are closed for `fetch` and `scheduled`. The second half of 8b (below) is not started. `bench/test-all.sh` gives ALL PASS in 2 minutes 11 seconds: 47 step lines (44 before 8b, 3 new: `roc test platform/main.roc`, `entry-test.mjs`, `entry-workerd.mjs`).
+
+```mermaid
+flowchart LR
+    W["Workers: fetch, scheduled, other names"] --> J["js/index.js: the class of makeHandler<br/>js/events.js: event as a JS value"]
+    J -->|"CBOR (J1 to J7)"| H["host/host.zig handle:<br/>decode, roc_event, encode"]
+    H --> E["platform/Entry.roc:<br/>Js to Worker.Event"]
+    E --> A["app event!<br/>(Worker.event! of the handlers)"]
+    A --> O["Worker.Outcome to Js"]
+    O -->|"CBOR, host block"| J2["js/host.js readOutcome, res_free at once"]
+    J2 --> R["Response, a throw, or the value of Reply"]
+```
+
+| Part | What | Main files |
+| --- | --- | --- |
+| Entry | `requires { event! : Worker.Event => Worker.Outcome }`, `provides { "roc_event": event_for_host! }`, both headers. `event_for_host! : Js => Js` turns the `Js` event into `Worker.Event` and the outcome into `Js` (`Entry`, not exposed). `handle!` is gone. | `platform/main.roc:2-5,35`, `platform/Entry.roc:23,34`, `bench/platform/` (copies) |
+| Host | `handle(ptr, len, id)` decodes the event block with the 8a codec into a `Js` value of the task, calls `roc_event`, encodes the outcome into a host block `[len][CBOR]`. The event block stays until the task ends (choice C2). A block that is not a value is a log line and a clean trap (`badEvent`). | `host/host.zig:515,541` |
+| Crash text (O2 of 8a) | `LOG_CRASH` is on: a `crash` writes its text to the log of 6a (owner 0) before the trap. The runner gives it as `crash` in the trap result, and the shim writes it in the log line of the trap. | `hostlib/roc.zig:65`, `js/runner.js:164`, `js/index.js:43` |
+| Types | `Worker.Event` (all tags of API.md 10.1), `Worker.Outcome`, `Worker.Scheduled` with `no_retry!`, `Worker.TraceItem`; the payload types of phase B: `Queue.Batch`, `Queue.Message`, `Email.Mail`, `Object.Event`, `Object.Socket`, `WebSocket.Message`, `WebSocket.Closed` (types only) | `platform/Worker.roc:23,37,46,59`, `platform/Queue.roc`, `platform/Email.roc`, `platform/Object.roc`, `platform/WebSocket.roc` |
+| `Worker` wrapper | `Worker(e) := { fetch! ?:, scheduled! ?:, queue! ?:, email! ?:, tail! ?:, other! ?: }` and `event!`: a missing field gives `Unhandled`, an `Err(e)` gives `Failed(Str.inspect(e))`. `Rpc`, `EntrypointFetch`, `Object` and `Manifest` give `Unhandled` until 8f. | `platform/Worker.roc:13,72` |
+| HTTP | `Request` (with `Request.Cf`), `Response`, `Body` of MODULES.md 4 with `Method` and `Header` of `roc-lang/http` 2.0.0 (a package of the platform). The reads of `Empty`, `Text` and `Bytes`. A `Stream` read gives `BodyErr(NotSupportedError)` until the second half. 8 pure `expect`s. | `platform/Body.roc:8,49`, `platform/Request.roc:8,17`, `platform/Response.roc:8` |
+| JS | `makeHandler` gives a subclass of `WorkerEntrypoint` with `fetch` and `scheduled`, and one method on the prototype for each name of the option `other`. The static `runner`. The option `requestText` is gone, `other` is built. `cloudflare:workers` resolves in workerd and Wrangler; Node tests import the shim through `bench/cf-node.mjs` (a resolve hook to `bench/cf-workers-stub.mjs`). | `js/index.js:29,51,74,88`, `js/events.js:21,31,37,45,55`, `js/options.js:33` |
+| Runner | `run(event, ro)` takes the event as a JS value and gives `{ outcome }` (was `run(text)` and `{ body }`). `encEvent`, `eventBytes`, `readOutcome` replace `enc0` and `readRes`. | `js/runner.js:173,269,471`, `js/host.js:27,89` |
+| Bench | Each bench app is `app [event!]`: the request text is the body of a `Fetch` event and the answer is the body of `Respond` (`bench/check.js` `benchEvent`, `benchBody`). `bench/core.js` `makeRunner` keeps `run(text)` and `body` for the tests. `eventBlock`, `outcomeBody` for the tests that call `handle` with no runner. `bench/worker.js` puts the text of the URL in the body of a new request with the signal of the client request. The configs list `js/events.js`. | `bench/app*.roc`, `bench/core.js`, `bench/check.js`, `bench/worker.js`, `bench/bridge-worker.js`, `bench/config-*.capnp` |
+
+Tests (`bench/app_events.roc`; Node: `node bench/entry-test.mjs bench/out/app_events.wasm`; workerd: `WORKERD=... node bench/entry-workerd.mjs`, config `bench/config-entry.capnp`, port 8135). Miniflare is not installed. workerd does not serve `/cdn-cgi/local/scheduled`: Miniflare serves it from its entry worker. So `bench/entry-worker.js` is a copy of that entry (`miniflare/src/workers/core/scheduled.ts`): `env.APP.scheduled({ scheduledTime, cron })` through a service binding with the flag `service_binding_extra_handlers` (workerd needs `--experimental` for it), then `{ outcome, noRetry }` as JSON, status 200 for `ok`, else 500. The reverts: `node bench/entry-reverts.mjs` (env `ZIG`, `ROC`, `WORKERD`) makes each edit, runs the tests, and restores the file (11 of 11 caught, 42 s).
+
+| Test | Node | workerd | Revert | Revert result |
+| --- | --- | --- | --- | --- |
+| The default export of `makeHandler` is a subclass of `WorkerEntrypoint` (stand-in in Node), with its methods on the prototype | PASS (1) | the class serves all tests | `class Handler {}` (no `extends`) | FAIL: Node 1; workerd does not start (it stops at load with a native stack trace) |
+| Binary body 0x00 to 0xFF round trip (POST /echo) | PASS (2) | PASS (1) | The shim sends the body as text (`request.text()`): the old `Str` | FAIL: 512 bytes back (U+FFFD for each byte above 0x7F), Node 2, workerd 1 |
+| 100 headers, status 404 | PASS (3, 4) | PASS (1) | (none asked) | |
+| JSON in and out (`Request.json!`, `Response.from_json`) | PASS (4b) | | (none asked) | |
+| `GET /cdn-cgi/local/scheduled?cron=*/5+*+*+*+*&time=1700000000000&format=json` reaches `scheduled!` with that cron and `time_ms`: outcome `ok`, status 200 | PASS (5a: a fake controller) | PASS (2a) | `time_ms` from `Date.now()` | FAIL: `WrongTime(1792161632896)`, Node 5a, workerd 2a |
+| `Err`: not `ok`, status 500, `noRetry: false`, a log line with the error | PASS (5b) | PASS (2b: `exception`) | The shim calls `noRetry` on each `Err` | FAIL: `noRetry: true`, Node 5b, workerd 2b |
+| `no_retry!` before `Err`: `noRetry: true` | PASS (5c) | PASS (2c) | `no_retry!` calls `noretry` (Roc, a build) | FAIL: `noRetry: false`, Node 5c |
+| No `scheduled!`: not `ok`, `noRetry: false` | PASS (5d) | PASS (2d) | (in 5b: the same shim path) | |
+| `queue` in `other` reaches `Other`; the `Ok(v)` of `other!` is the value of the JS caller | PASS (6: `h.queue(payload)` gives `{ kind, got: payload }`) | PASS (3: a queue event of `env.APP.queue` gives the outcome `ok`) | No method for the names of `other`; the method gives `undefined` for `Reply` | FAIL: Node 1 and 6, workerd 3 (`exception`); FAIL: Node 6 |
+| `Unhandled`: a 500 and a log line | PASS (7) | PASS (4a) | No log line for `Unhandled` | FAIL: Node 7, 8, workerd 4a, 4b |
+| `Err`: `Failed`, a 500 with no body, a log line with the error (`fetch: failed: Boom(42)`) | PASS (8) | PASS (4b) | The log line drops the message | FAIL: Node 5b, 5c, 8, workerd 2b, 2c, 4b |
+| A `crash`: its text in the log line (`fetch: trap: the crash text of app_events`) | PASS (9) | PASS (4c) | `LOG_CRASH` off (Zig, a build) | FAIL: Node 9 (the line has `RuntimeError: unreachable`) |
+| `Request.Cf` in the tag form: a field that is set is `Ok`, an absent or null field is `Missing` | PASS (10) | each request (local workerd sets `request.cf`) | The shim writes `null` for a field that is not set | FAIL: Node 10 (the decode in `Entry` crashes); workerd 1 and 4: local workerd gives each request a `request.cf` with fields that are not set |
+| The pure `expect`s of `Request` and `Response` (`roc test platform/main.roc`, a new step of `test-all.sh`) | 10 of 10 | | `segments` keeps empty parts; `query` does not read `+` as a space | FAIL: 1 of 10 each (by hand) |
+| Live bytes, tasks and alarms at the end of the Node test | 0, 0, 0 | | | |
+
+`bench/log-test.mjs` checks the crash text too (below).
+
+Tests that changed what they check:
+
+| Test | Change |
+| --- | --- |
+| All tests of the bench runner (`bench/core.js` `makeRunner`) | They send their text as the body of a `Fetch` event and read the body of `Respond`. The bench apps answer the same text, so the checks of each test are the same. |
+| `log-test.mjs` | Stronger: the 200 crash lines of level 0 (8a O2) are counted, and each crashed request has `crash` with its text. Before, a crash wrote no line. |
+| `resume-test.mjs` B, `checkheap-test.mjs` C2 | The adopted JS block is the event block (the CBOR of the request), not the request text. Same check: it stays until the task ends (choice C2). |
+| `wait-test.mjs`, `trapclean-test.mjs`, `tasktable-test.mjs` part 1, `cpu-test.mjs` 5c | They call `handle` with an event block (`eventBlock`) and read the outcome (`outcomeBody`). `cpu-test.mjs` 5c passed with raw text after the change too, but for the wrong reason: the decode of the text trapped before the wait that `fault_next_wait(3)` breaks. With the event block, the trap is at the wait again. |
+| `tasktable-test.mjs` part 2 | Same check. The control run counts 21 allocations (`d`), the decode of the event adds some before the first wait. |
+| `handler-test.mjs` | `makeHandler` gives a class: the test makes an instance with `(ctx, env)`. `other` is built: three bad values of it throw; `requestText` is an unknown option. The good options case also sets `other`. |
+| `context-test.mjs` | One instance of the class for each request, with its `ctx` and `env` (as Workers does). Same checks. |
+| `handler-test.mjs` 3 (`resumeCheck: "off"` on the production build throws at `makeHandler` time) | Same check, but the cause is the export list (choice C3), not the first instance. The 9a revert "the runner starts at the first request" is now the design: workerd forbids random values at global scope. |
+
+Choices made (the plan does not say):
+
+| # | Choice |
+| --- | --- |
+| C1 | The entry types are `Worker.Event` and `Worker.Outcome` (MODULES.md 3), so the header says `requires { event! : Worker.Event => Worker.Outcome }`: a platform header names the module of a type. API.md 10.1 writes `Event => Outcome`. |
+| C2 | The host keeps the event block until the task ends, as the request block before 8b, so a task has an adopted JS block in the sums of its waits (12a, `resume-test.mjs` B). Cost: the event bytes stay in the task while it runs (a buffered body twice; small when the second half sends a body as a `Stream`). Freeing it after the decode is the other option. |
+| C3 | workerd throws for `crypto.getRandomValues` at global scope ("generating random values ... not allowed within global scope"), and `export default makeHandler(app, {})` runs there. So the runner and its first instance start at the first event (or a read of `Handler.runner`). `resumeCheck: "off"` on a production host still throws at `makeHandler` time: the shim reads the export list (`isBenchHost`: a bench host exports `stats_reset`). |
+| C4 | The event and the outcome cross as `Js` trees with the shapes of the table in `platform/Entry.roc` (and API.md 10.1, "As built"), not as `Packed`: the platform has no `Cbor` module yet (8c). `Request.Cf` uses the tag form `{ Ok: v }` / `{ Err: "Missing" }` in the tree, so a move to `Packed` keeps the shim format. |
+| C5 | Log lines of the shim: `<entry>: failed: <message>`, `<entry>: unhandled: the app has no handler for it`, `<entry>: the outcome <x> is not for this event`, `<entry>: trap: <crash text or error>` (not for a shed or a cancel, which have their own lines). They go to the option `log` (default `console.warn`). |
+| C6 | `scheduled`: each outcome but `Done` (also `Respond` and `Reply`) and a trap is a log line and a throw. A method of `other`: only `Reply` returns; each other outcome and a trap is a log line and a throw. `fetch`: an outcome that is not `Respond` is a log line and a 500 with no body. |
+| C7 | `Worker.Scheduled.no_retry!` drops a throw of `noRetry` (it has the type `=> {}`): only a `Scheduled` event has a controller as its root `event`. |
+| C8 | The payload types of phase B (`Queue.Batch`, `Email.Mail`, `Object.Event`, `WebSocket.Message`, ...) are types only. `Email.Mail` is opaque with `headers : List(Header)`, so 8f can change its fields and add `header`. `Queue(a)`, `Object`, `WebSocket` and `Email` have a placeholder backing (opaque). `TraceItem` has `parser_for : _`; no code parses it yet. |
+| C9 | `Worker(e)` has no `rpc`, `entrypoints` and `objects` fields yet (8f): an optional field added later does not break an app. |
+| C10 | `Method` and `Header` come from the `roc-lang/http` 2.0.0 release URL in `packages` of both headers (AQ2). `Method` has no parser, so `Entry` maps the method text (an unknown one is `Unknown(text)`). |
+| C11 | `Body.text!`, `bytes!` and `json!` apply the limit (`default_max`, MC11) to `Text` and `Bytes` too: a body over the limit is `TooLarge`. `query` percent-decodes and reads `+` as a space. `cookie` reads the `Cookie` header. |
+| C12 | `Response.from_http` and `to_http!` (MODULES.md 4) are not built: no package of the platform uses `http` types yet. |
+| C13 | Node resolves `cloudflare:workers` with a resolve hook (`module.registerHooks`) in `bench/cf-node.mjs`, which imports the shim after the hook exists. |
+
+Left for the second half of 8b (the agent after this one). Done in the second half (status below), except the 101 response with `webSocket` (8f):
+
+| Item | Plan text |
+| --- | --- |
+| `Ctx.respond!` and its rules (API.md 10.2); `Ctx.pass_through!`; `Ctx.wait_until!` and 9c | "Work after `respond!` runs after the response. A second `respond!` gives status 1. A task that runs past 30 s after `respond!` is cancelled." "After `Ctx.pass_through!`, a handler that gives `Err` makes the `fetch` handler throw. Revert (always a 500): the `fetch` handler gives a 500. `pass_through!` in a `Scheduled` event gives `InvalidState`." "In workerd, a read of the request body after `respond!` gives `BodyErr`." And the tests of 9c. |
+| `Body.writer!` (and the type `Body.Writer`) | "A `Body.writer!` response: the client gets the first chunk before the task writes the second. Revert (the shim reads the stream to its end before it responds): the client gets all chunks at once." |
+| `compress!`, `decompress!` | "`compress!` with `Gzip` and `Deflate` gives bytes that Node `zlib` decodes to the input, and `decompress!` of them gives the input. Revert (`decompress!` with the wrong format name): the test fails." (`Body.Format` exists.) |
+| `Stream(Ref)` bodies, 10a, 10b | The request body as a `Stream` (`js/events.js` `bodyIn`), the `Stream` arm of `Body.bytes_with!` (`platform/Body.roc:49`), a `Stream` in `Respond` (`Entry` already writes it as a ref, `responseOf` already passes it), `chunk!`, `tee!`, `sha256!`, the 101 response with `webSocket` (`responseOf` sets `webSocket` when the outcome has it) |
+| `respond` in the task table | `js/tasks.js` `respond` and `bodyComplete` exist (deadlines of API.md 10.2); nothing calls them yet |
+
+Open points:
+
+| # | Point |
+| --- | --- |
+| O1 | `Worker.TraceItem` has `parser_for : _`, but `Header` of `roc-lang/http` has no `parser_for`. A parse of a `TraceItem` (8f) can fail to compile. Then the field takes `(Str, Str)` pairs or a platform type. |
+| O2 | `service_binding_extra_handlers` is experimental in workerd (`--experimental`). Miniflare sets the same flag for its entry, so the path is the same, but a workerd update can change it. |
+| O3 | The bench apps get their text through a `Fetch` event now, so a request costs a decode of the event (a few strings and one list) more than before. The numbers in `bench/README.md` "Results" are older still (O5 of 8a). |
+
+### Status of step 8b, second half (2026-10-16)
+
+Done: stream bodies (10a, 10b), `Body.chunk!`, `tee!`, `sha256!`, `writer!` and `Body.Writer`, `compress!` and `decompress!`, the module `Ctx` (`respond!`, `pass_through!`, `wait_until!`) with the rules of API.md 10.2, and 9c. The 101 response with `webSocket` is not built: it needs `WebSocket.accept!` (8f). `bench/test-all.sh` gives ALL PASS in 2 minutes 34 seconds: 49 step lines (47 before, 2 new: `stream-test.mjs`, `stream-workerd.mjs`).
+
+```mermaid
+flowchart LR
+    R["fetch(request)"] -->|"request.body: a ref (10a)"| T["task: event!"]
+    T -->|"Body.bytes_with!, chunk!: pf.readUpTo, pf.chunk<br/>(JS checks the limit before the copy)"| W["bytes in wasm"]
+    T -->|"Ctx.respond!: pf.respond"| E["the Response to Workers now"]
+    E --> C["ctx.waitUntil(the rest of the task)"]
+    T -->|"Body.writer!, write!, close!"| S["TransformStream: the response streams"]
+    T -->|"Ctx.wait_until!: pf.spawn + ctx.waitUntil"| P["started program: the context stays<br/>until it settles or the waitUntil limit"]
+```
+
+| Part | What | Main files |
+| --- | --- | --- |
+| Request body | `bodyIn` gives `request.body`: it crosses as a ref of the task, `Stream(Ref)`, with no copy. `bench/worker.js` sends the text of the bench app in the header `x-bench-text` (no body). `app.roc` reads the header, else the body (a stream: `req.text!()`, one wait). | `js/events.js` (`bodyIn`), `bench/app.roc`, `bench/worker.js` |
+| `Body` | The `Stream` arm of `bytes_with!` (`pf.readUpTo`), `chunk!` (`pf.chunk`), `tee!` (`tee()` on the ref), `sha256!` (`pf.sha256`, `crypto.DigestStream`; the builtin `Crypto.SHA256` for bytes in wasm), `writer!`, `Body.Writer` (`write!`, `write_text!`, `close!`), `compress!`, `decompress!` (`pf.transform`) | `platform/Body.roc`, `js/helpers.js` |
+| `Ctx` | `respond!` (`pf.respond`), `pass_through!` (`pf.passThrough`), `wait_until!` (`Start` of `pf.spawn`, then `ctx.waitUntil`, one `call!`) | `platform/Ctx.roc`, both headers (`exposes`), `js/helpers.js` |
+| Entry | `fetch` gives the task the hooks (`kind`, `ctx`, `respond`). After `respond!` it returns that response at once and gives the rest of the task to `ctx.waitUntil`. After `pass_through!`, `Failed` and a trap are a throw. `scheduled` and the `other` methods give no `respond` hook. | `js/index.js`, `js/runner.js` (`hooks`, `t.ok`) |
+| Task table | `respond(t, open)` from `pf.respond`, `bodyComplete(t)` from `pf.close`, a cancel `stream` when the reader of a writer stream cancels it, open writers closed (or aborted after a trap or a cancel) at the end of the task, and the `waitUntil` limit for the context of an ended task with a started program (`lingerUntil`, `sweep`, `contextsExpired`) | `js/tasks.js`, `js/helpers.js` |
+| 3 open point | The local facts (below and in section 3) | `research/stream-cancel/` |
+
+Tests (`bench/app_stream.roc`; Node: `node bench/stream-test.mjs bench/out/app_stream.wasm`; workerd: `WORKERD=... node bench/stream-workerd.mjs`, `bench/config-stream.capnp`, port 8136). The test ops (`makeHandler(module, { ops })`): `sleep(ms, signal)` (no `Time` module yet, and Node has no `scheduler`), `mark(id, text)`, `put(key, stream)`, `boom()`, `one()`. The reverts: `node bench/stream-reverts.mjs` (env `ROC`, `WORKERD`) makes each edit, runs both tests (a test that hangs is stopped at 90 s), and restores the file (18 of 18 caught, 5 min 12 s).
+
+| Id | Test | Node | workerd |
+| --- | --- | --- | --- |
+| `10a` | A 50 MB body (chunks of 64 KiB, made when the reader pulls) through `Response` as a stream (`Response.from_body(200, ..., req.body)`): the bytes come back, wasm memory grows by less than 1 MB | PASS: 0 B | PASS: 0 B |
+| `10b` | The first 1 KB of a 50 MB body with `chunk!`, and `bytes_with!` with `max_bytes` 1,024: wasm memory grows by less than 1 MB | PASS: one chunk of 65,536 B, 128 KB (2 chunks pulled), `TooLarge` with 0 B | PASS: one chunk of 4,096 B (workerd chunks), `TooLarge`, 0 B |
+| `tee` | `tee!` of 100,000 B: both read the same bytes, and a read of the first body again is `BodyErr(TypeError)` (RS3) | PASS | PASS |
+| `sha` | `sha256!` of a stream and of the bytes in wasm equal the SHA-256 of Node | PASS (the fallback: `subtle.digest`) | PASS (`crypto.DigestStream`) |
+| `compress` | `compress!` with `Gzip` and `Deflate`: Node `zlib` decodes the output to the input; `decompress!` of it and of the `zlib` output gives the input | PASS | PASS (gzip and an inflate) |
+| `after` | `respond!`, then a wait of 100 ms, then a mark: the response comes first, the mark after (in `ctx.waitUntil`) | PASS | PASS |
+| `twice` | A second `respond!` gives `InvalidState` | PASS | |
+| `scheduled` | `respond!` and `pass_through!` in a `Scheduled` event give `InvalidState` | PASS | |
+| `pass` | `pass_through!`, then `Err`: the `fetch` handler throws and `passThroughOnException` ran. The same with a `crash`. | PASS | |
+| `deadline` | After `respond!` with a `Bytes` body (the limit at 100 ms, requests every 25 ms): a wait of 300 ms is cancelled | PASS | |
+| `writer` | `Body.writer!`, 4 chunks, 100 ms after each, then `close!`, then a wait of 400 ms (the limit at 100 ms): the client gets the chunks at 2, 102, 202, 302 ms, the stream is whole (not cancelled while open), and the wait after `close!` is cancelled 113 ms after it | PASS | PASS (150 ms gaps: 2, 154, 305, 457 ms) |
+| `closed` | `write!` after `close!` gives `BodyErr(TypeError)` | PASS | |
+| `cancel` | The reader cancels the stream after the first chunk: the task is cancelled (reason `stream`) at once (2 ms) | PASS | (see `away`) |
+| `late` | A read of the request body 100 ms after `respond!` gives `BodyErr`: the log line `fetch: after respond: failed: BodyErr({ message: "Can't read from request stream after response has been sent.", name: "TypeError" })` | (Node does not end the body) | PASS |
+| `waituntil` | `wait_until!` of a wait of 100 ms, then a mark: one promise in `ctx.waitUntil`, the context stays (1) at the response, the mark comes after it, then 0 contexts | PASS | PASS (the mark after 400 ms) |
+| `started` | A started program waits 100 ms (with the signal of its task), then puts the `Stream` body of the request (300,000 B) after its task returned: the put is done with the right SHA-256, no log line, then 0 refs and 0 contexts | PASS | |
+| `startlog` | A started program that throws: one log line (`started program failed: task 26: TypeError: boom of the test`). One whose reader gives `Err(PreconditionFailed)`: no log line | PASS | |
+| `linger` | The `waitUntil` limit (100 ms): the context of a started program that waits 400 ms is freed at 103 ms (the sweep of a request), its wait sees the abort, the mark does not come | PASS | |
+| `away` | A raw client resets the socket after the first chunk of an open writer stream: the task is cancelled by `request.signal` (the 3 open point) | | PASS |
+| `end` | Live bytes, tasks, refs, contexts and alarms are 0 at the end | PASS | PASS |
+
+Revert checks (`node bench/stream-reverts.mjs`: each one a real edit, a run of both tests, and a restore; 18 of 18 caught, 5 min 12 s). The ids are the ids of the table above.
+
+| Revert | Must fail | Result |
+| --- | --- | --- |
+| 10a: the request body is copied into wasm (`arrayBuffer()`, not a stream) | Node and workerd `10a` | FAIL: Node, wasm memory grew by 102,760,448 B; workerd, an OOM trap (18 B came back). Also `10b`, `tee`, `started`, and in workerd `sha`, `compress`, `after`, `late`. |
+| 10b: `pf.chunk` gives the whole rest of the stream (copy all) | Node and workerd `10b` | FAIL: `chunks=1 bytes=52428800`; workerd an OOM trap |
+| 10b: `bytes_with!` of a stream reads it all into wasm and Roc checks the length (Roc, a build) | Node `10b` | FAIL: wasm memory grew by 104,988,672 B; workerd an OOM trap |
+| `decompress!` with the wrong format name | Node and workerd `compress` | FAIL: 11 B (an error text) in place of the input |
+| `respond!` gives no response at once (the shim responds at the task end) | Node and workerd `after`, workerd `late` | FAIL: the mark came before the response; the read after `respond!` gave the body. workerd `writer` waited forever (stopped at 90 s). |
+| A second `respond!` is allowed | Node `twice` | FAIL: `second Ok` |
+| `respond!` in any event (no check of the hook) | Node `scheduled` | FAIL: a trap, `Ctx.respond!: TypeError: h.respond is not a function` |
+| `pass_through!` in any event (no check of the kind) | Node `scheduled` | FAIL: `failed: NotInvalidState` |
+| `pass_through!`: an `Err` always gives a 500 | Node `pass` | FAIL: status 500 |
+| `respond!` does not tell the task table (no 30 s limit after it) | Node `deadline` | FAIL: not cancelled, the mark `done` came. Also `writer`. |
+| The shim reads the stream to its end before it responds | Node and workerd `writer` | FAIL: the chunks came at once (at 405 ms, at 607 ms) |
+| The limit starts at `respond!` (also for an open writer stream) | Node `writer` | FAIL: `chunk 0`, `chunk 1`, then the stream broke (the task was cancelled while it wrote) |
+| No cancel when the reader cancels the stream | Node `cancel` | FAIL: not cancelled (the task ended 51 ms later with `BodyErr`) |
+| No `request.signal` for the task | workerd `away` | FAIL: the writer task was not cancelled when the client went away (it waits forever) |
+| `wait_until!` does not call `ctx.waitUntil` (Roc, a build) | Node and workerd `waituntil` | FAIL: Node, 0 promises in `ctx.waitUntil`; workerd, the mark never came (the timer stops with the response) |
+| The context of a task is freed at its end | Node `started` | FAIL: the signal of the started program aborted, one log line, the put not done. Also `waituntil`, `linger`. |
+| No `waitUntil` limit for the context of a started program | Node `linger` | FAIL: not freed, the mark `started` came at 400 ms |
+| A started program that throws gives no log line | Node `startlog` | FAIL: no line |
+
+Tests that changed what they check:
+
+| Test | Change |
+| --- | --- |
+| `context-test.mjs` | Each task has one ref (the request body, a stream), not 0. Same check of one table for each task. |
+| `program-test.mjs` (`pf: readUpTo ...`) | `pf.writer()` gives `{ readable, writer }` (a `WritableStreamDefaultWriter`), not `{ readable, writable }` |
+| `entry-reverts.mjs` | The revert "the body crosses as a Str" edits `fetchEvent` (`bodyIn` is not async now). Same tests catch it. |
+| `handler-test.mjs` | The bench app reads its text from the body stream: one wait more for each request. Same checks. |
+| The workerd tests of `bench/worker.js` (`signal-workerd.mjs`, `budget-workerd.mjs`, `fallback-workerd.mjs`, `context-workerd.mjs`, `bench.mjs`) | `worker.js` sends the text in the header `x-bench-text`, not as the body. Same checks, same waits. With the body as a stream (one wait before the work), `fallback-workerd.mjs` and `context-workerd.mjs` variant a failed: 26 of 40 requests in round 0 were OOM traps (O6). |
+
+Choices I made (the plan does not say):
+
+| # | Choice |
+| --- | --- |
+| C1 | The request body of `fetch` is always a `Stream`, also when it is small. |
+| C2 | Decided again (task item 8): the host keeps the event block until `roc_event` returns (C2 of the first half). With 10a the request body is not in the block (a ref), so the block is the method, URL, headers and `cf`: the cost of "a buffered body twice" is gone. The block is the only JS block that a task adopts. If the host frees it after the decode, 12a test B (`resume-test.mjs` B: a write into an adopted JS block is found at the resume) has no block of a real task to check, and the adopted-block path of the sums is dead code in production. So it stays. |
+| C3 | `chunk!` cuts a JS chunk at `default_max` (MC11), and the rest comes at the next call. `chunk!` of `Text` or `Bytes` gives the whole value at each call (a value is not a stream). |
+| C4 | `readUpTo`, `chunk` and `sha256` share one reader for each stream (a `WeakMap` in `js/helpers.js`): `bytes!` after `chunk!` gives the rest. A stream that `readUpTo` read to its end gives a `TypeError` at the next read (RS3). |
+| C5 | `sha256!` of a stream uses `crypto.DigestStream`. Where it is missing (Node), the shim reads the chunks in JS and uses `crypto.subtle.digest`: no byte in wasm in both cases. |
+| C6 | `pf.writer()` gives the writer of the writable side, so `write!` is a `Call` of `write` on its ref: one wait until the reader takes the chunk. `write_text!` sends UTF-8 bytes: a Workers response stream takes bytes only. |
+| C7 | An open writer at the end of its task: closed when the task returned, aborted after a trap or a cancel. |
+| C8 | The output of `compress!` or `decompress!` of a writer stream counts as a stream of that writer: a response with it is complete at `close!`. |
+| C9 | `respond!`: an `InvalidStateError` is `InvalidState`. Any other throw (a status or a header that Workers refuses) is a `crash`, as the same response from `event!` is a 500. |
+| C10 | After `respond!`, the outcome of the task is ignored; `Failed` and `Unhandled` give the log line `fetch: after respond: <reason>`. |
+| C11 | After `pass_through!`, a trap is a throw too (not only `Failed`). A shed and a cancel keep their 503. |
+| C12 | `wait_until!` crashes when its `call!` fails (no `ctx.waitUntil`: a platform bug). |
+| C13 | The `waitUntil` limit of a started program: `afterRespondMs` after the response is complete, or after the end of the task when the response was complete then. The sweep of each new request checks it (no timer, as the deadlines of 3b). It writes one log line, counts `contextsExpired`, and frees the context: the signal of the program aborts. |
+| C14 | The entry gives the task `hooks` (`kind`, `ctx`, `respond`); only `fetch` gives `respond`. The helpers read `t.hooks`. |
+| C15 | The 9c put is the bench op `put(key, stream)`: it reads the stream to its end and keeps the length and the SHA-256. A stand-in for a `Cache.named` put: there is no `Cache` module (8c), and Node has no `caches`. |
+| C16 | `stream-test.mjs` turns off the idle check (`heapCheckWhenIdle: false`): the check gives its own promise to `ctx.waitUntil`, and the test counts the promises of `wait_until!`. |
+
+Open points:
+
+| # | Point |
+| --- | --- |
+| O1 | The open point of section 3: locally, when the client goes away from an open writer stream, only `request.signal` (with `enable_request_signal`) ends the task. workerd does not cancel the response stream, and the pending `write!` never settles. With no flag, the task waits forever. API.md 10.2 must say if one wait has a deadline while a stream is open. The edge part stays for 11c. |
+| O2 | The cancel of a writer stream by its reader is tested only in Node (`stream-test.mjs` `cancel`): local workerd does not cancel the stream when the client goes away (O1). The edge run of 11c can show if production does. |
+| O3 | `respond!` gives `InvalidState` in `EntrypointFetch` and in the `Fetch` of an object: their entries come in 8f, which must give the `respond` hook (and for an object, no `waitUntil`: API.md 10.2). |
+| O4 | The numbers in `bench/README.md` "Results" are older still (O3 of the first half). |
+| O6 | Variant a (an instance for each request, the fallback of a build that is not stack-first) admits a new instance by the memory of an instance at the first wait of a task (`note` in `js/runner.js`). An app that waits before its work (a read of a body stream first) gives a small number there, so at a burst too many instances start and the requests trap with OOM (seen in `fallback-workerd.mjs` with the body as a stream: 26 of 40 in round 0; round 1 and 2 were good). The bench avoids it (the header), but an app can do it. A better estimate (for example the largest end size of a task) is for 4f to decide. |
+| O5 | `stream-workerd.mjs` sends the two 50 MB uploads of `10b` with a raw socket: the app answers after the first chunk, and workerd closes the connection while the client still sends, so `fetch` of Node can fail with "terminated" (1 of 4 runs). A Worker that answers before it reads the whole body has the same effect on a client. |
+
 ## 9. JS shim
 
 | Gap | Now |
 |---|---|
-| G5 | The shim is `bench/core.js`, mixed with test code (`expected`, `check`). `bench/worker.js:12-15,33` makes `io` from the `env` of the first request. `io` has no `ctx.waitUntil`, no `request.signal` and no request headers. |
+| G5 | Done in 9a, 9b and 9c (9c with the second half of 8b: "Status of step 8b, second half" in section 8). Status below. Was: the shim is `bench/core.js`, mixed with test code (`expected`, `check`). `bench/worker.js:12-15,33` makes `io` from the `env` of the first request. `io` has no `ctx.waitUntil`, no `request.signal` and no request headers. |
 
 | Step | Change | Test |
 |---|---|---|
 | 9a | Move the runtime to `js/` (one entry module, for example `js/index.js` that exports `makeHandler(module, opts)`). It returns the handlers of API.md 10.1 for the Worker. `objectClass(name)` and `entrypointClass(name)` give the classes, and the methods come from the event `Manifest` (API.md AQ10). Test helpers stay in `bench/`. | `bench/worker.js` and the Node tests use `js/` and still pass |
 | 9b | The `io` call gets the task id. The task table (2c) keeps the context of each task: `env`, `ctx`, the `event` object, and its ref table. These are the roots of API.md 6.2 (OP3). | Two requests at the same time with different headers. Each effect sees the headers of its own request. Revert to one shared context: the test fails. |
-| 9c | `Ctx.wait_until!` and `Ctx.respond!` (API.md 10.2). The task table keeps the context of a task (its ref table and its roots) after the task ends, until each program of `Io.start!` settles, or until the 30 s `waitUntil` limit (API.md RS1, 6.5). | A `waitUntil` promise runs after the response. Revert (no `waitUntil`): the promise stops with the response. A started program that awaits 100 ms and then reads a `Stream` body and does a `Cache.named` put, after its task returned: the put is done, and then the ref table of the task is empty. Revert (free the context at the task end): status 1 and a log line, and the put is not done. A started program that throws gives one log line. A started program that gives a Roc-level `Err` (`R2.put_with!` with a wrong `etag_matches`) gives no log line, as MODULES.md 11 says. |
+| 9c | `Ctx.wait_until!` and `Ctx.respond!` (API.md 10.2). The task table keeps the context of a task (its ref table and its roots) after the task ends, until each program of `Io.start!` settles, or until the 30 s `waitUntil` limit (API.md RS1, 6.5). | A `waitUntil` promise runs after the response. Revert (no `waitUntil`): the promise stops with the response. A started program that awaits 100 ms and then reads a `Stream` body and does a `Cache.named` put, after its task returned: the put is done, and then the ref table of the task is empty. Revert (free the context at the task end): status 1 and a log line, and the put is not done. A started program that throws gives one log line. A started program that gives a Roc-level `Err` (`R2.put_with!` with a wrong `etag_matches`) gives no log line, as MODULES.md 11 says. Done with the second half of 8b ("Status of step 8b, second half"): `stream-test.mjs` `waituntil`, `started`, `startlog`, `linger`, and `stream-workerd.mjs` `waituntil`. The put is a bench op, the Roc-level `Err` an `Io` whose reader gives `Err(PreconditionFailed)` (no `Cache` and `R2` modules yet, 8c). |
+
+### Status of steps 9a, 9b (2026-10-16)
+
+Older statuses name `bench/core.js`, `bench/tasks.js` and `bench/budget.js`. The code is now in `js/` (table below).
+
+| File | Content |
+|---|---|
+| `js/index.js` | `makeHandler(module, opts)`: checks the options, makes the runner (so the first instance too), gives `{ runner, fetch }`. A comment marks where `scheduled` and the other handlers (8b) and `objectClass`, `entrypointClass` (8f) go. |
+| `js/options.js` | The option table: a test and the text of a good value for each name. `checkOptions` throws for an unknown name, a bad value, and `jsReserveBytes` not below `isolateBytes`. |
+| `js/runner.js` | `makeRunner`, `instanceA`, the two variants, alarm and check paths (the old `bench/core.js` without the parts below). |
+| `js/wait.js` | `makeWait` (the `js_wait` import, now with `io(kind, a, b, id)`), `hostCancel`, the end of a cancelled task. |
+| `js/host.js` | Readers and constants of the host exports: log, counters, CPU flags, sum modes, check names. |
+| `js/tasks.js` | The task table (from `bench/tasks.js`). Each entry now has `env`, `ctx`, `event` and `refs`. |
+| `js/budget.js` | The memory budget (from `bench/budget.js`). |
+| `bench/core.js`, `bench/check.js` | Test helpers. `core.js` re-exports `js/` for the Node tests. `check.js` has `expected` and `check`. |
+
+| Step | State | Where |
+|---|---|---|
+| 9a | Done | `js/`, `bench/worker.js` (uses `makeHandler`), `bench/core.js`, `bench/config-*.capnp` and `bench/deploy.sh` (list `js/*.js` and `check.js`), the test imports (`../js/tasks.js`, `../js/budget.js`) |
+| 9b | Done | `js/tasks.js` (`begin` stores `env`, `ctx`, `event`, `refs: new Map()`), `js/wait.js` (`io` gets the task id), `js/runner.js` (`run` passes `ro.env`, `ro.ctx`, `ro.event` to `begin`), `js/index.js` (`fetch` gives them), `bench/worker.js` (`io` reads `env` and the request from the task table: no `env` of the first request), `bench/echo.js` (the header `x-ctx-id`) |
+
+Tests:
+
+| Test | Result |
+|---|---|
+| `node bench/handler-test.mjs bench/out/app.wasm bench/out/app_prod.wasm` (9a). Both variants: 50 requests at once give 200 and the right bodies, a trap gives a 500 with `trap ...`, live bytes 0. 16 bad option cases (unknown name, `pinLimit` not built, a bad value for each built option, reserve over isolate, no `io`, `opts` not an object) and a module that is not a `WebAssembly.Module` each throw and name the option. All options set to good values serve a request. `resumeCheck: "off"` on `app_prod.wasm` throws at `makeHandler` time (no request) with "bench host" in the message. The bench build accepts it and serves. | PASS |
+| `node bench/context-test.mjs bench/out/app.wasm` (9b, Node). Both variants: 50 requests at once, each with its own `x-ctx-id` header, `env` and `ctx`. `io` gets the task id and reads the context. It answers from the header. Every body is right, each effect sees the `env`, `ctx` and request of the request that made it, each task has an own empty `Map` as ref table (50 tables), up to 50 effects wait together, the task table is empty at the end. | PASS |
+| `node bench/context-workerd.mjs` (9b, workerd). `worker.js` with `config-a.capnp` (10 requests at once, 2 rounds) and `config-b.capnp` (40 requests at once, 2 rounds). The effect sends the header of its task to the echo service, which answers with it. | PASS |
+| `bench/test-all.sh` | ALL PASS (the 3 new tests are in it) |
+
+Revert checks (each done for real, then restored):
+
+| Revert | Test | Result |
+|---|---|---|
+| `js/tasks.js`: one shared context (`shared ??= { env, ctx, event }`, each task gets the first one) | `context-test.mjs` | FAIL on both variants: 49 of 50 bodies have `fetch=f:req0`, and 196 effects of 200 saw the context of another request |
+| The same | `context-workerd.mjs` | FAIL: variant a 9 of 10 and 10 of 10, variant b 39 of 40 and 40 of 40 requests got the header of the first request |
+| `js/wait.js`: `io(kind, a, b)` (no task id) | `context-test.mjs` | FAIL: `io` throws with no task, 0 effects, bodies have empty `fetch=` and `db=` |
+| The same | `context-workerd.mjs` | FAIL: all requests fail |
+| `js/index.js`: `makeHandler` does not call `checkOptions` | `handler-test.mjs` | FAIL: 13 option cases do not throw (2 throw with a wrong message, 1 is `no io`, which throws as before) |
+| `js/index.js`: the runner starts at the first request | `handler-test.mjs` | FAIL: `resumeCheck "off"` on the production build does not throw at `makeHandler` time |
+
+Choices I made:
+
+| Question | Choice |
+|---|---|
+| How does `fetch` make the string for the app? (G1: no request type before 8b) | The option `requestText(request, env)`, default: the request body as text. `bench/worker.js` makes the string from the URL. Gone in 8b: the app gets a `Request`. |
+| Where do the effects come from? (8a replaces `io`) | The required option `io(kind, a, b, taskId)`. It finds the context with `handler.runner.tasks.get(taskId)`. It goes away in 8a. |
+| Variant `"a"` and the hooks that the tests use | The options `variant` (default `"b"`), `log`, `onLog`, `now`, `noFallback`, `wallMs`, `initMs`, `afterRespondMs` are accepted and checked like the table options. A production app does not need them. |
+| Options of the PLAN.md 4 table that the runner has not got (`pinLimit`, `ops`, `other`) | An error that names the step (8a, 8b), not "unknown option" |
+| `jsReserveBytes` not below `isolateBytes` | An error at `makeHandler` time: the memory for wasm would be 0 or less |
+| `resumeCheck: "off"` | No new code: the first instance (`set_sum(0)` gives 0 on the production host) is made in `makeHandler`, so the existing error ("needs the bench host") comes at load. The runner of variant `"a"` makes no instance at start, and variant a has no sums, so there it is not checked. |
+| `handler.runner` | The handler object has the extra property `runner` (tests and the bench). Since 8b: a static getter of the class (`Handler.runner`), which starts the runner. |
+| The ref table of a task is not freed at its end | Not done: 8a fills it, 10c and 9c free it. Today it is always empty. |
+| Where the old modules went | `bench/tasks.js` and `bench/budget.js` are moved to `js/`. The Node tests import them from `../js/`. `bench/core.js` stays as a re-export, so the older tests and `research/` scripts keep their imports. |
+
+Not checked: `bench/deploy.sh` (needs `wrangler login`). It copies `js/*.js` to `js/` of each Worker and lists `check.js` and `js/*.js` in the `rules`. The local workerd runs the same module names through the capnp configs.
+
+Observation (not caused by 9a, 9b): in workerd with `config-a.capnp` (variant a), 40 requests at once with the default budget: 6 of 40 failed in round 1, and all 40 in round 2 ("hung"). Cause and fix: "Fallback queue in workerd" (4b to 4f). `context-workerd.mjs` uses 40 requests for variant a again.
 
 ## 10. Body handles
 
@@ -930,9 +1688,9 @@ The API is `API.md` (2026-10-15). It replaces draft 1 of this section: kind numb
 
 | Step | Change | Test |
 |---|---|---|
-| 10a | JS keeps large bodies (`ReadableStream`, `Response`) as refs (API.md 9, RS3): a body is `Stream(Ref)`. `Response` can give it back to JS with no copy into wasm. Done in 8c. | Node: send an R2 object of 50 MB through `R2.get!` to the response. wasm memory grows by less than 1 MB. |
-| 10b | `Body.bytes_with!(body, { max_bytes })` and `Body.chunk!` copy the bytes into wasm only when Roc needs them. Ingest needs only `main.roc` from the archive. Done in 8c. | Read the first 1 KB of a 50 MB body: wasm memory grows by less than 1 MB. Revert (copy all): it grows by 50 MB. |
-| 10c | The task table frees the refs of a task (body ids too) at its end, its trap and its cancel (3c, API.md RS1). At the end of a task with programs of `Io.start!` that still run, it frees them when the last one settles, or at the 30 s `waitUntil` limit (9c). Done in 8a and 9c. | The ref-table test of 8a, and the started-program test of 9c |
+| 10a | JS keeps large bodies (`ReadableStream`, `Response`) as refs (API.md 9, RS3): a body is `Stream(Ref)`. `Response` can give it back to JS with no copy into wasm. Done in 8b (second half) for the request body; `R2.get!` is 8c. | Node: send an R2 object of 50 MB through `R2.get!` to the response. wasm memory grows by less than 1 MB. Done with a 50 MB request body in place of the R2 object (no `R2` module yet): `stream-test.mjs` and `stream-workerd.mjs` `10a`, 0 B of growth. Revert (the request body copied into wasm): 98 MB. |
+| 10b | `Body.bytes_with!(body, { max_bytes })` and `Body.chunk!` copy the bytes into wasm only when Roc needs them. Ingest needs only `main.roc` from the archive. Done in 8b (second half). | Read the first 1 KB of a 50 MB body: wasm memory grows by less than 1 MB. Revert (copy all): it grows by 50 MB. Done: `stream-test.mjs` and `stream-workerd.mjs` `10b` (`chunk!` and `bytes_with!`): 128 KB and 0 B. Reverts: 100 MB (`bytes_with!`), a 50 MB chunk (`chunk!`). |
+| 10c | The task table frees the refs of a task (body ids too) at its end, its trap and its cancel (3c, API.md RS1). At the end of a task with programs of `Io.start!` that still run, it frees them when the last one settles, or at the 30 s `waitUntil` limit (9c). Done in 8a and 9c. | The ref-table test of 8a, and the started-program test of 9c. Done: `bridge-test.mjs` `refs10k` (8a), `stream-test.mjs` `started` and `linger` (9c). |
 
 ## 11. Release
 
@@ -944,7 +1702,7 @@ The API is `API.md` (2026-10-15). It replaces draft 1 of this section: kind numb
 |---|---|---|
 | 11a | A release workflow: build the production host (7a) with the pinned nightly (`compat/last-stack-first-nightly`), bundle the platform with `roc bundle`, and attach the bundle and the `js/` package to a GitHub Release | Run on a test tag. A new app builds with the release URL. |
 | 11b | Publish `js/` (npm, or a file in the release that the app copies) | A new Worker project uses it with wrangler |
-| 11c | An example Worker app with a wrangler config (with the compatibility flag `enable_request_signal`, for 3b), deployed by CI. 5d (CPU limit on the edge) runs on it. Also check what the edge does at 128 MB: is only the isolate stopped, and do the requests in flight fail? Also check the facts of API.md 10.2 on the edge: does `request.signal` fire when the client goes away after the response body is complete, and does a `Body.writer!` stream keep the request past 30 s while the task writes? The cron edge test of API.md AQ12: two cron triggers (`*/2 * * * *` and `1-59/2 * * * *`). The `scheduled!` handler writes a row (`cron`, `time_ms`, the time of the run) to D1 for each run, then gives `Err`. For the second cron it calls `no_retry!` first. It runs for 1 hour. The jurisdiction of MODULES.md 7 on the edge (local workerd does not have it). | The deployed example answers. 5d and the 128 MB check give their results. The two facts of API.md 10.2 give their results, and API.md 10.2 is changed if they differ. AQ12: the rows show for each `time_ms` how many runs each cron got. More than one run for a `time_ms` of the first cron, and one for the second, shows that production retries and that `noRetry` stops it. Write the answer in MODULES.md 3 and settle AQ12. Revert (the handler gives `Ok`): one run for each `time_ms` of both crons. `counters.jurisdiction(Eu).named("x").id!()` differs from `counters.named("x").id!()`. Revert (the jurisdiction is not sent): they are equal. |
+| 11c | An example Worker app with a wrangler config (with the compatibility flag `enable_request_signal`, for 3b), deployed by CI. 5d (CPU limit on the edge) runs on it. Also check what the edge does at 128 MB: is only the isolate stopped, and do the requests in flight fail? Also check the facts of API.md 10.2 on the edge: does `request.signal` fire when the client goes away after the response body is complete, and does a `Body.writer!` stream keep the request past 30 s while the task writes? The cron edge test of API.md AQ12: two cron triggers (`*/2 * * * *` and `1-59/2 * * * *`). The `scheduled!` handler writes a row (`cron`, `time_ms`, the time of the run) to D1 for each run, then gives `Err`. For the second cron it calls `no_retry!` first. It runs for 1 hour. The jurisdiction of MODULES.md 7 on the edge (local workerd does not have it). The fallback (variant a, a 10-09 build) under `bench/fallback-workerd.mjs` load on the edge: the isolate is not stopped ("Fallback queue in workerd"). | The deployed example answers. 5d and the 128 MB check give their results. The two facts of API.md 10.2 give their results, and API.md 10.2 is changed if they differ. AQ12: the rows show for each `time_ms` how many runs each cron got. More than one run for a `time_ms` of the first cron, and one for the second, shows that production retries and that `noRetry` stops it. Write the answer in MODULES.md 3 and settle AQ12. Revert (the handler gives `Ok`): one run for each `time_ms` of both crons. `counters.jurisdiction(Eu).named("x").id!()` differs from `counters.named("x").id!()`. Revert (the jurisdiction is not sent): they are equal. |
 
 ## 12. One instance per isolate: check memory at resume
 
@@ -967,13 +1725,13 @@ Wasm checks bounds only at the edge of linear memory. A wrong store inside it (a
 |---|---|---|---|
 | Task pages and large blocks (Roc values) | The task | Sum at wait, check at resume (12a, 12b) | In the research host |
 | Saved stack copy | `waitBegin` | Same: the copy is in the task's pages | In the research host |
-| `Wait` record: low, top, copy address and length, owner | `waitBegin` | Add these fields to the sum (12a). Not `out`: JS writes it during the wait. | Not covered |
+| `Wait` record: low, top, copy address and length, owner | `waitBegin` | Add these fields to the sum (12a). Not `out`: JS writes it during the wait. | 12a; the records are also in the global check (12d) |
 | Shared stack below the saved part | The task that runs | Not needed: `waitEnd` writes the copy over it | |
 | Free units, the page reserve | Nobody | Not needed: the allocator reads only its tables, never a free unit, and sets up a page from the reserve again | |
-| Allocator tables (about 26 B per unit, 0.9 MB), task records, page reserve | The allocator, for all tasks | They change at each call, so no sum. Structural check after an alarm (12d). | Not covered |
-| Constant data (Roc constants, host constants) | Nobody after `init` | Sum at `init`, check after an alarm (12d) | Not covered |
-| Host globals (`TASK_TOP`, `OWNER`, the log, task ids) | The host | Range checks after an alarm (12d) | Not covered |
-| Pages of the roc runtime (foreign units) | The roc runtime | 12-pre finds which are constant after `init`. 12d sums those, and range-checks the tables of the others. | Not covered |
+| Allocator tables (about 26 B per unit, 0.9 MB), task records, page reserve | The allocator, for all tasks | They change at each call, so no sum. Structural check after an alarm (12d). | 12d, 12e |
+| Constant data (Roc constants, host constants) | Nobody after `init` | Sum at `init`, check after an alarm (12d) | 12d, 12e |
+| Host globals (`TASK_TOP`, `OWNER`, the log, task ids) | The host | Range checks after an alarm (12d) | 12d, 12e |
+| Pages of the roc runtime (foreign units) | The roc runtime | 12-pre finds which are constant after `init`. 12d sums those, and range-checks the tables of the others. Changed by the decisions on the 12-pre findings: no sum, table entries only. | 12d (table entries) |
 | JS blocks written during a wait (the response block) | JS | Not in the sum. JS writes them just before the resume. | Known gap, small window |
 | Response block of a task that ended | The host, in `handle` | None: JS reads it and frees it at once after `handle` returns (12-pre) | |
 | Roc code statics (`roc_tail_pending`, `roc_tail_args`) | The task that runs | None: never live across a wait (12-pre) | |
@@ -1012,7 +1770,7 @@ This answers the old open question 1 (kill all tasks, or let the intact ones fin
 | Full app, 64 at once: `"always"` against no sums | +6 % | +3 % |
 | KB summed per wait | 752 | 79 |
 
-The full app costs more than the replay shows, and its runs vary by about 3 %. 12f measures the cost again in the platform.
+The full app costs more than the replay shows, and its runs vary by about 3 %. 12f measured it again (see "Status of step 12f"): +1.9 % and +3.3 % at 200 items, +2.2 % and +4.9 % at 2,000 items.
 
 The sum is Fletcher with SIMD: 66 GB/s, against 12.5 GB/s for wyhash (`research/hash/`, see `research/README.md`). XOR misses swapped words and pairs that cancel.
 
@@ -1088,8 +1846,144 @@ A failed check acts as a failed check after an alarm: cancel all tasks (each get
 | 12d | Global check (export `check_heap`). Units: each is in exactly one place (a free run, a task page list, a large block, the reserve, foreign). The bitmap matches the free runs. Boundary tags match. Each small page's free list has `slots - live` entries. Task lists link back. Constant data and constant foreign units match their sums from `init`. Host globals are in range. Fail: cancel all tasks, drop, new instance (M1). | A test export breaks one table entry of each kind: each is found, and the instance is replaced. Revert (no check): the next requests get blocks that overlap (`dfree.mjs`-style check). Time of the check at 50 MB of heap: target under 1 ms. |
 | 12c | Alarm: the task gets a 503, `freeOwner` frees its pages and its host task slot (after an unclean trap, `task_abort` gives -1 and today leaves the slot in use, 2c), and JS calls the global check (12d) before the next `handle` or resume. This replaces the retire after an unclean trap in `bench/core.js`. Change the tests of problem 1 that look for a retire (see "Change after 12c"). | `wild.mjs`: 0 bad bodies, the instance count stays 1 while the global check passes. Revert (retire as now): a new instance per alarm. |
 | 12e | The global check with no alarm: when idle, and every `heapCheckEvery` requests (see "Check of shared memory with no alarm"). Set the default of `heapCheckEvery` from the time of 12d. | A test export breaks one table entry with no trap, then requests continue: with `heapCheckEvery` 100, the instance is replaced within 100 requests. With only idle checks, it is replaced when the requests stop. Revert (no 12e): the instance is never replaced, and a later request gets a wrong body. CPU cost with the default N: at most 0.1 % (bench of 12f). |
-| 12f | Full-app bench on an idle machine: sums off (sum mode 0, bench build only), `"afterAlarm"`, `"always"`, each with the 12e checks on. Write the costs in `bench/README.md`. | None: a measurement |
+| 12f | Full-app bench on an idle machine: sums off (sum mode 0, bench build only), `"afterAlarm"`, `"always"`, each with the 12e checks on. Write the costs in `bench/README.md`. | None: a measurement. Done: see "Status of step 12f". |
 | 12g | When talon runs on the platform: record its allocator calls (`TRACE=1 research/alloc/build.sh`), replay them against v7 (`research/alloc/scripts/all.sh` with the talon traces), run 12f on talon, and set `heapCheckEvery` from its median request time. Measure H7 and H8 on talon. | None: a measurement |
+
+### Status of step 12f (2026-10-16)
+
+Done. Full tables, the spread of each cell and the commands are in `bench/README.md`, section "Cost of the checks (12f)". Full app, 64 at once, variant B, 12e checks on (`heapCheckEvery` 100, idle check on). Node 26.7: 11 runs of each cell, the modes in turn. Median µs per request, against sums off (sum mode 0, bench host):
+
+| Items | Sums off | `"afterAlarm"` | `"always"` | PLAN "Costs" (afterAlarm, always) | Wasm memory, MB (PLAN "Memory, MB") |
+|---|---|---|---|---|---|
+| 200 | 249.2 | 254.0 (+1.9 %) | 257.5 (+3.3 %) | +1 %, +3 % | 8.1 (7.8) |
+| 2,000 | 2,304.1 | 2,354.0 (+2.2 %) | 2,418.1 (+4.9 %) | +3 %, +6 % | 52.8 (52.9) |
+
+| Check | Result |
+|---|---|
+| Production host (`app_prod.wasm`), same runs | `"afterAlarm"` 251.0 and 2,337.1 µs, `"always"` 253.9 and 2,389.7 µs: 0.7 to 1.4 % below the bench host in the same mode. It costs the same. Memory 7.8 and 52.5 MB. |
+| `live_peak` compare (4g to 4j open point) | A bench host with the compare removed, 18 runs for each cell in two orders: -0.8 % to +2.4 % (signs differ, most cells within 1 %). Not measurable: it stays. |
+| workerd (`bench.mjs`, 7 runs of each cell, CPU of the process) | 200 items: 526, 524, 522 µs (inside the noise). 2,000 items: 3,032, 3,124 (+3.0 %), 3,224 (+6.3 %). 0 wrong bodies, 0 alarms. Production host not run (the configs embed the bench host). |
+| Global check (`checkcost.mjs`) | 0.024 ms (5.8 MB heap) and 0.037 ms (47.9 MB). Cost with N = 100: 0.073 % and 0.022 % of the CPU (limit 0.1 %). PASS. |
+
+The defaults hold: `resumeCheck: "always"` costs +3 % (200 items) and +5 % (2,000 items) over no sums, which is 8 and 114 µs per request, and the PLAN "Costs" table says +3 % and +6 %. `"afterAlarm"` saves about half of it. `heapCheckEvery` 100 stays: the rule gives N = 100 and 20, and the cost is under 0.1 %.
+
+Odd: the absolute times are 10 to 15 % above the times of 12a and 12d (`checkcost.mjs` too, in the same session). The ratios between the modes are the same as before. Cause: the machine, not the code. A build of commit `d8d9e96` (12a and 12b, before 12d to 7a) and the current tree, run in turn with the same `sumcost.mjs`, give the same times (2,000 items, no sums: 2,282 and 2,292 µs against 2,320 and 2,301 µs; load 2.5, governor `powersave`).
+
+Changed for the measurement: `bench/sumcost.mjs` (a list of files, `MODES`, `RAW`, spread and memory columns; the old command line works as before), `bench/bench.mjs` (`ITEMS`, `CONCS`, `cpuUsPerReq`), `bench/worker.js` (binding `RESUME_CHECK`, query `items`), `bench/config-b.capnp` (binding `RESUME_CHECK`). `hostlib/alloc.zig` was changed for one build and restored (byte for byte).
+
+### Status of steps 12d, 12c, 12e (2026-10-16)
+
+| Step | State | Where |
+|---|---|---|
+| 12d | Done. `check_heap()` gives 0, or the code of the first check that failed (table below). It reads the tables, the host globals and the constant data, never a task page. JS calls it only when no task is in wasm. | `host/host.zig` (`check_heap`, `checkHost`, `checkWaits`, `constSum`, `rodataEnd`, `CHECK_*`), `hostlib/alloc.zig` (`checkTables`, `checkSmallPages`, `checkLarge`, `freeListLen`, `sumConst`, `markInit`, `SEEN`), `hostlib/roc.zig` (`logOk`), `hostlib/canary.zig` (`sumConst`), `hostlib/cpu.zig` (`causeOk`) |
+| 12c | Done. An unclean trap is an alarm: `task_abort` frees the pages and the task slot and gives -1, the host alarm counter goes up, the task gets a 503. The global check runs before the next `handle` or resume. Only a failed check replaces the instance. A throw in `enc0`, `readRes`, `drainLog`, `res_free` or `task_abort` is an alarm too: `run` never throws. A trap in the host code of a wait or a resume (the sum walk, the checks) is unclean (`IN_HOST` mark). | `host/host.zig` (`abortFree`, `IN_HOST`, `waitBegin`, `waitEnd`), `bench/core.js` (`runner.alarm`, `gate`, `checkHeap`, `makeWait`, `run`) |
+| 12e | Done. Idle check: after the last task in flight ends, in a timer, in `ctx.waitUntil` when the request has a ctx (`run(req, { ctx })`), once per idle period (`dirty`). Every `heapCheckEvery` requests: in `run`, before the task enters wasm; idle checks start the count again. Each check adds its time to `stats.heapCheckMs` (count `heapChecks`, `byCheck`). Each failed check writes one log line. Default `heapCheckEvery`: 100. | `bench/core.js` (`idle`, `run`, `HEAP_CHECK_EVERY`), `bench/worker.js` (passes `ctx`), `bench/checkcost.mjs` |
+| 12-pre map | Updated: rules for the new globals, rows 11 and 12 (response block, Roc code statics), `check_heap` after each phase, a flip of each constant byte. Exit 0 on `app` and `app_deep`. | `research/memmap/memmap.mjs`, `research/memmap/README.md` ("Update for 12a to 12e"), `research/memmap/results/app.md`, `app_deep.md` |
+
+Codes of `check_heap` (`CHECK_NAMES` in `bench/core.js`):
+
+| Code | Name | What must hold |
+|---|---|---|
+| 1 | pool bounds | `POOL_LO` is the memory end at `init` (`INIT_MEM_END`), `POOL_HI` the end of the last grow. No unit below `POOL_LO` is in use (the invariant "no foreign unit below `POOL_LO`"). No free bit below `LOW_HINT`. |
+| 2 | free runs | Each run is in the list of its length, with back links. The boundary tag at its last unit names its start. No free neighbor (runs are joined). |
+| 3 | free bits | The bitmap has exactly the units of the free runs |
+| 4 | page reserve | At most 256 pages, each in the pool with kind none |
+| 5 | task slots | Slot 0 is the host, slot 255 JS. A free slot has a zero record. Each record has its slot and owner. An owner is in one slot only. The `LAST_OWNER` cache is right. |
+| 6 | small page | Each page of a task list: in the pool, kind, slot, back link, class, bump, live count 1 to slots |
+| 7 | free list | `slots - live` entries, each a block start below the bump, with the free mark |
+| 8 | pages with room | `U_INAV` matches the lists of pages with room. A page that is not on its list is full. |
+| 9 | large block | Kind, slot, back link, length, requested end, body units |
+| 10 | unit | Each unit of the pool is in exactly one place (a free run, the reserve, a small page list, a large block) or foreign. Foreign units: table entries only, no sum. |
+| 11 | counts | `CHUNKS_USED`, `LIVE_BYTES` |
+| 12 | constant data | The sum of `[__global_base, end of .rodata)`, the Roc host table and its context byte, `FREE_MARK`, the grow step (4b), `alloc.allocator` and its vtable, the canary globals and the canary is the sum of `init` (after `set_free_mark` and `set_grow_step`) |
+| 13 | host globals | `COPY`, `SUSPECT`, `TRAP_CLEAN` are 0 or 1, `SUM_MODE` at most 2, `FAULT_NEXT` at most 5, `FILLED` in range, the trap cause known |
+| 14 | wait records | The `WAITS` rules of the decisions on 12-pre, and: low and top in the stack, the copy is a block of the slot of the task, one record per task, each task slot in use has a record (no task runs), `WAITS_FREE_HINT` in range |
+| 15 | log | `LOG` length at most its capacity, the buffer and each entry are host blocks with room, each level known |
+| 16 | busy | `TASK_TOP` or `OWNER` is set, or a record has the mark `IN_HOST`: a task trapped and JS did not call `task_abort` yet. See the choices. |
+
+Time of the check (`node bench/checkcost.mjs bench/out/app.wasm 3000 5`: 64 tasks wait at their first wait, `check_heap` 200 times, median; idle machine, load 0.8):
+
+| Heap | Check | Request (64 at once, CPU) | N from the rule |
+|---|---|---|---|
+| 47.9 MB of 50.6 MB memory (2,000 items) | 0.032 ms (target: under 1 ms) | 2,080.7 µs | 20 |
+| 5.8 MB of 8 MB (200 items) | 0.019 ms | 226.9 µs | 100 |
+| No task | 0.005 to 0.019 ms | | |
+
+`heapCheckEvery` = 100: the larger N of the two rows (the rule: the smallest round number with check time / (N x request time) <= 0.001). Cost with N = 100, time in the checks against the CPU time of the process: 0.065 % (200 items), 0.021 % (2,000 items). Inside these runs a check took 0.015 ms and 0.044 ms. In `wild.mjs` the slowest check was 0.33 ms (the first runs of the code).
+
+Tests (nightly 10-12, Node 26.7, workerd 2026-10-12):
+
+| Step | Test | Result |
+|---|---|---|
+| 12d | `node bench/checkheap-test.mjs bench/out/app.wasm`, A: 40 requests (30 end, 10 wait), the check passes, then `break_table` of one kind, then the runner check. 24 kinds: 16 allocator table entries (free run length, free bit of a used page, boundary tag, reserve page twice, used page in the reserve, live count, free list to a live block, back link, page with room off its list, slot of a large block, used page marked foreign, foreign unit below the pool, owner of a slot, `LIVE_BYTES`, `CHUNKS_USED`, `FREE_MARK`), a byte of `.rodata`, a canary word, `TASK_WAITING`, `Wait.at`, `Wait.copy_len`, the log length, `TASK_TOP`, `SUM_MODE` | PASS: each found (codes 1 to 16), one log line, the instance replaced, the 10 waiting tasks get a 503 (`heap`), the next request correct |
+| 12d | same, B (allocator driver): 5 kinds whose damage gives blocks that overlap | PASS: each found. With no check, the next allocations give overlapping blocks (1 or 2 pairs at the first such allocation) |
+| 12d | `research/memmap/build.sh`, `memmap.mjs` on `app` and `app_deep` | PASS (exit 0): every region has a row; `check_heap` gives 0 after each phase (10 and 8 phases); a flip of each byte of the constant symbols and the canary is found (5,093 of 5,093 and 4,602 of 4,602 bytes; code 12, one flip makes the check trap) |
+| 12d | `bench/checkcost.mjs` | Table above |
+| 12c | `node bench/wild.mjs bench/out/app.wasm <words>` (20,000 requests, 64 at once, 0.5 % write and trap after their resume) | 16 words: 0 wrong bodies, 1,020 alarms, 1,118 checks, 0 failed, 0 replaces. 256: 0 wrong bodies, 22 failed checks (17 wait records, 5 free lists) and 22 replaces. 4,096: 0 wrong bodies, 89 failed checks (55 wait records, 34 free lists) and 89 replaces. Always replaces = failed checks, never 2 instances with tasks, `run` never threw. |
+| 12c | same, 0 words, rate 0.05 (unclean traps with no damage) | PASS: 361 alarms, 405 checks, 0 failed, 0 replaces |
+| 12c | `node bench/oneinstance-test.mjs bench/out/app.wasm` (changed: problem 1, 4a) | PASS: 10 alarms `trap` (503), host `alarms()` 10, 10 checks after an alarm pass, 0 replaces, 0 cancels, 990 good bodies, live bytes 0 |
+| 12c | `node bench/overflow-test.mjs bench/out/app_deep.wasm --expect-shared` (changed: V2) | PASS: the 2 V2 traps are alarms (503 `trap`, host counter +1 each), the check passes, no replace, the next request correct. Overflow traps: clean, no alarm. |
+| 12c | `checkheap-test.mjs` C: the log length set to 2^28 while 5 tasks wait; `drainLog` of the first task that ends throws | PASS: 503 alarm `trap`, `run` does not throw, the check finds the log (15), replace, the other 4 tasks 503 `heap` |
+| 12c | same, C2: the list of JS pages links to itself while a task waits; the sum walk at its resume traps, then `task_abort` traps | PASS: 503 alarm `trap`, `run` does not throw, the check replaces the instance |
+| 12c | same, C3: the page list of a waiting task links to itself; the sum walk at its resume traps, `task_abort` does not | PASS: 503 alarm `trap` (not clean), host counter 1, the check replaces the instance |
+| 12c | same, D: task B gets a sum alarm and task A an unclean trap in the same job turn, B first | PASS: the check of B gives 16 (busy), the check at A's alarm passes, no replace |
+| 12c | same, E: as D, A makes a clean trap (no alarm); then task C resumes in the same job turn | PASS: the check runs at the resume of C (1 check before C enters wasm) |
+| 12c | same, F: as E, a new request in place of C | PASS: the check runs in `run`, before `handle` |
+| 12e | `node bench/checkevery-test.mjs bench/out/app.wasm`: 8 loops of requests, 201 requests, a wild write with no trap, 300 more. T: the free bit of a used page (`break_table` 2). C: one byte of the Roc literal `http://echo/f?id=` (`poke_wait` 4), which gives wrong bodies. | PASS. `heapCheckEvery` 100, no idle check: T and C replaced 99 requests after the write ("every"), 0 wrong bodies after the replace (C: 92 wrong bodies between the write and the replace). Only idle checks: no failed check while the requests run, replaced when they stop (in `ctx.waitUntil`), the next request correct. |
+| 12e | `bench/checkcost.mjs`: CPU cost with the default N | PASS: at most 0.065 % (limit 0.1 %) |
+| All | `bench/build.sh`, `bench/alloc-test.sh`, `node-test.mjs`, `overflow-test.mjs --expect-shared`, `strloop-test.mjs`, `log-test.mjs`, `oom-test.mjs`, `wait-test.mjs`, `trapclean-test.mjs`, `tasktable-test.mjs`, `deadline-test.mjs`, `oneinstance-test.mjs`, `resume-test.mjs`, `wild.mjs` (16, 256, 4,096), `checkheap-test.mjs`, `checkevery-test.mjs`, `stack-test.mjs`, `tasks-test.mjs`, `cpu-test.mjs`, `cancel-test.mjs` (`--expose-gc`), `signal-workerd.mjs` | PASS, each with `timeout 600` |
+
+Revert checks (each test must fail):
+
+| Revert | Test | Result |
+|---|---|---|
+| 12d: `check_heap` and `checkTables` give 0 | `checkheap-test.mjs` | FAIL (110): A: code 0 for all 24 kinds, no replace. B: not found, and the next allocations give overlapping blocks (the PLAN revert). C to F fail. |
+| same | `checkevery-test.mjs` | FAIL: never replaced; C: wrong bodies to the end |
+| 12d: no sum of `alloc.allocator` and of the context byte of the Roc host table | `memmap.mjs` on `app` | FAIL (exit 1): 9 flipped constant bytes not found |
+| 12c: a replace at each alarm (as before) | `wild.mjs` 16 | FAIL: 104 replaces, 0 failed checks (6,452 tasks cancelled) |
+| same | `oneinstance-test.mjs`, `overflow-test.mjs` | FAIL: 10 replaces and 373 cancels; the V2 alarms replace the instance |
+| 12c: an unclean trap does not free the task (the old `abortFree`) | `oneinstance-test.mjs` | FAIL: each check after an alarm fails with 14 (a slot in use with no waiting task), 10 replaces |
+| 12c: no catch around `task_abort` | `checkheap-test.mjs` C2 | FAIL: `run` threw |
+| 12c: no `IN_HOST` mark (a trap in the resume check counts as clean) | C3 | FAIL: a clean trap, no alarm, no check, the damaged instance stays |
+| 12c: CHECK_BUSY from a job is a failure | D | FAIL: the check of B fails (16), the instance is replaced |
+| 12c: no gate before a resume (`makeWait`) | E | FAIL: 0 checks when C resumes |
+| 12c: no gate in `run` | F | FAIL: 0 checks when the new task starts |
+| 12c: no catch around `readRes` and `drainLog` after `handle` | C | Does not fail: the outer catch of `run` catches the throw and calls `task_abort`, which gives -1 for a task that ended: an alarm too. The inner catch stays: it makes the alarm with no `task_abort` of an ended task. |
+| 12e: no 12e (`checkevery-test.mjs ... revert`: `heapCheckEvery` 0, no idle check) | `checkevery-test.mjs` | FAIL (5): T and C not replaced at idle, C never replaced, 300 wrong bodies, the next request wrong. (T "every" was replaced in that run by an alarm: its damage made a sum differ.) |
+| 12e: `heapCheckEvery` 20 | `checkcost.mjs` | FAIL: 0.259 % of the CPU time |
+
+New exports (for the lists of 7a; `platform/main.roc` has both):
+
+| Export | Use | List of 7a |
+|---|---|---|
+| `check_heap()` | The global check (12d) | Production (already in the 7a list) |
+| `break_table(kind, arg)` | Test: one wild write into the shared memory, with no trap. 1 to 19: allocator tables (17: the JS page list links to itself, 18: a task page list links to itself, 19: the live count is 0 while blocks are live, 4j), 20: a byte of `.rodata`, 21: a canary word, 22: `TASK_WAITING`, 23: `Wait.at`, 24: `Wait.copy_len`, 25: log length + 1, 26: `TASK_TOP`, 27: `SUM_MODE`, 28: log length = arg | Bench |
+
+Choices I made:
+
+| Question | Answer |
+|---|---|
+| A check while the catch of a trapped task is still in the job queue | Measured (test D): after an unclean trap, `TASK_TOP` and `OWNER` stay set until JS calls `task_abort`, and another task's alarm can run its check first. The host gives 16 (busy) when `TASK_TOP` or `OWNER` is set or a record has `IN_HOST`. From a promise job (the alarm, the gates, "every") busy means "not now": the check stays due. From a timer (idle, the fallback of an alarm, a test) no job is in the queue, so busy is a failure. |
+| When the check after an alarm runs | At once in the alarm. If busy: at the next gate (the start of `run`, and in the wait import before `js_alloc` of the result, so before the resume), or at a timer, whichever is first. A failed check at a gate cancels the waiting task too (503 `heap`). |
+| `IN_HOST` | `Wait.alarm` (not in the sum) is 3 while the host code of the wait (after `waitAdd`) or of the resume runs. A trap there leaves it, and `task_abort` counts the trap as unclean. Before, a trap in the sum walk of a resume was clean, because the record was still in the table (test C3). |
+| End of `.rodata` | The lowest host global with a start value: `.data` follows `.rodata`. No linker symbol gives it. The memmap flip check shows that each constant byte is in the sum. |
+| More constant data in the sum | `alloc.allocator` (8 B in `.data.rel.ro`) and the context byte of the Roc host table. The flip check found them. |
+| `heap_fill` (bench) | Its free also ends the task slot of its tag (`taskEnd`): the check wants each slot in use to be a waiting task |
+| The write of the 12e test | Allocator table damage (T) gave no wrong body in the runs I tried: the sums found its effects first (an alarm). So C writes one byte of a Roc string literal (constant data, no sum of a task covers it): each later task gets a wrong body with status 200, the case of "Gaps" row 2. |
+| `heapCheckEvery` from two workloads | The larger N (200 items: 100; 2,000 items: 20) |
+| "The instance count stays 1" in `wild.mjs` | Replaces = failed checks, and never 2 instances with a task (sampled each ms). `wild.mjs` now also fails when `run` throws, and counts the failed checks by code. |
+| `bench/worker.js` | Passes `ctx` to `run`, so the idle check runs in `ctx.waitUntil` in workerd |
+
+Open points:
+
+| Point | Detail | State |
+|---|---|---|
+| `set_suspect` after an alarm | It stays on for the life of the instance, so with `"afterAlarm"` each resume checks from the first alarm on. It could go off at a passed idle check (no task waits then). | Decided 2026-10-16: a passed idle check clears it. No task waits then, so no task can resume onto damage that the check did not see. Done in 4g to 4j (`runner.idleDone`, `bench/idle-test.mjs`). |
+| A trap in `task_cancel` | `hostCancel` drops it. On a damaged instance, the next "every" or idle check finds the damage. Should it be an alarm? | Decided 2026-10-16: yes, an alarm (a trap in host code shows damage). Done in 4g to 4j (`hostCancel` with `cancelTrap`, cause `cancel`, `bench/events-test.mjs`). |
+| A resume while the check is busy | Between a trap and its catch, a resume can run before the check. That task still checks its own sum. | Accepted |
+| The fallback timer of an alarm in workerd | The timers of a request that ended may not fire (3.0). The check then runs at the next gate. | Accepted |
+
+Open points of 12a, 12b that this work settles: "Other exports that trap on a damaged instance" (12c: alarms) and "12-pre map" (the new globals have rules).
 
 ### Status of steps 12a, 12a-stack, 12b (2026-10-16)
 
@@ -1109,7 +2003,7 @@ New exports (all in `platform/main.roc`). For the lists of 7a:
 | `set_sum(mode)` | JS sets the sum mode from `resumeCheck` before `init`. Mode 0 only for benches. | Production (mode 0: bench only) |
 | `set_suspect(on)` | JS sets it at an alarm ("afterAlarm") | Production |
 | `alarms()` | Counter of alarms at resume (M11, H3) | Production |
-| `sum_checks()` | Counter of sum checks at resume | Bench |
+| `sum_checks()` | Counter of sum checks at resume | Production (7a: the runner reads it in `hostCounters`) |
 | `poke_wait(id, kind, arg)` | Test: a wild write with no trap. 1: `Wait.low` += arg. 2: XOR into the first JS block that task `id` adopted. 3: `out[1]` += arg at the next resume of `id`, before the checks. 4: XOR into the word at address `id`. | Bench |
 | `set_wild(seed, words)`, `fault_next_wait(4)`, `fault_next_wait(5)` | Test: the wild-write hook. 4: random words from the host global `WILD_BASE` to the memory end, then a trap (the research hook). 5: the same write, then the task waits and traps after its resume. | Bench |
 

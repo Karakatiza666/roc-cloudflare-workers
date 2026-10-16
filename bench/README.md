@@ -12,19 +12,34 @@ Question: a Roc wasm32 app with a Zig host serves concurrent requests that wait 
 
 | File | Content |
 |---|---|
-| `../host/host.zig` | Host. `waitBegin`/`waitEnd` and `getSP`/`setSP` (copy), `roc_wait`, `handle`, `task_abort`, `copy_bench`, counters |
+| `../host/host.zig`, `../host/cbor.zig`, `../host/cbor_test.zig` | Host. `waitBegin`/`waitEnd` and `getSP`/`setSP` (copy), the bridge (`roc_await`, `roc_call`, `roc_native`: encode the program, `js_await`/`js_call`, decode the result, PLAN.md 8a), `handle`, `task_abort`, `copy_bench`, counters. `cbor.zig`: the CBOR profile over the glue types (API.md 5.1). `cbor_test.zig`: its native tests (HD5, HD6, HD7) |
 | `../hostlib/` | Allocator, canary, Roc callbacks |
-| `../platform/main.roc`, `../platform/Wait.roc` | Platform: `requires { handle! : Str => Str }`, one hosted `Wait.wait!(kind, num, a, b, c)` |
-| `app.roc` | Handler: 200 records to JSON (about 300 KB of heap), recursion `depth` levels with a kept value per level, two waits (fetch: 5 ms, db: 1 ms), body with the request id and a stack checksum |
-| `core.js` | JS shim: `makeRunner(module, "a" or "b", io)`, the `js_wait` import, the body check. "b" falls back to "a" when `stack_first()` is 0, and uses a new instance after an unclean trap |
+| `../platform/main.roc` and the modules of `../platform/` | Production platform: `requires { event! : Worker.Event => Worker.Outcome }` (PLAN.md 8b), the modules `Js` and `Io` (API.md 5, 6), `Native` (8e), `Worker`, `Request`, `Response`, `Body`, `Ctx` (8b) and the payload types of phase B (`Queue`, `Email`, `Object`, `WebSocket`), `Entry` (not exposed: the event as `Js` to `Worker.Event`, and the outcome back), the hosted functions in `Host` (not exposed: apps use `Io.await!` and `Io.call!`), the production exports (PLAN.md 7a). `Method` and `Header` come from `roc-lang/http` (a package URL) |
+| `platform/` | Bench platform: the same files with more exports (the test exports). The bench apps use it. `build.sh` builds its host with `zig build -Dbench=true` into `platform/targets/` (ignored) |
+| `exports-test.mjs` | PLAN.md 7a: the two headers are equal but for `exports:`, the production build (`out/app_prod.wasm`, made from `app.roc` by `build.sh`) has the production exports and no bench export, and it serves requests with the runner of `../js/` |
+| `app.roc` | `event!`: the request text is the body of a `Fetch` event, and the answer is the body of `Respond` (8b; all bench apps do the same). `worker.js` sends the text in the header `x-bench-text` (no body, so no wait before the work). A body of `makeHandler` is a stream since 10a: `app.roc` reads it with one wait more (`req.text!`, `handler-test.mjs`, `context-test.mjs`). Handler: 200 records to JSON (about 300 KB of heap), recursion `depth` levels with a kept value per level, two waits (fetch: 5 ms, db: 1 ms), body with the request id and a stack checksum. Each wait is `Io.await!` of a program that calls `ops.fetch` or `ops.db` with the roots `env`, `ctx`, `event` as the last arguments (`effect!`) |
+| `../js/index.js`, `../js/events.js`, `../js/options.js`, `../js/runner.js`, `../js/wait.js`, `../js/host.js`, `../js/tasks.js`, `../js/budget.js`, `../js/bridge.js`, `../js/program.js`, `../js/helpers.js`, `../js/values.js`, `../js/cbor.js` | The JS shim (PLAN.md 9a, 8a). `makeHandler(module, opts)` checks the options (`ops`: the JS functions of the app, `pinLimit`, `other`: handler names for the event `Other`) and gives a subclass of `WorkerEntrypoint` with `fetch`, `scheduled` and the `other` methods (8b). `events.js` makes the events of API.md 10.1 (the request body as a stream, a ref of the task: 10a) and the `Response` of an outcome. `helpers.js` also has the stream helpers of `Body` (`readUpTo`, `chunk`, `sha256`, `transform`, `writer`, `close`) and of `Ctx` (`respond`, `passThrough`, `spawn`). The runner starts at the first event (workerd forbids random values at global scope). `makeRunner(module, "a" or "b", opts)` is the runner: the `js_await` and `js_call` imports (`bridge.js`), the program interpreter (`program.js`), the root `pf` and the pin table (`helpers.js`), the CBOR profile (`values.js`, `cbor.js`), the task table (with the context and the ref table of each task, 9b), the memory budget. "b" falls back to "a" when `stack_first()` is 0, and uses a new instance after an unclean trap |
+| `core.js`, `ops.js`, `check.js` | Test helpers. `core.js` re-exports the runner and the host readers of `../js/` for the Node tests. Its `makeRunner(module, variant, io, opts)` turns the `io(kind, a, b, context)` of a test into the ops `fetch` and `db` of the bench apps (`ops.js`: the role of the old wait kinds 1 and 2), and its `run(text)` sends the text as a `Fetch` event and gives the body of `Respond` as `body` (8b). `eventBlock` and `outcomeBody` do the same for a test that calls `handle` itself. `check.js` has `expected` and `check` (the body that the bench app must give), `benchEvent` and `benchBody`. `worker.js` imports `check.js` only |
+| `handler-test.mjs` | PLAN.md 9a: an instance of the class of `makeHandler` serves requests on both variants, an unknown option and a bad value throw at `makeHandler` time, `resumeCheck: "off"` throws on the production build and works on the bench build |
+| `context-test.mjs`, `context-workerd.mjs` | PLAN.md 9b: requests at the same time with different headers. Each effect gets the roots `env`, `ctx` and `event` of its task (8a; was the task id) and sees the headers, `env`, `ctx` and request of its own task. `context-workerd.mjs` runs `worker.js` with `config-a.capnp` and `config-b.capnp`. The echo service answers with the header `x-ctx-id` when it is set |
 | `app_deep.roc`, `overflow-test.mjs` | Stack overflow test: recursion with a wide record per level, with and without an allocation per level |
 | `oneinstance-test.mjs` | One instance per isolate (PLAN.md 4a): 1,000 requests with 1 % unclean traps, never more than 1 instance with a task, 0 bad bodies |
-| `app_wait.roc`, `cpu-test.mjs` | CPU flags of workerd (PLAN.md 5a to 5c): the exported globals, the signal (clean trap with cause "cpu"), the terminated flag (replace). `app_wait.roc` has one wait and no allocation |
+| `app_wait.roc`, `cpu-test.mjs` | CPU flags of workerd (PLAN.md 5a to 5c): the exported globals, the signal (clean trap with cause "cpu"), the terminated flag (replace). `app_wait.roc` has one wait (`Io.await!([])`, an empty program) and no allocation |
 | `app_strloop.roc`, `strloop-test.mjs` | Bug B5 (PLAN.md 6e): a string that grows in a loop. Wasm memory must stay under 6 MB |
 | `alloc-test.sh`, `alloc_driver.zig`, `dfree.mjs`, `fmark.mjs`, `reserve.mjs`, `adopt.mjs`, `sumjs.mjs` | Allocator tests (PLAN.md 6e) on a driver built from `../hostlib/`: double free, free after the page went to another task, a live block with the free mark, the page reserve at the memory cap, adopted JS blocks at `freeOwner` and in `sumTask` |
+| `../js/budget.js`, `budget-test.mjs`, `grow.mjs`, `fallback-budget-test.mjs`, `budget-workerd.mjs`, `fallback-workerd.mjs`, `config-m.capnp` | The memory budget (PLAN.md 4b to 4f): the JS budget and its options, `js_grow` and the pressure steps in Node, the allocator driver that asks JS (`grow.mjs`, built by `alloc-test.sh`), the fallback with a queue (10-09 build in `out09/`), and the dropped instance that counts until the callback in workerd |
+| `events-test.mjs`, `idle-test.mjs`, `counters.mjs` | Log lines and counters (PLAN.md 4g, M11: one line and one counter for each event, and a trap in `task_cancel` is an alarm), the leak counter and the idle reset in the app (4h, 4j, and the end of `set_suspect` at a passed idle check), and the H3 counters and the idle reset against a manual walk of the unit tables on the allocator drivers (`counters.mjs`, built and run by `alloc-test.sh`) |
+| `app_bridge.roc`, `bridge-test.mjs`, `bridge-reverts.mjs`, `bridge-workerd.mjs`, `bridge-worker.js`, `config-bridge.capnp`, `Cbor.roc` | The bridge (PLAN.md 8a): refs (RS1), programs, `Par`, `Race`, OP7, `pf` helpers, pins with a `CryptoKey`, `Packed` rows read by `Cbor.parse` (`Cbor.roc`: a copy of `../research/api-probe/cbor/Cbor.roc`), status 4, refs after 10,000 tasks with traps and cancels, HD3, HD6. `bridge-reverts.mjs` breaks one JS rule at a time in a copy of `../js/` and checks that its test fails. `bridge-workerd.mjs` runs the main tests in workerd (port 8134) |
+| `app_native.roc`, `native-test.mjs`, `native-reverts.mjs` | `Native` (PLAN.md 8e): decode of package archives against `zstd -d`, the output limit and its memory, BLAKE3 and SHA-256 in chunks against the references of `../research/native/data/`, the zstd stream, handle errors, a handle of another task (`native_reown`, bench only), handles at the end, trap and cancel of a task, status 4 (OOM) at each allocation, and a deep recursion that calls `zstd_decode!` (the depth where it traps). `native-reverts.mjs` edits the Zig source one rule at a time, builds, runs the test and restores the file |
+| `app_events.roc`, `entry-test.mjs`, `entry-workerd.mjs`, `entry-reverts.mjs`, `entry-worker.js`, `events-worker.js`, `config-entry.capnp`, `cf-node.mjs`, `cf-workers-stub.mjs` | The events (PLAN.md 8b, first half): the class of `makeHandler` (a `WorkerEntrypoint` subclass), a binary body, 100 headers, 404, JSON, the cron rules (cron and `time_ms`, `Err`, `no_retry!`, no `scheduled!`), `other` (`queue`), `Unhandled`, `Failed`, the crash text in the log line, `Request.Cf`. `entry-workerd.mjs` runs workerd with `--experimental` (port 8135): `entry-worker.js` serves `/cdn-cgi/local/scheduled` as Miniflare does and sends a queue event. `entry-reverts.mjs` makes each revert, runs the tests and restores the file. `cf-node.mjs` gives Node the stand-in `cf-workers-stub.mjs` for `cloudflare:workers` |
+| `app_stream.roc`, `stream-test.mjs`, `stream-workerd.mjs`, `stream-reverts.mjs`, `stream-worker.js`, `config-stream.capnp` | Streams and the context of a task (PLAN.md 8b second half, 9c, 10a, 10b). A 50 MB request body back as the response body, the first chunk and a 1 KB limit of a 50 MB body: wasm memory grows by less than 1 MB. `tee!`, `sha256!`, `compress!` and `decompress!` (Node `zlib` as the reference). `Ctx.respond!` (the work after it, a second call, the 30 s limit at 100 ms, `InvalidState` in a cron run, `BodyErr` for a read of the request body after it in workerd), `Ctx.pass_through!`, `Body.writer!` (the first chunk before the second, the limit at `close!`, a cancel of the stream), `Ctx.wait_until!` (the promise in `ctx.waitUntil`, the context until it settles, the `waitUntil` limit, the log rule), the client that goes away in workerd (`request.signal`). Port 8136. `stream-reverts.mjs` makes each revert (18), runs both tests and restores the file |
+| `flaky-load.sh` | Runs a test N times while two copies of `sumcost.mjs` load the CPU (PLAN.md 8e: `fallback-budget-test.mjs`) |
+| `wait-test.mjs`, `trapclean-test.mjs`, `tasktable-test.mjs` | The wait import never rejects (2b), TRAP_CLEAN (2d), the task table (2c). Since 8a they use `makeBridge` of `../js/bridge.js`; tasktable part 2 aims `fail_alloc_at` with `alloc_count` |
+| `cbor-js-test.mjs`, `cbor-js-reverts.mjs`, `cbor-wasm-test.mjs`, `hd4-test.mjs`, `hd4/oracle.roc`, `jsgen.js`, `program-test.mjs` | The CBOR profile (API.md 5): the JS codec and its revert checks, the Zig codec in the wasm32 host (HD5 corpus, HD6, same bytes as JS), HD4 (the Zig decoder against the Roc oracle; the inputs go to `hd4/*.bin`, ignored), the seeded value generator, the program interpreter and the result block |
+| `test-all.sh` | Builds everything (also the 10-09 apps into `out09/`) and runs all tests with `timeout 600`: one line for each, exit 1 when one fails. Env: `ZIG`, `WORKERD` |
 | `check-layout.mjs` | Reads a linked wasm: STACK-FIRST, DATA-FIRST or UNKNOWN (exit 0, 1, 2) |
 | `get-roc.sh`, `ci-layout.sh`, `../compat/last-stack-first-nightly` | Nightly download, the CI check of one nightly (`../.github/workflows/nightly-layout.yml`), the pinned nightly |
-| `worker.js`, `echo.js`, `config-{a,b,j}.capnp` | workerd worker, echo service binding, one config per variant |
+| `worker.js`, `echo.js`, `config-{a,b,j,m,s}.capnp` | workerd worker (it uses `makeHandler`, and gives the class a new request with the text of the URL as its body and the signal of the client request; its ops `fetch` and `db` get `env` and the request as arguments, the roots of the task), echo service binding, one config per variant. The configs list the `../js/` modules as `js/*.js` |
 | `bench.mjs` | Load generator (Node fetch, concurrency pool) and driver: fresh workerd per variant and rep |
 | `owner.mjs` | Cost of owner tags: alloc + free, heap walk per trap, whole request. Two builds, tags on and off |
 | `micro.mjs` | CPU cost in Node with a real clock: instantiate, copy work alone, per request by depth |
@@ -205,3 +220,103 @@ Two bugs found on the way, both fixed:
 | `new WebAssembly.Instance` + `init`, real module | about 0.7 ms | 0.03 ms |
 
 JSPI works on the edge. B is correct under concurrency, and A does not fit the free plan CPU limit.
+
+## Cost of the checks (12f)
+
+Step 12f of `../PLAN.md`: what the sums and the global check cost in the full app (`app.roc`: a list of items to JSON, 50 call levels, 2 waits). 64 requests at once, 200 and 2,000 items, variant B (one instance), v7 allocator. Each mode runs with the checks of 12e on (`heapCheckEvery` 100, idle check on). Date 2026-10-16. Node 26.7, workerd 2026-10-12, nightly 10-12. The machine is a desktop with 24 cores and a background load of 0.8 to 2.7. No other job of mine ran during a measurement.
+
+Modes:
+
+| Mode | `resumeCheck` | Sum mode of the host | Sums |
+|---|---|---|---|
+| off | `"off"` | 0 (bench host only: the production host refuses it) | None |
+| afterAlarm | `"afterAlarm"` | 1 | At each wait. At a resume only after an alarm. |
+| always | `"always"` (default) | 2 | At each wait. At each resume after other code ran (here: at each resume). |
+
+### CPU in Node (`sumcost.mjs`)
+
+Waits that resolve at once, so the time is CPU. 3,000 requests after a warm-up. 11 runs of each cell, bench host and production host in turn in each run. The table has the median, the lowest and the highest run, in µs per request. "Against off" is the median against the median of `"off"` on the bench host.
+
+| Items | Host | Mode | Median | Lowest to highest | Against off | Sum checks per wait | Wasm memory, MB | Wrong bodies |
+|---|---|---|---|---|---|---|---|---|
+| 200 | bench | off | 249.2 | 247 to 272 | 0 | 0 | 8.1 | 0 |
+| 200 | bench | afterAlarm | 254.0 | 252 to 261 | +1.9 % | 0 | 8.1 | 0 |
+| 200 | bench | always | 257.5 | 255 to 276 | +3.3 % | 1.0 | 8.1 | 0 |
+| 200 | production | afterAlarm | 251.0 | 248 to 262 | +0.7 % | 0 | 7.8 | 0 |
+| 200 | production | always | 253.9 | 251 to 269 | +1.9 % | 1.0 | 7.8 | 0 |
+| 2,000 | bench | off | 2,304.1 | 2,263 to 2,345 | 0 | 0 | 52.8 | 0 |
+| 2,000 | bench | afterAlarm | 2,354.0 | 2,337 to 2,442 | +2.2 % | 0 | 52.8 | 0 |
+| 2,000 | bench | always | 2,418.1 | 2,383 to 2,522 | +4.9 % | 1.0 | 52.8 | 0 |
+| 2,000 | production | afterAlarm | 2,337.1 | 2,307 to 2,665 | +1.4 % | 0 | 52.5 | 0 |
+| 2,000 | production | always | 2,389.7 | 2,367 to 2,646 | +3.7 % | 1.0 | 52.5 | 0 |
+
+Each cell had 30 global checks in 3,300 requests (the count of `heapChecks`), so the 12e checks were on. Memory is the same in all modes. The largest run of a cell has the same memory as the median.
+
+Production against bench, same mode: -1.2 % and -1.4 % (200 items), -0.7 % and -1.2 % (2,000 items). The production host costs the same, and a little less. The bench host has about 0.3 MB more memory at 200 items (7.8 against 8.1 MB). The cause is not checked. (The production host has no `task_waits`: the script counts 2 waits for each request there.)
+
+### Cost of the `live_peak` compare (`hostlib/alloc.zig`, `liveAdd`)
+
+`liveAdd` makes one compare at each allocation: `if (LIVE_BYTES > LIVE_PEAK) LIVE_PEAK = LIVE_BYTES`. The test: a bench host with that line removed (`bench/out-nopeak/app.wasm`), against the normal bench host. Modes `"off"` and `"always"`. Two sets of 9 runs, each with the other order of the two files, so 18 runs for each cell. Median in µs per request.
+
+| Items | Mode | Normal | No compare | No compare against normal |
+|---|---|---|---|---|
+| 200 | off | 249.3 | 255.3 | +2.4 % |
+| 200 | always | 261.1 | 259.0 | -0.8 % |
+| 2,000 | off | 2,269.9 | 2,291.8 | +1.0 % |
+| 2,000 | always | 2,409.2 | 2,401.3 | -0.3 % |
+
+The signs differ and the size is at most 1 % apart from one cell, which has the highest run of 296 µs. The cost of the compare is below what this bench can measure (about 1 %). The compare reads a global that is in the cache, and it writes only at a new peak. It stays.
+
+### CPU in workerd (`bench.mjs`)
+
+Local workerd, 5,000 requests after 1,000 of warm-up, 64 at once, depth 50, waits through the echo service (5 ms and 1 ms). Seven runs of each cell, a new workerd for each run, the modes in turn. "CPU" is the CPU time of the workerd process (`utime` plus `stime` from `/proc`) for each request. It has the echo service and the HTTP work too, so the part of wasm is the difference between the modes. The production host is not in this table: the configs embed `out/app.wasm` (the bench host), and the Node table shows that the two hosts cost the same.
+
+| Items | Mode | CPU µs per request, median (lowest to highest) | Against off | Requests per second | p50 ms | p99 ms | Wasm memory, MB | Wrong bodies and errors |
+|---|---|---|---|---|---|---|---|---|
+| 200 | off | 526 (494 to 552) | 0 | 1,839 | 32.4 | 80.6 | 8.5 | 0 |
+| 200 | afterAlarm | 524 (498 to 586) | -0.4 % | 1,860 | 32.8 | 77.4 | 8.6 | 0 |
+| 200 | always | 522 (510 to 576) | -0.8 % | 1,869 | 32.6 | 80.8 | 8.6 | 0 |
+| 2,000 | off | 3,032 (3,014 to 3,152) | 0 | 330 | 189.9 | 259.7 | 53.9 | 0 |
+| 2,000 | afterAlarm | 3,124 (3,100 to 3,148) | +3.0 % | 321 | 196.3 | 258.3 | 54.6 | 0 |
+| 2,000 | always | 3,224 (3,200 to 3,290) | +6.3 % | 311 | 203.3 | 262.4 | 54.3 | 0 |
+
+At 200 items the checks are inside the noise (the spread is 10 %). At 2,000 items the cost is +92 µs and +192 µs for each request, a little more than in Node (+50 and +114 µs). The host counter `sumChecks` confirms the mode: 0 (off, afterAlarm) and 12,000 (always, 6,000 requests with 2 waits). 62 global checks in each run, 0 alarms, 0 replaces.
+
+### Global check (`checkcost.mjs`, 5 runs)
+
+| Items | Heap | Check | Request (CPU) | N from the rule | Cost with N = 100, share of the CPU | Limit |
+|---|---|---|---|---|---|---|
+| 200 | 5.8 MB | 0.024 ms | 263.2 µs | 100 | 0.073 % | 0.1 % |
+| 2,000 | 47.9 MB | 0.037 ms | 2,376.2 µs | 20 | 0.022 % | 0.1 % |
+
+PASS. The default `heapCheckEvery` of 100 holds.
+
+### Reproduce
+
+```sh
+ZIG=<zig 0.17> bench/build.sh
+# CPU in Node: bench host and production host, all modes (the production host skips "off")
+RAW=.cache/results/12f-main.json node bench/sumcost.mjs bench/out/app.wasm,bench/out/app_prod.wasm 3000 11
+# live_peak: build a bench host with the compare removed, then restore hostlib/alloc.zig
+cp hostlib/alloc.zig .cache/alloc.zig.orig
+sed -i '/if (LIVE_BYTES > LIVE_PEAK) LIVE_PEAK = LIVE_BYTES;/d' hostlib/alloc.zig
+ZIG=<zig 0.17> bash -c '"$ZIG" build -Dbench=true && mkdir -p bench/out-nopeak && "$ROC" build --opt=speed --target=wasm32 --no-cache --output=bench/out-nopeak/app.wasm bench/app.roc'
+cp .cache/alloc.zig.orig hostlib/alloc.zig
+ZIG=<zig 0.17> bench/build.sh                                    # the normal host again
+MODES=off,always node bench/sumcost.mjs bench/out/app.wasm,bench/out-nopeak/app.wasm 3000 9
+MODES=off,always node bench/sumcost.mjs bench/out-nopeak/app.wasm,bench/out/app.wasm 3000 9
+# CPU in workerd: one workerd for each run, the modes in turn
+for m in off afterAlarm always; do
+  WORKERD=<workerd> RESUME_CHECK=$m ITEMS=2000 CONCS=64 VARIANTS=b DEPTHS=50 node bench/bench.mjs 1 5000
+done
+node bench/checkcost.mjs bench/out/app.wasm 3000 5               # the global check (12d, 12e)
+```
+
+`sumcost.mjs` takes a list of files (comma). Env: `ITEMS`, `CONC`, `MODES`, `RAW` (the runs as JSON). `bench.mjs` takes the env `RESUME_CHECK` (a binding of `config-b.capnp`, read in `worker.js`), `ITEMS` and `CONCS`, and each row has `cpuUsPerReq`.
+
+### Notes
+
+| Point | Detail |
+|---|---|
+| Absolute times | The times are 10 to 15 % above the times of 12a (223.9 and 2,003.8 µs with no sums) and of 12d (226.9 and 2,080.7 µs). `checkcost.mjs` gave 263.2 and 2,376.2 µs in the same session, so the cause is not the new script. The cause is the machine (load 2.5, governor `powersave`), not the code: a build of commit `d8d9e96` and the current tree, run in turn, give the same times (2,000 items, no sums: 2,282 and 2,292 µs against 2,320 and 2,301 µs). The ratios between the modes are the result of this measurement. |
+| Spread | Less than 3 % between the lowest and the highest run for most cells. The cells with one slow run (2,665 µs, 296 µs) show that a single run can be 10 % off, so each cell is the median of 9 to 18 runs. |

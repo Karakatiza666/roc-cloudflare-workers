@@ -9,3 +9,7 @@ bench/pad.txt
 bench/app_pad.roc
 .wrangler/
 .claude/worktrees/
+bench/out09/
+bench/platform/targets/
+bench/app_prod.roc
+bench/hd4/*.bin

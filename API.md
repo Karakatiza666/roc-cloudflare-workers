@@ -120,14 +120,18 @@ Hosted functions (`platform/Host.roc`, not in `exposes`):
 | `call!` | `Js => { status : U8, value : Js }` | `js_call`, a plain import | No |
 | `native!` | `U32, List(U8) => { status : U8, bytes : List(U8) }` | none: Zig code in the host | No |
 
+Apps and modules reach them through `Io.await!(ops)` and `Io.call!(ops)` (`platform/Io.roc`, built in `PLAN.md` 8a), not `Js.await!` and `Js.call!` (6.4): `Host.roc` imports `Js`, and Roc has no import cycles (`research/bridge-check/`), so `Js.roc` cannot call `Host`.
+
 The argument of `await!` and `call!` is a program (6.2) as a `Js` value. The result is a `Js` value (5). Roc never sees the byte format: the Zig host encodes the argument into a host block for JS (4.1), and decodes the bytes that JS writes back into Roc values (5.1). JS reads the argument before its first `await` (`../DESIGN-REGISTRY.md` 8). The host frees the argument (glue `decref`), because a hosted function owns its arguments.
 
 | Status | Meaning | Value |
 | --- | --- | --- |
 | 0 | Ok | The value of the last op |
 | 1 | JS threw, a promise rejected, or a value broke a conversion rule (J1, J3) | `Error(name, message)` |
-| 2 | A promise in `call!` (the program needs `await!`) | `Error` |
-| 3 | Bad program: a slot out of range, an unknown root or op | `Error`. This is a platform bug: the module crashes. |
+| 2 | A promise in `call!` (the program needs `await!`) | `Error("PromiseInCall", message)` |
+| 3 | Bad program: a slot out of range, an unknown root or op | `Error("BadProgram", message)`. This is a platform bug: the module crashes. |
+
+Built in 8a, two more cases: a program deeper than 64 containers (J3) is status 1 with `Error("RangeError", ...)` from the host, with no crossing. A result block that is not one value of the profile (5) is status 3 with `Error("BadResult", "CBOR: <what> at byte <n>")` from the host.
 
 Roc sees only statuses 0 to 3. Statuses 4 and 5 (4.1) stay in the host.
 
@@ -151,12 +155,13 @@ The hosted functions are Roc functions in the Zig host. Under them, the host and
 
 | Step | Rule |
 | --- | --- |
-| Argument | The host encodes the program (5) into a host block (owner 0). For `js_await`, it records the block in the `Wait` record of the task, so `task_abort` and `task_cancel` free it too. JS reads the block before its first `await`. The host frees it after the import returns. |
+| Argument | The host encodes the program (5) into a block of the task (8a: the owner is the task, not 0). So `freeOwner` frees it at `task_abort` and `task_cancel`, with the pages of the task, and the `Wait` record does not hold it. JS reads the block before its first `await`. The host frees it after the import returns. |
 | Task | The host gives the id of the task that runs as `task_id`. JS cannot know it: the engine resumes a suspended stack when its promise settles, and other promise jobs can run before that (found in `PLAN.md` 2c, 2026-10-16). |
 | Result | JS encodes the value (5) into a block from `js_alloc` and writes `[ptr, len]` at `out_ptr`. After the resume, the host checks the block (`PLAN.md` 12b), decodes it into Roc values with the owner of the task (5.1), and frees it. |
-| Status 4: no memory | `js_alloc` gave 0 (`PLAN.md` 2a). There is no result block. The host makes a clean OOM trap for the task (`PLAN.md` M6), the same as a failed `roc_alloc`. |
+| Status 4: no memory | `js_alloc` gave 0 (`PLAN.md` 2a), or it threw (8a: a trap in `js_alloc`). There is no result block. The host makes a clean OOM trap for the task (`PLAN.md` M6), the same as a failed `roc_alloc`. |
+| Grow | `poolGrow` (`hostlib/alloc.zig`) calls `js_grow(pages)` before each `memory.grow` and grows only on 1. A 0 is pressure (`PLAN.md` M7): the host gives its page reserve back and tries again, then the task gets a clean OOM trap with the cause `oom` (`trap_cause()` 2). JS counts the memory of all instances (`PLAN.md` M3, M10). |
 | Status 5: cancelled | The task was cancelled (`PLAN.md` 3c). The host runs `unreachable` before it reads memory or a global. |
-| Event | JS writes the event bytes into a `js_alloc` block and calls `handle(ptr, len, id)`. `handle` decodes them, calls `roc_event`, encodes the `Js` result into a host block and returns its address. JS reads it and calls `res_free`. |
+| Event | JS writes the event bytes into a `js_alloc` block and calls `handle(ptr, len, id)`. `handle` decodes them, calls `roc_event`, encodes the `Js` result into a host block and returns its address. JS reads it and calls `res_free` at once. Built in 8b: the task adopts the event block and the host frees it when `roc_event` returns (a trap frees it with the task), so it is in the sums of the waits of the task (`PLAN.md` 12a), as the request block was before 8b. A block that is not one value is a log line and a clean trap of the task. |
 
 ## 5. Values: `Js`
 
@@ -236,6 +241,17 @@ Tests that keep the Zig code and Roc in step:
 
 Each test must fail when its change is reverted (for example, swap two tag numbers, or turn off the small-string flag).
 
+As built in 8a (`PLAN.md` 8a status has the files and the revert results):
+
+| # | Built as |
+| --- | --- |
+| HD3 | `bench/app_bridge.roc` (request `hd3`), not the conformance app (8c) |
+| HD4 | The oracle is `bench/hd4/oracle.roc`, a new decoder of the CBOR profile. `research/api-probe/Js.roc` stays as the record of the first byte format. |
+| HD5 | A seeded random fuzz (random, mutated and cut inputs), not `std.testing.fuzz` (a guided run needs a fuzz build). The wasm32 run uses its own seeded corpus (`bench/cbor-wasm-test.mjs`), not the native one. |
+| HD6 | Also in a task: `leaked_at_end` stays 0, because a leak in a task goes back with its pages and live bytes do not show it |
+
+The host decoder (`host/cbor.zig`) does not read the content of a `Packed` value: `Cbor.parse` reads it in Roc. An integer outside the i64 range is a decode error (`Int` holds an I64).
+
 HD4 uses the `Js` decoder in Roc as the oracle. It changes to the CBOR profile with the format (8a).
 
 JS cannot write Roc values itself with less cost. Each heap block needs its own allocation, so JS would call `js_alloc` once for each string and list. One large block for all values does not work, because Roc frees each block alone when its refcount goes to 0.
@@ -298,12 +314,12 @@ Op : [
 | --- | --- |
 | OP1 | In `await!`, JS awaits each op result that is a thenable before the next op, except the result of `Start`. In `call!`, a thenable result of an op other than `Start` is status 2. A `Start` slot holds a pending promise: a later op can give it to `Promise.all` or `ctx.waitUntil`, or `Keep` it. |
 | OP2 | The result of the program is the last slot, converted by J1 to J7. Other slots are not converted, so a module can chain a JS object with no ref. |
-| OP3 | Roots, resolved for the task that runs: `env`, `ctx`, `event` (the object that started the task), `global` (`globalThis`: `fetch`, `caches`, `crypto`, `console`, constructors), `pf` (the platform helpers, 6.4), `ops` (JS functions that the app adds, 6.4), and the `cloudflare:*` modules that the shim imports (`cloudflare:sockets`, `cloudflare:email`, `cloudflare:workers`). An unknown root is status 3. |
+| OP3 | Roots, resolved for the task that runs: `env`, `ctx`, `event` (the object that started the task), `global` (`globalThis`: `fetch`, `caches`, `crypto`, `console`, constructors), `pf` (the platform helpers, 6.4), `ops` (JS functions that the app adds, 6.4), `signal` (8a: an `AbortSignal` that aborts at the end of the task, and in a `Race` branch also when the branch loses, OP8), and the `cloudflare:*` modules that the shim imports (`cloudflare:sockets`, `cloudflare:email`, `cloudflare:workers`; not built in 8a). An unknown root is status 3. |
 | OP4 | A program has no branch and no loop. A module that must branch runs 2 programs or calls a platform helper (`pf`, 6.4). An app adds a JS op (6.4). A result that can be `null` needs no branch (OP7). |
 | OP5 | The op encoder in Roc (ops to a `Js` array) and the interpreter in JS are the only code that knows the op format. The byte format (5) is only in the Zig host and the JS shim. |
-| OP6 | `Par` runs each branch as its own program, with its own slots from 0, and awaits all of them (`Promise.allSettled`). Its slot gets an `Arr` with one `Arr([Num(status), value])` for each branch, in order, with the statuses of 4. A status 3 in a branch makes the whole program status 3. Workers lets 6 connections wait at the same time and queues the others, so a large `Par` is slower, but it does not fail. `Par` always gives a promise, so a program with `Par` runs with `await!`, also when each branch is sync (`Io.both!` of two `Io.sync` values). In `call!`, `Par` is status 2 (OP1). |
+| OP6 | `Par` runs each branch as its own program, with its own slots from 0, and awaits all of them (`Promise.allSettled`). Its slot gets an `Arr` with one `Arr([Int(status), value])` for each branch, in order, with the statuses of 4. A status 3 in a branch makes the whole program status 3. Workers lets 6 connections wait at the same time and queues the others, so a large `Par` is slower, but it does not fail. `Par` always gives a promise, so a program with `Par` runs with `await!`, also when each branch is sync (`Io.both!` of two `Io.sync` values). In `call!`, `Par` is status 2 (OP1). |
 | OP7 | `Get` and `Fields` on `null` or `undefined` give `undefined`, as `?.` in JS. `Call`, `Start`, `New` and `Set` on them still throw (status 1). So a module reads a result that can be `null` with no branch: `R2.get!` and `R2.head!` read `Fields` of the result of `get` or `head`, and `Undefined` is `NotFound`. `Cache.get!` does the same with the result of `match`. `WebSocket.connect!` reads `Fields(res, ["status", "webSocket"])` in its wait, gives `NotUpgrade` for a `Null` socket, and calls `accept()` on the ref in a second program with `call!` (no wait). |
-| OP8 | `Race` runs each branch as `Par` does, and settles when the first branch settles (`Promise.race`). Its slot gets `Arr([Int(index), Arr([Num(status), value])])` for that branch. The interpreter gives each branch an `AbortSignal` and aborts the other branches. They go on in JS until they see the abort, and their results are dropped. A platform helper that takes a value from a queue (a WebSocket message, a TCP read) stops its wait on the abort and leaves the value for the next call, so a branch that lost takes nothing. `Time.sleep` stops its timer (`scheduler.wait` with the signal). `Race` gives a promise, so it needs `await!` (as OP6). |
+| OP8 | `Race` runs each branch as `Par` does, and settles when the first branch settles (`Promise.race`). Its slot gets `Arr([Int(index), Arr([Int(status), value])])` for that branch. The interpreter gives each branch an `AbortSignal` (the root `signal` in the branch) and aborts the other branches. They go on in JS until they see the abort, and their results are dropped. A platform helper that takes a value from a queue (a WebSocket message, a TCP read) stops its wait on the abort and leaves the value for the next call, so a branch that lost takes nothing. `Time.sleep` stops its timer (`scheduler.wait` with the signal). `Race` gives a promise, so it needs `await!` (as OP6). |
 
 Example, inside `D1` (all names are module code, not app code). Each function that waits has a pure twin that gives an `Io` (6.5):
 
@@ -337,20 +353,26 @@ A binding value holds the name of the binding: `D1 :: { name : Str }`, made with
 | Need | Use |
 | --- | --- |
 | A platform module needs a loop or a branch in JS: a stream read to a limit, the pin table (9) | A platform helper in the shim: `Call(Root("pf"), "readUpTo", [Slot(n), Lit(Num(max))])`. The helpers are part of the platform release, like the modules that call them. |
-| A Workers API that has no module yet | `Js.await!(program)`, `Js.call!(program)` or an `Io` (6.5) in the app. Same rules as in a module. |
+| A Workers API that has no module yet | `Io.await!(ops)`, `Io.call!(ops)` or an `Io` (6.5) in the app. Same rules as in a module. (Was `Js.await!` and `Js.call!`: see 4.) |
 | JS logic with a branch, a loop or a callback (HTMLRewriter, a library from npm) | The app adds JS functions: `makeHandler(module, { ops: { name: async (...args) => ... } })`. Roc calls them with `Call(Root("ops"), "name", args)`. A Roc package that needs JS code tells the app to add its functions to `ops`. |
 
 The platform helpers (root `pf`) that this file names. Each one is a loop or a branch that a program cannot have (OP4).
 
 | Helper | Does | Used by |
 | --- | --- | --- |
-| `readUpTo(stream, max)` | Reads a stream to `max` bytes. Past `max`, it gives an error that the module turns into `TooLarge`. | `Body.bytes!`, `text!`, `json!` |
-| `pack(value)` | Writes the value as one `Packed` CBOR value (5.2) | `D1.all!`, `first!`, RPC, queue reads |
-| `packEach(array, key)` | Gives the array with the field `key` of each item as a `Packed` value. The other fields stay. | `D1.batch!` (6.2): `results` of each `D1Result` |
+| `readUpTo(stream, max)` | Reads a stream to `max` bytes. Past `max`, it gives an error that the module turns into `TooLarge`. Built in `PLAN.md` 8b: no byte goes into wasm past `max` (the check is in JS, before the copy), and it reads on from where `chunk` stopped. | `Body.bytes!`, `text!`, `json!` |
+| `pack(value, maxBytes)` | Writes the value as one `Packed` CBOR value (5.2). Above `maxBytes` (no default: the module gives it, 8c): a `TooLarge`, status 1. | `D1.all!`, `first!`, RPC, queue reads |
+| `packEach(array, key, maxBytes)` | Gives the array with the field `key` of each item as a `Packed` value. The other fields stay. | `D1.batch!` (6.2): `results` of each `D1Result` |
 | `findById(array, id)` | Gives the item whose `id` is `id`, else `undefined` (OP7) | `Queue.Message.ack!`, `retry!`: `Get(Root("event"), "messages")`, then `findById`, then `Call` of `ack` |
 | `spawn(ops)` | Runs the ops as an async program of the task. A throw goes to the log. The task context stays until it settles (RS1). | `Io.start!` (6.5) |
-| `writer()` | Makes a `TransformStream`, and records its writable side in the task table, so the task stays until the stream closes or is cancelled (10.2) | `Body.writer!` (`MODULES.md` 4) |
-| `pin`, `pinned`, `unpin` | The pin table (RS2) | `Js.pin!`, `pinned!`, `unpin!`, `Memo` |
+| `writer()` | Makes a `TransformStream`, and records its writable side in the task table, so the task stays until the stream closes or is cancelled (10.2). Built in `PLAN.md` 8b: it gives `{ readable, writer }` (the writer of `getWriter()`, so `write!` is a `Call` of `write` on its ref). | `Body.writer!` (`MODULES.md` 4) |
+| `close(writer)` | Closes a writer of `writer()`. The response body is complete now when it is the stream of `respond` (10.2). | `Body.Writer.close!` |
+| `chunk(stream, max)` | The next chunk, at most `max` bytes (the rest comes next), or `undefined` at the end. It shares the reader of `readUpTo`. | `Body.chunk!` |
+| `sha256(stream)` | `crypto.DigestStream`: the SHA-256 with no copy into wasm | `Body.sha256!` |
+| `transform(body, kind, format)` | The body (a stream, bytes, text or `null`) through a `CompressionStream` or a `DecompressionStream` | `Body.compress!`, `decompress!` |
+| `respond(outcome)` | The outcome `Respond` as a Workers `Response`, given to the entry now (10.2). An `InvalidStateError` when the entry gave no hook, or on a second call. | `Ctx.respond!` |
+| `passThrough()` | `ctx.passThroughOnException()` in the `fetch` of a Worker, else an `InvalidStateError` | `Ctx.pass_through!` |
+| `pin(name, value, maxAgeMs)`, `pinned(name)`, `unpin(name)` | The pin table (RS2). `pinned` gives `undefined` for a name with no entry or an entry past its age (8a; `Js.pinned!` makes it `NotPinned` in 8c). | `Js.pin!`, `pinned!`, `unpin!`, `Memo` |
 
 The app is trusted code: it is the developer's own Worker. A program can reach only the roots of OP3, and Workers does not allow `eval` or `new Function`.
 
@@ -442,24 +464,63 @@ Wrappers:
 
 ## 8. Native
 
-Some work has no Workers API and is slow or missing in Roc. The host does it with Zig `std` through `native!(op, bytes)`. Each op is a pure function with a size limit. State that crosses calls (a hash state, a decoder window) is a host block owned by the task, so `freeOwner` frees it after a trap.
+Some work has no Workers API and is slow or missing in Roc. The host does it with Zig `std` through `native!(op, bytes)`. Each op is a pure function with a size limit. State that crosses calls (a hash state, a decoder window) is a host block owned by the task, so `freeOwner` frees it after a trap. The typed Roc side is `platform/Native.roc` (`Native.zstd_decode!`, `Native.ZstdStream`, `Native.Blake3`, `Native.Sha256`). The Zig side is `hostlib/native/` (`native.zig`, `zstd.zig`). It was built in `research/native/` and wired in `PLAN.md` 8e.
 
 | Op | Zig `std` | Why not in Workers or Roc |
 | --- | --- | --- |
 | `zstd_decode(bytes, max_out)` | `std.compress.zstd` | `DecompressionStream` has gzip and deflate only (`research/api-probe/`). No Roc library. Design 6.2 already puts it in the host. |
-| `zstd_stream_*` (open, push a chunk, take output, close) | same | For archives larger than the memory budget (RF5) |
+| `zstd_stream_*` (open, push a chunk, close) | same | For archives larger than the memory budget (RF5) |
 | `blake3_*`, `sha256_*` (new, update, final) | `std.crypto.hash` | Roc `Crypto` has no state that takes one chunk at a time (RF5). WebCrypto has no BLAKE3. |
 
-The op number is the `U32` argument of `native!`. The other inputs are at the start of the bytes, little-endian:
+The op number is the `U32` argument of `native!`. All integers in the bytes are little-endian.
 
-| Op | Bytes in | Bytes out |
-| --- | --- | --- |
-| `zstd_decode` | u32 `max_out`, then the frame | The output. Status 1 when the output is larger than `max_out`, or the frame is bad. |
-| `zstd_stream_open`, `blake3_new`, `sha256_new` | nothing (zstd: u32 window limit) | u32 handle |
-| `zstd_stream_push`, `blake3_update`, `sha256_update` | u32 handle, then a chunk | zstd: the output so far. Hash: nothing. |
-| `zstd_stream_close`, `blake3_final`, `sha256_final` | u32 handle | zstd: the rest of the output. Hash: the digest. |
+| Op | Name | Bytes in | Bytes out (status 0) |
+| --- | --- | --- | --- |
+| 1 | `zstd_decode` | u32 `max_out`, then the frames | The output |
+| 2 | `zstd_stream_open` | nothing, or u32 `window_limit`, or u32 `window_limit` and u32 `push_limit` (0 is the default) | u32 handle |
+| 3 | `zstd_stream_push` | u32 handle, then a chunk | The output of the whole blocks in the chunk (can be empty) |
+| 4 | `zstd_stream_close` | u32 handle | Nothing. The handle is freed, also when the status is 1. |
+| 5 | `blake3_new` | nothing | u32 handle |
+| 6 | `blake3_update` | u32 handle, then a chunk | Nothing |
+| 7 | `blake3_final` | u32 handle | 32 bytes. The handle is freed. |
+| 8, 9, 10 | `sha256_new`, `sha256_update`, `sha256_final` | as 5, 6, 7 | as 5, 6, 7 (32 bytes) |
 
-A handle is an index in a table of host blocks of the task. A handle of another task or a closed handle gives status 1.
+A handle is `gen << 8 | (slot + 1)`. It is never 0. Roc treats it as an opaque `U32`. A handle belongs to the task that made it. A closed handle, a handle of another task, a handle of an old task and a wrong number give status 1. `zstd_decode` also decodes many frames and skippable frames. It refuses a frame with a dictionary.
+
+Statuses. On status 1 the bytes are a short ASCII code. Roc sees status 0 and 1. Status 4 stays in the host.
+
+| Status | Code | Cause | Tag in `Native` |
+| --- | --- | --- | --- |
+| 1 | `output_limit` | The output is more than `max_out` (op 1), or more than `push_limit` in one push (op 3) | `OutputLimit` |
+| 1 | `window_too_large` | The frame header needs a window over the limit (stream only) | `WindowTooLarge` |
+| 1 | `bad_frame` | Not a zstd frame, or a damaged frame, or bytes after the last frame | `BadFrame` |
+| 1 | `truncated` | The input is empty or stops inside a frame | `Truncated` |
+| 1 | `unsupported` | A frame with a dictionary | `Unsupported` |
+| 1 | `bad_handle` | Closed handle, wrong number, or a handle that an old task made | `BadHandle` |
+| 1 | `wrong_task` | The handle belongs to another task | `WrongTask` |
+| 1 | `wrong_kind` | The handle is a stream, a BLAKE3 state or a SHA-256 state, and the op wants another. The typed handles of `Native` cannot do this: a crash if it happens. | none |
+| 1 | `too_many_handles` | More than 16 handles for the task, or more than 4 streams, or no free slot (64 in the instance) | `TooManyHandles` |
+| 1 | `no_task` | A handle op with owner 0 (the host, no task runs) | `NoTask` |
+| 1 | `bad_argument` | Bytes too short, unknown op, or `window_limit` over 8 MiB | `BadArgument` (`open_with!` only) |
+| 4 | `out_of_memory` | The allocator gave 0. The host makes a clean OOM trap for the task (4.1), as for a failed `roc_alloc`. | none |
+
+A code that `Native.roc` does not know is a platform bug: a crash.
+
+Limits:
+
+| Limit | Value |
+| --- | --- |
+| Output of `zstd_decode` | `max_out`, a u32 of the caller (`Native.zstd_decode!` takes a `U64` and clamps it). The decode stops after the block that passes it (at most 128 KB over). A content size in the header over the limit stops before the first block. The result is an error with no bytes. |
+| Window of `zstd_decode` | None. The buffer is the whole output, so the window costs no memory. |
+| Window of a stream | 8 MiB by default, and 8 MiB is the hard limit (the size that the zstd standard tells all decoders to take: `roc bundle` makes 2 MiB, `zstd -19` from a pipe makes 8 MiB). A frame over the limit is `window_too_large`. An open with a larger `window_limit` is `bad_argument`. |
+| `push_limit` | The most output of one push. 16 MiB by default. One block (128 KB) can pass it. After `output_limit` the stream is dead: each push gives the same error, and `close` frees it. |
+| Handles | 64 in the instance, 16 for a task, 4 zstd streams for a task |
+| Stack | zstd needs about 274 KB of stack while a block decodes (std keeps two 128 KB arrays on the stack). Before `zstd_decode` and `zstd_stream_push` the host reserves 300 KB (`canary.reserve`): when the task has less stack left, the task gets a clean trap (the stack canary is not touched). The other ops need 16 KB. |
+| Frame checksum | Not checked (std panics on `verify_checksum`). The registry checks the BLAKE3 of the asset (`../DESIGN-REGISTRY.md`). |
+
+The memory of an op: `zstd_decode` holds the output and the input at once, and the result is a copy into a Roc list, so a one-shot decode of a large archive needs about twice its output plus the input (161 MB for a 70 MB output and a 21 MB archive). The stream holds the window (at most 8 MiB, plus a slack of at most 2 MB) and one push. Use the stream for an archive over a few MB of output (RF5).
+
+Cleanup. `alloc.taskEnd` calls `native.endTask(allocator, owner, .forget)` first, so a return, a trap and a cancel drop the handles of the task. The blocks are blocks of the task, so the allocator frees them in the same call.
 
 A Native op that Roc gets in its builtins later moves to Roc, and the op stays for one platform release.
 
@@ -554,6 +615,28 @@ So one export for each kind gives no measurable gain. The cost of a request is i
 
 Durable Object classes and RPC entry points are JS classes in Workers, and an ES module must name its exports in its source. So the entry file has one line for each class: `export const Room = objectClass("Room")`, `export const Admin = entrypointClass("Admin")` (`MODULES.md` 3). The names of the methods come from Roc: at load, `makeHandler` makes the instance, sends `Manifest`, and gets `{ default: [methods], objects: { Room: { handlers, methods } }, entrypoints: { Admin: { handlers, methods } } }` from the `Worker` wrapper (`MODULES.md` 3). `handlers` names the handlers that the class has (`init`, `fetch`, `alarm`, `webSocketMessage`, ...), and the shim defines a JS method only for those: a class with no `alarm!` has no `alarm` method, so an alarm cannot throw and retry for nothing, and a class with no `init!` has no `blockConcurrencyWhile`. `makeHandler` gives a subclass of `WorkerEntrypoint`, not a plain object, because Workers sends RPC to the default export only when it extends `WorkerEntrypoint`. Its `fetch`, `scheduled`, `queue`, `email` and `tail` methods send the events above, with `this.env` and `this.ctx` as roots, and the `default` methods are on its prototype. It defines each method on the prototype of its class, because workerd finds an RPC method only on the class prototype (an own property gives "The RPC receiver does not implement the method"). Each method call becomes an event. A class in the manifest with no export, or an export that is not in the manifest, is a throw at load, so `wrangler deploy` fails and names the class. An app with no `Worker` wrapper answers `Unhandled`: no classes. Wrangler names the classes as usual, and workerd checks them against the exports.
 
+As built in `PLAN.md` 8b (first half). The status there has the files, the tests and the choices.
+
+| Item | Built as | Why |
+| --- | --- | --- |
+| Header | `requires { event! : Worker.Event => Worker.Outcome }`. `Event` and `Outcome` are in the block of `Worker` (`MODULES.md` 3). | A platform header names the module of a type. |
+| Payload types of phase B | `Queue.Batch`, `Queue.Message`, `Email.Mail`, `Object.Event`, `Object.Socket`, `WebSocket.Message`, `WebSocket.Closed`, `Worker.TraceItem` exist as types only. | The type of `Event` is final in phase A (rules above). |
+| Entry points | `makeHandler` gives a class (a subclass of `WorkerEntrypoint`) with `fetch`, `scheduled`, and a method on the prototype for each name of the option `other`. `Rpc`, `EntrypointFetch`, `Object` and `Manifest` are 8f: the `Worker` wrapper gives `Unhandled` for them. | |
+| First instance | At the first event (or the first read of the static `runner`), not in `makeHandler`. `resumeCheck: "off"` on a production host still throws in `makeHandler`: the shim reads the export list. | workerd forbids random values at global scope, and the free mark of an instance is random (`PLAN.md` 12). |
+| Log lines | `<entry>: failed: <message>`, `<entry>: unhandled: ...`, `<entry>: trap: <the text of a Roc crash, or the error>` through the option `log` (default `console.warn`) | `PLAN.md` 8a O2: the host writes the text of a `crash` to its log before the trap. |
+| Outcomes that an entry does not take | `fetch`: a log line and a 500 with no body. `scheduled`: each outcome but `Done` is a log line and a throw. A method of `other`: each outcome but `Reply` is a log line and a throw. | |
+
+The event and the outcome cross as `Js` trees (5) with these shapes (`platform/Entry.roc`, `js/events.js`). Typed data as `Packed` (5.2) waits for the `Cbor` module (`PLAN.md` 8c).
+
+| Value | Shape |
+| --- | --- |
+| `Fetch` | `{ kind: "fetch", request: { method, url, headers: [[name, value], ...], body, cf } }` |
+| `Scheduled` | `{ kind: "scheduled", cron, time_ms }`: `controller.cron`, `controller.scheduledTime` |
+| `Other` | `{ kind: "other", name, payload }`: the handler name and its first argument (J1 to J7) |
+| `body` | absent (`Empty`), bytes, text, or a ref (`Stream`). The request body of `fetch` is always a ref (second half of 8b, `PLAN.md` 10a). |
+| `cf` | absent, or an object with each field of `Request.Cf` as `{ Ok: v }` or `{ Err: "Missing" }` (never `null`), and `is_eu_country` as a boolean |
+| Outcome | `{ outcome: "respond", status, headers, body, webSocket? }`, `{ outcome: "reply", value }`, `{ outcome: "done" }`, `{ outcome: "failed", message }`, `{ outcome: "unhandled" }` |
+
 ### 10.2 Respond now, work after
 
 `Ctx.respond!(response)` gives the response to Workers at once, and the task goes on. The return value of `event!` is then ignored. It works in the `Fetch` of a Worker, in the `EntrypointFetch` of a named entry point, and in the `Fetch` of a Durable Object:
@@ -595,6 +678,17 @@ This one function covers 3 needs:
 | A streaming response (SSE, a long export) | `{ body, writer } = Body.writer!()?`, `respond!(Response.from_body(200, "text/event-stream", body))`, then `writer.write!(chunk)` for each chunk and `writer.close!()` at the end (`MODULES.md` 4). No `Js`. |
 | A WebSocket | `WebSocket.accept!(req)`, `respond!` with its 101 response, then `receive!` and `send!` (`MODULES.md` 12) |
 
+As built in `PLAN.md` 8b (second half). Measured in local workerd (`research/stream-cancel/`, `bench/stream-workerd.mjs`):
+
+| Fact | Result |
+| --- | --- |
+| A read of the request body after `respond!` | `TypeError: Can't read from request stream after response has been sent.`: `BodyErr` |
+| The client goes away while a `Body.writer!` stream is open (a TCP reset or a FIN after the first chunk) | With `enable_request_signal`: `request.signal` aborts at once, so the shim cancels the task. The response stream is not cancelled, and a pending `write` never settles (5 s checked). With no flag: nothing ends the task. Open point of `PLAN.md` 3. |
+| The client goes away after the body is complete | `request.signal` does not abort, and the work in `ctx.waitUntil` runs to its end |
+| A timer after the response with no `ctx.waitUntil` | It never fires. With `ctx.waitUntil`, it fires. |
+
+`respond!` works in the `Fetch` of a Worker now. `EntrypointFetch` and the `Fetch` of an object give the hook in 8f.
+
 ## 11. Tests and the contract
 
 | Part | Test | Where |
@@ -604,7 +698,7 @@ This one function covers 3 needs:
 | Wrappers (7.1) | Conformance routes: a `Memo` loads once, and a second request gets the value with no load. `Worker` sends each kind to its field, and an `Err` gives `Failed`. A `Queue(a)` constant sends and reads one type. An `Rpc` constant calls an object and a service. | `conformance/` |
 | Module conventions (`MODULES.md` 1) | `research/api-probe/modules-check/` until `platform/` exists: `roc check`, a run against `expected.txt`, and two files that must not compile (a `Secret` in a JSON encode and in a CBOR encode) | `platform/`, `conformance/` |
 | Each module | The conformance app: one route for each module function, run in workerd with local bindings (Miniflare gives local D1, R2, KV, Queues and Durable Objects). Each test fails when its function sends a wrong method name. | `conformance/` of this repository |
-| Events | One test for each Workers entry kind (10.1). `scheduled` runs through `GET /cdn-cgi/local/scheduled?cron=...&time=...&format=json` of Miniflare, which gives the outcome and the `noRetry` flag (`MODULES.md` 3). | `conformance/` |
+| Events | One test for each Workers entry kind (10.1). `scheduled` runs through `GET /cdn-cgi/local/scheduled?cron=...&time=...&format=json` of Miniflare, which gives the outcome and the `noRetry` flag (`MODULES.md` 3). Until Miniflare is installed (`PLAN.md` 8b): a small entry service in a workerd config serves the same path, as the entry worker of Miniflare does (`Fetcher.scheduled` with the flag `service_binding_extra_handlers`). | `conformance/`; 8b: `bench/entry-test.mjs`, `bench/entry-workerd.mjs` |
 | Host rules (traps, sums, memory) | As now | `bench/`, `PLAN.md` |
 
 The registry app does not fake the platform in Roc. An `expect` cannot run an effect (RF9), and a fake in Roc would test the fake. The registry tests:

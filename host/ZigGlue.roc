@@ -1,3 +1,9 @@
+# Copy of roc:src/glue/src/ZigGlue.roc at roc commit dbf53c2b109a4756134d03c15d8d1e8c7ee15fc4
+# (2026-10-01; the file is the same in nightly-2026-10-12-2664a27). The lines after this header are not changed.
+# Copyright © 2019 Richard Feldman and subsequent Roc authors <roc-lang.org/authors>
+# Licensed under the Universal Permissive License (UPL), Version 1.0. See LICENSE.
+# bench/glue.sh runs it with `roc glue` to make host/roc_platform_abi.zig.
+
 ## A glue script for generating a Zig source file with hosted function bindings.
 app [make_glue] { pf: platform glue }
 

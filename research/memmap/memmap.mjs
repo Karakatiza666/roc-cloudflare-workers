@@ -2,8 +2,8 @@
 // Memory map of one wasm instance (PLAN.md step 12-pre).
 // Usage: node research/memmap/memmap.mjs <app.wasm> [--map <file.map>] [--kind app|deep] [--detail] [--json] [--light]
 // Method: parse the wasm (memory, globals, data segments, name section) and the wasm-ld map (symbol
-// addresses: research/memmap/build.sh writes it). Instantiate it with the stub import of
-// bench/core.js (`env.js_wait`, copied in `makeWait` below, no import from bench/), run `init`, then a
+// addresses: research/memmap/build.sh writes it). Instantiate it with a stub of the wait import `env.js_await`
+// (API.md 4.1: it reads the last op of the program, as the ops of bench/ops.js; no import from bench/), run `init`, then a
 // mix of requests (waits, traps, cancels, a failed allocation, `dbg` lines, stack overflow).
 // After each phase, compare the static part of memory with the copy taken after `init`.
 // The heap part is read from the unit tables of hostlib/alloc.zig (U_KIND, U_SLOT, ...).
@@ -14,6 +14,7 @@
 // --light: small requests and 16 at once (the boxy build is slow). --detail: one row for each data symbol.
 import { readFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { fromJs, toJs } from '../../js/values.js';
 
 // ---------------------------------------------------------------- arguments
 const args = process.argv.slice(2);
@@ -44,7 +45,8 @@ const buf = readFileSync(file);
 if (!mapArg && existsSync(file.replace(/\.wasm$/, '.map'))) mapArg = file.replace(/\.wasm$/, '.map');
 
 // ---------------------------------------------------------------- the PLAN 12 table
-// The ten rows of "What a host bug can damage", in the order of PLAN.md.
+// The rows of "What a host bug can damage", in the order of PLAN.md (11 and 12: the two rows with no check,
+// from the decisions on the 12-pre findings).
 const ROWS = {
   1: 'Task pages and large blocks',
   2: 'Saved stack copy',
@@ -56,6 +58,8 @@ const ROWS = {
   8: 'Host globals',
   9: 'Pages of the roc runtime (foreign units)',
   10: 'JS blocks',
+  11: 'Response block of a task that ended',
+  12: 'Roc code statics',
 };
 // What 12d does with a row.
 const ACTION = {
@@ -69,6 +73,8 @@ const ACTION = {
   8: 'range check (12d)',
   9: 'sum if constant, else range (12d)',
   10: 'owner and length (12b)',
+  11: 'none (JS reads it and calls res_free at once)',
+  12: 'none (never live across a wait)',
 };
 
 // ---------------------------------------------------------------- wasm parser
@@ -176,15 +182,25 @@ const RULES = [
   [/^alloc\.(POOL_LO|POOL_HI|GROWN_END|CHUNKS_USED)$/, 'pool bounds', 6],
   [/^alloc\.(CACHE|CACHED)$/, 'page reserve table', 6],
   [/^alloc\.(TASKS|SLOT_OWNER|LAST_OWNER|LAST_SLOT)$/, 'task records', 6],
+  [/^alloc\.SEEN$/, 'scratch bitmap of check_heap (cleared at each check)', 6],
   [/^alloc\.FREE_MARK$/, 'free mark (set once)', 8, true],
-  [/^alloc\.(OWNER|FAIL_AT|LIVE_BYTES|DOUBLE_FREES|DEALLOC_MISS|ROC_BYTES)$/, 'allocator globals, counters', 8],
+  [/^alloc\.GROW_CHUNKS$/, 'grow step (set once, before init)', 8, true],
+  [/^alloc\.(OWNER|FAIL_AT|LIVE_BYTES|DOUBLE_FREES|DEALLOC_MISS|ROC_BYTES|INIT_MEM_END)$/, 'allocator globals, counters', 8],
+  [/^alloc\.(LIVE_PEAK|RECLAIMS|RECLAIMED|LEAKED|RESETS|RESET_BYTES)$/, 'allocator counters of H3 and the idle reset (4h, 4j)', 8],
   [/^roc\.LOG$/, 'log', 8],
   [/^canary\./, 'canary globals (init only)', 8, true],
   [/^mem\.TRAP_CLEAN$/, 'trap flag', 8],
   [/^host\.(COPY|TASK_TOP|TASK_WAITING|TASK_SAVED|TASK_SAVED_MAX|TASK_SAVED_PEAK|TASK_WAITS|WAITS_FREE_HINT)$/, 'host globals', 8],
   [/^host\.WAITS$/, 'WAITS (pointers to Wait records)', 8],
+  [/^host\.(SUM_MODE|SUSPECT|SUM_CHECKS|ALARMS)$/, 'sum mode, alarm counters (12a, 12b)', 8],
+  [/^mem\.RUN_EPOCH$/, 'export counter RUN_EPOCH (12b)', 8],
+  [/^cpu\.(__instance_signal|__instance_terminated|CAUSE)$/, 'CPU flags of workerd, trap cause (5a, 5b)', 8],
+  [/^host\.CONST_SUM$/, 'sum of the constant data (12d, set by init)', 7, true],
   [/^host\.(FILL|FILLED|FILL_TAG)$/, 'bench only: heap_fill', 'bench'],
   [/^host\.FAULT_NEXT$/, 'bench only: fault_next_wait', 'bench'],
+  [/^host\.LEAK_NEXT$/, 'bench only: leak_next', 'bench'],
+  [/^host\.(WILD_BASE|WILD_SEED|WILD_WORDS|WILD_TRAP|POKE_OUT|POKE_OUT_ADD)$/, 'bench only: set_wild, poke_wait', 'bench'],
+  [/^roc_tail_(pending|args)$/, 'Roc code statics (roc_tail_*)', 12],
   [/^roc\.RocHostOf.*\.(host|env)$/, 'roc host table', 7, true],
   [/^roc_boxy_sidecar/, 'roc runtime sidecar (constant data of the boxy runtime)', 7, true],
   [/^alloc\.vtable$/, 'allocator vtable', 7, true],
@@ -245,12 +261,16 @@ const reply = (k, a, b) => {
   if (k === 1) { try { return 'f:' + new URL(b).searchParams.get('id'); } catch { return 'f:?'; } }
   return 'd:' + (a.split(' ')[1] ?? 'x');
 };
-// The wait import. It reads its arguments before the first await (they can be on the shared stack).
-const wait = async (k, num, ap, al, bp, bl, cp, cl, out, id) => {
+// The wait import. It reads the program before the first await (in variant B the block is in memory that other
+// tasks use next). The last op is the call of the bench op: `fetch(method, url, ...)` is kind 1, `db(q, ...)` kind 2.
+const wait = async (id, ap, al, out) => {
   const x = cell.x;
-  const u8 = new Uint8Array(x.memory.buffer);
-  const a = dec.decode(u8.subarray(ap, ap + al));
-  const b = dec.decode(u8.subarray(bp, bp + bl));
+  const prog = fromJs(new Uint8Array(x.memory.buffer).slice(ap, ap + al));
+  const [, , name, args] = prog.at(-1) ?? [];
+  const lit = (i) => (args?.[i]?.[0] === 'lit' ? String(args[i][1]) : '');
+  const k = name === 'fetch' ? 1 : 2;
+  const a = lit(0);
+  const b = k === 1 ? lit(1) : '';
   const t = st.tasks.get(id);
   if (t?.cancelled) { t.ended5 = true; return 5; }
   st.waiting++;
@@ -264,20 +284,20 @@ const wait = async (k, num, ap, al, bp, bl, cp, cl, out, id) => {
     st.waiting--;
   }
   if (t.cancelled) { t.ended5 = true; return 5; }
-  const body = enc.encode(reply(k, a, b));
+  const body = toJs(reply(k, a, b)).slice();
   const p = x.js_alloc(body.length);
   if (!p) return 4;
   new Uint8Array(x.memory.buffer).set(body, p);
   const dv = new DataView(x.memory.buffer);
   dv.setUint32(out, p, true);
   dv.setUint32(out + 4, body.length, true);
-  return 200;
+  return 0;
 };
 
 const importObj = { env: {} };
 for (const im of WebAssembly.Module.imports(new WebAssembly.Module(buf))) {
   importObj[im.module] ??= {};
-  importObj[im.module][im.name] = im.name === 'js_wait' ? new WebAssembly.Suspending(wait) : () => 0;
+  importObj[im.module][im.name] = im.name === 'js_await' ? new WebAssembly.Suspending(wait) : im.name === 'js_grow' ? () => 1 : () => 0;
 }
 const module = new WebAssembly.Module(buf);
 const inst = new WebAssembly.Instance(module, importObj);
@@ -346,7 +366,8 @@ function heapCount() {
   return c;
 }
 
-// The Wait records (host.WAITS): [low, top, buf ptr, buf len, out0, out1, owner, at] in host/host.zig.
+// The Wait records (host.WAITS): [low, top, buf ptr, buf len, out0, out1, owner, at, epoch, alarm, sum (8 B)]
+// in host/host.zig: 48 B (an extern struct, 12a).
 function waitRecords() {
   const a = A('host.WAITS');
   if (!a) return null;
@@ -355,8 +376,8 @@ function waitRecords() {
   for (let i = 0; i < n; i++) {
     const p = d.getUint32(a + 4 * i, true);
     if (!p) continue;
-    const f = [...Array(8).keys()].map((k) => d.getUint32(p + 4 * k, true));
-    recs.push({ at: p, low: f[0], top: f[1], buf: f[2], len: f[3], owner: f[6], index: f[7], slot: i, ok: f[1] - f[0] === f[3] && f[7] === i });
+    const f = [...Array(10).keys()].map((k) => d.getUint32(p + 4 * k, true));
+    recs.push({ at: p, low: f[0], top: f[1], buf: f[2], len: f[3], owner: f[6], index: f[7], alarm: f[9], slot: i, ok: f[1] - f[0] === f[3] && f[7] === i && f[9] === 0 });
   }
   return recs;
 }
@@ -397,7 +418,7 @@ async function runReq(req, onResponse) {
   new Uint8Array(x.memory.buffer).set(bytes, p);
   try {
     const blk = await handle(p, bytes.length, t.id);
-    onResponse?.();
+    onResponse?.(blk);
     const len = rd32(blk);
     const body = dec.decode(new Uint8Array(x.memory.buffer, blk + 4, len));
     x.res_free(blk);
@@ -424,13 +445,22 @@ async function burst(label, reqs, atAllWaiting) {
     atAllWaiting?.(ids);
   };
   let respSnap = false;
-  await Promise.all(reqs.map((r) => runReq(r, () => {
-    if (!respSnap && label === 'one request') { respSnap = true; snapHeap('response block'); }
+  await Promise.all(reqs.map((r) => runReq(r, (blk) => {
+    if (!respSnap && label === 'one request') {
+      respSnap = true;
+      respBlock = { start: blk, end: blk + 4 + rd32(blk) };
+      snapHeap('response block');
+    }
   })));
   st.onWait = null;
   snapStatic(label);
   snapHeap(label);
+  // 12d: the global check passes after each phase (no task runs or waits then).
+  if (x.check_heap) heapChecks.push([label, x.check_heap()]);
 }
+// The response block of the first request (between `handle` and `res_free`), and the results of `check_heap`.
+let respBlock = null;
+const heapChecks = [];
 
 // ---------------------------------------------------------------- run
 instCopy = new Uint8Array(new Uint8Array(x.memory.buffer, 0, staticEnd).slice());
@@ -604,10 +634,12 @@ if (peak) {
   row('page reserve (empty small pages)', mid.reserve, 5);
   row('task small pages', mid.smallTask, 1, `${mid.taskSlots.size} task slots`);
   row('task large blocks', mid.largeTask, 1, `${fmt(copyBytes)} B of it are ${recs.length} saved stack copies (row 2), found by the Wait records${waitOk ? '' : ' (layout check failed)'}`);
-  row('host pages (slot 0)', [...mid.smallHost, ...mid.largeHost], 3, `Wait records (${recs.length} x 32 B), log lines; the response block is here for a short time`);
+  row('host pages (slot 0)', [...mid.smallHost, ...mid.largeHost], 3, `Wait records (${recs.length} x 48 B), log lines; the response block is here for a short time`);
   row('JS pages (slot JS)', [...mid.smallJs, ...mid.largeJs], 10, 'request blocks and response blocks of js_alloc');
   row('foreign units (roc runtime)', mid.foreign, 9);
   row('unit of kind none, not free, not reserve', mid.other, null);
+  // The response block of a task that ended: a host block, from the return of `handle` to `res_free` (first request).
+  if (respBlock) heapRows.push({ name: 'response block of a task that ended (first request, from the return of handle to res_free)', start: respBlock.start, end: respBlock.end, units: 1, size: respBlock.end - respBlock.start, row: 11, note: 'in a host page' });
   heapRows.copyBytes = copyBytes;
   heapRows.waitOk = waitOk;
   heapRows.recs = recs.length;
@@ -641,7 +673,7 @@ p(`| Symbols | ${mapNote}; name section: ${wasm.funcNames} function names, ${was
 p(`| Memory at start | ${wasm.memory.min} pages (${fmt(initialBytes)} B), maximum ${wasm.memory.max ?? 'none'}; at the end ${fmt(final.memBytes)} B |`);
 p(`| Stack | top ${hex(sp0)} (the start of __stack_pointer), stack first: ${statusInit.stackFirst}, canary ok after init: ${statusInit.canaryOk} |`);
 p(`| Requests | ${Object.entries(tally).map(([k, v]) => `${k}: ${v}`).join(', ')} |`);
-p(`| After the unclean traps | live bytes ${x.live_bytes?.()}, canary ok ${x.stack_canary_ok?.()} (the pages of an unclean task stay: the instance is replaced in production) |`);
+p(`| After the unclean traps | live bytes ${x.live_bytes?.()}, canary ok ${x.stack_canary_ok?.()} (12c: task_abort frees the pages and the slot of an unclean task, and the instance stays while the global check passes) |`);
 p(`| At the end of the clean phases | live bytes ${final.live}, tasks waiting ${final.waiting}, dealloc_miss ${final.missed}, canary ok ${final.canaryOk}, log lines ${logLines.length} |`);
 p();
 p('## Static regions (below the pool)');
@@ -727,6 +759,25 @@ p(`| Total, static | ${fmt(constBytes)} | |`);
 const constForeign = foreignCopy.size - foreignChanged.size;
 p(`| Constant foreign units (unchanged after first seen) | ${fmt(constForeign << 12)} | ${constForeign} units |`);
 p();
+// 12d: a flip of each byte of these ranges must make `check_heap` fail (CHECK_CONST, or another code when
+// the byte is one that the check itself reads). The byte goes back after each check, and the check passes again.
+// Only the bytes of the symbols (no padding between them); a region with no symbols (the canary): all bytes.
+const flips = { bytes: 0, found: 0, missed: [], codes: {}, after: null };
+const flipSpans = constRegions.flatMap((r) => (r.syms ? r.syms.map((s) => [s.addr, s.addr + s.size]) : [[r.start, r.end]]));
+if (x.check_heap && x.check_heap() === 0) {
+  for (const [start, end] of flipSpans) for (let a = start; a < end; a++) {
+    const u8 = mem8();
+    u8[a] ^= 1;
+    let code;
+    try { code = x.check_heap(); } catch { code = 'trap'; }
+    mem8()[a] ^= 1;
+    flips.bytes++;
+    flips.codes[code] = (flips.codes[code] ?? 0) + 1;
+    if (code !== 0) flips.found++;
+    else if (flips.missed.length < 8) flips.missed.push(hex(a));
+  }
+  flips.after = x.check_heap();
+}
 const brokeConst = regions.filter((r) => r.constant && r.writtenN > 0);
 const idleRow8 = regions.filter((r) => r.row === 8 && !r.constant && r.writtenN === 0);
 const mutable = regions.filter((r) => r.writtenN > 0 && r.row !== 4 && r.row !== 'bench');
@@ -758,12 +809,18 @@ p(`| Constant by design but written | ${brokeConst.length ? brokeConst.map((r) =
 p(`| Row 8 regions not written in this mix (writable by design, so not constant) | ${idleRow8.length ? idleRow8.map((r) => r.name).join('; ') : 'none'} |`);
 p(`| Regions with no PLAN 12 row | ${unmapped.length ? unmapped.join('; ') : 'none'} |`);
 p(`| Canary and live bytes at the end of the clean phases | canary ok ${final.canaryOk}, live bytes ${final.live} |`);
+const badChecks = heapChecks.filter(([, c]) => c !== 0);
+if (flips.bytes) p(`| check_heap (12d) after a flip of each byte of the constant symbols and the canary | ${flips.found} of ${flips.bytes} found (codes ${Object.entries(flips.codes).map(([c, n]) => `${c}: ${n}`).join(', ')})${flips.missed.length ? `; missed at ${flips.missed.join(', ')}` : ''}; after the last flip back: ${flips.after} |`);
+if (heapChecks.length) p(`| check_heap (12d) after each phase | ${badChecks.length ? `FAILED: ${badChecks.map(([l, c]) => `${l}: ${c}`).join('; ')}` : `0 (pass) in all ${heapChecks.length} phases`} |`);
 const bench = regions.filter((r) => r.bench);
 if (bench.length) p(`| Bench-only regions (not in a production build, PLAN 7a) | ${bench.map((r) => `${r.name}, ${fmt(r.size)} B`).join('; ')} |`);
 p();
 p(unmapped.length === 0 ? 'RESULT: every region is in a row of the PLAN 12 table.' : `RESULT: ${unmapped.length} region(s) are not in the table.`);
 if (brokeConst.length) p(`RESULT: ${brokeConst.length} constant region(s) were written: ${brokeConst.map((r) => r.name).join('; ')}.`);
+if (badChecks.length) p(`RESULT: check_heap failed after ${badChecks.length} phase(s).`);
+const flipBad = flips.bytes && (flips.found !== flips.bytes || flips.after !== 0);
+if (flipBad) p(`RESULT: check_heap missed ${flips.bytes - flips.found} flipped constant byte(s).`);
 
 if (asJson) console.log(JSON.stringify({ file, foreignBySnap: Object.fromEntries(Object.entries(heapSnaps).map(([k, v]) => [k, v.foreign.length])), regions: regions.map(({ syms, ...r }) => r), heap: heapRows, unmapped, final, tally }, null, 1));
 else console.log(out.join('\n'));
-process.exit(unmapped.length || brokeConst.length ? 1 : 0);
+process.exit(unmapped.length || brokeConst.length || badChecks.length || flipBad ? 1 : 0);

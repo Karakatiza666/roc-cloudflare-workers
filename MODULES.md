@@ -206,6 +206,17 @@ export default makeHandler(app, {});
 
 `makeHandler` gives a subclass of `WorkerEntrypoint` (`cloudflare:workers`), not a plain object, because Workers sends RPC to the default export only when it extends `WorkerEntrypoint` (Cloudflare docs, service bindings RPC). Its `fetch`, `scheduled`, `queue`, `email` and `tail` methods send the events of `API.md` 10.1, with `this.env` and `this.ctx` as the roots `env` and `ctx`. `makeHandler` puts the `default` methods of the manifest on its prototype, and the methods of the manifest on each class. A class in Roc with no export, or an export with no class in Roc, is a throw at load, so `wrangler deploy` fails with the name. The Wrangler config names the classes too (Workers needs it), and workerd checks it against the exports.
 
+As built in `PLAN.md` 8b (first half) (`platform/Worker.roc`):
+
+| Item | Built as | Why |
+| --- | --- | --- |
+| Fields | `fetch!`, `scheduled!`, `queue!`, `email!`, `tail!`, `other!`. Not yet `rpc`, `entrypoints`, `objects`. | Phase B (`PLAN.md` 8f). An optional field added later does not break an app. |
+| `event!` | `Rpc`, `EntrypointFetch`, `Object` and `Manifest` give `Unhandled` | 8f |
+| `no_retry!` | One `call!` of `noRetry` on the root `event` (the controller). A throw is dropped. | The type is `=> {}`. Only a `Scheduled` event has a controller. |
+| `TraceItem` | The type above, with `parser_for : _`. Nothing parses it yet. | 8f. `Header` of `roc-lang/http` has no `parser_for` (`PLAN.md` 8b, open point O1). |
+| `other` methods | A method on the prototype of the class for each name. `makeHandler` refuses `fetch`, `scheduled`, `constructor` and a name twice. | Workers finds a handler on the prototype. |
+| Local test of a cron | No Miniflare yet: a workerd config with an entry service that serves `/cdn-cgi/local/scheduled` as Miniflare does (`bench/entry-worker.js`) | `PLAN.md` 8b |
+
 ## 4. HTTP: `Request`, `Response`, `Body`, `Http`
 
 One request type and one response type, for both directions: the request of a `fetch` handler and the request of `Http.send!`, the response of a handler and the response of `Http.send!` or `Cache.get!`. The body is a `Body`, so a stream stays in JS (RS3).
@@ -299,6 +310,24 @@ Http :: [].{
 | `Body.writer!` | A stream that the task writes after `respond!`: `Response.from_body(200, "text/event-stream", body)`, then `writer.write!` for each chunk, then `writer.close!()`. The task stays while the stream is open, and the 30 s limit after the response starts at `close!` (`API.md` 10.2). When the client stops reading, Workers cancels the stream, and the shim cancels the task. A `write!` after `close!` gives `BodyErr`. |
 | `compress!`, `decompress!` | `CompressionStream` and `DecompressionStream` of Workers: `Gzip` (`"gzip"`) and `Deflate` (`"deflate"`). A `Text` or `Bytes` body becomes a stream first. The result is a `Stream` body, so the bytes stay in JS. zstd is not in Workers: `Native` (`API.md` 8). Set `Content-Encoding` on the response by hand. |
 | The client goes away | The shim cancels the task at its next wait (`request.signal`, `API.md` 10.2). That is the abort signal of the app: there is no `aborted!`. While Roc runs, the JS event loop does not run, so a sync read of `request.signal.aborted` cannot change between two waits. |
+
+As built in `PLAN.md` 8b (first half and second half) (`platform/Request.roc`, `Response.roc`, `Body.roc`):
+
+| Item | Built as | Why |
+| --- | --- | --- |
+| `Method`, `Header` | From the `roc-lang/http` 2.0.0 release URL, a package of the platform (`packages` of both headers) | AQ2 |
+| Bodies | The request body arrives as `Stream` (a ref of the task), with no copy (second half of 8b, `PLAN.md` 10a). Each function of the table above is built. A read of a `Stream` (`text!`, `json!`, `bytes!`, `bytes_with!`) is one wait: `pf.readUpTo` stops at the limit before a copy into wasm. | RS3 |
+| `chunk!` | The next chunk as JS gives it, cut to `default_max` (the rest comes at the next call). `Empty` is `End`, and `Text` and `Bytes` are one `Chunk` with no crossing. `chunk!` and a later `bytes!` of the same stream share one reader: `bytes!` gives the rest. | MC11: each read into wasm has a limit. The table above gives no limit for `chunk!`, and a JS chunk can be large (a stream made from one big array). |
+| A second read | A stream that a read took to its end, or that `tee!` or another reader holds, gives `BodyErr` (`TypeError`) | RS3 |
+| `sha256!` | A stream: `crypto.DigestStream` (one wait, no byte in wasm). Where it is missing (Node tests), the chunks in JS and `crypto.subtle.digest`. `Empty`, `Text`, `Bytes`: the builtin `Crypto.SHA256` in wasm, no crossing. | No crossing for bytes that are in wasm already |
+| `writer!` | `pf.writer()` gives the readable side and the writer (`getWriter()`) of a `TransformStream`. `Body.Writer :: { writer : Js.Ref }`. `write!` waits on `writer.write(chunk)`: it settles when the reader takes the chunk, so a `write!` before `respond!` waits for the response. `write_text!` sends UTF-8 bytes. `close!` is `pf.close` (no wait). | A response stream of Workers takes bytes only |
+| An open writer at the end of the task | Closed when the task returned, aborted after a trap or a cancel | The client sees the end of the body. The table above does not say. |
+| `compress!`, `decompress!` | `pf.transform(body, kind, format)`. The output of a writer stream counts as a stream of that writer, so a response with it is complete at `close!`. | API.md 10.2 |
+| Limits | `text!`, `json!`, `bytes!` apply `default_max` to `Text` and `Bytes` too: `TooLarge` over it | MC11, one rule for each body |
+| `query` | Percent-decoded, `+` is a space | Query strings of forms |
+| `cookie` | The value of a pair of the `Cookie` header | |
+| `from_http`, `to_http!` | Not built | No package of the platform uses `http` types yet |
+| `cf` | Crosses in the event as a `Js` tree in the tag form (`{ "Ok": v }`, `{ "Err": "Missing" }`), not as `Packed` | No `Cbor` module in the platform yet (`PLAN.md` 8c). The shim format stays the same for `Packed`. |
 
 ## 5. Data: `D1`, `Sql`, `Kv`, `R2`, `Cache`
 
@@ -795,6 +824,18 @@ Log :: [].{
 | `wait_until!` | `Io.start!` and `ctx.waitUntil` in one `call!`, with no wait. The Roc reader of the `Io` does not run, so a Roc-level `Err` (`PreconditionFailed`, `BadData`) is not seen. Only a JS throw goes to the log. The context of the task (refs and roots) stays until the operation settles, or until the 30 s limit of `waitUntil` (`API.md` 6.5, RS1). Work whose result matters (a write that can fail, a check) runs in the task after `respond!`. |
 | `pass_through!` | `ctx.passThroughOnException()`. Only in the `Fetch` of a Worker. Elsewhere the shim gives status 1, and the function gives `InvalidState`. After it, an `Err` of `fetch!` makes the shim throw, and Workers sends the request to the origin (`API.md` 10.1). Workers cannot send a request body that the handler already read (Cloudflare docs, Context API). |
 | `sleep!`, `sleep` | `scheduler.wait(ms)`. On the edge, a timer does not move during CPU work, only at I/O (Cloudflare docs, scheduler). A sleep is a wait, so the deadlines of `API.md` 10.2 apply. A timeout is a race: `Io.race!([op.map(Done), Time.sleep(ms).map(\|_\| TimedOut)])` (`API.md` 6.5). |
+
+As built in `PLAN.md` 8b (second half) and 9c (`platform/Ctx.roc`, `js/helpers.js`, `js/index.js`). `Time` and `Log` are 8c.
+
+| Item | Built as | Why |
+| --- | --- | --- |
+| `respond!` | One `call!` of `pf.respond` with the outcome `Respond` of the response (the shape of `Entry`). The shim makes the Workers `Response` at once and gives it to the `fetch` handler, which returns it and gives the rest of the task to `ctx.waitUntil`. Only the `fetch` of a Worker gives the hook now (`EntrypointFetch` and the `Fetch` of an object are 8f). | API.md 10.2 |
+| Errors of `respond!` | `InvalidStateError` (no hook, a second call) is `InvalidState`. Any other throw (a status or a header that Workers refuses) is a `crash`, as the same response from `event!` is a 500. | The type has only `InvalidState` |
+| After `respond!` | The outcome of `event!` is ignored. `Failed` and `Unhandled` give the log line `fetch: after respond: <reason>`, a trap gives its trap line. | Something must show an error that no client sees |
+| `pass_through!` | `pf.passThrough`: `ctx.passThroughOnException()` in the `fetch` of a Worker, else `InvalidState`. After it, `Failed` and a trap make the `fetch` handler throw. A shed and a cancel keep their 503. | A trap is an exception of the handler too |
+| `wait_until!` | One `call!`: `Start` of `pf.spawn` with the ops of the `Io`, then `ctx.waitUntil` of that promise. A failed call is a `crash` (a platform bug). | MC3: no wait |
+| The context of a started program | The task table keeps it after the task ends, until the last started program settles. The `waitUntil` limit: `afterRespondMs` (30 s) after the response is complete, or after the end of the task when the response was complete then. The deadline sweep of each new request checks it (no timer, `PLAN.md` 3b), frees the context, and writes the log line `task context freed at the waitUntil limit: ...`. The signal of the program aborts then. | RS1, API.md 6.5 |
+
 
 `Log.info!("published", { pkg: name, ms: 12 })`. The fields are a record, so Workers Logs can filter on them. A record with a `Secret` in it does not compile here (10).
 

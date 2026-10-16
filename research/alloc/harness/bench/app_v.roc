@@ -1,4 +1,4 @@
-app [handle!] { pf: platform "../platform/main.roc" }
+app [handle!] { pf: platform "platform/main.roc" }
 
 import pf.Wait
 

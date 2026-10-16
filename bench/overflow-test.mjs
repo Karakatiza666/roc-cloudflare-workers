@@ -11,7 +11,8 @@
 //     body while the canary is broken, and the first trap is clean. The free path checks the
 //     canary first (`roc_dealloc`), so it traps before it changes a table;
 //   - V2: a trap at normal stack depth (a forced out-of-bounds write, a forced unreachable) is
-//     still unclean: the instance is replaced.
+//     still unclean: an alarm (PLAN.md 12c). `task_abort` gives -1, the alarm counter of the host
+//     goes up, the global check passes, and the instance stays (no replace).
 // Data-first module: the runner must fall back to an instance per request.
 // --no-fallback keeps the shared instance on a data-first module. Then the test must fail.
 // --expect-shared: fail when the runner falls back (CI, after check-layout.mjs found STACK-FIRST).
@@ -49,10 +50,10 @@ const fail = (msg) => { failures.push(msg); console.log('FAIL', msg); };
   const c = makeRunner(module, 'b', async () => 'x', { noFallback });
   if (!c.stats.fallback) {
     const res = await c.run('100000');
-    console.log('cold depth 100000 trap:', String(res.trap).slice(0, 60), '| retired', c.stats.retired > 0);
+    console.log('cold depth 100000 trap:', String(res.trap).slice(0, 60), '| retired', c.stats.retired > 0, '| alarms', c.stats.alarms);
     if (res.body !== undefined) fail('cold 100000: no trap');
     else if (!/RangeError/.test(res.trap)) fail(`cold 100000: not a RangeError (${res.trap}): the test proves nothing`);
-    if (c.stats.retired) fail('cold 100000: a RangeError retired a stack-first instance');
+    if (c.stats.retired || c.stats.alarms) fail('cold 100000: a RangeError was not clean on a stack-first instance');
     if (c.x.live_bytes() !== 0) fail(`cold 100000: live bytes ${c.x.live_bytes()}`);
     const a = await c.run('5');
     if (a.body !== ref(5, false)) fail(`cold 100000: next request gave ${a.body ?? a.trap}`);
@@ -80,7 +81,7 @@ if (shared && first.stack_first() !== 1 && !noFallback) fail('shared on a data-f
 for (const alloc of [false, true]) {
   let trapped = false;
   for (const d of [1000, 2000, 3000, 4000, 4500, 5000, 5500, 6000, 7000, 8000, 10000, 15000, 20000]) {
-    const retired = r.stats.retired;
+    const retired = r.stats.retired + r.stats.alarms;
     const res = await r.run(`${d}${alloc ? ' alloc' : ''}`);
     const tag = `depth ${d}${alloc ? ' alloc' : ''}`;
     if (res.body !== undefined) {
@@ -92,10 +93,10 @@ for (const alloc of [false, true]) {
       continue;
     }
     trapped = true;
-    const isRetired = r.stats.retired > retired;
-    console.log(tag, 'trap:', res.trap.slice(0, 60), '| retired', isRetired);
+    const isRetired = r.stats.retired + r.stats.alarms > retired;
+    console.log(tag, 'trap:', res.trap.slice(0, 60), '| retired or alarm', isRetired);
     // 4-pre: a stack-first overflow wrote nothing but the stack, so the trap is clean.
-    if (shared && isRetired) fail(`${tag}: an overflow trap retired a stack-first instance`);
+    if (shared && isRetired) fail(`${tag}: an overflow trap was not clean on a stack-first instance`);
     if (shared && res.x.live_bytes() !== 0) fail(`${tag}: live bytes ${res.x.live_bytes()} after the trap`);
     const next = await small(tag);
     if (shared && next.x.stack_canary_ok() !== 1) fail(`${tag}: canary broken after the trap`);
@@ -126,16 +127,23 @@ if (shared) {
     if (f.x.live_bytes() !== 0 || f.x.dealloc_miss() !== 0) fail(`free ${d}: live bytes ${f.x.live_bytes()}, dealloc_miss ${f.x.dealloc_miss()} at the end`);
   } else if (d > 20000) fail('free: no trap up to depth 20000');
 }
-// V2: a trap at normal depth must stay unclean, also in a stack-first build.
+// V2: a trap at normal depth must stay unclean, also in a stack-first build. After 12c it is an
+// alarm: `task_abort` gives -1, the alarm counter of the host goes up, and the instance stays
+// while the global check passes.
 if (shared) {
   if (r.stats.walkFailed !== 0) fail(`an overflow trap was unclean (${r.stats.walkFailed})`);
   for (const [kind, what] of [[1, 'out-of-bounds write'], [2, 'unreachable']]) {
-    const was = r.stats.retired;
-    r.x.fault_next_wait(kind);
+    const x = r.x;
+    const was = { retired: r.stats.retired, host: x.alarms(), alarmChecks: r.stats.byCheck.alarm };
+    x.fault_next_wait(kind);
     const res = await r.run('5');
+    const host = x.alarms() - was.host;
     if (res.body !== undefined) fail(`V2 ${what}: no trap`);
-    else if (r.stats.retired === was) fail(`V2 ${what}: a trap at normal depth did not retire the instance`);
-    console.log('V2', what, 'trap:', String(res.trap).slice(0, 50), '| retired', r.stats.retired > was);
+    else if (res.alarm !== 'trap' || res.status !== 503) fail(`V2 ${what}: a trap at normal depth is not an alarm (${res.alarm}, ${res.status})`);
+    if (host !== 1) fail(`V2 ${what}: the alarm counter of the host went up by ${host}, want 1`);
+    if (r.stats.byCheck.alarm !== (was.alarmChecks ?? 0) + 1 || r.stats.heapFails) fail(`V2 ${what}: no passed global check after the alarm`);
+    if (r.stats.retired !== was.retired || r.x !== x) fail(`V2 ${what}: the alarm replaced the instance`);
+    console.log('V2', what, 'trap:', String(res.trap).slice(0, 50), '| alarm', res.alarm, '| host alarms +', host, '| replaced', r.x !== x);
     await small(`V2 ${what}`);
   }
 }

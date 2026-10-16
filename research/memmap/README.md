@@ -62,6 +62,30 @@ Test of the script (the checks must fail when the data is bad):
 | `--map out/app_deep.map` on `app.wasm` | The map is ignored (its sections do not fit the data segments): coarse run, exit 1 |
 | `--map out/app_boxy.map` on `app.wasm` | exit 2, "the map does not match this wasm" (canary check) |
 
+## Update for 4g to 4j (2026-10-16)
+
+`results/app.md` and `results/app_deep.md` are new runs on the build with 4g to 4j (exit 0 on both, `check_heap` 0 after each phase, every constant byte found by the flip check). The new globals are all zero at start (`.bss`), so no constant range changed.
+
+| Change in `memmap.mjs` | Why |
+|---|---|
+| Rule `alloc.(LIVE_PEAK\|RECLAIMS\|RECLAIMED\|LEAKED\|RESETS\|RESET_BYTES)`: row 8, counters | H3 counters (4h) and the idle reset (4j) |
+| Rule `host.LEAK_NEXT`: bench only | test export `leak_next` (4h) |
+
+## Update for 12a to 12e (2026-10-16)
+
+The output sections below are of the 12-pre build. `results/app.md` and `results/app_deep.md` are new runs on the build with 12a to 12e. `results/app_boxy.md` is of the 12-pre build.
+
+| Change in `memmap.mjs` | Why |
+|---|---|
+| Rules for the new host globals: `SUM_MODE`, `SUSPECT`, `SUM_CHECKS`, `ALARMS`, `mem.RUN_EPOCH`, `cpu.__instance_signal`, `cpu.__instance_terminated`, `cpu.CAUSE`, `alloc.INIT_MEM_END` (row 8); `host.CONST_SUM` (row 7, written by `init`); `alloc.SEEN`, the scratch bitmap of `check_heap` (row 6, the check clears it before use) | 12a, 12b, 12d, 5a, 5b |
+| Bench only: `WILD_BASE`, `WILD_SEED`, `WILD_WORDS`, `WILD_TRAP`, `POKE_OUT`, `POKE_OUT_ADD` | Test exports `set_wild`, `poke_wait` |
+| Row 11 "Response block of a task that ended" (a heap row: the block of the first request, from the return of `handle` to `res_free`) and row 12 "Roc code statics" (`roc_tail_pending`, `roc_tail_args`). Both: no check. | Decisions on the 12-pre findings |
+| `Wait` records are 48 B (an `extern struct`, 12a). The layout check also wants `alarm` = 0 in a record of a waiting task. | 12a, 12c |
+| `check_heap` must give 0 after each phase (no task runs or waits then). Else exit 1. | 12d on a real mix of requests |
+| A flip of each byte of the constant symbols and of the canary must make `check_heap` fail; after the flip back it gives 0. Else exit 1. | 12d: the constant sum covers all constant data that the map finds |
+
+Revert check of the flip: with no sum of `alloc.allocator` (an 8 B constant in `.data.rel.ro`) and of the 1 B context of the Roc host table, the script exits 1 ("missed 9 flipped constant byte(s)").
+
 ## Result by PLAN 12 row (bench app, 2026-10-16 build)
 
 Static memory at start: 34 pages, 2,228,224 B. The pool (heap units of 4 KB) starts at 0x220000, right after it. After `init` the pool has 0 units.

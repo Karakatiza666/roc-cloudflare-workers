@@ -3,7 +3,8 @@
 //! Ops as research/alloc/replay/replay.zig: 1 alloc, 2 free, 3 realloc, 4 task end,
 //! 5 sum (into SUMS[id]), 6 adopt, 8 js_alloc, 9 free after a clean trap,
 //! 10 roc_alloc, 11 roc_realloc, 12 fail_next_alloc (as the host export),
-//! 13 break_table(kind = id, arg = len) (PLAN.md 12d).
+//! 13 break_table(kind = id, arg = len) (PLAN.md 12d), 14 task end with the leak count (`taskDone`, 4h).
+//! The exports `table_*` and `pool_*` give the unit tables to JS for a manual walk (PLAN.md 4h, 4j).
 const lib = @import("hostlib");
 const alloc = lib.alloc;
 
@@ -36,6 +37,33 @@ export fn check_tables() u32 {
     return alloc.checkTables();
 }
 
+/// PLAN.md 4h, 4j: addresses of the unit tables, for the walk of `bench/counters.mjs`.
+export fn table_kind() usize {
+    return @intFromPtr(&alloc.U_KIND);
+}
+export fn table_live() usize {
+    return @intFromPtr(&alloc.U_LIVE);
+}
+export fn table_class() usize {
+    return @intFromPtr(&alloc.U_CLASS);
+}
+export fn table_units() usize {
+    return @intFromPtr(&alloc.U_UNITS);
+}
+export fn table_free_bits() usize {
+    return @intFromPtr(&alloc.FREE_BITS);
+}
+export fn pool_lo() usize {
+    return alloc.POOL_LO;
+}
+export fn pool_hi() usize {
+    return alloc.POOL_HI;
+}
+/// PLAN.md 4j: `host/host.zig` `idle_reset` without the host state (no task runs or waits here).
+export fn idle_reset() u32 {
+    return @intFromBool(alloc.idleReset());
+}
+
 export fn sum_of(id: u32) u32 {
     return @truncate(SUMS[id] ^ (SUMS[id] >> 32));
 }
@@ -59,6 +87,7 @@ export fn run(n: u32) void {
             11 => PTRS[r[2]] = @intCast(@intFromPtr(alloc.roc_realloc(@ptrFromInt(PTRS[r[2]] + off), r[3], al)) - off),
             12 => alloc.FAIL_AT = 1,
             13 => _ = alloc.breakTable(r[2], r[3]),
+            14 => _ = alloc.taskDone(r[1]),
             else => @trap(),
         }
     }

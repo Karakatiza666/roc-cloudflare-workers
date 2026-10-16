@@ -1,11 +1,17 @@
-//! zig build: the bench host into platform/targets/wasm32/host.wasm.
+//! zig build: the production host into platform/targets/wasm32/host.wasm.
+//! zig build -Dbench=true: the bench host (it also has the test exports of PLAN.md 7a) into
+//! bench/platform/targets/wasm32/host.wasm.
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
     const options = b.addOptions();
+    const bench = b.option(bool, "bench", "Bench host: add the test exports (PLAN.md 7a)") orelse false;
     options.addOption(bool, "small_buffers", false);
+    options.addOption(bool, "bench", bench);
     options.addOption(bool, "track_live", b.option(bool, "track_live", "Count live bytes (leak checks)") orelse true);
     options.addOption(bool, "owner_tag", b.option(bool, "owner_tag", "Tag spans with the task, free them after a trap") orelse true);
+    // The allocator asks JS (`js_grow`) before each grow (PLAN.md 4b).
+    options.addOption(bool, "ask_js", true);
     const wasm = b.resolveTargetQuery(.{
         .cpu_arch = .wasm32,
         .os_tag = .freestanding,
@@ -19,6 +25,6 @@ pub fn build(b: *std.Build) void {
     host.link_function_sections = true;
     host.link_data_sections = true;
     const place = b.addUpdateSourceFiles();
-    place.addCopyFileToSource(host.getEmittedBin(), "platform/targets/wasm32/host.wasm");
+    place.addCopyFileToSource(host.getEmittedBin(), if (bench) "bench/platform/targets/wasm32/host.wasm" else "platform/targets/wasm32/host.wasm");
     b.getInstallStep().dependOn(&place.step);
 }

@@ -2,11 +2,13 @@
 // node bench/resume-test.mjs bench/out/app.wasm [afterAlarm]   (the second argument: the revert check of C)
 // The io of each task waits until the test releases it, so the test writes while the task waits.
 // A. 12a: `poke_wait` adds -16 to `Wait.low` of a waiting task: that task gets a 503 (alarm "sum").
-// B. 12a: `poke_wait` changes a byte of a JS block that the task adopted (the body of its first
-//    wait, kept across its second wait): that task gets a 503 (alarm "sum").
+// B. 12a: `poke_wait` changes a byte of a JS block that the task adopted (its request, long, so that `id` keeps it
+//    across the waits): that task gets a 503 (alarm "sum"). Until 8a the target was the body of the first wait;
+//    the bridge frees each result block before the resume, so the request is the JS block that stays.
 // C. 12b: one byte of a task's string (in its pages) changes while it waits, with no trap. The other
 //    tasks resume first and end with correct bodies, then the task gets a 503 (alarm "sum").
-// D. 12b: the length of the response block goes up by 64 just before the resume: a 503 (alarm "block").
+// D. 12b: the length of the response block goes up by 1 MB just before the resume: a 503 (alarm "block"). Since 8a
+//    JS writes a result into a block of 256 B or more, so the change must be larger than the room of the block.
 // E. 12b: one task alone. Between its wait and its resume only `js_alloc` (its response block) runs:
 //    the resume checks the sum (`sum_checks` + 1).
 // Exit 1 on a failure.
@@ -29,8 +31,8 @@ function gatedRunner(opts = {}) {
   };
   const r = makeRunner(module, 'b', io, { resumeCheck, ...opts });
   // Start a task. It runs up to its first wait in this call. In a fresh runner, task ids are 1, 2, ...
-  r.start = (id) => {
-    const p = r.run(`${id} 0 5 10`);
+  r.start = (id, extra = '') => {
+    const p = r.run(`${id} 0 5 10${extra}`);
     return { p, tid: r.tasks.stats.started };
   };
   r.release = async (kind, id) => {
@@ -45,19 +47,19 @@ function gatedRunner(opts = {}) {
 }
 
 // The body with no write: the same request on a clean runner.
-async function good(id) {
+async function good(id, extra) {
   const r = gatedRunner();
-  const { p } = r.start(id);
+  const { p } = r.start(id, extra);
   await r.release(1, id);
   await r.release(2, id);
   return (await p).body;
 }
 const show = (res) => (res.body !== undefined ? `body ${res.body.slice(-40)}` : `${res.status ?? '-'} ${res.alarm ?? res.cancelled ?? ''} ${String(res.trap).slice(0, 40)}`);
 
-async function expectAlarm(name, id, cause, poke) {
-  const want = await good(id);
+async function expectAlarm(name, id, cause, poke, extra) {
+  const want = await good(id, extra);
   const r = gatedRunner();
-  const { p, tid } = r.start(id);
+  const { p, tid } = r.start(id, extra);
   const at = await poke(r, tid);
   if (!at) {
     fail(`${name}: the write found no target: the test proves nothing`);
@@ -74,11 +76,11 @@ async function expectAlarm(name, id, cause, poke) {
 // A. Wait.low of the first wait.
 await expectAlarm('A Wait.low', '701', 'sum', async (r, tid) => r.x.poke_wait(tid, 1, -16 >>> 0));
 
-// B. The adopted JS block (the fetch body), at the second wait.
+// B. The adopted JS block (the request), at the second wait. The parts after the 4th are not read by the app.
 await expectAlarm('B adopted JS block', '702', 'sum', async (r, tid) => {
   await r.release(1, '702');
   return r.x.poke_wait(tid, 2, 0x01);
-});
+}, ` - 0 ${'p'.repeat(64)}`);
 
 // C. A byte of the task's own string `level-1-of-request-<id>` (bench/app.roc `deep!`), which
 // the task reads after the wait. 7 other tasks wait too, and resume first.
@@ -116,7 +118,7 @@ await expectAlarm('B adopted JS block', '702', 'sum', async (r, tid) => {
 // D. The length of the response block of the second wait.
 await expectAlarm('D length of the response block', '704', 'block', async (r, tid) => {
   await r.release(1, '704');
-  return r.x.poke_wait(tid, 3, 64);
+  return r.x.poke_wait(tid, 3, 1 << 20);
 });
 
 // E. Only js_alloc runs between the wait and the resume.

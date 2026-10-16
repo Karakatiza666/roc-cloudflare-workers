@@ -1,9 +1,9 @@
-// PLAN.md 3a, 3b: the JS task table alone (bench/tasks.js), with a fake clock. No wasm.
+// PLAN.md 3a, 3b: the JS task table alone (js/tasks.js), with a fake clock. No wasm.
 // node bench/tasks-test.mjs
 // Each rule of the deadline table of API.md 10.2, also the rules that need later steps
 // (respond!, Body.writer!, 101 sockets, receive!: 8b, 8f). Deadlines: wait 100 ms,
 // wall 200 ms, Init 150 ms, after respond 100 ms.
-import { makeTaskTable, deadlineOf, DEADLINES } from './tasks.js';
+import { makeTaskTable, deadlineOf, DEADLINES } from '../js/tasks.js';
 let failed = false;
 const row = (name, got, want) => {
   const pass = JSON.stringify(got) === JSON.stringify(want);

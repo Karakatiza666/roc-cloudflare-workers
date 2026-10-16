@@ -7,6 +7,31 @@
 //    get a 503, the next request is correct on the new instance).
 // B. Allocator driver: the damage that the check finds. After a break, with no check, the next
 //    allocations give blocks that overlap (as dfree.mjs). The check must find each break first.
+// C. 12c: a throw after `handle` returned (in `readRes`, `drainLog`, `res_free`) on a damaged
+//    instance is an alarm: `run` does not throw, the task gets a 503, and the global check runs.
+//    `break_table` 28 sets the log length to 2^28 while 5 tasks wait. The first task that ends
+//    reads the log past the memory end. The check finds the log and replaces the instance.
+//    C2: `break_table` 17 makes the list of JS pages link to itself while a task waits (its second
+//    wait: its request is a JS block that it adopted, long, so that `id` keeps it; until 8a: the fetch body). At its
+//    resume the sum walk (`sumAdopted`) traps in the host code of the resume: an unclean trap, not
+//    a throw at the resume point. Then `task_abort` traps too (the walk of `freeAdopted`). `run`
+//    does not throw: an alarm "trap", and the check replaces the instance.
+//    C3: `break_table` 18 makes the page list of a waiting task link to itself. At its resume the
+//    sum walk traps (`step`). `task_abort` does not trap (its walk gives the page back, and that
+//    ends the loop), but the trap was in the host code of the resume (`IN_HOST`): an alarm "trap",
+//    not a clean trap, and the check replaces the instance.
+// D. 12c: a check while the catch of another trapped task is still in the job queue. Task B gets a
+//    sum alarm at its resume (`poke_wait` 1), task A an unclean trap just after its resume
+//    (`fault_next_wait` 5 with 0 words). Both resume in the same job turn, B first: the check of
+//    B's alarm runs while A's catch waits, so `TASK_TOP` and `OWNER` are A's. The host answers
+//    CHECK_BUSY, and the check runs again at A's alarm. Expect: 2 alarms, no failed check, the
+//    instance stays, the next request is correct.
+// E. 12c: the check that an alarm made due runs before the next resume. As D, but task A makes a
+//    clean trap (a Roc `crash` after its first wait): no alarm, so nothing runs the check at A's
+//    catch. Then task C resumes, still in the same job turn (no timer ran): the gate in the wait
+//    import runs the check before C enters wasm.
+// F. 12c: as E, but a new request starts in place of the resume of C: the gate in `run` runs the
+//    check before the new task enters wasm.
 // Exit 1 on a failure.
 import { readFileSync } from 'node:fs';
 import { makeRunner, check, CHECK_NAMES } from './core.js';
@@ -77,8 +102,8 @@ async function partA(kind, name, arg = 0) {
   if (hit !== 1) { fail(`A ${kind} ${name}: no target for the break: the test proves nothing`); return; }
   const code = x0.check_heap();
   const stays = r.checkHeap('test');
-  for (const [k, g] of gates) { gates.delete(k); g(); }
-  const res = await Promise.all(runs);
+  // Open each wait until all tasks end (with no replace, the 10 tasks wait twice).
+  const res = await opened(Promise.all(runs), gates);
   const cancelled = res.filter((v) => v.cancelled === 'heap').length;
   const next = await opened(r.run('7 0 3 5'), gates);
   const row = { kind, name, code, found: CHECK_NAMES[code] ?? '-', replaced: r.x !== x0, cancelled, logLines: lines.length, next: check('7', next.body ?? '', 3) };
@@ -127,12 +152,149 @@ for (const [kind, name] of OVERLAP) {
   d.run([[13, 0, kind, kind === 7 ? 7 : 0]]);
   const code = d.x.check_tables();
   // With no check: more blocks of tasks 7 and 9, until the reserve is used up and memory grows.
-  for (let i = 0; i < 400; i++) d.alloc(i % 2 ? 9 : 7, [24, 100, 3000, 2048][i % 4]);
-  const ov = d.overlaps();
+  // Stop at the first overlap: on damaged lists a later allocation can loop for ever.
+  let ov = 0;
+  for (let i = 0; i < 400 && ov === 0; i++) {
+    d.alloc(i % 2 ? 9 : 7, [24, 100, 3000, 2048][(i >> 1) % 4]);
+    ov = d.overlaps();
+  }
   console.log('B', JSON.stringify({ kind, name, before, code, found: CHECK_NAMES[code] ?? '-', overlapsWithNoCheck: ov }));
   if (before !== 0) fail(`B ${kind}: the check fails before the break (${before})`);
   if (code === 0) fail(`B ${kind} ${name}: the check did not find it`);
   if (ov === 0) fail(`B ${kind} ${name}: no blocks overlap with no check: the test proves nothing`);
+}
+
+// C. ------------------------------------------------------------------------------------------
+{
+  const gates = new Map();
+  const lines = [];
+  const r = makeRunner(module, 'b', gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: (t) => lines.push(t) });
+  const x0 = r.x;
+  const runs = [];
+  for (let i = 0; i < 5; i++) runs.push(r.run(`${6000 + i} 0 6 20`).catch((e) => ({ threw: String(e) })));
+  await open(gates, '1:6000');
+  if (x0.break_table(28, 1 << 28) !== 1) fail('C: no target for the break');
+  await open(gates, '2:6000');
+  const first = await runs[0];
+  for (let i = 1; i < 5; i++) {
+    for (const [k, g] of gates) { gates.delete(k); g(); }
+    await tick();
+  }
+  const rest = await Promise.all(runs.slice(1));
+  const row = { first: first.threw ?? `${first.status} ${first.alarm}`, alarms: r.stats.byAlarm, checks: r.stats.byCheck, fails: r.stats.heapFails, replaced: r.x !== x0, others: rest.map((v) => v.threw ? 'threw' : v.cancelled ?? 'body').join(' '), logLines: lines.length };
+  console.log('C', JSON.stringify(row));
+  if (first.threw) fail(`C: run threw: ${first.threw}`);
+  else if (first.status !== 503 || first.alarm !== 'trap') fail(`C: the task got ${first.status} ${first.alarm}, want 503 alarm trap`);
+  if (r.stats.heapFails !== 1 || r.x === x0) fail('C: the check after the alarm did not replace the instance');
+  if (rest.some((v) => v.cancelled !== 'heap')) fail(`C: the other tasks: ${row.others}, want 4 cancels (heap)`);
+}
+
+{
+  const gates = new Map();
+  const r = makeRunner(module, 'b', gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: () => {} });
+  const x0 = r.x;
+  const p = r.run(`6100 0 6 20 - 0 ${'p'.repeat(64)}`).catch((e) => ({ threw: String(e) }));
+  // At the second wait: the request (a JS block that the task adopted) is live.
+  await open(gates, '1:6100');
+  if (x0.break_table(17, 0) !== 1) fail('C2: no target for the break');
+  await open(gates, '2:6100');
+  const res = await p;
+  const row = { res: res.threw ?? `${res.status} ${res.alarm} ${String(res.trap).slice(0, 40)}`, fails: r.stats.heapFails, replaced: r.x !== x0 };
+  console.log('C2', JSON.stringify(row));
+  if (res.threw) fail(`C2: run threw: ${res.threw}`);
+  else if (res.status !== 503 || res.alarm !== 'trap') fail(`C2: the task got ${row.res}, want 503 alarm trap`);
+  if (r.stats.heapFails !== 1 || r.x === x0) fail('C2: the check after the alarm did not replace the instance');
+}
+
+{
+  const gates = new Map();
+  const r = makeRunner(module, 'b', gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: () => {} });
+  const x0 = r.x;
+  const p = r.run('6200 0 6 20').catch((e) => ({ threw: String(e) }));
+  if (x0.break_table(18, r.tasks.stats.started) !== 1) fail('C3: no target for the break');
+  await open(gates, '1:6200');
+  const res = await p;
+  const row = { res: res.threw ?? `${res.status} ${res.alarm} ${String(res.trap).slice(0, 40)}`, hostAlarms: x0.alarms(), fails: r.stats.heapFails, replaced: r.x !== x0 };
+  console.log('C3', JSON.stringify(row));
+  if (res.threw) fail(`C3: run threw: ${res.threw}`);
+  else if (res.status !== 503 || res.alarm !== 'trap') fail(`C3: the task got ${row.res}, want 503 alarm trap`);
+  if (x0.alarms() !== 1) fail(`C3: the alarm counter of the host is ${x0.alarms()}, want 1`);
+  if (r.stats.heapFails !== 1 || r.x === x0) fail('C3: the check after the alarm did not replace the instance');
+}
+
+{
+  const gates = new Map();
+  const lines = [];
+  const r = makeRunner(module, 'b', gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: (t) => lines.push(t) });
+  const x0 = r.x;
+  const pb = r.run('6300 0 6 20');
+  const tb = r.tasks.stats.started;
+  x0.set_wild(1, 0);
+  x0.fault_next_wait(5);
+  const pa = r.run('6301 0 6 20');
+  if (x0.poke_wait(tb, 1, -16 >>> 0) === 0) fail('D: no target for the poke');
+  for (let i = 0; i < 5; i++) await tick();
+  for (const k of ['1:6300', '1:6301']) { gates.get(k)(); gates.delete(k); }
+  const [rb, ra] = await Promise.all([pb, pa]);
+  const next = await opened(r.run('7 0 3 5'), gates);
+  const row = { b: `${rb.status} ${rb.alarm}`, a: `${ra.status} ${ra.alarm}`, busy: r.stats.heapBusy, checks: r.stats.byCheck, fails: r.stats.heapFails, replaced: r.x !== x0, next: check('7', next.body ?? '', 3) };
+  console.log('D', JSON.stringify(row));
+  if (rb.alarm !== 'sum' || ra.alarm !== 'trap') fail(`D: alarms ${row.b}, ${row.a}, want sum and trap`);
+  if (r.stats.heapBusy === 0) fail('D: no check saw a trapped task that is not aborted: the test proves nothing');
+  if (r.stats.heapFails !== 0 || r.x !== x0) fail(`D: the instance was replaced: ${JSON.stringify(lines)}`);
+  if (!(r.stats.byCheck.alarm >= 1)) fail('D: no check ran after the alarms');
+  if (!row.next) fail('D: the next request is wrong');
+}
+
+{
+  const gates = new Map();
+  const r = makeRunner(module, 'b', gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: () => {} });
+  const x0 = r.x;
+  const pb = r.run('6400 0 6 20');
+  const tb = r.tasks.stats.started;
+  const pa = r.run('6401 1 6 20');
+  const pc = r.run('6402 0 6 20');
+  if (x0.poke_wait(tb, 1, -16 >>> 0) === 0) fail('E: no target for the poke');
+  for (let i = 0; i < 5; i++) await tick();
+  // From here on, only promise jobs until C waits again: no timer can run the check.
+  for (const k of ['1:6400', '1:6401']) { gates.get(k)(); gates.delete(k); }
+  const [rb, ra] = await Promise.all([pb, pa]);
+  const busy = r.stats.heapBusy, before = r.stats.byCheck.alarm ?? 0;
+  gates.get('1:6402')();
+  gates.delete('1:6402');
+  for (let i = 0; i < 100 && !gates.has('2:6402'); i++) await Promise.resolve();
+  const atResume = r.stats.byCheck.alarm ?? 0;
+  for (const [k, g] of gates) { gates.delete(k); g(); }
+  const rc = await opened(pc, gates);
+  const row = { b: `${rb.status} ${rb.alarm}`, a: String(ra.trap).slice(0, 30), busy, checksBeforeC: before, checksAtResumeOfC: atResume, fails: r.stats.heapFails, replaced: r.x !== x0, c: check('6402', rc.body ?? '', 6) };
+  console.log('E', JSON.stringify(row));
+  if (rb.alarm !== 'sum' || ra.alarm || ra.body !== undefined) fail(`E: B ${row.b}, A ${row.a}: want an alarm sum and a clean trap`);
+  if (busy === 0 || before !== 0) fail('E: the check of B was not busy: the test proves nothing');
+  if (atResume !== 1) fail(`E: ${atResume} checks when C resumed, want 1 (the gate before the resume)`);
+  if (r.stats.heapFails !== 0 || !row.c) fail('E: the instance was replaced, or C is wrong');
+}
+
+{
+  const gates = new Map();
+  const r = makeRunner(module, 'b', gated(gates), { heapCheckEvery: 0, heapCheckWhenIdle: false, log: () => {} });
+  const x0 = r.x;
+  const pb = r.run('6500 0 6 20');
+  const tb = r.tasks.stats.started;
+  const pa = r.run('6501 1 6 20');
+  if (x0.poke_wait(tb, 1, -16 >>> 0) === 0) fail('F: no target for the poke');
+  for (let i = 0; i < 5; i++) await tick();
+  for (const k of ['1:6500', '1:6501']) { gates.get(k)(); gates.delete(k); }
+  const [rb, ra] = await Promise.all([pb, pa]);
+  const busy = r.stats.heapBusy, before = r.stats.byCheck.alarm ?? 0;
+  // `run` calls the gate before its task enters wasm, in this call.
+  const pn = r.run('6502 0 6 20');
+  const atStart = r.stats.byCheck.alarm ?? 0;
+  const rn = await opened(pn, gates);
+  const row = { b: `${rb.status} ${rb.alarm}`, a: String(ra.trap).slice(0, 30), busy, checksBefore: before, checksAtStart: atStart, fails: r.stats.heapFails, n: check('6502', rn.body ?? '', 6) };
+  console.log('F', JSON.stringify(row));
+  if (busy === 0 || before !== 0) fail('F: the check of B was not busy: the test proves nothing');
+  if (atStart !== 1) fail(`F: ${atStart} checks when the new task started, want 1 (the gate before \`handle\`)`);
+  if (r.stats.heapFails !== 0 || !row.n) fail('F: the instance was replaced, or the new request is wrong');
 }
 
 console.log(failures.length ? `FAIL (${failures.length})` : 'PASS');

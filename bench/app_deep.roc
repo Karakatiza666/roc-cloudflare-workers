@@ -1,6 +1,11 @@
-app [handle!] { pf: platform "../platform/main.roc" }
+app [event!] { pf: platform "platform/main.roc" }
 
-import pf.Wait
+import pf.Worker
+import pf.Response
+import pf.Io
+
+## One wait: the op `db` of the bench runner (`bench/core.js`).
+wait_ops = [Call(Root("ops"), "db", [Lit(Text("x"))])]
 
 ## A wide record, so each level uses more shadow stack than engine stack.
 W : { a : U64, b : U64, c : U64, d : U64, e : U64, f : U64, g : U64, h : U64, i : U64, j : U64, k : U64, l : U64, m : U64, n : U64, o : U64, p : U64 }
@@ -40,8 +45,23 @@ down_free = |n, salt, keep| {
 ## Request: "<depth>", "<depth> alloc" or "<depth> free". The first wait makes the call a task, as in the real handler.
 handle! : Str => Str
 handle! = |req| {
-	_w = Wait.wait!(2, 0, "x", "", [])
+	_w = Io.await!(wait_ops)
 	depth = U64.from_str(req.drop_suffix(" alloc").drop_suffix(" free")) ?? 10
 	r = if req.ends_with(" free") down_free(depth, 17, List.repeat(0, 100)) else down(depth, 17, req.ends_with(" alloc"))
 	"a=${r.a.to_str()} d=${r.d.to_str()} p=${r.p.to_str()}"
+}
+
+## PLAN.md 8b: the request text is the body of a `Fetch` event (`bench/check.js` `benchEvent`), and the answer is the
+## body of `Respond`. A record with no headers, so the answer allocates no more than the text.
+event! : Worker.Event => Worker.Outcome
+event! = |e| match e {
+	Fetch(req) => {
+		text = match req.body {
+			Bytes(b) => Str.from_utf8(b) ?? ""
+			Text(s) => s
+			_ => ""
+		}
+		Respond(Response.{ status: 200, body: Text(handle!(text)) })
+	}
+	_ => Unhandled
 }

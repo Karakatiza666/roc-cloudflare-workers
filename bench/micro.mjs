@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { makeRunner, check } from './core.js';
 
 const mods = { real: new WebAssembly.Module(readFileSync(process.argv[2])), pad: new WebAssembly.Module(readFileSync(process.argv[3])) };
-const env = { env: { js_wait: new WebAssembly.Suspending(async () => 0) } };
+const env = { env: { js_await: new WebAssembly.Suspending(async () => 0), js_call: () => 0, js_grow: () => 1 } };
 
 function instUs(m, n, withInit) {
   const t = performance.now();

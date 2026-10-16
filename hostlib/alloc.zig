@@ -33,11 +33,11 @@ const KIND_SMALL: u8 = 1;
 const KIND_LARGE: u8 = 2; // the first unit of a large block
 const KIND_BODY: u8 = 3; // the other units of a large block
 const KIND_FOREIGN: u8 = 4;
-var U_KIND: [MAX_UNITS]u8 = @splat(0);
+pub var U_KIND: [MAX_UNITS]u8 = @splat(0);
 /// Small page or large block: the task slot.
 var U_SLOT: [MAX_UNITS]u8 = @splat(0);
 /// Large block or free run (at its first unit): the length in units.
-var U_UNITS: [MAX_UNITS]u16 = @splat(0);
+pub var U_UNITS: [MAX_UNITS]u16 = @splat(0);
 /// Free run (at its last unit): its first unit.
 var U_START: [MAX_UNITS]u16 = @splat(0);
 /// Small pages and large blocks: the task's lists. Free runs: the lists of the index.
@@ -46,8 +46,8 @@ var U_PREV: [MAX_UNITS]u16 = @splat(0);
 /// Large block: the requested end (the sum and a moving realloc stop there).
 var U_HW: [MAX_UNITS]u32 = @splat(0);
 // Small pages: one size class each, with their own free list and live count.
-var U_CLASS: [MAX_UNITS]u8 = @splat(0);
-var U_LIVE: [MAX_UNITS]u16 = @splat(0);
+pub var U_CLASS: [MAX_UNITS]u8 = @splat(0);
+pub var U_LIVE: [MAX_UNITS]u16 = @splat(0);
 var U_BUMP: [MAX_UNITS]u16 = @splat(0);
 /// Offset + 1 of the first free block in the page, 0 when none.
 var U_FREE: [MAX_UNITS]u16 = @splat(0);
@@ -56,16 +56,27 @@ var U_ANEXT: [MAX_UNITS]u16 = @splat(0);
 var U_APREV: [MAX_UNITS]u16 = @splat(0);
 var U_INAV: [MAX_UNITS]u8 = @splat(0);
 
-var FREE_BITS: [MAX_UNITS / 64]u64 = @splat(0);
+pub var FREE_BITS: [MAX_UNITS / 64]u64 = @splat(0);
 /// No free unit in the bitmap words below this one.
 var LOW_HINT: usize = 0;
-var POOL_LO: usize = 0;
-var POOL_HI: usize = 0;
+pub var POOL_LO: usize = 0;
+pub var POOL_HI: usize = 0;
 /// The memory end after our last grow: memory above it was grown by other code.
 var GROWN_END: usize = 0;
 pub var CHUNKS_USED: usize = 0;
-/// Grow step in units. 4b makes it the shim option `growStepBytes`.
-const GROW_CHUNKS: usize = PAGE >> CH_SHIFT;
+/// Grow step in units: the shim option `growStepBytes` (PLAN.md 4b, H9). JS sets it before `init`:
+/// the sum of constant data (12d) covers it.
+var GROW_CHUNKS: usize = PAGE >> CH_SHIFT;
+export fn set_grow_step(bytes: usize) void {
+    mem.enter();
+    // At least one page, and at most the whole pool.
+    GROW_CHUNKS = std.math.clamp(bytes >> CH_SHIFT, PAGE >> CH_SHIFT, MAX_UNITS);
+}
+
+/// PLAN.md M4: JS says if memory may grow by `pages` (1: yes, 0: no). It keeps the budget of the
+/// isolate (M3). The test driver of the allocator (`bench/alloc_driver.zig`) may be built with no ask.
+const ASK_JS = @import("build_options").ask_js;
+extern "env" fn js_grow(pages: u32) u32;
 
 /// Empty small pages go to a stack that only small pages use (no bitmap, no joins).
 const CACHE_MAX: usize = 256;
@@ -82,6 +93,9 @@ fn smallGive(h: usize) void {
 /// Only when memory cannot grow. False when the reserve is empty.
 fn cacheDrain() bool {
     if (CACHED == 0) return false;
+    // H3 (4h): one reclaim walk and the bytes it gave back.
+    RECLAIMS += 1;
+    RECLAIMED += CACHED << CH_SHIFT;
     while (CACHED > 0) {
         CACHED -= 1;
         runGive(CACHE[CACHED], 1);
@@ -215,7 +229,8 @@ fn poolInit() void {
 }
 
 /// Grow memory so that the free run at the top has `n` units. False on out-of-memory.
-/// The only place that grows memory. 4b: ask JS first (`js_grow`).
+/// The only place that grows memory. It asks JS first (`js_grow`, M4) and grows only on yes. A "no" is
+/// pressure (M7): the callers give the page reserve back and try again (step 1), else give 0 (step 3).
 fn poolGrow(n: usize) bool {
     poolInit();
     const top = @wasmMemorySize(0) * PAGE;
@@ -228,8 +243,14 @@ fn poolGrow(n: usize) bool {
     }
     const have: usize = if (POOL_HI > POOL_LO and isFree(POOL_HI - 1)) POOL_HI - U_START[POOL_HI - 1] else 0;
     const want = @max(n -| have, GROW_CHUNKS);
-    const pages = (want * CH + PAGE - 1) / PAGE;
+    var pages = (want * CH + PAGE - 1) / PAGE;
     if (POOL_HI + pages * (PAGE / CH) > MAX_UNITS) return false;
+    if (ASK_JS and js_grow(@intCast(pages)) == 0) {
+        // The step can be larger than the room that is left: ask once more for the pages that are needed.
+        const need = (@max(n -| have, 1) * CH + PAGE - 1) / PAGE;
+        if (need >= pages or js_grow(@intCast(need)) == 0) return false;
+        pages = need;
+    }
     if (@wasmMemoryGrow(0, pages) < 0) return false;
     GROWN_END = @wasmMemorySize(0) * PAGE;
     const hi = GROWN_END >> CH_SHIFT;
@@ -284,7 +305,7 @@ fn takeRun(n: usize, grow: bool) usize {
 
 // ---------------------------------------------------------------- tasks
 
-const CLASSES = [13]usize{ 16, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 2048 };
+pub const CLASSES = [13]usize{ 16, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 2048 };
 const NCLASS = CLASSES.len;
 const CLASS_UP: [SMALL_MAX / 16]u8 = blk: {
     @setEvalBranchQuota(10_000);
@@ -479,14 +500,15 @@ inline fn smallStart(ptr: usize) usize {
 }
 
 /// Free the small block at `p` (its start). An empty page goes back at once.
-fn smallFree(t: *Task, p: usize) void {
+/// False when it was a second free (caught, nothing changed).
+fn smallFree(t: *Task, p: usize) bool {
     const h = p >> CH_SHIFT;
     // A second free of the block: the mark is there, the link is a block offset + 1
     // (or 0), and the block is on the free list.
     if (rdUsize(p) == FREE_MARK and isLink(h, rdUsize(p + 4))) {
         if (onFreeList(h, p)) {
             DOUBLE_FREES += 1;
-            return;
+            return false;
         }
     }
     // The mark is not an owner, so a free block of a JS page has none.
@@ -500,6 +522,7 @@ fn smallFree(t: *Task, p: usize) void {
         listRemove(&t.small_head, h);
         smallGive(h);
     }
+    return true;
 }
 
 // ---------------------------------------------------------------- large blocks
@@ -544,7 +567,22 @@ fn largeGrowInPlace(s: usize, m: usize, at_top: bool) bool {
 
 pub const TRACK_LIVE = @import("build_options").track_live;
 pub var LIVE_BYTES: usize = 0;
+/// H3 (PLAN.md 4h): the peak of `LIVE_BYTES`, the reclaim walks (`cacheDrain`) and the bytes they gave
+/// back, the bytes that `taskDone` freed at the end of tasks (a leak), and the idle resets (4j).
+pub var LIVE_PEAK: usize = 0;
+var RECLAIMS: u32 = 0;
+var RECLAIMED: usize = 0;
+pub var LEAKED: usize = 0;
+var RESETS: u32 = 0;
+var RESET_BYTES: usize = 0;
 pub var DEALLOC_MISS: u32 = 0;
+
+/// Add `n` bytes to the live count and keep its peak.
+inline fn liveAdd(n: usize) void {
+    if (!TRACK_LIVE) return;
+    LIVE_BYTES +%= n;
+    if (LIVE_BYTES > LIVE_PEAK) LIVE_PEAK = LIVE_BYTES;
+}
 pub var ROC_BYTES: usize = 0;
 
 inline fn classOf(len: usize) usize {
@@ -552,11 +590,15 @@ inline fn classOf(len: usize) usize {
 }
 
 /// Test only (the exports `fail_next_alloc`, `fail_alloc_at` in host/host.zig): allocation
-/// number FAIL_AT from now gives 0. 0: off.
+/// number FAIL_AT from now gives 0. 0: off. The production host has no hook (PLAN.md 7a).
 pub var FAIL_AT: u32 = 0;
+/// Test only (the export `alloc_count`): the allocations so far, to aim `FAIL_AT` (`bench/tasktable-test.mjs`).
+pub var ALLOCS: u32 = 0;
+const BENCH = @import("build_options").bench;
 
 fn allocIn(t: *Task, len: usize, grow: bool) usize {
-    if (FAIL_AT != 0) {
+    if (BENCH) ALLOCS +%= 1;
+    if (BENCH and FAIL_AT != 0) {
         FAIL_AT -= 1;
         if (FAIL_AT == 0) return 0;
     }
@@ -565,7 +607,7 @@ fn allocIn(t: *Task, len: usize, grow: bool) usize {
     const p = if (small) smallAlloc(t, class) else largeAlloc(t, len, grow);
     if (p == 0) return 0;
     const cap = if (small) CLASSES[class] else alignUp(len, CH);
-    if (TRACK_LIVE) LIVE_BYTES +%= cap;
+    liveAdd(cap);
     return p;
 }
 
@@ -599,8 +641,8 @@ fn release(u: usize, ptr: usize) void {
     const t = &TASKS[U_SLOT[u]];
     if (U_KIND[u] == KIND_SMALL) {
         const cap = CLASSES[U_CLASS[u]];
-        if (TRACK_LIVE) LIVE_BYTES -%= cap;
-        smallFree(t, smallStart(ptr));
+        // A caught double free changes nothing: the count stays (it must never be too low, H2).
+        if (smallFree(t, smallStart(ptr)) and TRACK_LIVE) LIVE_BYTES -%= cap;
     } else {
         const cap = @as(usize, U_UNITS[u]) << CH_SHIFT;
         if (TRACK_LIVE) LIVE_BYTES -%= cap;
@@ -651,7 +693,7 @@ pub fn hostReallocFor(owner: usize, ptr: usize, new_length: usize, alignment: us
         if (largeGrowInPlace(u, m, false) or (runFind(m) == 0 and largeGrowInPlace(u, m, true))) {
             U_HW[u] = @intCast(end_);
             const grown = (m << CH_SHIFT) - old;
-            if (TRACK_LIVE) LIVE_BYTES +%= grown;
+            liveAdd(grown);
             return ptr;
         }
     }
@@ -667,12 +709,12 @@ pub fn hostReallocFor(owner: usize, ptr: usize, new_length: usize, alignment: us
 
 pub inline fn allocOrTrap(length: usize, alignment: usize) usize {
     const p = hostAlloc(length, alignment);
-    if (p == 0) mem.trapClean();
+    if (p == 0) cpu.oom();
     return p;
 }
 pub inline fn reallocOrTrap(ptr: usize, new_length: usize, alignment: usize) usize {
     const p = hostRealloc(ptr, new_length, alignment);
-    if (p == 0) mem.trapClean();
+    if (p == 0) cpu.oom();
     return p;
 }
 
@@ -680,12 +722,12 @@ pub inline fn reallocOrTrap(ptr: usize, new_length: usize, alignment: usize) usi
 /// The owner is not changed, so the trap leaves OWNER as the task that runs.
 pub inline fn allocHostOrTrap(length: usize, alignment: usize) usize {
     const p = hostAllocFor(0, length, alignment);
-    if (p == 0) mem.trapClean();
+    if (p == 0) cpu.oom();
     return p;
 }
 pub inline fn reallocHostOrTrap(ptr: usize, new_length: usize, alignment: usize) usize {
     const p = hostReallocFor(0, ptr, new_length, alignment);
-    if (p == 0) mem.trapClean();
+    if (p == 0) cpu.oom();
     return p;
 }
 
@@ -694,7 +736,7 @@ pub export fn roc_alloc(length: usize, alignment: usize) callconv(.c) ?*anyopaqu
     // 5b: a task that allocates after the CPU signal gets a clean trap.
     cpu.check();
     const p = hostAlloc(length, alignment);
-    if (p == 0) mem.trapClean();
+    if (p == 0) cpu.oom();
     ROC_BYTES += length;
     return @ptrFromInt(p);
 }
@@ -707,7 +749,7 @@ export fn roc_dealloc(ptr: ?*anyopaque, alignment: usize) callconv(.c) void {
 pub export fn roc_realloc(ptr: ?*anyopaque, new_length: usize, alignment: usize) callconv(.c) ?*anyopaque {
     cpu.check();
     const p = hostRealloc(@intFromPtr(ptr), new_length, alignment);
-    if (p == 0) mem.trapClean();
+    if (p == 0) cpu.oom();
     if (p != @intFromPtr(ptr)) ROC_BYTES += new_length;
     return @ptrFromInt(p);
 }
@@ -769,6 +811,8 @@ inline fn step(n: *usize) void {
 /// The task ended (or trapped clean): give all its pages back. Returns its live bytes.
 pub fn taskEnd(owner: usize) usize {
     if (owner == 0) return 0;
+    // PLAN.md 8e: drop the Native handles of the task. Their blocks are of the task: this call frees them.
+    @import("native/native.zig").endTask(allocator, owner, .forget);
     const t = taskFind(owner) orelse return 0;
     var live: usize = 0;
     var steps: usize = 0;
@@ -797,6 +841,14 @@ pub fn taskEnd(owner: usize) usize {
     return live;
 }
 
+/// A task ended by its own return: `taskEnd`, and the bytes that it still had to free are a leak
+/// (H3, 4h: `leaked_at_end`). A task that trapped is freed by `freeOwner`: no leak count there.
+pub fn taskDone(owner: usize) usize {
+    const n = taskEnd(owner);
+    LEAKED += n;
+    return n;
+}
+
 /// Free every block of `owner` after a clean trap.
 pub fn freeOwner(owner: usize) ?usize {
     if (owner == 0) return 0;
@@ -807,8 +859,69 @@ pub fn freeOwner(owner: usize) ?usize {
 export fn dealloc_miss() u32 {
     return DEALLOC_MISS;
 }
+/// The bytes of the units in use: tasks, host and JS blocks, the page reserve and foreign units.
 export fn heap_used() usize {
     return CHUNKS_USED << CH_SHIFT;
+}
+/// H3 (PLAN.md 4h): the bytes of the pool (units in use and free). Memory never gets smaller.
+export fn heap_bytes() usize {
+    return (POOL_HI - POOL_LO) << CH_SHIFT;
+}
+/// The peak of `live_bytes` since the start.
+export fn live_peak() usize {
+    return LIVE_PEAK;
+}
+/// Reclaim walks (the page reserve gave its pages back to the pool, pressure step 1) and the bytes gained.
+export fn reclaim_walks() u32 {
+    return RECLAIMS;
+}
+export fn reclaim_bytes() usize {
+    return RECLAIMED;
+}
+/// The bytes that `taskDone` freed at the end of tasks: a task that leaks shows here (PLAN.md 6e).
+export fn leaked_at_end() usize {
+    return LEAKED;
+}
+/// Idle resets done (4j) and the units in use that they gave back, in bytes.
+export fn idle_resets() u32 {
+    return RESETS;
+}
+export fn idle_reset_bytes() usize {
+    return RESET_BYTES;
+}
+
+/// PLAN.md H2, 4j: the heap starts again. Only when nothing is in use: the count says 0 and no task
+/// list (host, JS, tasks) holds a block, so a wrong count never resets over live data. Each region
+/// (the units between foreign units) becomes one free run, the free lists are made again and the page
+/// reserve is empty. Foreign units stay. False: not done. The caller says that no task runs or waits.
+pub fn idleReset() bool {
+    if (!TRACK_LIVE or LIVE_BYTES != 0 or POOL_HI == 0) return false;
+    for (&TASKS) |*t| if (t.small_head != 0 or t.large_head != 0) return false;
+    for (SLOT_OWNER[1..JS_SLOT]) |o| if (o != 0) return false;
+    const before = CHUNKS_USED;
+    for (&TASKS) |*t| t.avail = @splat(0);
+    RL_HEAD = std.mem.zeroes([RL_FL][RL_SL]u16);
+    RL_FLBITS = 0;
+    RL_SLBITS = @splat(0);
+    CACHED = 0;
+    LOW_HINT = 0;
+    var u = POOL_LO;
+    while (u < POOL_HI) {
+        if (U_KIND[u] == KIND_FOREIGN) {
+            u += 1;
+            continue;
+        }
+        const e = std.mem.indexOfScalarPos(u8, U_KIND[0..POOL_HI], u, KIND_FOREIGN) orelse POOL_HI;
+        @memset(U_KIND[u..e], KIND_NONE);
+        setRange(u, e - u, true);
+        runInsert(u, e - u);
+        u = e;
+    }
+    // `CHUNKS_USED` does not count foreign units.
+    CHUNKS_USED = 0;
+    RESETS += 1;
+    RESET_BYTES += before << CH_SHIFT;
+    return true;
 }
 /// A block for JS to fill: [owner word][Roc refcount = 1][len bytes]. Returns the bytes.
 /// Out of memory gives 0, with no trap: JS is in a host call, and no task runs. JS answers
@@ -962,15 +1075,18 @@ pub fn markInit() void {
     INIT_MEM_END = @wasmMemorySize(0) * PAGE;
 }
 
-/// For the sum of constant data (host/host.zig `constSum`): the free mark and the allocator vtable.
+/// For the sum of constant data (host/host.zig `constSum`): the free mark, the grow step (JS sets both
+/// before `init`), the allocator and its vtable.
 pub fn sumConst(acc: u64) u64 {
-    const a = mem.sumBytes(@intFromPtr(&FREE_MARK), @sizeOf(usize), acc);
+    var a = mem.sumBytes(@intFromPtr(&FREE_MARK), @sizeOf(usize), acc);
+    a = mem.sumBytes(@intFromPtr(&GROW_CHUNKS), @sizeOf(usize), a);
+    a = mem.sumBytes(@intFromPtr(&allocator), @sizeOf(std.mem.Allocator), a);
     return mem.sumBytes(@intFromPtr(&vtable), @sizeOf(std.mem.Allocator.VTable), a);
 }
 
 /// The lowest address of the globals of this file with a start value (in `.data`, after `.rodata`).
 pub fn firstData() usize {
-    return @min(@min(@intFromPtr(&FREE_MARK), @intFromPtr(&TASKS)), @min(@intFromPtr(&SLOT_OWNER), @intFromPtr(&vtable)));
+    return @min(@min(@intFromPtr(&FREE_MARK), @intFromPtr(&TASKS)), @min(@min(@intFromPtr(&SLOT_OWNER), @intFromPtr(&vtable)), @intFromPtr(&GROW_CHUNKS)));
 }
 
 /// The units that the check found in a place. Only `checkTables` uses it.
@@ -1267,6 +1383,19 @@ pub fn breakTable(kind: u32, arg: usize) u32 {
         15 => CHUNKS_USED +%= 1,
         // 16: the free mark (constant data after `init`).
         16 => FREE_MARK ^= 2,
+        // 19: the live byte count is 0 while blocks are live (a count that is too low: the idle reset, 4j, must not reset).
+        19 => LIVE_BYTES = 0,
+        // 18: the page list of task `arg` (0: any) links to itself at its first page.
+        18 => {
+            const h = smallPageOf(arg, false) orelse return 0;
+            U_NEXT[h] = @intCast(h);
+        },
+        // 17: the list of JS pages links to itself (a walk of it never ends: `step` traps).
+        17 => {
+            const h: usize = TASKS[JS_SLOT].small_head;
+            if (h == 0) return 0;
+            U_NEXT[h] = @intCast(h);
+        },
         else => return 0,
     }
     return 1;

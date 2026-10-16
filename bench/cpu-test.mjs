@@ -8,7 +8,7 @@
 // 5c: the terminated flag (1) at the start of a request: the instance is replaced. A kill leaves
 //     stale state (here: a stack pointer that is wrapped), so a request on the old instance traps.
 import { readFileSync } from 'node:fs';
-import { makeRunner, check, readFlag, SIGXCPU, TERMINATED } from './core.js';
+import { makeRunner, check, readFlag, eventBlock, SIGXCPU, TERMINATED } from './core.js';
 const dir = process.argv[2] ?? 'bench/out';
 const load = (f) => new WebAssembly.Module(readFileSync(`${dir}/${f}`));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -26,7 +26,7 @@ const strloop = (n) => Array.from({ length: n }, (_, i) => `,${i}`).join('');
 for (const f of ['app.wasm', 'app_deep.wasm', 'app_strloop.wasm', 'app_wait.wasm']) {
   const m = load(f);
   const ex = WebAssembly.Module.exports(m);
-  const x = new WebAssembly.Instance(m, { env: { js_wait: () => 0 } }).exports;
+  const x = new WebAssembly.Instance(m, { env: { js_await: () => 0, js_call: () => 0, js_grow: () => 1 } }).exports;
   const addr = [];
   for (const name of ['__instance_signal', '__instance_terminated']) {
     if (ex.find((e) => e.name === name)?.kind !== 'global') { fail(`5a ${f}: ${name} is not exported as a global`); continue; }
@@ -119,11 +119,10 @@ for (const f of ['app.wasm', 'app_deep.wasm', 'app_strloop.wasm', 'app_wait.wasm
   if (r.x !== x0 || r.stats.terminated || a.body === undefined) fail('5c: control run');
   // The kill: a task is stopped at a wait, and nothing cleans up.
   x0.fault_next_wait(3);
-  const bytes = new TextEncoder().encode('7');
-  const p = x0.js_alloc(bytes.length);
-  new Uint8Array(x0.memory.buffer).set(bytes, p);
+  // PLAN.md 8b: the request text is the body of a `Fetch` event (else the decode of the event traps first).
+  const [p, len] = eventBlock(x0, '7');
   let trapped = false;
-  await WebAssembly.promising(x0.handle)(p, bytes.length, 4_000_000_000).catch(() => { trapped = true; });
+  await WebAssembly.promising(x0.handle)(p, len, 4_000_000_000).catch(() => { trapped = true; });
   if (!trapped) fail('5c: the forced trap did not happen');
   writeFlag(x0, '__instance_terminated', TERMINATED);
   let next;

@@ -1,6 +1,6 @@
 // PLAN.md 6d and 2a: a failed allocation is a clean OOM trap for one task.
 // node bench/oom-test.mjs bench/out/app.wasm
-// 6d: `fail_next_alloc` before the next `roc_alloc` of a task: it traps clean, `task_abort`
+// 6d: `fail_alloc_at` aimed at the next `roc_alloc` of a task: it traps clean, `task_abort`
 //     frees its pages, the other tasks are correct.
 // 2a: `fail_next_alloc` before a `js_alloc` for a wait result: JS gives status 4, and the
 //     host makes the same clean trap.
@@ -21,8 +21,9 @@ for (const v of ['b']) {
     if (kind === 1) {
       await sleep(3);
       const id = new URL(b).searchParams.get('id');
-      // The empty body makes no js_alloc, so the next allocation is the `roc_alloc` of the task.
-      if (id === victim.roc) { r.x.fail_next_alloc(); return ''; }
+      // Allocation 1 is the result block (`js_alloc`, 8a). The empty text needs no block in the decode, so
+      // allocation 2 is the `roc_alloc` of the task (until 8a: the empty body made no js_alloc, so it was 1).
+      if (id === victim.roc) { r.x.fail_alloc_at(2); return ''; }
       return 'f:' + id;
     }
     await sleep(1);

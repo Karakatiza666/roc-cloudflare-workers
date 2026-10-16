@@ -1,9 +1,11 @@
 // PLAN.md 4a (M1): one instance per isolate. node bench/oneinstance-test.mjs bench/out/app.wasm
 // 1,000 requests, 25 at a time, with waits. Each 100th request makes an unclean trap: a forced
-// out-of-bounds write at its first wait (`fault_next_wait`, V2). The runner replaces the instance
-// and cancels the tasks of the old one (3c), so tasks never wait on two instances.
-// Expect: never more than 1 instance with a task, 0 bad bodies, 10 replaces, every request ends
-// with a good body, its own trap, or a 503 cancel (`replace`), the table is empty at the end.
+// out-of-bounds write at its first wait (`fault_next_wait`, V2). After 12c an unclean trap is an
+// alarm: the task gets a 503, `task_abort` gives -1 and frees its pages and slot, the alarm counter
+// of the host goes up, and the global check runs. It passes (the write hit nothing), so the
+// instance stays and the other tasks of the wave finish on it.
+// Expect: never more than 1 instance with a task, 0 bad bodies, 10 alarms "trap" (host counter
+// +10), 10 passed checks, 0 replaces, 0 cancels, every other request a good body, the table empty.
 // Then variant a (the fallback of problem 1): 1,000 requests with 1 % clean traps, 0 bad bodies.
 import { readFileSync } from 'node:fs';
 import { makeRunner, check } from './core.js';
@@ -28,6 +30,7 @@ const N = 1000, WAVE = 25;
   else {
     const victims = new Set();
     const all = [];
+    const x0 = r.x;
     for (let i = 0; i < N; i++) {
       const id = String(10000 + i);
       const victim = i % 100 === 60;
@@ -38,7 +41,7 @@ const N = 1000, WAVE = 25;
       }
       all.push(r.run(`${id} 0 8 10`).then((res) => ({ id, victim, res })));
       sample();
-      // Let the trap handler run (the replace) while the other tasks of the wave still wait.
+      // Let the trap handler run (the alarm) while the other tasks of the wave still wait.
       if (victim) await sleep(0);
       if (i % WAVE === WAVE - 1) await sleep(3);
     }
@@ -49,19 +52,22 @@ const N = 1000, WAVE = 25;
         if (victim) fail(`victim ${id} got a body`);
         else if (check(id, res.body, 8)) ok++;
         else { bad++; if (bad < 4) console.log('BAD', id, res.body); }
-      } else if (res.cancelled === 'replace') cancels++;
-      else if (victim) ownTraps++;
+      } else if (res.cancelled) cancels++;
+      else if (victim && res.alarm === 'trap' && res.status === 503) ownTraps++;
       else { other++; if (other < 4) console.log('OTHER', id, res.trap); }
     }
     const st = r.stats;
-    console.log('b', { ok, bad, ownTraps, cancels, other, maxLive, retired: st.retired, walkFailed: st.walkFailed, table: r.tasks.size });
+    const hostAlarms = x0.alarms();
+    console.log('b', { ok, bad, ownTraps, cancels, other, maxLive, retired: st.retired, walkFailed: st.walkFailed, hostAlarms, alarmChecks: st.byCheck.alarm, heapFails: st.heapFails, table: r.tasks.size });
     if (maxLive > 1) fail(`b: ${maxLive} instances with tasks at one time`);
     if (bad !== 0) fail(`b: ${bad} bad bodies`);
     if (other !== 0) fail(`b: ${other} requests ended in another way`);
     if (ownTraps !== victims.size) fail(`b: ${ownTraps} own traps, want ${victims.size}`);
-    if (st.retired !== victims.size) fail(`b: ${st.retired} replaces, want ${victims.size}`);
+    if (st.retired !== 0 || r.x !== x0) fail(`b: ${st.retired} replaces, want 0 (an alarm must not replace the instance)`);
     if (st.walkFailed !== victims.size) fail(`b: ${st.walkFailed} unclean traps, want ${victims.size}`);
-    if (cancels === 0) fail('b: no task was cancelled by a replace: the test proves nothing');
+    if (hostAlarms !== victims.size) fail(`b: the alarm counter of the host is ${hostAlarms}, want ${victims.size}`);
+    if (st.byCheck.alarm !== victims.size || st.heapFails !== 0) fail(`b: ${st.byCheck.alarm} checks after an alarm, ${st.heapFails} failed, want ${victims.size} and 0`);
+    if (cancels !== 0) fail(`b: ${cancels} tasks cancelled, want 0`);
     if (ok + bad + ownTraps + cancels + other !== N) fail('b: a request is missing');
     if (r.tasks.size !== 0) fail(`b: ${r.tasks.size} tasks left in the table`);
     const live = r.x.live_bytes();
@@ -77,7 +83,7 @@ const N = 1000, WAVE = 25;
     await sleep(1);
     return kind === 1 ? 'f:' + new URL(b).searchParams.get('id') : 'd:' + a.split(' ')[1];
   };
-  const r = makeRunner(module, 'a', io);
+  const r = makeRunner(module, 'a', io, { isolateBytes: 2 ** 40 });
   const all = [];
   for (let i = 0; i < N; i++) {
     const id = String(20000 + i);

@@ -9,7 +9,8 @@
 // the revert check: then wrong bodies are expected.
 // 12c: an alarm does not replace the instance. The global check runs after each alarm, and only a
 // failed check replaces it: replaces = failed checks, and never 2 instances with tasks.
-// Exit 1 when a wrong body comes back, or when an instance is replaced with no failed check.
+// Exit 1 when a wrong body comes back, when an instance is replaced with no failed check, or when
+// `run` throws (12c: a trap in any export on a damaged instance is an alarm).
 import { readFileSync } from 'node:fs';
 import { makeRunner, check } from './core.js';
 const module = new WebAssembly.Module(readFileSync(process.argv[2]));
@@ -23,7 +24,8 @@ const io = async (kind, a, b) => {
   return kind === 1 ? 'f:' + new URL(b).searchParams.get('id') : 'd:' + a.split(' ')[1];
 };
 const lines = {};
-const log = (text) => { const k = text.split(':')[0]; lines[k] = (lines[k] ?? 0) + 1; };
+// One count per kind of log line. A failed check: per check code (`heap check failed (why): <code> <name>`).
+const log = (text) => { const k = text.startsWith('heap check failed') ? text.split(';')[0] : text.split(':')[0]; lines[k] = (lines[k] ?? 0) + 1; };
 const r = makeRunner(module, 'b', io, { resumeCheck, noFallback: true, log });
 let seed = 7, i = 0;
 const s = { good: 0, badBody: 0, wild: 0, alarmSum: 0, alarmBlock: 0, trap: 0, cancelled: 0, otherErr: 0 };
@@ -59,4 +61,5 @@ const st = r.stats;
 console.log(JSON.stringify({ resumeCheck, trapAt, words, n, rate, ...s, replaced: st.retired, heapChecks: st.heapChecks, heapFails: st.heapFails, byCheck: st.byCheck, maxLive, logLines: lines, checkMsMax: +st.heapCheckMaxMs.toFixed(3) }));
 const sameInstance = st.retired === st.heapFails && maxLive <= 1;
 if (!sameInstance) console.log(`FAIL: ${st.retired} replaces, ${st.heapFails} failed checks: an alarm replaced the instance`);
-process.exit(s.badBody === 0 && sameInstance ? 0 : 1);
+if (s.otherErr) console.log(`FAIL: run threw ${s.otherErr} times`);
+process.exit(s.badBody === 0 && sameInstance && s.otherErr === 0 ? 0 : 1);

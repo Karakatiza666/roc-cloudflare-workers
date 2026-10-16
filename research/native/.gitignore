@@ -1,0 +1,4 @@
+out/
+.cache/
+.zig-cache/
+data/big-*

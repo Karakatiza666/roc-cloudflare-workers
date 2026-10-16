@@ -1,6 +1,9 @@
 // Load generator and driver. Each rep starts a fresh workerd for the variant.
 // WORKERD=<path> node bench/bench.mjs [reps=3] [n=5000]          latency, throughput, copy bytes by depth (DEPTHS, VARIANTS)
 // WORKERD=<path> node bench/bench.mjs leak [n=10000] [rate=0.01] the trap leak test, both variants
+// WORKERD=<path> RESUME_CHECK=off|afterAlarm|always ITEMS=<n> CONCS=64 VARIANTS=b DEPTHS=50 node bench/bench.mjs 5 3000
+//   the cost of the checks in workerd (12f). RESUME_CHECK and ITEMS: see worker.js. CONCS: the concurrencies (default 1,16,64).
+//   Each row also has cpuUsPerReq: the CPU time of the workerd process (utime + stime) per request.
 import { spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -13,6 +16,10 @@ const BASE = 'http://127.0.0.1:8131';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let nextId = 100000;
 
+const cpuMs = (pid) => {
+  const f = readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ')[1].split(' '); // fields from 3: utime is 14, stime 15
+  return ((Number(f[11]) + Number(f[12])) * 1000) / 100; // clock ticks of 10 ms
+};
 const rssKB = (pid) => Number(/VmRSS:\s+(\d+)/.exec(readFileSync(`/proc/${pid}/status`, 'utf8'))[1]);
 
 async function start(variant, pad = '0') {
@@ -42,7 +49,7 @@ async function load(conc, n, trapRate = 0, depth = 50) {
       const trap = trapRate > 0 && Math.random() < trapRate;
       const s = performance.now();
       try {
-        const r = await fetch(`${BASE}/h?id=${id}&trap=${trap ? 1 : 0}&depth=${depth}`);
+        const r = await fetch(`${BASE}/h?id=${id}&trap=${trap ? 1 : 0}&depth=${depth}${process.env.ITEMS ? '&items=' + process.env.ITEMS : ''}`);
         const body = await r.text();
         lat.push(performance.now() - s);
         if (trap) {
@@ -103,11 +110,13 @@ if (mode === 'leak') {
       await load(16, 1000); // warmup
       const rssWarm = rssKB(p.pid);
       for (const depth of v === 'j' ? [0] : depths) {
-        for (const c of [1, 16, 64]) {
+        for (const c of (process.env.CONCS || '1,16,64').split(',').map(Number)) {
           await fetch(BASE + '/reset');
+          const cpu0 = cpuMs(p.pid);
           const r = await load(c, n, 0, depth);
+          const cpuUsPerReq = Math.round(((cpuMs(p.pid) - cpu0) * 1000) / n);
           const s = await stats();
-          console.log(JSON.stringify({ rep, variant: v, depth, ...r, rssKB: rssKB(p.pid), memBytes: s.mem, savedMax: s.saved_max, savedPeak: s.saved_peak, waits: s.waits }));
+          console.log(JSON.stringify({ rep, variant: v, depth, ...r, cpuUsPerReq, rssKB: rssKB(p.pid), memBytes: s.mem, savedMax: s.saved_max, savedPeak: s.saved_peak, waits: s.waits }));
         }
       }
       const extra = v === 'a' ? { instUs: await instCost(0), instPadUs: await instCost(1), rssAfterInstKB: rssKB(p.pid) } : {};

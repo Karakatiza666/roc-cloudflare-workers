@@ -1,4 +1,4 @@
-//! Bench host: one Roc request handler that waits on JS with JSPI.
+//! Host: one Roc request handler that waits on JS with JSPI. Production by default, bench with `zig build -Dbench=true` (PLAN.md 7a).
 //! Variant A (copy off): a fresh instance for each request, no stack copy.
 //! Variant B (copy on): one instance for all requests. A wait copies the
 //! used shadow stack to the heap, and back at the resume.
@@ -7,6 +7,10 @@
 const std = @import("std");
 const abi = @import("roc_platform_abi.zig");
 const lib = @import("hostlib");
+
+/// PLAN.md 7a: the bench host has the test exports and their hooks. In the production host each
+/// use of a hook is behind `if (BENCH)`, so the compiler leaves it out.
+const BENCH = lib.BENCH;
 
 comptime {
     _ = lib.exports;
@@ -19,14 +23,20 @@ const gpa = lib.alloc.allocator;
 const trap = mem.trap;
 const RocStr = abi.RocStr;
 const Bytes = abi.RocListWith(u8, false);
-const AwaitRet = abi.WaitWait;
 const ROC_HOST = &lib.roc.RocHostOf(abi.RocHost).host;
 const StrOps = lib.roc.StrOf(RocStr);
+/// The CBOR profile of API.md 5 over the glue types (HD1: its `comptime` checks).
+const cbor = @import("cbor.zig").Codec(abi);
+const JsVal = abi.Js;
+const BridgeRet = abi.HostAwait;
 
 comptime {
     mem.checkStr(RocStr);
-    _ = mem.fieldOff(AwaitRet, "status", u16);
-    _ = mem.fieldOff(AwaitRet, "body", Bytes);
+    _ = mem.fieldOff(BridgeRet, "status", u8);
+    _ = mem.fieldOff(BridgeRet, "value", JsVal);
+    _ = mem.fieldOff(abi.HostCall, "value", JsVal);
+    _ = mem.fieldOff(abi.HostNative, "bytes", Bytes);
+    _ = mem.fieldOff(abi.HostNative, "status", u8);
 }
 
 inline fn slice(s: *const RocStr) []const u8 {
@@ -81,9 +91,13 @@ const Wait = extern struct {
 /// code ran (`mem.RUN_EPOCH` changed). JS sets it once, before the first task.
 var SUM_MODE: u32 = 2;
 var SUSPECT: bool = false;
-export fn set_sum(m: u32) void {
+/// Returns 1 when the mode is set. 0: refused, the mode stays. The production host refuses mode 0
+/// (PLAN.md 7a, 12b: no sums is for benches only).
+export fn set_sum(m: u32) u32 {
     mem.enter();
+    if (!BENCH and m == 0) return 0;
     SUM_MODE = m;
+    return 1;
 }
 /// JS sets it after an alarm: each later resume checks its sum.
 export fn set_suspect(on: u32) void {
@@ -106,6 +120,10 @@ fn sumWait(w: *const Wait) u64 {
 /// Causes of an alarm at resume (`Wait.alarm`). `task_abort` gives them to JS as maxInt - cause.
 const ALARM_SUM: u32 = 1;
 const ALARM_BLOCK: u32 = 2;
+/// Not an alarm yet: the host code of the wait or of the resume runs (the sum, the checks, the
+/// copy). A trap there leaves this mark, and `task_abort` counts it as an unclean trap (12c). A
+/// throw into the task at its resume point (2c) runs no host code and leaves 0: clean.
+const IN_HOST: u32 = 3;
 /// Alarms at a resume, and unclean traps that `task_abort` saw (M11, H3).
 var ALARMS: u32 = 0;
 export fn alarms() u32 {
@@ -204,14 +222,15 @@ inline fn waitBegin() *Wait {
     const bp = lib.alloc.hostAlloc(top - low, 1);
     if (bp == 0) {
         lib.alloc.hostDealloc(@intFromPtr(w));
-        mem.trapClean();
+        lib.cpu.oom();
     }
     const buf = @as([*]u8, @ptrFromInt(bp))[0 .. top - low];
     @memcpy(buf, @as([*]const u8, @ptrFromInt(low))[0..buf.len]);
-    w.* = .{ .low = low, .top = top, .copy = buf.ptr, .copy_len = buf.len, .out = .{ 0, 0 }, .owner = lib.alloc.OWNER, .at = 0, .epoch = mem.RUN_EPOCH, .alarm = 0, .sum = 0 };
+    w.* = .{ .low = low, .top = top, .copy = buf.ptr, .copy_len = buf.len, .out = .{ 0, 0 }, .owner = lib.alloc.OWNER, .at = 0, .epoch = mem.RUN_EPOCH, .alarm = IN_HOST, .sum = 0 };
     waitAdd(w);
     // 12a: after the copy, which is in the task's pages.
     if (SUM_MODE != 0) w.sum = sumWait(w);
+    w.alarm = 0;
     TASK_TOP = 0;
     lib.alloc.OWNER = 0;
     TASK_WAITING += 1;
@@ -225,8 +244,9 @@ inline fn waitBegin() *Wait {
 
 /// The stack is idle (at TOP): put the task back on it.
 inline fn waitEnd(w: *Wait) [2]u32 {
+    w.alarm = IN_HOST;
     if (getSP() != w.top) trap();
-    if (POKE_OUT != 0) pokeOut(w);
+    if (BENCH and POKE_OUT != 0) pokeOut(w);
     if (SUM_MODE != 0) @call(.never_inline, resumeCheck, .{w});
     mem.enter();
     setSP(w.low);
@@ -239,9 +259,6 @@ inline fn waitEnd(w: *Wait) [2]u32 {
     lib.alloc.hostDealloc(@intFromPtr(w));
     return out;
 }
-
-/// kind, number, text a, text b, bytes c, address of [body ptr, body len], task id. Returns the status.
-extern "env" fn js_wait(kind: u32, num: f64, ap: usize, al: usize, bp: usize, bl: usize, cp: usize, cl: usize, out: usize, id: usize) u32;
 
 /// The status that JS gives when it could not make the result block (API.md 4.1).
 const STATUS_OOM: u32 = 4;
@@ -262,7 +279,7 @@ inline fn trapIfCancelled(status: u32) void {
         : .{ .memory = true });
 }
 
-/// Test export (PLAN.md 4-pre, 4a, 5c): the next `roc_wait` traps at its start, at the normal stack depth
+/// Test export (PLAN.md 4-pre, 4a, 5c): the next wait (`roc_await`) traps at its start, at the normal stack depth
 /// of the task. 1: an out-of-bounds write. 2: `unreachable`. Both are unclean (V2).
 /// 3: `unreachable` with a wrapped stack pointer, as a task that a kill left on a stale stack (5c).
 /// 4: a wild write (PLAN.md 12a, `bench/wild.mjs`): `set_wild` random words between the host
@@ -270,7 +287,7 @@ inline fn trapIfCancelled(status: u32) void {
 /// 5: the same wild write, then the task waits, and traps (unclean) after its resume. Other
 /// tasks resume onto the damage before the alarm.
 var FAULT_NEXT: u32 = 0;
-export fn fault_next_wait(kind: u32) void {
+fn fault_next_wait(kind: u32) callconv(.c) void {
     mem.enter();
     FAULT_NEXT = kind;
 }
@@ -278,7 +295,7 @@ var WILD_BASE: u32 = 0;
 var WILD_TRAP: usize = 0;
 var WILD_SEED: u32 = 1;
 var WILD_WORDS: u32 = 16;
-export fn set_wild(seed: u32, words: u32) void {
+fn set_wild(seed: u32, words: u32) callconv(.c) void {
     mem.enter();
     WILD_SEED = seed;
     WILD_WORDS = words;
@@ -299,7 +316,7 @@ fn wildWrite() void {
 /// (any memory). Returns the address, or 0 when there is none.
 var POKE_OUT: usize = 0;
 var POKE_OUT_ADD: u32 = 0;
-export fn poke_wait(id: usize, kind: u32, arg: u32) usize {
+fn poke_wait(id: usize, kind: u32, arg: u32) callconv(.c) usize {
     mem.enter();
     if (kind == 4) {
         mem.wr32(id, mem.rd32(id) ^ arg);
@@ -331,8 +348,9 @@ fn pokeOut(w: *Wait) void {
     w.out[1] +%= POKE_OUT_ADD;
 }
 
-export fn roc_wait(kind: u32, num: u64, a: RocStr, b: RocStr, c: Bytes) callconv(.c) AwaitRet {
-    if (FAULT_NEXT != 0) {
+/// The test hooks of `fault_next_wait`, at the start of a wait.
+inline fn waitHooks() void {
+    if (BENCH and FAULT_NEXT != 0) {
         const k = FAULT_NEXT;
         FAULT_NEXT = 0;
         if (k == 1) @as(*volatile u32, @ptrFromInt(0xFFFF_FFF0)).* = 1;
@@ -340,47 +358,134 @@ export fn roc_wait(kind: u32, num: u64, a: RocStr, b: RocStr, c: Bytes) callconv
         if (k == 4 or k == 5) wildWrite();
         if (k == 5) WILD_TRAP = lib.alloc.OWNER else @trap();
     }
-    const as = slice(&a);
-    const bs = slice(&b);
-    const cs = c.items();
+}
+
+// ---------------------------------------------------------------- the bridge (API.md 4, 4.1)
+
+/// `(task_id, arg_ptr, arg_len, out_ptr) -> status` (API.md 4.1). `js_await` is wrapped in
+/// `WebAssembly.Suspending`. JS reads the argument before its first await, and writes
+/// `[ptr, len]` of a `js_alloc` block with the CBOR of the result at `out_ptr`.
+extern "env" fn js_await(id: usize, ap: usize, al: usize, out: usize) u32;
+extern "env" fn js_call(id: usize, ap: usize, al: usize, out: usize) u32;
+
+/// Status 3 (API.md 4): a bad program. Also a result block that is not one value of the profile.
+const STATUS_BAD: u8 = 3;
+
+/// The program as CBOR in a block of the task: `freeOwner` frees it after a trap or a cancel of the
+/// task, as the saved stack. Null: deeper than 64 containers (J3).
+fn encodeArg(prog: *const JsVal) ?mem.Span {
+    const n = cbor.encodedSize(prog) orelse return null;
+    const p = lib.alloc.allocOrTrap(@max(n, 1), 1);
+    cbor.encode(prog, @as([*]u8, @ptrFromInt(p))[0..n]);
+    return .{ .p = p, .l = n };
+}
+
+/// The result block of JS to a `Js` value of the task (RS4), then the block is freed. The block is
+/// adopted first, so a trap in the decode (out of memory) frees it with the task.
+fn resultOf(status: u32, out: [2]u32) BridgeRet {
+    const p: usize = out[0];
+    const l: usize = out[1];
+    // A block that is not a JS block (damage): an unclean trap. A resume checked it already (12b).
+    if (!lib.alloc.jsBlockOk(p, l)) trap();
+    const bytes: []const u8 = if (p == 0) &.{} else @as([*]const u8, @ptrFromInt(p))[0..l];
+    lib.alloc.adopt(p);
+    const d = cbor.decode(bytes, ROC_HOST);
+    lib.alloc.hostDealloc(p);
+    switch (d) {
+        .value => |v| return .{ .value = v, .status = if (status <= STATUS_BAD) @intCast(status) else STATUS_BAD },
+        .problem => |pr| {
+            var buf: [96]u8 = undefined;
+            return .{ .value = cbor.errorValue("BadResult", cbor.problemText(pr, &buf), ROC_HOST), .status = STATUS_BAD };
+        },
+    }
+}
+
+/// One crossing: encode the program, give it to JS, decode the result. `waits`: `js_await`, with
+/// the stack copy of variant B. The hosted function owns `prog` (glue `decref`).
+inline fn bridge(prog: JsVal, comptime waits: bool) BridgeRet {
+    if (waits) waitHooks();
     const id = lib.alloc.OWNER;
+    const arg = encodeArg(&prog);
+    prog.decref(ROC_HOST);
+    // J3: a program deeper than 64 containers never reaches JS (status 1, the RangeError of the shim).
+    const a = arg orelse return .{ .value = cbor.errorValue("RangeError", "CBOR: value is deeper than 64 levels, or has a cycle", ROC_HOST), .status = 1 };
     var out: [2]u32 = .{ 0, 0 };
     var status: u32 = 0;
-    if (COPY) {
+    if (waits and COPY) {
         const w = waitBegin();
-        status = js_wait(kind, @floatFromInt(num), @intFromPtr(as.ptr), as.len, @intFromPtr(bs.ptr), bs.len, @intFromPtr(cs.ptr), cs.len, @intFromPtr(&w.out), id);
+        status = js_await(id, a.p, a.l, @intFromPtr(&w.out));
         trapIfCancelled(status);
         out = waitEnd(w);
-        if (WILD_TRAP != 0 and WILD_TRAP == id) {
+        if (BENCH and WILD_TRAP != 0 and WILD_TRAP == id) {
             WILD_TRAP = 0;
             @trap();
         }
     } else {
-        status = js_wait(kind, @floatFromInt(num), @intFromPtr(as.ptr), as.len, @intFromPtr(bs.ptr), bs.len, @intFromPtr(cs.ptr), cs.len, @intFromPtr(&out), id);
+        status = if (waits) js_await(id, a.p, a.l, @intFromPtr(&out)) else js_call(id, a.p, a.l, @intFromPtr(&out));
         trapIfCancelled(status);
     }
+    lib.alloc.hostDealloc(a.p);
     // Status 4: `js_alloc` was out of memory. A clean OOM trap for this task (PLAN.md 2a).
     // The task is back on its stack and has its owner, so `task_abort` frees its pages.
-    if (status == STATUS_OOM) mem.trapClean();
-    a.decref(ROC_HOST);
-    b.decref(ROC_HOST);
-    c.decref(ROC_HOST);
-    return .{ .status = @truncate(status), .body = bytesFrom(out[0], out[1]) };
+    if (status == STATUS_OOM) lib.cpu.oom();
+    return resultOf(status, out);
 }
 
-/// A List(U8) over the js_alloc block at `ptr`, which it takes.
-fn bytesFrom(ptr: usize, len: usize) Bytes {
-    if (len == 0) {
-        if (ptr != 0) lib.alloc.hostDealloc(ptr - 4);
-        return .{ .elements_ptr = null, .length = 0, .capacity_or_alloc_ptr = 0 };
+export fn roc_await(prog: JsVal) callconv(.c) BridgeRet {
+    return bridge(prog, true);
+}
+
+export fn roc_call(prog: JsVal) callconv(.c) BridgeRet {
+    return bridge(prog, false);
+}
+
+/// API.md 8, PLAN.md 8e: one Native op. The owner is the task that runs (a handle of another task is status 1).
+/// Status 4 (no memory) is a clean OOM trap, as a failed `roc_alloc`. The result is a new list of the task.
+export fn roc_native(op: u32, bytes: Bytes) callconv(.c) abi.HostNative {
+    // The stack that the op needs is free, or this is a clean trap (the canary stays whole).
+    lib.canary.reserve(lib.native.stackNeed(op));
+    const r = lib.native.call(gpa, lib.alloc.OWNER, op, bytes.items());
+    defer r.release(gpa);
+    // After the call: the input points into the list.
+    bytes.decref(ROC_HOST);
+    if (r.status == 4) lib.cpu.oom();
+    return .{ .bytes = Bytes.fromSlice(r.bytes, ROC_HOST), .status = r.status };
+}
+
+/// Test export (API.md 5.1, HD5, HD6): decode the `len` bytes at `p`, then drop the value. 0: a value,
+/// else the fault (`cbor.Fault`). The values are host blocks (no task runs): live bytes show a leak.
+fn cbor_check(p: usize, len: usize) callconv(.c) u32 {
+    mem.enter();
+    const bytes: []const u8 = if (len == 0) &.{} else @as([*]const u8, @ptrFromInt(p))[0..len];
+    switch (cbor.decode(bytes, ROC_HOST)) {
+        .value => |v| {
+            v.decref(ROC_HOST);
+            return 0;
+        },
+        .problem => |pr| return @intFromEnum(pr.fault),
     }
-    lib.alloc.adopt(ptr);
-    return .{ .elements_ptr = @ptrFromInt(ptr), .length = len, .capacity_or_alloc_ptr = len << 1 };
 }
 
-/// Run the handler on the request in the js_alloc block at `p` (taken), as task `id`.
-/// Returns a heap block [len u32][bytes] for JS; JS frees it with `res_free`.
-/// No frame of its own: TOP is the stack pointer of the JS call.
+/// Test export (API.md 11, "same bytes in Zig and JS"): decode, then encode again into a host block
+/// `[len u32][bytes]` that JS frees with `res_free`. 0: the bytes are not a value.
+fn cbor_echo(p: usize, len: usize) callconv(.c) usize {
+    mem.enter();
+    const bytes: []const u8 = if (len == 0) &.{} else @as([*]const u8, @ptrFromInt(p))[0..len];
+    switch (cbor.decode(bytes, ROC_HOST)) {
+        .value => |v| {
+            defer v.decref(ROC_HOST);
+            const n = cbor.encodedSize(&v) orelse return 0;
+            const blk = lib.alloc.allocHostOrTrap(4 + n, 4);
+            mem.wrUsize(blk, n);
+            cbor.encode(&v, @as([*]u8, @ptrFromInt(blk + 4))[0..n]);
+            return blk;
+        },
+        .problem => return 0,
+    }
+}
+
+/// Run the event in the js_alloc block at `p` (taken, the CBOR of a `Js` value, API.md 4.1), as task `id`.
+/// Returns a heap block [len u32][CBOR of the outcome] for JS; JS frees it with `res_free`.
 export fn handle(p: usize, l: usize, id: usize) usize {
     // JS gives the id (PLAN.md 2c) and never reuses one: 0 is the host, maxInt the JS slot.
     if (id == 0 or id == std.math.maxInt(usize)) trap();
@@ -393,21 +498,54 @@ export fn handle(p: usize, l: usize, id: usize) usize {
     TASK_TOP = getSP();
     const r = @call(.never_inline, handleImpl, .{ p, l });
     TASK_TOP = 0;
-    // The task ended: its pages go back to the pool.
-    _ = lib.alloc.taskEnd(lib.alloc.OWNER);
+    // The task ended: its pages go back to the pool. What is left is a leak (H3, `leaked_at_end`).
+    _ = lib.alloc.taskDone(lib.alloc.OWNER);
     lib.alloc.OWNER = 0;
     return r;
 }
 
+/// Test export (PLAN.md 4h): the next task keeps a block of `n` bytes to its end, a leak
+/// (`leaked_at_end`).
+var LEAK_NEXT: usize = 0;
+fn leak_next(n: usize) callconv(.c) void {
+    mem.enter();
+    LEAK_NEXT = n;
+}
+
 fn handleImpl(p: usize, l: usize) usize {
-    const res = abi.roc_handle(StrOps.fromParts(p, l));
-    const s = slice(&res);
-    // The response outlives the task: it is a host block (owner 0).
-    const blk = lib.alloc.allocHostOrTrap(4 + s.len, 4);
-    mem.wrUsize(blk, s.len);
-    mem.copyBytes(blk + 4, @intFromPtr(s.ptr), s.len);
+    const bytes: []const u8 = if (p == 0) &.{} else @as([*]const u8, @ptrFromInt(p))[0..l];
+    var buf: [96]u8 = undefined;
+    // The event is a value of the task. A block that is not one value is a shim bug: a clean trap with a log line.
+    const ev = switch (cbor.decode(bytes, ROC_HOST)) {
+        .value => |v| v,
+        .problem => |pr| badEvent("the event is not a Js value: ", cbor.problemText(pr, &buf)),
+    };
+    // The event block stays until the task ends, as the request block did before 8b: a JS block that the task
+    // adopted, in the sums of its waits (12a). A trap frees it with the task (`freeAdopted`).
+    const res = abi.roc_event(ev);
+    lib.alloc.hostDealloc(p);
+    if (BENCH and LEAK_NEXT != 0) {
+        _ = lib.alloc.allocOrTrap(LEAK_NEXT, 8);
+        LEAK_NEXT = 0;
+    }
+    // The outcome outlives the task: it is a host block (owner 0).
+    const n = cbor.encodedSize(&res) orelse badEvent("the outcome is deeper than 64 levels", "");
+    const blk = lib.alloc.allocHostOrTrap(4 + n, 4);
+    mem.wrUsize(blk, n);
+    cbor.encode(&res, @as([*]u8, @ptrFromInt(blk + 4))[0..n]);
     res.decref(ROC_HOST);
     return blk;
+}
+
+/// One log line (6a, owner 0), as the text of a crash, then a clean trap of the task.
+fn badEvent(what: []const u8, detail: []const u8) noreturn {
+    var line: [160]u8 = undefined;
+    const a = @min(what.len, line.len);
+    @memcpy(line[0..a], what[0..a]);
+    const b = @min(detail.len, line.len - a);
+    @memcpy(line[a..][0..b], detail[0..b]);
+    lib.roc.logPushCopy(@intFromPtr(&line), a + b, lib.roc.LOG_LEVEL_LOG);
+    mem.trapClean();
 }
 
 export fn res_free(p: usize) void {
@@ -446,6 +584,11 @@ fn abortFree(id: usize) usize {
     if (waitOf(id)) |w| {
         const cause = w.alarm;
         const freed = waitDrop(w);
+        // A trap in the host code of the wait or the resume: unclean (12c).
+        if (cause == IN_HOST) {
+            ALARMS += 1;
+            return std.math.maxInt(usize);
+        }
         return if (cause != 0) std.math.maxInt(usize) - cause else freed;
     }
     // The task that ran is OWNER (a trap in a host call from JS has OWNER 0).
@@ -477,6 +620,10 @@ const CHECK_CONST: u32 = 12;
 const CHECK_HOST: u32 = 13;
 const CHECK_WAITS: u32 = 14;
 const CHECK_LOG: u32 = 15;
+/// A task trapped and JS has not called `task_abort` yet (`TASK_TOP` or `OWNER` is set, or a
+/// `Wait` record has the mark `IN_HOST`). Not a failure when JS calls the check from a promise
+/// job: the catch of that task can still be in the queue. At a timer (no job in the queue) it is.
+const CHECK_BUSY: u32 = 16;
 
 /// Linker symbols: the start of the data (`.rodata` first), the top of the stack.
 extern const __global_base: u8;
@@ -488,16 +635,20 @@ var CONST_SUM: u64 = 0;
 /// The end of `.rodata`: the lowest host global with a start value (they are the first data of
 /// `.data`, which follows `.rodata`). All bytes below it, from `__global_base`, are constant.
 fn rodataEnd() usize {
-    const firsts = [_]usize{ @intFromPtr(&SUM_MODE), @intFromPtr(&WILD_SEED), @intFromPtr(&WILD_WORDS), @intFromPtr(ROC_HOST), lib.alloc.firstData(), lib.cpu.firstData() };
-    return std.mem.min(usize, &firsts);
+    const firsts = [_]usize{ @intFromPtr(&SUM_MODE), @intFromPtr(ROC_HOST), lib.alloc.firstData(), lib.cpu.firstData() };
+    const first = std.mem.min(usize, &firsts);
+    return if (BENCH) @min(first, @intFromPtr(&WILD_SEED), @intFromPtr(&WILD_WORDS)) else first;
 }
 
 /// Constant data (PLAN.md 12-pre): the `.rodata` of the host and of Roc, the free mark, the host
-/// tables, the canary globals and the canary.
+/// tables (the Roc host table and its context byte, the allocator and its vtable), the canary
+/// globals and the canary. `research/memmap/memmap.mjs` checks that a flip of each byte of the
+/// constant ranges of its map makes this sum differ.
 fn constSum() u64 {
     const lo = @intFromPtr(&__global_base);
     var acc = mem.sumBytes(lo, rodataEnd() - lo, 1);
     acc = mem.sumBytes(@intFromPtr(ROC_HOST), @sizeOf(abi.RocHost), acc);
+    acc = mem.sumBytes(@intFromPtr(&lib.roc.RocHostOf(abi.RocHost).env), 1, acc);
     acc = lib.alloc.sumConst(acc);
     return lib.canary.sumConst(acc);
 }
@@ -508,9 +659,9 @@ inline fn byteOf(p: anytype) u8 {
 
 /// Host globals in range. No task is in wasm when JS calls the check.
 fn checkHost() u32 {
-    if (TASK_TOP != 0 or lib.alloc.OWNER != 0) return CHECK_HOST;
     if (byteOf(&COPY) > 1 or byteOf(&SUSPECT) > 1 or byteOf(&mem.TRAP_CLEAN) > 1) return CHECK_HOST;
-    if (SUM_MODE > 2 or FAULT_NEXT > 5 or FILLED > FILL.len or !lib.cpu.causeOk()) return CHECK_HOST;
+    if (SUM_MODE > 2 or !lib.cpu.causeOk()) return CHECK_HOST;
+    if (BENCH and (FAULT_NEXT > 5 or FILLED > FILL.len)) return CHECK_HOST;
     return 0;
 }
 
@@ -542,10 +693,12 @@ fn checkWaits() u32 {
 
 /// PLAN.md 12d: the global check of the shared memory (allocator tables, host globals, `WAITS`,
 /// the log, constant data). JS calls it when no task is in wasm: after an alarm (12c), when the
-/// instance is idle, and every `heapCheckEvery` requests (12e). 0: pass. Else the code of the
-/// first check that failed: JS replaces the instance (M1).
+/// instance is idle, and every `heapCheckEvery` requests (12e). 0: pass. `CHECK_BUSY`: a trapped
+/// task is not aborted yet. Else the code of the first check that failed: JS replaces the instance (M1).
 export fn check_heap() u32 {
     mem.enter();
+    if (TASK_TOP != 0 or lib.alloc.OWNER != 0) return CHECK_BUSY;
+    for (WAITS) |e| if (e) |w| if (w.alarm == IN_HOST) return CHECK_BUSY;
     const h = checkHost();
     if (h != 0) return h;
     const t = lib.alloc.checkTables();
@@ -558,11 +711,12 @@ export fn check_heap() u32 {
 }
 
 /// Test export (PLAN.md 12d, 12e): a wild write into one entry of the shared memory, with no
-/// trap. Kinds 1 to 16: allocator tables (`lib.alloc.breakTable`). 20: a byte of `.rodata` at
+/// trap. Kinds 1 to 19: allocator tables (19: the live count is 0, 4j) (`lib.alloc.breakTable`). 20: a byte of `.rodata` at
 /// `__global_base` + arg. 21: a word of the canary. 22: `TASK_WAITING`. 23: `at` of the first
 /// `Wait` record. 24: its copy length. 25: the log length (+1). 26: `TASK_TOP`. 27: `SUM_MODE`.
+/// 28: the log length = arg (JS then reads past the memory end in `drainLog`, 12c).
 /// Returns 1 when it found a target, else 0.
-export fn break_table(kind: u32, arg: usize) u32 {
+fn break_table(kind: u32, arg: usize) callconv(.c) u32 {
     mem.enter();
     if (kind < 20) return lib.alloc.breakTable(kind, arg);
     var first: ?*Wait = null;
@@ -579,6 +733,7 @@ export fn break_table(kind: u32, arg: usize) u32 {
         25 => lib.roc.LOG.len += 1,
         26 => TASK_TOP = 16,
         27 => SUM_MODE = 7,
+        28 => lib.roc.LOG.len = arg,
         else => return 0,
     }
     return 1;
@@ -590,7 +745,7 @@ export fn task_slots() u32 {
 }
 
 /// Overhead bench: `n` rounds of `k` allocations of `size` bytes, then their frees.
-export fn alloc_bench(n: u32, k: u32, size: usize) u32 {
+fn alloc_bench(n: u32, k: u32, size: usize) callconv(.c) u32 {
     mem.enter();
     var ptrs: [256]usize = undefined;
     var sum: u32 = 0;
@@ -608,12 +763,14 @@ export fn alloc_bench(n: u32, k: u32, size: usize) u32 {
 var FILL: [65536]usize = undefined;
 var FILLED: usize = 0;
 var FILL_TAG: usize = 0;
-export fn heap_fill(count: usize, size: usize, tag: usize) void {
+fn heap_fill(count: usize, size: usize, tag: usize) callconv(.c) void {
     mem.enter();
     const saved = lib.alloc.OWNER;
     // A free must come from the owner (the owner check at free).
     lib.alloc.OWNER = FILL_TAG;
     for (0..FILLED) |i| lib.alloc.hostDealloc(FILL[i]);
+    // The task slot of the tag goes back too: the check of 12d wants each slot in use to be a waiting task.
+    _ = lib.alloc.taskEnd(FILL_TAG);
     FILLED = 0;
     FILL_TAG = tag;
     lib.alloc.OWNER = tag;
@@ -624,28 +781,28 @@ export fn heap_fill(count: usize, size: usize, tag: usize) void {
     lib.alloc.OWNER = saved;
 }
 /// One heap walk for an owner that has no spans. Returns the bytes freed (0), or maxInt.
-export fn walk_bench(owner: usize) usize {
+fn walk_bench(owner: usize) callconv(.c) usize {
     mem.enter();
     return lib.alloc.freeOwner(owner) orelse std.math.maxInt(usize);
 }
 
-export fn task_waiting() u32 {
+fn task_waiting() callconv(.c) u32 {
     return TASK_WAITING;
 }
-export fn task_saved() usize {
+fn task_saved() callconv(.c) usize {
     return TASK_SAVED;
 }
-export fn task_saved_max() usize {
+fn task_saved_max() callconv(.c) usize {
     return TASK_SAVED_MAX;
 }
-export fn task_saved_peak() usize {
+fn task_saved_peak() callconv(.c) usize {
     return TASK_SAVED_PEAK;
 }
-export fn task_waits() u32 {
+fn task_waits() callconv(.c) u32 {
     return TASK_WAITS;
 }
 /// Zero the copy counters, before a measured run.
-export fn stats_reset() void {
+fn stats_reset() callconv(.c) void {
     mem.enter();
     TASK_SAVED_MAX = 0;
     TASK_SAVED_PEAK = 0;
@@ -653,7 +810,7 @@ export fn stats_reset() void {
 }
 /// The copy work of `iters` waits of `len` bytes alone: alloc, copy out, copy back, free.
 /// It copies the bytes at [4096, 4096 + len), inside the stack area.
-export fn copy_bench(len: usize, iters: u32) u32 {
+fn copy_bench(len: usize, iters: u32) callconv(.c) u32 {
     mem.enter();
     var sum: u32 = 0;
     const src: [*]u8 = @ptrFromInt(4096);
@@ -672,20 +829,104 @@ export fn copy_bench(len: usize, iters: u32) u32 {
 }
 
 /// Turn the stack copy on or off. Off is safe only with one request at a time.
-export fn set_copy(on: u32) void {
+fn set_copy(on: u32) callconv(.c) void {
     mem.enter();
     COPY = on != 0;
 }
+/// PLAN.md H2, 4j: JS calls it at the idle point (after a passed idle check, 12e). 1: the heap
+/// started again. 0: not done (a task runs or waits, or a block is live). Nothing is read or
+/// changed then.
+export fn idle_reset() u32 {
+    if (TASK_TOP != 0 or lib.alloc.OWNER != 0 or TASK_WAITING != 0) return 0;
+    mem.enter();
+    return @intFromBool(lib.alloc.idleReset());
+}
+
+/// Test export (PLAN.md 4g): a wrong free that the allocator must catch. 1: a double free of a small
+/// block (`double_frees`). 2: a free by a task that is not the owner (`dealloc_miss`). Both leave the
+/// heap as it was.
+fn bad_free(kind: u32) callconv(.c) void {
+    mem.enter();
+    const saved = lib.alloc.OWNER;
+    defer lib.alloc.OWNER = saved;
+    switch (kind) {
+        1 => {
+            // The second block keeps the page, so the second free finds the free mark.
+            const a = lib.alloc.hostAllocFor(0, 24, 8);
+            const b = lib.alloc.hostAllocFor(0, 24, 8);
+            lib.alloc.hostDealloc(a);
+            lib.alloc.hostDealloc(a);
+            lib.alloc.hostDealloc(b);
+        },
+        2 => {
+            lib.alloc.OWNER = 1_000_001;
+            const a = lib.alloc.hostAlloc(24, 8);
+            lib.alloc.OWNER = 1_000_002;
+            lib.alloc.hostDealloc(a);
+            lib.alloc.OWNER = 1_000_001;
+            lib.alloc.hostDealloc(a);
+            _ = lib.alloc.taskEnd(1_000_001);
+        },
+        else => {},
+    }
+}
+
 /// Test export (PLAN.md 6d, 2a): the next allocation gives 0, from `roc_alloc` or `js_alloc`.
-export fn fail_next_alloc() void {
+fn fail_next_alloc() callconv(.c) void {
     mem.enter();
     lib.alloc.FAIL_AT = 1;
 }
 /// Test export (PLAN.md 2c): allocation number `n` from now gives 0 (1: the next one).
-export fn fail_alloc_at(n: u32) void {
+fn fail_alloc_at(n: u32) callconv(.c) void {
     mem.enter();
     lib.alloc.FAIL_AT = n;
 }
+/// Test export: the allocations so far (all owners), to aim `fail_alloc_at`.
+fn alloc_count() callconv(.c) u32 {
+    return lib.alloc.ALLOCS;
+}
+/// Test export (PLAN.md 8e): the Native handles in use (all tasks).
+fn native_slots() callconv(.c) u32 {
+    return @intCast(lib.native.inUse(null));
+}
+/// Test export (PLAN.md 8e): the handles of task `from` become handles of task `to`. Returns how many.
+fn native_reown(from: usize, to: usize) callconv(.c) u32 {
+    return @intCast(lib.native.reown(from, to));
+}
 export fn live_bytes() usize {
     return lib.alloc.LIVE_BYTES;
+}
+
+// PLAN.md 7a: the test and bench exports. Only the bench host has them: the production host has
+// no code for them (`platform/main.roc` lists the production exports, `bench/platform/main.roc` all).
+comptime {
+    if (BENCH) {
+        const bench_exports = .{
+            .{ "fault_next_wait", &fault_next_wait },
+            .{ "set_wild", &set_wild },
+            .{ "poke_wait", &poke_wait },
+            .{ "leak_next", &leak_next },
+            .{ "break_table", &break_table },
+            .{ "alloc_bench", &alloc_bench },
+            .{ "heap_fill", &heap_fill },
+            .{ "walk_bench", &walk_bench },
+            .{ "task_waiting", &task_waiting },
+            .{ "task_saved", &task_saved },
+            .{ "task_saved_max", &task_saved_max },
+            .{ "task_saved_peak", &task_saved_peak },
+            .{ "task_waits", &task_waits },
+            .{ "stats_reset", &stats_reset },
+            .{ "copy_bench", &copy_bench },
+            .{ "set_copy", &set_copy },
+            .{ "bad_free", &bad_free },
+            .{ "fail_next_alloc", &fail_next_alloc },
+            .{ "fail_alloc_at", &fail_alloc_at },
+            .{ "alloc_count", &alloc_count },
+            .{ "cbor_check", &cbor_check },
+            .{ "cbor_echo", &cbor_echo },
+            .{ "native_slots", &native_slots },
+            .{ "native_reown", &native_reown },
+        };
+        for (bench_exports) |e| @export(e[1], .{ .name = e[0] });
+    }
 }

@@ -1,0 +1,71 @@
+{
+ "config-flag.capnp": {
+  "fetch abort (FIN), waitUntil": [
+   "0ms start signal=object aborted=false",
+   "205ms signal abort"
+  ],
+  "TCP reset, waitUntil": [
+   "0ms start signal=object aborted=false",
+   "203ms signal abort"
+  ],
+  "socket destroy, waitUntil": [
+   "0ms start signal=object aborted=false",
+   "307ms signal abort"
+  ],
+  "TCP reset, no waitUntil": [
+   "0ms start signal=object aborted=false",
+   "203ms signal abort"
+  ],
+  "complete body, then the client goes away (fin)": [
+   "0ms start",
+   "1001ms work end"
+  ],
+  "complete body, then the client goes away (rst)": [
+   "0ms start",
+   "1001ms work end"
+  ],
+  "TCP reset, waitUntil, after 5 s": [
+   "0ms start signal=object aborted=false",
+   "204ms signal abort"
+  ],
+  "timer of 100 ms after the response, waitUntil=0": [
+   "0ms start"
+  ],
+  "timer of 100 ms after the response, waitUntil=1": [
+   "0ms start",
+   "102ms fired"
+  ]
+ },
+ "config-noflag.capnp": {
+  "fetch abort (FIN), waitUntil": [
+   "0ms start signal=object aborted=false"
+  ],
+  "TCP reset, waitUntil": [
+   "0ms start signal=object aborted=false"
+  ],
+  "socket destroy, waitUntil": [
+   "0ms start signal=object aborted=false"
+  ],
+  "TCP reset, no waitUntil": [
+   "0ms start signal=object aborted=false"
+  ],
+  "complete body, then the client goes away (fin)": [
+   "0ms start",
+   "1001ms work end"
+  ],
+  "complete body, then the client goes away (rst)": [
+   "0ms start",
+   "1001ms work end"
+  ],
+  "TCP reset, waitUntil, after 5 s": [
+   "0ms start signal=object aborted=false"
+  ],
+  "timer of 100 ms after the response, waitUntil=0": [
+   "0ms start"
+  ],
+  "timer of 100 ms after the response, waitUntil=1": [
+   "0ms start",
+   "102ms fired"
+  ]
+ }
+}

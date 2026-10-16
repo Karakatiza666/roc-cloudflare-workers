@@ -61,8 +61,8 @@ export fn roc_expect_failed(bytes: [*]const u8, len: usize) callconv(.c) void {
     _ = .{ bytes, len };
 }
 
-/// Set by a host that wants the crash message in the log before the trap.
-pub var LOG_CRASH: bool = false;
+/// The crash message goes to the log before the trap (PLAN.md 8b, O2 of 8a): JS writes it in the log line of the trap.
+pub var LOG_CRASH: bool = true;
 
 export fn roc_crashed(bytes: [*]const u8, len: usize) callconv(.c) void {
     if (LOG_CRASH) logPushCopy(@intFromPtr(bytes), len, LOG_LEVEL_LOG);
@@ -92,7 +92,8 @@ pub fn RocHostOf(comptime RocHost: type) type {
         fn ctxCrashed(_: *RocHost, b: [*]const u8, l: usize) callconv(.c) void {
             roc_crashed(b, l);
         }
-        var env: u8 = 0;
+        /// The context of the callbacks. Nothing reads it; 12d sums it with the constant data.
+        pub var env: u8 = 0;
         pub var host = RocHost{
             .env = @ptrCast(&env),
             .roc_alloc = &ctxAlloc,
