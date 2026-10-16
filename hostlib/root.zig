@@ -6,10 +6,11 @@ pub const mem = @import("mem.zig");
 pub const alloc = @import("alloc.zig");
 pub const canary = @import("canary.zig");
 pub const roc = @import("roc.zig");
+pub const cpu = @import("cpu.zig");
 pub const wordbuf = @import("wordbuf.zig");
 
 /// Refer to this from the host so that every export in the shared files is kept.
-pub const exports = .{ alloc, canary, roc };
+pub const exports = .{ alloc, canary, roc, cpu };
 
 test {
     _ = mem;

@@ -50,7 +50,8 @@ deep! = |n, id, trap| {
 	}
 }
 
-## Request: "<id> <trap: 0|1> <depth> <items>". Body: "id=<id> json=<bytes> sum=<sum> fetch=<echo> db=<echo>".
+## Request: "<id> <trap: 0|1> <depth> <items> [dbg]". With `dbg`, the request writes 200 `dbg` lines
+## after its waits and then crashes (`bench/log-test.mjs`). Body: "id=<id> json=<bytes> sum=<sum> fetch=<echo> db=<echo>".
 handle! : Str => Str
 handle! = |req| {
 	parts = req.split_on(" ")
@@ -66,5 +67,11 @@ handle! = |req| {
 	}
 	json = Json.to_str(items(id, count))
 	r = deep!(depth, id, trap)
+	if parts.get(4) == Ok("dbg") {
+		for i in 0.U64.until(200) {
+			dbg "request ${id} line ${i.to_str()}"
+		}
+		crash "crash after dbg of request ${id}"
+	}
 	"id=${id} json=${json.count_utf8_bytes().to_str()} sum=${r.sum.to_str()} ${r.out}"
 }

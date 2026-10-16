@@ -4,7 +4,7 @@
 // GET /inst?n=<n>&pad=0|1   n x (new WebAssembly.Instance + init), for the instantiate cost
 import app from 'app.wasm';
 import appPad from 'app_pad.wasm';
-import { makeRunner, instanceA, expected } from 'core.js';
+import { makeRunner, instanceA, expected, readFlag } from 'core.js';
 
 let runner = null;
 let mismatch = 0;
@@ -34,8 +34,9 @@ export default {
       const id = u.searchParams.get('id');
       const trap = u.searchParams.get('trap') === '1';
       const depth = u.searchParams.get('depth') || '50';
-      const r = await runner.run(`${id} ${trap ? 1 : 0} ${depth}`);
-      if (r.trap) return new Response('trap ' + r.trap, { status: 500 });
+      // request.signal: a cancel when the client goes away (PLAN.md 3b, flag enable_request_signal).
+      const r = await runner.run(`${id} ${trap ? 1 : 0} ${depth}`, { signal: req.signal });
+      if (r.trap) return new Response('trap ' + r.trap, { status: r.status ?? 500 });
       return new Response(r.body);
     }
     if (u.pathname === '/stats') {
@@ -43,6 +44,7 @@ export default {
       return Response.json({
         variant: env.VARIANT,
         ...runner?.stats,
+        cancels: runner?.tasks.stats.byReason,
         heap_used: x?.heap_used(),
         live_bytes: x?.live_bytes(),
         mem: x?.memory.buffer.byteLength,
@@ -51,6 +53,9 @@ export default {
         waits: x?.task_waits(),
         waiting: x?.task_waiting(),
         canary_ok: x?.stack_canary_ok(),
+        // 5a: workerd zeroes the signal when it registers the instance. 0xFFFF: not registered.
+        signal: x && (x.__instance_signal ? readFlag(x, '__instance_signal') : null),
+        terminated: x && (x.__instance_terminated ? readFlag(x, '__instance_terminated') : null),
       });
     }
     if (u.pathname === '/reset') {

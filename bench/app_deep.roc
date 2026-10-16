@@ -22,11 +22,26 @@ down = |n, salt, alloc| {
 	}
 }
 
-## Request: "<depth>", or "<depth> alloc". The first wait makes the call a task, as in the real handler.
+## The recursion of `down` with no allocation. One list, made at the top, goes down the levels and
+## is freed at depth 0, so the free runs at the deepest frame (PLAN.md 4-pre, the canary check at free).
+down_free : U64, U64, List(U64) -> W
+down_free = |n, salt, keep| {
+	if n == 0 {
+		# `set` takes the list (unique: in place), and the list is freed after its last use here.
+		mine = keep.set(0, 5) ?? []
+		x = mine.get(0) ?? 0
+		{ a: salt + x, b: 1, c: 2, d: 1, e: 3, f: 4, g: 5, h: 6, i: 7, j: 8, k: 9, l: 10, m: 11, n: 12, o: 13, p: 14 }
+	} else {
+		r = down_free(n - 1, m(salt + n * 3), keep)
+		{ a: m(r.b + n), b: m(r.c * 5 + n), c: m(r.a + r.d), d: r.d + 1, e: m(r.f + r.e), f: m(r.g + n), g: m(r.h * 3), h: m(r.i + 1), i: m(r.j + r.a), j: m(r.k + 2), k: m(r.l + n), l: m(r.m + 3), m: m(r.n + r.b), n: m(r.o + 4), o: m(r.p + n), p: m(r.a + r.c) }
+	}
+}
+
+## Request: "<depth>", "<depth> alloc" or "<depth> free". The first wait makes the call a task, as in the real handler.
 handle! : Str => Str
 handle! = |req| {
 	_w = Wait.wait!(2, 0, "x", "", [])
-	depth = U64.from_str(req.drop_suffix(" alloc")) ?? 10
-	r = down(depth, 17, req.ends_with(" alloc"))
+	depth = U64.from_str(req.drop_suffix(" alloc").drop_suffix(" free")) ?? 10
+	r = if req.ends_with(" free") down_free(depth, 17, List.repeat(0, 100)) else down(depth, 17, req.ends_with(" alloc"))
 	"a=${r.a.to_str()} d=${r.d.to_str()} p=${r.p.to_str()}"
 }

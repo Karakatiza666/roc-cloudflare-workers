@@ -60,6 +60,10 @@ STUBS = {
     'mark_false': 'export fn mark_false() u32 {\n    return 0;\n}',
 }
 missing = [k for k in STUBS if f'export fn {k}(' not in s]
+# The harness host reads SUM_BYTES; the port (hostlib/alloc.zig) has no research counters.
+if 'pub var SUM_BYTES' not in s:
+    s += '\npub var SUM_BYTES: u64 = 0;\n'
+
 if missing:
     s += '\n// ---------------------------------------------------------------- harness stubs\n\n' + '\n'.join(STUBS[k] for k in missing) + '\n'
 # Trace build (env TRACE=1): each top-level API call goes to the JS import `js_trace`.

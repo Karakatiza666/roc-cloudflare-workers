@@ -1,9 +1,20 @@
 // Memory layout check of a linked wasm: is the shadow stack below the data?
-// Usage: node bench/check-layout.mjs <app.wasm>...
+// Usage: node bench/check-layout.mjs [--header <platform/main.roc>] <app.wasm>...
 // Exit 0: all stack-first. 1: a file is data-first. 2: a file could not be checked.
+// With --header, the stack size (the start of `__stack_pointer`) must equal `initial_stack_size`
+// in the header. A missing field, or a stack of another size, is exit 1 (verdict STACK-SIZE).
 // Stack-first: `__stack_pointer` starts at or below the lowest active data segment,
 // so an overflow goes below address 0 and traps. Data-first: an overflow writes over data.
 import { readFileSync } from 'node:fs';
+
+const args = process.argv.slice(2);
+let expectedStack = null;
+const h = args.indexOf('--header');
+if (h >= 0) {
+  const m = /^\s*initial_stack_size:\s*(\d+)\s*,/m.exec(readFileSync(args[h + 1], 'utf8'));
+  expectedStack = m ? Number(m[1]) : NaN;
+  args.splice(h, 2);
+}
 
 function parse(buf) {
   let p = 8;
@@ -97,7 +108,7 @@ function stackPointer(m) {
 }
 
 let worst = 0;
-for (const file of process.argv.slice(2)) {
+for (const file of args) {
   let verdict, detail;
   try {
     const m = parse(readFileSync(file));
@@ -111,13 +122,17 @@ for (const file of process.argv.slice(2)) {
       const hi = Math.max(...m.segments.map((s) => s.offset + s.len));
       verdict = sp.init <= lo ? 'STACK-FIRST' : 'DATA-FIRST';
       detail = `stack pointer starts at ${sp.init} (${sp.how}), data ${lo}..${hi}`;
+      if (verdict === 'STACK-FIRST' && expectedStack !== null && sp.init !== expectedStack) {
+        verdict = 'STACK-SIZE';
+        detail += Number.isNaN(expectedStack) ? ', and the header has no initial_stack_size' : `, but the header says initial_stack_size ${expectedStack}`;
+      }
     }
   } catch (e) {
     verdict = 'UNKNOWN'; detail = String(e.message ?? e);
   }
-  const code = verdict === 'STACK-FIRST' ? 0 : verdict === 'DATA-FIRST' ? 1 : 2;
+  const code = verdict === 'STACK-FIRST' ? 0 : verdict === 'DATA-FIRST' || verdict === 'STACK-SIZE' ? 1 : 2;
   worst = Math.max(worst, code);
   console.log(`${verdict} ${file}: ${detail}`);
 }
-if (process.argv.length < 3) { console.log('usage: node bench/check-layout.mjs <app.wasm>...'); worst = 2; }
+if (args.length < 1) { console.log('usage: node bench/check-layout.mjs [--header <main.roc>] <app.wasm>...'); worst = 2; }
 process.exit(worst);

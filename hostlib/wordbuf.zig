@@ -15,11 +15,11 @@ pub const WordBuf = struct {
     cap: usize = 0,
     len: usize = 0,
 
-    /// Append a word, doubling the buffer on demand.
+    /// Append a word, doubling the buffer on demand. The buffer is a host block (owner 0).
     pub fn push(self: *WordBuf, initial_cap: usize, word: u32) void {
         if (self.len == self.cap) {
             const new_cap = if (self.cap == 0) initial_cap else self.cap * 2;
-            self.ptr = if (self.ptr == 0) alloc.allocOrTrap(new_cap * 4, 4) else alloc.reallocOrTrap(self.ptr, new_cap * 4, 4);
+            self.ptr = if (self.ptr == 0) alloc.allocHostOrTrap(new_cap * 4, 4) else alloc.reallocHostOrTrap(self.ptr, new_cap * 4, 4);
             self.cap = new_cap;
         }
         mem.wr32(self.ptr + self.len * 4, word);
@@ -37,7 +37,7 @@ pub const WordBuf = struct {
             self.push(initial_cap, 0);
             return;
         }
-        const copy = alloc.allocOrTrap(len, 1);
+        const copy = alloc.allocHostOrTrap(len, 1);
         mem.copyBytes(copy, ptr, len);
         self.push(initial_cap, @intCast(copy));
         self.push(initial_cap, @intCast(len));

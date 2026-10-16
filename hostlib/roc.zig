@@ -12,8 +12,9 @@ pub const LOG_LEVEL_DBG: u32 = 1;
 // Console log queue of (ptr, len, level) triples, drained by JS.
 pub var LOG = wordbuf.WordBuf{};
 
+/// The copy and the buffer are host blocks (owner 0): they outlive the task, and JS frees them.
 pub fn logPushCopy(ptr: usize, len: usize, level: u32) void {
-    const copy = alloc.allocOrTrap(len, 1);
+    const copy = alloc.allocHostOrTrap(len, 1);
     mem.copyBytes(copy, ptr, len);
     LOG.push(wordbuf.LOG_INITIAL, @intCast(copy));
     LOG.push(wordbuf.LOG_INITIAL, @intCast(len));
@@ -26,13 +27,31 @@ export fn log_ptr() usize {
 export fn log_len() usize {
     return LOG.len;
 }
+/// Free the entries and the buffer (PLAN.md H2: an empty log holds no bytes).
 export fn log_clear() void {
+    mem.enter();
     var i: usize = 0;
     while (i + 2 < LOG.len) : (i += 3) {
         const ptr: usize = mem.rd32(LOG.ptr + i * 4);
         if (ptr != 0) alloc.hostDealloc(ptr);
     }
-    LOG.len = 0;
+    if (LOG.ptr != 0) alloc.hostDealloc(LOG.ptr);
+    LOG = .{};
+}
+
+/// For the global check (PLAN.md 12d): the buffer and each entry are host blocks with room for
+/// their length, and each level is known. An entry that a trap cut off (fewer than 3 words) is not read.
+pub fn logOk() bool {
+    if (LOG.len > LOG.cap or (LOG.ptr == 0) != (LOG.cap == 0)) return false;
+    if (LOG.ptr == 0) return true;
+    if (!alloc.hostBlockOk(LOG.ptr, LOG.cap * 4)) return false;
+    var i: usize = 0;
+    while (i + 2 < LOG.len) : (i += 3) {
+        const at = LOG.ptr + i * 4;
+        if (mem.rd32(at + 8) > LOG_LEVEL_DBG) return false;
+        if (!alloc.hostBlockOk(mem.rd32(at), mem.rd32(at + 4))) return false;
+    }
+    return true;
 }
 
 export fn roc_dbg(bytes: [*]const u8, len: usize) callconv(.c) void {

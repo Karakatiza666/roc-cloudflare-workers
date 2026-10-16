@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the host, the glue, and the bench apps (bench/out/app.wasm, app_pad.wasm, app_deep.wasm).
+# Build the host, the glue, and the bench apps (bench/out/app.wasm, app_pad.wasm, app_deep.wasm, app_strloop.wasm, app_wait.wasm, app_stack.wasm).
 # Env: ZIG (Zig 0.17).
 # Optional: ROC (default: the nightly in compat/last-stack-first-nightly, see bench/get-roc.sh),
 # ZIG_FLAGS (e.g. "-Downer_tag=false -Dtrack_live=false"), OUT (default bench/out).
@@ -20,12 +20,13 @@ open('bench/app_pad.roc', 'w').write(s)
 PY
 OUT=${OUT:-bench/out}
 mkdir -p "$OUT"
-for app in app app_pad app_deep; do
-  # The stack size must match STACK_SIZE in hostlib/canary.zig.
-  "$ROC" build --opt=speed --target=wasm32 --wasm-memory=0 --wasm-stack-size=1048576 --no-cache \
-    --output="$OUT/$app.wasm" bench/$app.roc
+for app in app app_pad app_deep app_strloop app_wait app_stack; do
+  # The stack size and the memory are in the header of platform/main.roc (no flags).
+  # Exit 2: warnings only (bench/app.roc has a dbg for bench/log-test.mjs). The file is written.
+  "$ROC" build --opt=speed --target=wasm32 --no-cache \
+    --output="$OUT/$app.wasm" bench/$app.roc || [ $? -eq 2 ]
 done
 ls -l "$OUT"
 # The layout check warns only. CI (bench/ci-layout.sh) fails on it.
-node bench/check-layout.mjs "$OUT"/app.wasm "$OUT"/app_pad.wasm "$OUT"/app_deep.wasm ||
+node bench/check-layout.mjs --header platform/main.roc "$OUT"/app.wasm "$OUT"/app_pad.wasm "$OUT"/app_deep.wasm ||
   echo "WARNING: a build is not stack-first. The platform falls back to an instance per request." >&2

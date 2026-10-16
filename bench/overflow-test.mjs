@@ -2,9 +2,16 @@
 // Requests with deeper recursion until one traps, without and with an allocation per level.
 // Stack-first module (one shared instance):
 //   - no request returns a body while the canary is broken, and each body is correct;
-//   - the trap without allocation (out of bounds) retires the instance;
-//   - the trap with allocation (canary) is clean: the instance stays;
-//   - the next request is correct.
+//   - the trap without allocation (out of bounds, wrapped stack pointer) is clean after 4-pre
+//     (PLAN.md 4-pre, V1): the instance stays, live bytes are 0;
+//   - the trap with allocation (canary) is clean too;
+//   - a V8 RangeError (cold code, a fresh instance: the stack pointer is not wrapped) is clean too;
+//   - the next request is correct;
+//   - free mode (one list freed at the deepest frame, no other allocation): no request returns a
+//     body while the canary is broken, and the first trap is clean. The free path checks the
+//     canary first (`roc_dealloc`), so it traps before it changes a table;
+//   - V2: a trap at normal stack depth (a forced out-of-bounds write, a forced unreachable) is
+//     still unclean: the instance is replaced.
 // Data-first module: the runner must fall back to an instance per request.
 // --no-fallback keeps the shared instance on a data-first module. Then the test must fail.
 // --expect-shared: fail when the runner falls back (CI, after check-layout.mjs found STACK-FIRST).
@@ -17,13 +24,13 @@ const noFallback = process.argv.includes('--no-fallback');
 const expectShared = process.argv.includes('--expect-shared');
 const module = new WebAssembly.Module(readFileSync(file));
 
-// down() of bench/app_deep.roc.
-function ref(depth, alloc) {
+// down() of bench/app_deep.roc. free: down_free(), the base record has a = salt + 5.
+function ref(depth, alloc, free = false) {
   const m = (x) => x % 1000003n;
   // A loop, not recursion: the salt goes down the levels, the record comes back up.
   const down = (n, salt) => {
     for (let k = n; k > 0n; k--) salt = m(salt + k * 3n);
-    let r = { a: salt, b: 1n, c: 2n, d: 1n, e: 3n, f: 4n, g: 5n, h: 6n, i: 7n, j: 8n, k: 9n, l: 10n, m: 11n, n: 12n, o: 13n, p: 14n };
+    let r = { a: free ? salt + 5n : salt, b: 1n, c: 2n, d: 1n, e: 3n, f: 4n, g: 5n, h: 6n, i: 7n, j: 8n, k: 9n, l: 10n, m: 11n, n: 12n, o: 13n, p: 14n };
     for (let k = 1n; k <= n; k++) {
       const extra = alloc ? 2n : 0n;
       r = { a: m(r.b + k + extra), b: m(r.c * 5n + k), c: m(r.a + r.d), d: r.d + 1n, e: m(r.f + r.e), f: m(r.g + k), g: m(r.h * 3n), h: m(r.i + 1n), i: m(r.j + r.a), j: m(r.k + 2n), k: m(r.l + k), l: m(r.m + 3n), m: m(r.n + r.b), n: m(r.o + 4n), o: m(r.p + k), p: m(r.a + r.c) };
@@ -36,6 +43,21 @@ function ref(depth, alloc) {
 
 const failures = [];
 const fail = (msg) => { failures.push(msg); console.log('FAIL', msg); };
+// Cold code (the first request of a fresh module, before any other test runs): the engine
+// stack ends first, with a RangeError (V1). Later requests run warm code and trap out of bounds.
+{
+  const c = makeRunner(module, 'b', async () => 'x', { noFallback });
+  if (!c.stats.fallback) {
+    const res = await c.run('100000');
+    console.log('cold depth 100000 trap:', String(res.trap).slice(0, 60), '| retired', c.stats.retired > 0);
+    if (res.body !== undefined) fail('cold 100000: no trap');
+    else if (!/RangeError/.test(res.trap)) fail(`cold 100000: not a RangeError (${res.trap}): the test proves nothing`);
+    if (c.stats.retired) fail('cold 100000: a RangeError retired a stack-first instance');
+    if (c.x.live_bytes() !== 0) fail(`cold 100000: live bytes ${c.x.live_bytes()}`);
+    const a = await c.run('5');
+    if (a.body !== ref(5, false)) fail(`cold 100000: next request gave ${a.body ?? a.trap}`);
+  }
+}
 const r = makeRunner(module, 'b', async () => 'x', { noFallback });
 const shared = !r.stats.fallback;
 const first = r.x;
@@ -72,13 +94,50 @@ for (const alloc of [false, true]) {
     trapped = true;
     const isRetired = r.stats.retired > retired;
     console.log(tag, 'trap:', res.trap.slice(0, 60), '| retired', isRetired);
-    if (shared && !isRetired && !(alloc && r.x.stack_first() === 1)) fail(`${tag}: an unclean trap did not retire the instance`);
-    if (shared && alloc && r.x.stack_first() === 1 && isRetired) fail(`${tag}: a canary trap retired a stack-first instance`);
+    // 4-pre: a stack-first overflow wrote nothing but the stack, so the trap is clean.
+    if (shared && isRetired) fail(`${tag}: an overflow trap retired a stack-first instance`);
+    if (shared && res.x.live_bytes() !== 0) fail(`${tag}: live bytes ${res.x.live_bytes()} after the trap`);
     const next = await small(tag);
     if (shared && next.x.stack_canary_ok() !== 1) fail(`${tag}: canary broken after the trap`);
     break;
   }
   if (!trapped) fail(`no trap up to depth 20000${alloc ? ' alloc' : ''}: the test proves nothing`);
+}
+// Free mode, on a fresh runner (an intact canary): depths up to the first trap, 2 frames apart.
+if (shared) {
+  const f = makeRunner(module, 'b', async () => 'x', { noFallback });
+  let d = 3000, res, bodies = 0;
+  for (; d <= 20000; d += d < 4000 ? 500 : 2) {
+    res = await f.run(`${d} free`);
+    if (res.body === undefined) break;
+    bodies++;
+    if (f.x.stack_canary_ok() !== 1) {
+      fail(`free ${d}: a body with a broken canary (the free ran below the canary limit)`);
+      break;
+    }
+    if (res.body !== ref(d, false, true)) fail(`free ${d}: wrong body ${res.body}`);
+  }
+  if (res.body === undefined) {
+    console.log(`free: ${bodies} bodies, canary intact; depth ${d} trap:`, String(res.trap).slice(0, 60), '| retired', f.stats.retired > 0);
+    if (f.stats.retired || f.stats.walkFailed) fail(`free ${d}: the trap was not clean`);
+    if (f.x.live_bytes() !== 0) fail(`free ${d}: live bytes ${f.x.live_bytes()} after the trap`);
+    const a = await f.run('5 free');
+    if (a.body !== ref(5, false, true)) fail(`free ${d}: next request gave ${a.body ?? a.trap}`);
+    if (f.x.live_bytes() !== 0 || f.x.dealloc_miss() !== 0) fail(`free ${d}: live bytes ${f.x.live_bytes()}, dealloc_miss ${f.x.dealloc_miss()} at the end`);
+  } else if (d > 20000) fail('free: no trap up to depth 20000');
+}
+// V2: a trap at normal depth must stay unclean, also in a stack-first build.
+if (shared) {
+  if (r.stats.walkFailed !== 0) fail(`an overflow trap was unclean (${r.stats.walkFailed})`);
+  for (const [kind, what] of [[1, 'out-of-bounds write'], [2, 'unreachable']]) {
+    const was = r.stats.retired;
+    r.x.fault_next_wait(kind);
+    const res = await r.run('5');
+    if (res.body !== undefined) fail(`V2 ${what}: no trap`);
+    else if (r.stats.retired === was) fail(`V2 ${what}: a trap at normal depth did not retire the instance`);
+    console.log('V2', what, 'trap:', String(res.trap).slice(0, 50), '| retired', r.stats.retired > was);
+    await small(`V2 ${what}`);
+  }
 }
 const live = r.x.live_bytes();
 if (shared && live !== 0) fail(`live bytes ${live} at the end`);

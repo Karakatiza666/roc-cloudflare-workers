@@ -232,7 +232,7 @@ Request := {
 	post_json : Str, a -> Request where [a.JsonEncodable]
 	with_header : Request, Str, Str -> Request
 
-	segments : Request -> List(Str)       # "https://x/v1/pkg/a?q=1" gives ["v1", "pkg", "a"]
+	segments : Request -> List(Str)       # "https://x/v1/packages/a/b/releases?q=1" gives ["v1", "packages", "a", "b", "releases"]
 	query : Request, Str -> Try(Str, [NotFound])
 	header : Request, Str -> Try(Str, [NotFound])   # caseless
 	cookie : Request, Str -> Try(Str, [NotFound])

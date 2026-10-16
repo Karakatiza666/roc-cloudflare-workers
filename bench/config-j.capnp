@@ -4,6 +4,7 @@ const config :Workerd.Config = (
     (name = "main", worker = (modules = [
         (name = "worker.js", esModule = embed "worker.js"),
         (name = "core.js", esModule = embed "core.js"),
+        (name = "tasks.js", esModule = embed "tasks.js"),
         (name = "app.wasm", wasm = embed "out/app.wasm"),
         (name = "app_pad.wasm", wasm = embed "out/app_pad.wasm")],
       compatibilityDate = "2026-10-01",

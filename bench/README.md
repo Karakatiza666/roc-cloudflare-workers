@@ -18,6 +18,10 @@ Question: a Roc wasm32 app with a Zig host serves concurrent requests that wait 
 | `app.roc` | Handler: 200 records to JSON (about 300 KB of heap), recursion `depth` levels with a kept value per level, two waits (fetch: 5 ms, db: 1 ms), body with the request id and a stack checksum |
 | `core.js` | JS shim: `makeRunner(module, "a" or "b", io)`, the `js_wait` import, the body check. "b" falls back to "a" when `stack_first()` is 0, and uses a new instance after an unclean trap |
 | `app_deep.roc`, `overflow-test.mjs` | Stack overflow test: recursion with a wide record per level, with and without an allocation per level |
+| `oneinstance-test.mjs` | One instance per isolate (PLAN.md 4a): 1,000 requests with 1 % unclean traps, never more than 1 instance with a task, 0 bad bodies |
+| `app_wait.roc`, `cpu-test.mjs` | CPU flags of workerd (PLAN.md 5a to 5c): the exported globals, the signal (clean trap with cause "cpu"), the terminated flag (replace). `app_wait.roc` has one wait and no allocation |
+| `app_strloop.roc`, `strloop-test.mjs` | Bug B5 (PLAN.md 6e): a string that grows in a loop. Wasm memory must stay under 6 MB |
+| `alloc-test.sh`, `alloc_driver.zig`, `dfree.mjs`, `fmark.mjs`, `reserve.mjs`, `adopt.mjs`, `sumjs.mjs` | Allocator tests (PLAN.md 6e) on a driver built from `../hostlib/`: double free, free after the page went to another task, a live block with the free mark, the page reserve at the memory cap, adopted JS blocks at `freeOwner` and in `sumTask` |
 | `check-layout.mjs` | Reads a linked wasm: STACK-FIRST, DATA-FIRST or UNKNOWN (exit 0, 1, 2) |
 | `get-roc.sh`, `ci-layout.sh`, `../compat/last-stack-first-nightly` | Nightly download, the CI check of one nightly (`../.github/workflows/nightly-layout.yml`), the pinned nightly |
 | `worker.js`, `echo.js`, `config-{a,b,j}.capnp` | workerd worker, echo service binding, one config per variant |
@@ -32,6 +36,10 @@ Question: a Roc wasm32 app with a Zig host serves concurrent requests that wait 
 ZIG=<zig 0.17> bench/build.sh   # roc: the nightly in compat/ (ROC= to override)
 node bench/node-test.mjs bench/out/app.wasm                      # smoke test, both variants
 node bench/overflow-test.mjs bench/out/app_deep.wasm             # stack overflow
+node bench/oneinstance-test.mjs bench/out/app.wasm               # one instance (4a)
+node bench/cpu-test.mjs                                          # CPU flags (5a to 5c)
+node bench/strloop-test.mjs bench/out/app_strloop.wasm           # string loop (B5)
+ZIG=<zig 0.17> bench/alloc-test.sh                               # allocator tests
 bench/ci-layout.sh <nightly tag>                                 # what CI runs for a new nightly
 WORKERD=<workerd 2026-10-12> node bench/bench.mjs 3 5000 > .cache/results/bench.jsonl
 WORKERD=<workerd> node bench/bench.mjs leak 10000 0.01 > .cache/results/leak.jsonl

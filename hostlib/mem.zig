@@ -1,6 +1,7 @@
 //! Raw memory access and Roc string layout (wasm32).
 
 const std = @import("std");
+const alloc = @import("alloc.zig");
 
 pub inline fn rd8(a: usize) u8 {
     return @as(*const u8, @ptrFromInt(a)).*;
@@ -31,11 +32,30 @@ pub inline fn trap() noreturn {
 }
 
 /// Set by a trap that leaves the heap sound (Roc `crash`, stack canary, out of
-/// memory). Any other trap may follow a corrupt write, so the host retires the instance.
+/// memory) while a task runs. Any other trap may follow a corrupt write, so the host
+/// retires the instance. `handle` clears it.
 pub var TRAP_CLEAN: bool = false;
 pub inline fn trapClean() noreturn {
-    TRAP_CLEAN = true;
+    // No task runs (OWNER is 0): the trap is in a host call from JS, and is not clean.
+    if (alloc.OWNER != 0) TRAP_CLEAN = true;
     @trap();
+}
+
+/// PLAN.md 12b: goes up at each export call that can write memory (a task run, a resume,
+/// `js_alloc`, `res_free`, `log_clear`, ...). A resume checks its sum when it changed since the wait.
+pub var RUN_EPOCH: u32 = 0;
+pub inline fn enter() void {
+    RUN_EPOCH +%= 1;
+}
+
+/// A sum of the bytes [p, p + len) for the check of constant data (PLAN.md 12d). Any alignment.
+pub fn sumBytes(p: usize, len: usize, seed: u64) u64 {
+    const K: u64 = 0x9E37_79B9_7F4A_7C15;
+    var acc = seed;
+    var i: usize = 0;
+    while (i + 4 <= len) : (i += 4) acc = (acc ^ rd32(p + i)) *% K;
+    while (i < len) : (i += 1) acc = (acc ^ rd8(p + i)) *% K;
+    return acc;
 }
 
 pub inline fn alignUp(n: usize, a0: usize) usize {

@@ -8,3 +8,4 @@ bench/out-*/
 bench/pad.txt
 bench/app_pad.roc
 .wrangler/
+.claude/worktrees/
