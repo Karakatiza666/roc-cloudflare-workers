@@ -4,6 +4,8 @@
 // of the runner): `run.mjs` sends one request at a time. `GET /__stats`: the task table. `GET /__mem`: the size of wasm memory in bytes (10a).
 import app from 'app.wasm';
 import { makeHandler } from './js/index.js';
+import { withStubs, stubRoute, Flow, Waiter } from './bindings.js';
+export { Flow, Waiter };
 
 // The root `ops` (API.md 6.4). `lib` is an object of functions, not a function (the option check, PLAN.md 8a O4).
 const ops = {
@@ -12,9 +14,15 @@ const ops = {
 const Handler = makeHandler(app, { ops, heapCheckWhenIdle: false });
 
 export default class extends Handler {
+  // The JS stubs of conformance/bindings.js are in the env of each request.
+  constructor(ctx, env) {
+    super(ctx, withStubs(env));
+  }
   async fetch(request) {
     const path = new URL(request.url).pathname;
     const r = Handler.runner;
+    const stub = stubRoute(path);
+    if (stub) return stub;
     if (path === '/__stats') {
       const s = r.tasks.stats;
       return Response.json({ live: r.x.live_bytes(), tasks: r.tasks.size, refsLive: s.refsLive, contextsLive: s.contextsLive, alarms: r.stats.alarms });

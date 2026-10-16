@@ -1,0 +1,12 @@
+version 200 {"v":{"id":"4d82b416-09ad-44f1-8768-cb5142eba94f","tag":"","timestamp":"2026-10-16T18:26:54.819Z"}}
+analytics 200 {"a":["function",null]}
+hyper 200 {"h":{"cs":"postgres://user:secret@0b7e0f5ebf8cdf75fc5a7fda6e7d0366.hyperdrive.local:5432/mydb?sslmode=disable","host":"0b7e0f5ebf8cdf75fc5a7fda6e7d0366.hyperdrive.local","port":5432,"user":"user","password":"secret","database":"mydb","keys":["connectionString","port","ip","host","password
+secret 200 {"s":"s3cr3t"}
+secret_missing 200 {"err":["Error","Secret \"nokey\" not found"]}
+assets 200 {"a":[200,"hello-asset\n",[["cache-control","public, max-age=0, must-revalidate"],["cf-cache-status","HIT"],["content-type","text/plain; charset=utf-8"],["etag","\"2d96d414ac136e92b55d6b1853ffaba3\""]]]}
+assets404 200 {"a":[404,""]}
+wf 200 {"id":"i1","status":{"status":"complete","__LOCAL_DEV_STEP_OUTPUTS":[{"got":{"a":1},"id":"i1"}],"output":{"got":{"a":1},"id":"i1"}},"keys":["id","binding"],"proto":["constructor","getInstance","pause","resume","terminate","restart","delete","status","subscribe","sendEvent"]}
+wf_missing 200 {"err":["Error","instance.not_found"]}
+wf_dup 200 {"err":["Error","(instance.already_exists) Workflow instance with id \"dup\" already exists"]}
+wf_ctl 200 {"paused":{"status":"complete","__LOCAL_DEV_STEP_OUTPUTS":[{"got":{"b":2},"id":"c1"}],"output":{"got":{"b":2},"id":"c1"}},"resumed":{"status":"complete","__LOCAL_DEV_STEP_OUTPUTS":[{"got":{"b":2},"id":"c1"}],"output":{"got":{"b":2},"id":"c1"}},"err":["Error","WorkflowError: (instance.cann
+200 [["created","running"],["paused","paused"],["resumed","running"],["sent","complete","{\"started\":{\"n\":1},\"got\":{\"x\":1}}"],["terminated","terminated"],["wrong type","running"]]

@@ -22,6 +22,14 @@ import CacheRoutes
 import D1Routes
 import MemoRoutes
 import PinRoutes
+import AiRoutes
+import VectorizeRoutes
+import AnalyticsRoutes
+import HyperdriveRoutes
+import WorkflowsRoutes
+import AssetsRoutes
+import VersionRoutes
+import SecretsStoreRoutes
 
 fetch! : Request => Try(Response, [])
 fetch! = |req| {
@@ -39,6 +47,14 @@ fetch! = |req| {
 		["d1", .. as rest] => D1Routes.route!(req, rest)
 		["memo", .. as rest] => MemoRoutes.route!(req, rest)
 		["pin", .. as rest] => PinRoutes.route!(req, rest)
+		["ai", .. as rest] => AiRoutes.route!(req, rest)
+		["vectorize", .. as rest] => VectorizeRoutes.route!(req, rest)
+		["analytics", .. as rest] => AnalyticsRoutes.route!(req, rest)
+		["hyperdrive", .. as rest] => HyperdriveRoutes.route!(req, rest)
+		["workflows", .. as rest] => WorkflowsRoutes.route!(req, rest)
+		["assets", .. as rest] => AssetsRoutes.route!(req, rest)
+		["version", .. as rest] => VersionRoutes.route!(req, rest)
+		["secretsstore", .. as rest] => SecretsStoreRoutes.route!(req, rest)
 		_ => Response.from_text(404, "no route")
 	}
 	Ok(res)
