@@ -1,6 +1,6 @@
 // The worker of the conformance app (PLAN.md 8c) in Miniflare: `app.wasm` (conformance/app.roc on the bench platform)
 // behind `makeHandler`. Each response has the waits of its task (`x-waits`, the bench export `task_waits`) and its time
-// in ms (`x-ms`): `run.mjs` sends one request at a time. `GET /__stats`: the task table and wasm memory.
+// in ms (`x-ms`): `run.mjs` sends one request at a time. `GET /__stats`: the task table. `GET /__mem`: the size of wasm memory in bytes (10a).
 import app from 'app.wasm';
 import { makeHandler } from './js/index.js';
 
@@ -18,6 +18,7 @@ export default class extends Handler {
       const s = r.tasks.stats;
       return Response.json({ live: r.x.live_bytes(), tasks: r.tasks.size, refsLive: s.refsLive, contextsLive: s.contextsLive, alarms: r.stats.alarms });
     }
+    if (path === '/__mem') return new Response(String(r.x.memory.buffer.byteLength));
     const w0 = r.x.task_waits();
     const t0 = Date.now();
     const res = await super.fetch(request);

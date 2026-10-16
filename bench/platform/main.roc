@@ -1,6 +1,6 @@
 platform ""
 	requires { event! : Worker.Event => Worker.Outcome }
-	exposes [Js, Io, Native, Worker, Request, Response, Body, Ctx, Queue, Email, Object, WebSocket, Http, Env, Secret, Time, Log, RateLimit, WebCrypto]
+	exposes [Js, Io, Native, Worker, Request, Response, Body, Ctx, Queue, Email, Object, WebSocket, Http, Env, Secret, Time, Log, RateLimit, WebCrypto, R2, Cache]
 	packages { http: "https://github.com/roc-lang/http/releases/download/2.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst" }
 	provides { "roc_event": event_for_host! }
 	hosted { "roc_await": Host.await!, "roc_call": Host.call!, "roc_native": Host.native! }
@@ -38,6 +38,8 @@ import Time
 import Log
 import RateLimit
 import WebCrypto
+import R2
+import Cache
 import Entry
 
 ## API.md 4: the host decodes the event bytes into a `Js` value, and encodes the result for JS.

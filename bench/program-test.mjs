@@ -186,6 +186,18 @@ await test('pf: pack, packEach (the other fields stay), findById (undefined for 
   assert.equal(pf.findById(msgs, 'z'), undefined);
   assert.throws(() => pf.findById('x', 'a'), TypeError);
 });
+await test('pf: r2list gives plain { meta, checksums } records (R2.list!, 8c)', async () => {
+  const pf = ctxOf().roots.pf;
+  const sum = new Uint8Array([1, 2]).buffer;
+  const obj = { key: 'k', version: 'v', size: 3, etag: 'e', httpEtag: '"e"', uploaded: new Date(5), httpMetadata: { cacheControl: 'x' }, customMetadata: {}, checksums: { md5: sum }, body: 'not copied' };
+  const res = pf.r2list({ objects: [obj], truncated: true, cursor: 'c', delimitedPrefixes: ['p/'] });
+  assert.deepEqual(res.prefixes, ['p/']);
+  assert.deepEqual([res.truncated, res.cursor], [true, 'c']);
+  assert.deepEqual(Object.keys(res.objects[0].meta), ['key', 'version', 'size', 'etag', 'httpEtag', 'uploaded', 'httpMetadata', 'customMetadata']);
+  assert.equal(res.objects[0].checksums.md5, sum);
+  assert.equal(res.objects[0].checksums.sha1, undefined);
+  assert.deepEqual(pf.r2list({ objects: [], truncated: false }), { objects: [], prefixes: [], truncated: false, cursor: undefined });
+});
 await test('pf: the pin table (pinLimit, max age, counts)', async () => {
   let now = 0;
   const pins = makePins(2, () => now);

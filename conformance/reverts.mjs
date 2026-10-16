@@ -1,5 +1,5 @@
 // node conformance/reverts.mjs [name-filter]   (env: ROC; MINIFLARE as run.mjs)
-// Revert checks of PLAN.md 8c, wave 1 and 8d. Each revert is a real edit of a source file, a build of the conformance app
+// Revert checks of PLAN.md 8c (wave 1, R2 and Cache) and 8d. Each revert is a real edit of a source file, a build of the conformance app
 // into .cache/conformance-reverts/ when a .roc file changed, a run of the test that must catch it, and a restore of the
 // file. A change that finds no text to replace is an error (the code moved: update this list).
 // The conformance app is on the bench platform, so a Roc edit is in bench/platform/ (the copy of platform/). The MC10
@@ -80,6 +80,40 @@ const reverts = [
   R('Js pins: pf.pin does not keep the value', 'conformance', ['webcrypto a pinned CryptoKey used by a later request'], ['js/helpers.js', '      shim.pins.pin(name, value, maxAgeMs);\n', '']),
   R('WebCrypto.hmac_sha256: the inner pad uses 0x5c', 'roc test', [], ['platform/WebCrypto.roc', 'bitwise_xor(0x36)', 'bitwise_xor(0x5c)']),
   R('WebCrypto.hmac_sha256: a key longer than the block is not hashed', 'roc test', [], ['platform/WebCrypto.roc', 'if key.len() > block Crypto', 'if key.len() > 100_000 Crypto']),
+  // PLAN.md 8c, R2 and Cache. A wrong JS method name in one function: its route fails.
+  R('R2.head: head is called "headx"', 'conformance', ['r2 head!', 'r2 head (Io twin)'], [BP + 'R2.roc', 'call_ops(bucket, "head",', 'call_ops(bucket, "headx",']),
+  R('R2.get: get is called "getx"', 'conformance', ['r2 get!', 'r2 get (Io twin)'], [BP + 'R2.roc', 'call_ops(bucket, "get", [Lit(Text(key))], [])', 'call_ops(bucket, "getx", [Lit(Text(key))], [])']),
+  R('R2.list: pf.r2list is called "r2listx"', 'conformance', ['r2 list! start_after', 'r2 list! limit, cursor, delimiter'], [BP + 'R2.roc', 'Call(Root("pf"), "r2list",', 'Call(Root("pf"), "r2listx",']),
+  R('Cache.get: match is called "matchx"', 'conformance', ['cache get! of a missing key is NotFound', 'cache put! and get!'], [BP + 'Cache.roc', 'Call(Slot(1), "match",', 'Call(Slot(1), "matchx",']),
+  // OP7: Get and Fields on null and undefined throw: a missing key is R2Err and CacheErr, not NotFound.
+  R('OP7: no ?. in Get and Fields (js/program.js)', 'conformance', ['r2 get! of a missing key is NotFound', 'r2 head! of a missing key is NotFound', 'cache get! of a missing key is NotFound'],
+    ['js/program.js', 'return o === null || o === undefined ? undefined : o[name];', 'return o[name];'],
+    ['js/program.js', 'if (o === null || o === undefined) return undefined; // OP7', '']),
+  // R2.Cond: the module sends only the first field.
+  R('R2.put_with: only_if sends only the first field', 'conformance', ['r2 put_with! only_if with two fields'],
+    [BP + 'R2.roc', '\t\t|> put_date("uploadedBefore", c.?uploaded_before_ms)\n\t\t|> put_date("uploadedAfter", c.?uploaded_after_ms)\n', '']),
+  R('R2.put_with: only_if is not sent', 'conformance', ['r2 put_with! only_if: a wrong etag_matches is PreconditionFailed', 'r2 put_with! absent: a key that exists is PreconditionFailed'],
+    [BP + 'R2.roc', 'Ok(c) => put_record(build(base), "onlyIf", finish(cond_build(c, base)))', 'Ok(_) => build(base)']),
+  // Multipart: each function of Upload calls createMultipartUpload in place of resumeMultipartUpload.
+  R('R2.Upload: createMultipartUpload in place of resumeMultipartUpload', 'conformance', ['r2 multipart: create, upload_part, complete in three requests'],
+    [BP + 'R2.roc', 'Call(Slot(0), "resumeMultipartUpload", [Lit(Text(up.key))', 'Call(Slot(0), "createMultipartUpload", [Lit(Text(up.key))']),
+  // A stream with no known length: no FixedLengthStream.
+  R('R2.put_with: no FixedLengthStream', 'conformance', ['r2 put_with! of a stream with length_bytes stores the bytes'],
+    [BP + 'R2.roc', '\tStream(r) => match length {\n\t\tOk(n) => {', '\tStream(r) => match length {\n\t\tOk(_) => { ops: [], arg: Lit(Ref(r)) }\n\t\tOk(n) => {']),
+  R('R2.list: include is not sent', 'conformance', ['r2 put_with! http: head! has it, list! has none, list! with include has it', 'r2 put_with! custom, list! include Custom'],
+    [BP + 'R2.roc', '("include", Arr(inc.map(', '("includex", Arr(inc.map(']),
+  R('R2.list: start_after is not sent', 'conformance', ['r2 list! start_after'], [BP + 'R2.roc', '("startAfter", Text(s))', '("startAfterx", Text(s))']),
+  R('R2.get_with: the module does not read range', 'conformance', ['r2 get_with! range From', 'r2 get_with! range Suffix'],
+    [BP + 'R2.roc', 'match range_of(field(got.fields, "range")) {', 'match Err(NoRange) {']),
+  R('R2.put_with: the checksum is not sent', 'conformance', ['r2 put_with! checksum: a wrong Sha256 is R2Err, the right one is in meta.checksums'],
+    [BP + 'R2.roc', 'Ok(Sha256(b)) => put_lit(b3, "sha256", Bytes(b))', 'Ok(Sha256(_)) => b3']),
+  R('R2.Meta: md5 is not read', 'conformance', ['r2 put! with no checksum has an MD5'], [BP + 'R2.roc', 'Bytes(b) => { ..c0, md5: b }', 'Bytes(_) => c0']),
+  R('Cache.put: the status is always 200', 'conformance', ['cache put! of a 206 response is CacheErr'], [BP + 'Cache.roc', '("status", Lit(Int(res.status.to_i64()))),', '("status", Lit(Int(200))),']),
+  R('Cache.delete: false is Ok', 'conformance', ['cache delete! of a key that is not cached is NotFound'],
+    [BP + 'Cache.roc', 'Ok(Bool(Bool.False)) => Err(NotFound)', 'Ok(Bool(Bool.False)) => Ok({})']),
+  // 10a with R2: the body is read into wasm before the response.
+  R('10a: the R2 body is copied into wasm (conformance/R2Routes.roc)', 'conformance', ['r2 10a: a 50 MB object through get! to the response, wasm memory grows by less than 1 MB'],
+    ['conformance/R2Routes.roc', 'Ok(obj) => Response.from_body(200, "application/octet-stream", obj.body)\n\tErr(e) => Response.from_text(200, "Err ${Str.inspect(e)}")\n}', 'Ok(obj) => match obj.body.bytes_with!({ max_bytes: 100_000_000 }) {\n\t\tOk(b) => Response.from_bytes(200, "application/octet-stream", b)\n\t\tErr(e) => Response.from_text(200, "Err ${Str.inspect(e)}")\n\t}\n\tErr(e) => Response.from_text(200, "Err ${Str.inspect(e)}")\n}']),
 ];
 
 const filter = process.argv[2];

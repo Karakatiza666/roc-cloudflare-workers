@@ -14,6 +14,8 @@ import RateLimitRoutes
 import CfRoutes
 import ShimRoutes
 import WebCryptoRoutes
+import R2Routes
+import CacheRoutes
 
 fetch! : Request => Try(Response, [])
 fetch! = |req| {
@@ -26,6 +28,8 @@ fetch! = |req| {
 		["cf", .. as rest] => CfRoutes.route!(req, rest)
 		["shim", .. as rest] => ShimRoutes.route!(req, rest)
 		["webcrypto", .. as rest] => WebCryptoRoutes.route!(req, rest)
+		["r2", .. as rest] => R2Routes.route!(req, rest)
+		["cache", .. as rest] => CacheRoutes.route!(req, rest)
 		_ => Response.from_text(404, "no route")
 	}
 	Ok(res)

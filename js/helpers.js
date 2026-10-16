@@ -26,6 +26,15 @@ function concat(chunks, n) {
   }
   return out;
 }
+// One object of an R2 list as the record that `R2.roc` reads: `{ meta, checksums }` (the same two parts as the program of `R2.get!`).
+const R2_META = ['key', 'version', 'size', 'etag', 'httpEtag', 'uploaded', 'httpMetadata', 'customMetadata'];
+const R2_SUMS = ['md5', 'sha1', 'sha256', 'sha384', 'sha512'];
+function r2pair(o) {
+  const meta = {}, checksums = {};
+  for (const k of R2_META) meta[k] = o[k];
+  for (const k of R2_SUMS) checksums[k] = o.checksums?.[k];
+  return { meta, checksums };
+}
 // The writers of `pf.writer` by their readable side and by their writer (`close`, `respond`).
 const writerOfStream = new WeakMap();
 const writerOf = new WeakMap();
@@ -91,6 +100,11 @@ export function makeHelpers(t, c, shim, tasks) {
       ).finally(() => {
         if (t) tasks.spawnEnd(t);
       });
+    },
+    // `R2.list!`: the result of `bucket.list()` as `{ objects: [{ meta, checksums }], prefixes, truncated, cursor }`, all plain
+    // data: a program has no loop (OP4), and a class instance for each object would be a ref each.
+    r2list(res) {
+      return { objects: res.objects.map(r2pair), prefixes: [...(res.delimitedPrefixes ?? [])], truncated: Boolean(res.truncated), cursor: res.cursor };
     },
     // The pin table (RS2): `Js.pin!`, `pinned!`, `unpin!` (8c).
     pin(name, value, maxAgeMs) {
