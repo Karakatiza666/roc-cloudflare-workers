@@ -19,6 +19,8 @@ flowchart LR
 | `worker.js` | `makeHandler` of the app, the option `ops`, and the headers `x-waits` (waits of the task), `x-awaits` and `x-calls` (the crossings: calls of `js_await` and `js_call`, from `stats.crossings` of the runner) and `x-ms` on each response. `GET /__stats`: the task table. |
 | `run.mjs` | Starts a local HTTP server and Miniflare, runs each check of `checks/*.mjs` (in name order), then the check `end` (no task, ref, context, alarm or live byte). One line for each check: `PASS <name>` or `FAIL <name>: <why>`. Exit 1 on a failure. |
 | `checks/<module>.mjs` | `options`: the Miniflare options of the module (its bindings). `checks`: a list of `[name, async (t) => detail]`. |
+| `bindings.js` | The JS stubs for the bindings that Miniflare has no local form of (Workers AI, Vectorize) or whose data a test must see (Analytics Engine, version metadata, a workflow binding): plain objects that record each call. `withStubs(env)` puts them in the env of each request (`worker.js`). `GET /__stub_calls`: the record. `POST /__stub_reset`: clear it. It also has the two workflow classes (`Flow`, `Waiter`) of the local Workflows binding. |
+| `canon.mjs`, `assets/` | `canon(value)`: JSON text with the keys in order (Roc writes the fields of a record in name order). `assets/`: the files of the local `Assets` binding. |
 | `assert.mjs` | `eq`, `ok`, `answer(r, text)` (a 200 with that body) |
 | `reverts.mjs` | The revert checks: a real edit, a build, a run, a restore (`PLAN.md` 8c, "Status of step 8c, wave 1") |
 | `must-not-compile.sh`, `must-not-compile/` | A `Secret` in `Log` fields and in a CBOR encode (`Cbor` of the package `roc-cbor`) does not compile; the controls with `s.reveal()` do |
@@ -29,7 +31,7 @@ Run:
 | --- | --- |
 | `bench/build.sh` | Builds `bench/out/conformance.wasm` with the other apps |
 | `node conformance/run.mjs [wasm] [filter]` | All checks, or the checks whose name has the filter. Env `MINIFLARE`: the miniflare package (default: the one of the global wrangler of this node). |
-| `ROC=... node conformance/reverts.mjs [filter]` | The revert checks |
+| `ROC=... node conformance/reverts.mjs [filter]` | The revert checks. The filter is a text of a name, or texts joined by a vertical bar. |
 | `ROC=... conformance/must-not-compile.sh` | The must-not-compile checks |
 
 What a check gets (`t`):

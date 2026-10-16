@@ -55,16 +55,21 @@ const merged = {};
 for (const s of suites) {
   for (const [k, v] of Object.entries(s.options ?? {})) {
     if (Array.isArray(v)) merged[k] = [...(merged[k] ?? []), ...v];
-    else if (v && typeof v === 'object') {
+    else if (typeof v === 'string') {
+      if (merged[k] !== undefined && merged[k] !== v) throw new Error(`${s.file}: the option ${k} is in two check files`);
+      merged[k] = v;
+    } else if (v && typeof v === 'object') {
       for (const name of Object.keys(v)) if (merged[k] && name in merged[k]) throw new Error(`${s.file}: the option ${k}.${name} is in two check files`);
       merged[k] = { ...(merged[k] ?? {}), ...v };
-    } else throw new Error(`${s.file}: the option ${k} must be an array or an object`);
+    } else throw new Error(`${s.file}: the option ${k} must be an array, an object or a text`);
   }
 }
 
 // The modules of the worker, by their names: worker.js, the shim (js/*.js, from the root of the repo) and app.wasm.
 const modules = [
   { type: 'ESModule', path: join(here, 'worker.js'), contents: readFileSync(join(here, 'worker.js'), 'utf8') },
+  // The other JS modules of the worker (conformance/bindings.js: the stubs and the workflow classes).
+  ...readdirSync(here).filter((f) => f.endsWith('.js') && f !== 'worker.js').map((f) => ({ type: 'ESModule', path: join(here, f), contents: readFileSync(join(here, f), 'utf8') })),
   ...readdirSync(join(root, 'js')).filter((f) => f.endsWith('.js')).map((f) => ({ type: 'ESModule', path: join(here, 'js', f), contents: readFileSync(join(root, 'js', f), 'utf8') })),
   { type: 'CompiledWasm', path: join(here, 'app.wasm'), contents: readFileSync(wasm) },
 ];

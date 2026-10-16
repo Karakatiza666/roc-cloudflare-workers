@@ -2131,6 +2131,230 @@ Open points:
 | QO5 | `queue`, `email` and `tail` exist for every app (QC16). Should the manifest hide them? |
 | QO6 | A body that CBOR cannot write is retried as an empty body (QC5). Should the batch instead give the handler the raw message? |
 
+### Status of step 8f, part 4: other bindings (2026-10-16)
+
+Done: the modules `Ai`, `Vectorize`, `Analytics`, `Hyperdrive` (`config!`), `Workflows` (the client), `Assets`, `Version` and `SecretsStore` (MODULES.md 13), each function with its `Io` twin where it waits (MC3), the conformance routes and checks in Miniflare, JS stubs for the bindings that have no local form, and the reverts. `Email` is another agent's. `Hyperdrive.connect!` is not built: it needs `Tcp` (a later part). The workflow class is phase C (AQ1).
+
+| Run | Result |
+| --- | --- |
+| `bench/test-all.sh` | ALL PASS, 49 step lines (the same steps; `conformance/run.mjs` runs the new checks) |
+| `node conformance/run.mjs bench/out/conformance.wasm` | 171 checks and `end`, PASS (48 are new: 2 `version`, 2 `analytics`, 3 `secretsstore`, 1 `hyperdrive`, 8 `assets`, 10 `ai`, 11 `vectorize`, 11 `workflows`) |
+| `roc test platform/main.roc` | 80 `expect`s (was 53: 27 new in the 8 modules) |
+| `conformance/must-not-compile.sh` | 4 checks, PASS (unchanged) |
+| `ROC=... node conformance/reverts.mjs 'Ai.\|Vectorize\|Analytics\|Version\|SecretsStore\|Hyperdrive\|Assets\|Workflows'` | 89 of 89 caught (85 `conformance` or `roc test` reverts of the plan and 4 for the checks of a throw), clean tree PASS |
+
+
+```mermaid
+flowchart LR
+    A["app: index.query_with!(vector, { top_k: 3, return_metadata: All })"] --> P["Vectorize.roc: one program"]
+    P -->|"env[name].query(vector, { topK: 3, returnMetadata: 'all' }), pf.limit(result, max)"| J["JS: a Js tree; TooLarge before any copy (MC11)"]
+    J --> R["Roc: each metadata goes to JSON text, then to Meta (the codec of index)"]
+    R -->|"Ok"| M["{ matches : List(Match(Meta)), count }"]
+    R -->|"a metadata that does not fit"| B["BadData(vector a: the metadata does not fit the type ...)"]
+```
+
+| Module | Binding in Miniflare | How it is tested | Main files |
+| --- | --- | --- | --- |
+| `Version` | `versionMetadata: 'V'` (local) | Local binding, and the stub `STUB_VERSION` for known values | `platform/Version.roc`, `conformance/VersionRoutes.roc`, `checks/version.mjs` |
+| `Analytics` | `analyticsEngineDatasets` (local, it keeps nothing) | Local binding (the call does not throw), and the stub `STUB_STATS` that records the data point | `platform/Analytics.roc`, `AnalyticsRoutes.roc`, `checks/analytics.mjs` |
+| `SecretsStore` | `secretsStoreSecrets` (local) | Local binding, the value from the admin API of Miniflare | `platform/SecretsStore.roc`, `SecretsStoreRoutes.roc`, `checks/secretsstore.mjs` |
+| `Hyperdrive` | `hyperdrives` (local, a fake host name) | Local binding | `platform/Hyperdrive.roc`, `HyperdriveRoutes.roc`, `checks/hyperdrive.mjs` |
+| `Assets` | `assets` with `run_worker_first` and `routerConfig.has_user_worker` (local) | Local binding, the directory `conformance/assets/` | `platform/Assets.roc`, `AssetsRoutes.roc`, `checks/assets.mjs` |
+| `Workflows` | `workflows` with two classes of the worker (`Flow`, `Waiter`) (local) | Local binding for the real flow. The stub `STUB_WORKFLOW` for the parameters, the event and `NotFound` of an instance that is gone. | `platform/Workflows.roc`, `WorkflowsRoutes.roc`, `checks/workflows.mjs` |
+| `Ai` | Remote only | Stub-tested: `STUB_AI` of `conformance/bindings.js` records `run(model, input, options)` | `platform/Ai.roc`, `AiRoutes.roc`, `checks/ai.mjs` |
+| `Vectorize` | Remote only | Stub-tested: `STUB_VECTORIZE`, an in-memory index that records each call | `platform/Vectorize.roc`, `VectorizeRoutes.roc`, `checks/vectorize.mjs` |
+| Shared | | `conformance/bindings.js` (the stubs, `withStubs(env)` in the `constructor` of the worker, `/__stub_calls`, `/__stub_reset`, the workflow classes), `canon.mjs`, `run.mjs` (the other JS modules of `conformance/`, an option that is a text), `reverts.mjs` (a filter of texts joined by a vertical bar) | `conformance/` |
+| Probes | | `research/bindings-probe/`: the local facts of each binding (`README.md`), a `where` clause on a record with a type variable, how an `F64` prints | `research/bindings-probe/` |
+
+Tests (names are the check names of `run.mjs`; all PASS). Each revert is a real edit, a build, a run and a restore (`ROC=... node conformance/reverts.mjs 'Ai.|Vectorize|Analytics|Version|SecretsStore|Hyperdrive|Assets|Workflows'`).
+
+| Check | Reverts that must fail it (the first column of the next table) |
+| --- | --- |
+| `version metadata!: the local binding` | R50, R51, R53 |
+| `version metadata!: id, tag and timestamp of a known object` | R50, R51, R52 |
+| `analytics write!: the local binding, and a binding that is not in the config` | R45, R49 |
+| `analytics write!: blobs, doubles and indexes reach the binding` | R45, R46, R47, R48 |
+| `secretsstore get!: a Secret that shows only by reveal, one wait` | R54, R55 |
+| `secretsstore get (Io twin)` | R54, R55 |
+| `secretsstore get!: a secret that does not exist is SecretsStoreErr` | R54 |
+| `hyperdrive config!: the six fields, the two secrets hidden, one call!` | R56, R57, R58, R59 |
+| `assets fetch!: a file, one wait (the body of the answer is read in a second one)` | R61, R65 |
+| `assets fetch (Io twin)` | R61, R65 |
+| `assets fetch!: a file that does not exist is an answer, not an error` | R61, R64 |
+| `assets fetch!: the url of the request` | R61, R64 |
+| `assets fetch!: the method of the request (a POST is 405)` | R62 |
+| `assets fetch!: the headers of the request (If-None-Match is 304)` | R63 |
+| `assets fetch!: pass the response as it is (a stream), also the Io twin` | R61, R65 |
+| `assets fetch!: a binding that is not in the config, and a url with no host, are AssetsErr` | R88 |
+| `ai run!: typed input and output, one wait` | R1, R4, R5 |
+| `ai run (Io twin)` | R1, R4, R5 |
+| `ai run_with!, run_with (Io twin): the gateway with all its fields, cache_ttl_ms in whole seconds, rounded up` | R1, R6, R7, R8, R9, R10, R11 |
+| `ai run_with!: a gateway with only its id sends only the id` | R1, R6, R7 |
+| `ai run_with!: max_bytes only sends no options to the binding` | R1 |
+| `ai run!: an output above 1 MiB is TooLarge, run_with! with max_bytes of 2 MiB gives it` | R12, R13, R14 |
+| `ai run!: a throw of the binding is AiErr` | R86 |
+| `ai run!: an output that does not fit its type is BadData` | R15 |
+| `ai stream!, stream (Io twin): the stream of the model, with stream: true in the input` | R2, R3 |
+| `ai stream!: a throw is AiErr` | R87 |
+| `vectorize upsert!, upsert (Io twin): the vectors, with metadata and namespace only where the app gives them` | R17, R30, R31, R32, R33, R34 |
+| `vectorize insert!, insert (Io twin): the same vectors; an id that exists keeps its vector` | R18, R30, R31 |
+| `vectorize query!, query (Io twin): the matches with ids and scores, no values and no metadata by default` | R16, R21, R39 |
+| `vectorize query_with!, query_with (Io twin): all options, the typed metadata and the values come back` | R16, R21, R22, R23, R24, R25, R26, R29, R35, R37, R38 |
+| `vectorize query_with!: an option that the app leaves out is not sent` | R16 |
+| `vectorize query_with!: return_metadata Indexed and None` | R16, R22, R27, R28, R35 |
+| `vectorize get!, get (Io twin): the vectors that exist, with typed metadata` | R19, R35 |
+| `vectorize delete!, delete (Io twin): the ids go to the binding, the vectors are gone` | R20, R34 |
+| `vectorize query_with!: metadata that does not fit the type of the index is BadData with the id` | R36 |
+| `vectorize query_with!, get!: a result above 1 MiB is TooLarge, query_with! with max_bytes of 2 MB gives it` | R40, R41, R42, R43 |
+| `vectorize query!: a binding that is not in the config is VectorizeErr` | R89 |
+| `workflows create!, create (Io twin): an instance with a new id, and its output has the parameters` | R67, R76, R77 |
+| `workflows create_with!, create_with (Io twin): the id of the app; the same id is AlreadyExists` | R67, R78, R81 |
+| `workflows get!, get (Io twin): the instance of an id, or NotFound` | R68, R82 |
+| `workflows status!, status (Io twin): the state, no error, the output as JSON text and typed` | R69, R70, R71, R84 |
+| `workflows pause!, resume!, send_event!: a waiting instance, then its output has the event` | R69, R72, R73, R75, R83 |
+| `workflows pause (Io twin), resume (Io twin), send_event (Io twin)` | R69, R72, R73, R75 |
+| `workflows terminate!, terminate (Io twin): a waiting instance ends; a finished one is WorkflowsErr` | R69, R74 |
+| `workflows create!: the parameters (JSON) and the id reach the binding; with no id, no id is sent` | R76, R77, R78 |
+| `workflows send_event!: the type and the payload (JSON) reach the binding` | R75, R79, R80 |
+| `workflows: an instance that is gone is NotFound for each function` | R82 |
+| `workflows: the stub gets the call that the function names` | R69 |
+
+Reverts:
+
+| Revert | Must fail | Result |
+| --- | --- | --- |
+| R1 Ai.run: run is called "runx" | conformance: 5 checks | 8 checks FAIL: `typed input and output, one wait: got 200 "AiErr TypeError: o[name] is n` |
+| R2 Ai.stream: run is called "runx" | conformance: 1 check | 2 checks FAIL: `the stream of the model, with stream: true in the input: got 200 "AiErr ` |
+| R3 Ai.stream: stream is not set in the input | conformance: 1 check | 1 checks FAIL: `the stream of the model, with stream: true in the input: got 200 "[objec` |
+| R4 Ai.run: the input is not sent | conformance: 2 checks | 3 checks FAIL: `typed input and output, one wait: got 200 "Ok len=12 echo @cf/m: ", want` |
+| R5 Ai.run: the model is not sent | conformance: 2 checks | 5 checks FAIL: `typed input and output, one wait: got 200 "Ok len=10 echo m: hi", want 2` |
+| R6 Ai.run_with: the gateway option is not sent | conformance: 2 checks | 2 checks FAIL: `the gateway with all its fields, cache_ttl_ms in whole seconds, rounded ` |
+| R7 Ai.Gateway: id is not sent | conformance: 2 checks | 2 checks FAIL: `the gateway with all its fields, cache_ttl_ms in whole seconds, rounded ` |
+| R8 Ai.Gateway: skip_cache is not sent | conformance: 1 check | 1 checks FAIL: `the gateway with all its fields, cache_ttl_ms in whole seconds, rounded ` |
+| R9 Ai.Gateway: cache_ttl_ms is not sent | conformance: 1 check | 1 checks FAIL: `the gateway with all its fields, cache_ttl_ms in whole seconds, rounded ` |
+| R10 Ai.Gateway: cache_ttl_ms rounds down (MC10) | conformance: 1 check | 1 checks FAIL: `the gateway with all its fields, cache_ttl_ms in whole seconds, rounded ` |
+| R11 Ai.Gateway: cache_key is not sent | conformance: 1 check | 1 checks FAIL: `the gateway with all its fields, cache_ttl_ms in whole seconds, rounded ` |
+| R12 Ai.run: no limit in pf.pack | conformance: 1 check | 1 checks FAIL: `an output above 1 MiB is TooLarge, run_with! with max_bytes of 2 MiB giv` |
+| R13 Ai.run_with: max_bytes is ignored | conformance: 1 check | 1 checks FAIL: `an output above 1 MiB is TooLarge, run_with! with max_bytes of 2 MiB giv` |
+| R14 Ai.run: TooLarge is AiErr | conformance: 1 check | 1 checks FAIL: `an output above 1 MiB is TooLarge, run_with! with max_bytes of 2 MiB giv` |
+| R15 Ai.run: a parse error is TooLarge, not BadData | conformance: 1 check | 1 checks FAIL: `an output that does not fit its type is BadData: got 200 "TooLarge", wan` |
+| R16 Vectorize.query: query is called "queryx" | conformance: 4 checks | 7 checks FAIL: `the matches with ids and scores, no values and no metadata by default: g` |
+| R17 Vectorize.upsert: upsert is called "upsertx" | conformance: 1 check | 8 checks FAIL: `the vectors, with metadata and namespace only where the app gives them: ` |
+| R18 Vectorize.insert: insert is called "insertx" | conformance: 1 check | 1 checks FAIL: `the same vectors; an id that exists keeps its vector: got 200 "Vectorize` |
+| R19 Vectorize.get: getByIds is called "getByIdsx" | conformance: 1 check | 4 checks FAIL: `the same vectors; an id that exists keeps its vector: got 200 "Vectorize` |
+| R20 Vectorize.delete: deleteByIds is called "deleteByIdsx" | conformance: 1 check | 1 checks FAIL: `the ids go to the binding, the vectors are gone: got 200 "VectorizeErr T` |
+| R21 Vectorize.query: the vector is not sent | conformance: 2 checks | 2 checks FAIL: `the matches with ids and scores, no values and no metadata by default: q` |
+| R22 Vectorize.query_with: the options are not sent | conformance: 2 checks | 4 checks FAIL: `all options, the typed metadata and the values come back: got 200 "count` |
+| R23 Vectorize.QueryOptions: top_k is not sent | conformance: 1 check | 1 checks FAIL: `all options, the typed metadata and the values come back: query_with: go` |
+| R24 Vectorize.QueryOptions: namespace is not sent | conformance: 1 check | 2 checks FAIL: `all options, the typed metadata and the values come back: query_with: go` |
+| R25 Vectorize.QueryOptions: return_values is not sent | conformance: 1 check | 2 checks FAIL: `all options, the typed metadata and the values come back: got 200 "count` |
+| R26 Vectorize.QueryOptions: return_metadata All is sent as "indexed" | conformance: 1 check | 1 checks FAIL: `all options, the typed metadata and the values come back: query_with: go` |
+| R27 Vectorize.QueryOptions: return_metadata Indexed is sent as "all" | conformance: 1 check | 1 checks FAIL: `return_metadata Indexed and None: the answer: got "[{\"returnMetadata\":` |
+| R28 Vectorize.QueryOptions: return_metadata None is not sent | conformance: 1 check | 1 checks FAIL: `return_metadata Indexed and None: the answer: got "[{\"returnMetadata\":` |
+| R29 Vectorize.QueryOptions: filter is not sent | conformance: 1 check | 1 checks FAIL: `all options, the typed metadata and the values come back: got 200 "count` |
+| R30 Vectorize.Vector: values are not sent | conformance: 2 checks | 5 checks FAIL: `the vectors, with metadata and namespace only where the app gives them: ` |
+| R31 Vectorize.Vector: id is not sent | conformance: 2 checks | 9 checks FAIL: `the vectors, with metadata and namespace only where the app gives them: ` |
+| R32 Vectorize.Vector: namespace is not sent | conformance: 1 check | 8 checks FAIL: `the vectors, with metadata and namespace only where the app gives them: ` |
+| R33 Vectorize.Vector: metadata is not sent | conformance: 1 check | 6 checks FAIL: `the vectors, with metadata and namespace only where the app gives them: ` |
+| R34 Vectorize: a mutation gives no mutationId | conformance: 2 checks | 3 checks FAIL: `the vectors, with metadata and namespace only where the app gives them: ` |
+| R35 Vectorize: the metadata of a match is not read | conformance: 3 checks | 5 checks FAIL: `the same vectors; an id that exists keeps its vector: got 200 "count=2 [` |
+| R36 Vectorize: a metadata that does not fit is Missing | conformance: 1 check | 1 checks FAIL: `metadata that does not fit the type of the index is BadData with the id:` |
+| R37 Vectorize: the values of a match are not read | conformance: 1 check | 1 checks FAIL: `all options, the typed metadata and the values come back: got 200 "count` |
+| R38 Vectorize: the namespace of a match is not read | conformance: 1 check | 4 checks FAIL: `the matches with ids and scores, no values and no metadata by default: g` |
+| R39 Vectorize: the score is not read | conformance: 1 check | 6 checks FAIL: `the matches with ids and scores, no values and no metadata by default: g` |
+| R40 Vectorize.query: no limit in pf.limit | conformance: 1 check | 1 checks FAIL: `a result above 1 MiB is TooLarge, query_with! with max_bytes of 2 MB giv` |
+| R41 Vectorize.query_with: max_bytes is ignored | conformance: 1 check | 1 checks FAIL: `a result above 1 MiB is TooLarge, query_with! with max_bytes of 2 MB giv` |
+| R42 Vectorize.get: no limit in pf.limit | conformance: 1 check | 1 checks FAIL: `a result above 1 MiB is TooLarge, query_with! with max_bytes of 2 MB giv` |
+| R43 Vectorize: TooLarge is VectorizeErr | conformance: 1 check | 1 checks FAIL: `a result above 1 MiB is TooLarge, query_with! with max_bytes of 2 MB giv` |
+| R44 Vectorize.QueryOptions (roc test): max_bytes is sent to Vectorize | roc test | roc test FAILED: `── ✗ fail ───────────────────────────────────────── platform/Vectorize.r` |
+| R45 Analytics.write: writeDataPoint is called "writeDataPointx" | conformance: 2 checks | 2 checks FAIL: `the local binding, and a binding that is not in the config: got 200 "Ana` |
+| R46 Analytics.write: blobs are not sent | conformance: 1 check | 1 checks FAIL: `blobs, doubles and indexes reach the binding: the recorded data points: ` |
+| R47 Analytics.write: doubles are not sent | conformance: 1 check | 1 checks FAIL: `blobs, doubles and indexes reach the binding: the recorded data points: ` |
+| R48 Analytics.write: indexes are not sent | conformance: 1 check | 1 checks FAIL: `blobs, doubles and indexes reach the binding: the recorded data points: ` |
+| R49 Analytics.write!: await! in place of call! | conformance: 1 check | 1 checks FAIL: `the local binding, and a binding that is not in the config: js_await: go` |
+| R50 Version.metadata!: Date.parse is called "parsex" | conformance: 2 checks | 2 checks FAIL: `the local binding: got 500 trap RuntimeError: unreachable` |
+| R51 Version.metadata!: the timestamp is not read | conformance: 2 checks | 2 checks FAIL: `the local binding: got 500 trap RuntimeError: unreachable` |
+| R52 Version.metadata!: the tag is not read | conformance: 1 check | 1 checks FAIL: `id, tag and timestamp of a known object: got 200 "v-1 tag= ts=1767323045` |
+| R53 Version.metadata!: await! in place of call! | conformance: 1 check | 1 checks FAIL: `the local binding: js_call: got 0, want 1` |
+| R54 SecretsStore.get: get is called "getx" | conformance: 3 checks | 3 checks FAIL: `a Secret that shows only by reveal, one wait: got 200 "SecretsStoreErr T` |
+| R55 SecretsStore.get: Io.sync in place of Io.new (status 2) | conformance: 2 checks | 3 checks FAIL: `a Secret that shows only by reveal, one wait: got 200 "SecretsStoreErr P` |
+| R56 Hyperdrive.config!: connectionString is not read | conformance: 1 check | 1 checks FAIL: `the six fields, the two secrets hidden, one call!: got 500 trap RuntimeE` |
+| R57 Hyperdrive.config!: port is not read | conformance: 1 check | 1 checks FAIL: `the six fields, the two secrets hidden, one call!: got 500 trap RuntimeE` |
+| R58 Hyperdrive.config!: password is not read | conformance: 1 check | 1 checks FAIL: `the six fields, the two secrets hidden, one call!: got 500 trap RuntimeE` |
+| R59 Hyperdrive.config!: await! in place of call! | conformance: 1 check | 1 checks FAIL: `the six fields, the two secrets hidden, one call!: js_await: got 1, want` |
+| R60 Hyperdrive.config (roc test): a port above 65535 is U16 wrap | roc test | roc test FAILED: `── ✗ fail ───────────────────────────────────────── platform/Hyperdrive.` |
+| R61 Assets.fetch: fetch is called "fetchx" | conformance: 5 checks | 7 checks FAIL: `a file, one wait (the body of the answer is read in a second one): got 2` |
+| R62 Assets.fetch: the method is not sent | conformance: 1 check | 1 checks FAIL: `the method of the request (a POST is 405): got 200 AssetsErr TypeError` |
+| R63 Assets.fetch: the headers are not sent | conformance: 1 check | 1 checks FAIL: `the headers of the request (If-None-Match is 304): got 200 status=200 ty` |
+| R64 Assets.fetch: the url is always /hello.txt | conformance: 2 checks | 3 checks FAIL: `a file that does not exist is an answer, not an error: got 200 status=20` |
+| R65 Assets.fetch: the body is not read | conformance: 3 checks | 4 checks FAIL: `a file, one wait (the body of the answer is read in a second one): got 2` |
+| R66 Assets.fetch (roc test): a text body is not sent | roc test | roc test FAILED: `── ✗ fail ───────────────────────────────────────────── platform/Assets.` |
+| R67 Workflows.create: create is called "createx" | conformance: 2 checks | 8 checks FAIL: `an instance with a new id, and its output has the parameters: create: go` |
+| R68 Workflows.get: get is called "getx" | conformance: 1 check | 10 checks FAIL: `an instance with a new id, and its output has the parameters: the state ` |
+| R69 Workflows.Instance: get is called "getx" (each function of an instance) | conformance: 5 checks | 8 checks FAIL: `an instance with a new id, and its output has the parameters: the state ` |
+| R70 Workflows.status: status is called "statusx" | conformance: 1 check | 7 checks FAIL: `an instance with a new id, and its output has the parameters: the state ` |
+| R71 Workflows.status: JSON.stringify is called "stringifyx" | conformance: 1 check | 6 checks FAIL: `an instance with a new id, and its output has the parameters: the state ` |
+| R72 Workflows.pause: pause is called "pausex" | conformance: 2 checks | 3 checks FAIL: `a waiting instance, then its output has the event: got 200 "WorkflowsErr` |
+| R73 Workflows.resume: resume is called "resumex" | conformance: 2 checks | 3 checks FAIL: `a waiting instance, then its output has the event: got 200 "WorkflowsErr` |
+| R74 Workflows.terminate: terminate is called "terminatex" | conformance: 1 check | 2 checks FAIL: `a waiting instance ends; a finished one is WorkflowsErr: got 200 "Workfl` |
+| R75 Workflows.send_event: sendEvent is called "sendEventx" | conformance: 3 checks | 4 checks FAIL: `a waiting instance, then its output has the event: got 200 "WorkflowsErr` |
+| R76 Workflows.create: the parameters are not sent | conformance: 2 checks | 2 checks FAIL: `an instance with a new id, and its output has the parameters: create: th` |
+| R77 Workflows.create: the parameters are not JSON.parse of the text | conformance: 2 checks | 8 checks FAIL: `an instance with a new id, and its output has the parameters: create: go` |
+| R78 Workflows.create_with: the id is not sent | conformance: 2 checks | 7 checks FAIL: `the id of the app; the same id is AlreadyExists: got 200 "Ok id=ad40b556` |
+| R79 Workflows.send_event: the type is not sent | conformance: 1 check | 3 checks FAIL: `a waiting instance, then its output has the event: the state is not Comp` |
+| R80 Workflows.send_event: the payload is not sent | conformance: 1 check | 3 checks FAIL: `a waiting instance, then its output has the event: state=Complete error=` |
+| R81 Workflows.create: AlreadyExists is WorkflowsErr | conformance: 1 check | 1 checks FAIL: `the id of the app; the same id is AlreadyExists: got 200 "WorkflowsErr E` |
+| R82 Workflows.get: NotFound is WorkflowsErr | conformance: 2 checks | 3 checks FAIL: `the instance of an id, or NotFound: got 200 "WorkflowsErr Error: instanc` |
+| R83 Workflows.State: "paused" is Queued | conformance: 1 check | 2 checks FAIL: `a waiting instance, then its output has the event: the state is not Paus` |
+| R84 Workflows.Status: the output is not read | conformance: 1 check | 5 checks FAIL: `an instance with a new id, and its output has the parameters: create: th` |
+| R85 Workflows.Status (roc test): the state "waitingForPause" is Unknown | roc test | roc test FAILED: `── ✗ fail ───────────────────────────────────────── platform/Workflows.r` |
+| R86 Ai.run: a throw is TooLarge | conformance: 1 check | 1 checks FAIL: `a throw of the binding is AiErr: got 200 "TooLarge", want 200 "AiErr Err` |
+| R87 Ai.stream: a throw is a crash | conformance: 1 check | 1 checks FAIL: `a throw is AiErr: got 500 "trap RuntimeError: unreachable", want 200 "Ai` |
+| R88 Assets.fetch: a throw is a crash | conformance: 1 check | 1 checks FAIL: `a binding that is not in the config, and a url with no host, are AssetsE` |
+| R89 Vectorize.query: a throw is TooLarge | conformance: 1 check | 1 checks FAIL: `a binding that is not in the config is VectorizeErr: got 200 "TooLarge",` |
+
+Edge parts for 11c (the plan says "on the edge", or the local binding differs or is only a stub):
+
+| Part | What to run on the edge | Local result |
+| --- | --- | --- |
+| `Ai` | `run!` of a real model (`@cf/meta/llama-3.1-8b-instruct`: `{ prompt, max_tokens }` gives `{ response }`), `run_with!` with a gateway (`skipCache`, `cacheTtl` in seconds, `cacheKey`), `stream!` (server-sent events, `stream: true` in the input), a model that gives bytes (an image model: `Js` until a typed form exists) | Stub only |
+| `Vectorize` | A real index: `upsert!`, `insert!`, `get!`, `delete!` (the result `{ mutationId }`), `query_with!` with each option: `namespace`, `return_values`, `return_metadata` (`None`, `Indexed`, `All`) and `filter` (`$eq`, `$in`, ...), the metadata types, the `values` of a vector (`number[]` or a typed array: JSON gives an array), the limit of 1 MiB | Stub only |
+| `Analytics` | A real dataset: the data point is in the SQL API after a delay. The limits (20 blobs, 20 doubles, 1 index of 96 bytes): what `writeDataPoint` does above them. | The local binding keeps nothing |
+| `Version` | The real `id`, `tag` and `timestamp` (the format of the timestamp: ISO text?) | Local: a random UUID, tag `""`, an ISO timestamp |
+| `SecretsStore` | The message of `get()` for a secret that does not exist (a `NotFound` tag needs it) | `Error: Secret "nokey" not found` |
+| `Hyperdrive` | The six fields of a real binding (`connectionString`, `host`, `port` as a number, `user`, `password`, `database`) | A fake host `<hash>.hyperdrive.local`, `?sslmode=disable` |
+| `Assets` | `fetch!` with a request of the app (an absolute URL with any host), HEAD, `If-None-Match`, a 404 (the `404.html` and `single-page-application` modes) | PASS locally |
+| `Workflows` | The texts of `instance.not_found`, `instance.already_exists` and `instance.cannot_terminate`. The `error` of a failed instance (`{ name, message }` or text). The state `waiting` (local: `running`). An id of 100 characters. `Instance` kept across requests. | PASS locally |
+
+Choices I made (the design does not say):
+
+| # | Choice |
+| --- | --- |
+| OC1 | `Workflows.Instance` is data, `{ name, id }`: each function runs `env[name].get(id)` and then the method in one program. So an app keeps an instance across requests (MC13), and an instance that is gone is `NotFound`. The cost is one internal `get` for each call. |
+| OC2 | Parameters and event payloads of `Workflows`, and the metadata of `Vectorize`, are JSON (MC5: JSON at rest): `Json.to_str`, then `JSON.parse` in the program. `Ai` is typed data with CBOR (`Packed`, MC5), as the design says. |
+| OC3 | `Vectorize` reads a `Js` tree (`pf.limit`) and turns each metadata into JSON text for the codec in the constant: a `where` clause cannot name a record with a type variable inside (MODULES.md 15). Vectors go out as one JSON text (`vectors_json`): the derived JSON encoder has no form for a record with optional fields. |
+| OC4 | `Vectorize` has the `_with` forms of MC4: `query!(values)`, `query_with!(values, opts)`. The design table puts the options in `query!`. `query_with!` has also `namespace`, `return_values` and `max_bytes` (MC11), `filter` is a `Js` object. |
+| OC5 | `Ai.run_with!` has `max_bytes` (MC11) next to `gateway`. `stream!` sets `stream: true` on the decoded input (`Set` op), so the input must be a record. `cache_ttl_ms` goes as `cacheTtl` in whole seconds, rounded up (MC10, `Time.seconds_up`). |
+| OC6 | `Version.metadata!` and `Hyperdrive.config!` give the record of the design. A binding that is not in the config (or a bad shape) is a crash with the name of the binding: the program gives `undefined` fields (OP7). They have no `Io` twin (no wait, MC3). `timestamp_ms` is `Date.parse` of the ISO text, in the same program. |
+| OC7 | `Assets.fetch!` keeps the body a stream (`Fields` of the response, as `Http.open!`): the usual use is `Assets.fetch!(req)` as the response, so no byte goes into wasm. `res.text!()` reads it to 1 MiB. The code that builds the `fetch` program and reads the `Response` is a private copy of `Http.roc` (about 40 lines). |
+| OC8 | The error codes of `Workflows` are read from the message of the throw (`contains("instance.not_found")`, `instance.already_exists`): `NotFound` and `AlreadyExists`. The edge text is on the 11c list. Each other throw is `WorkflowsErr`. |
+| OC9 | `Workflows.Status` is `{ state, error, output_json }`. `state` is a tag union of the nine texts of Workflows (a new text is `Unknown`). `output()` reads `output_json` into the type of the call (MC7). |
+| OC10 | `SecretsStore.get!` has `SecretsStoreErr(Thrown)` for each throw: the Cloudflare docs give no text for a secret that does not exist, so there is no `NotFound` tag. |
+| OC11 | The conformance worker puts the stubs in the env with a `Proxy` in the `constructor` of its default class (`makeHandler` is not changed). `run.mjs` loads the other `.js` files of `conformance/` as modules and takes an option that is a text (`versionMetadata`). A record of the derived codecs has its fields in name order, so the checks compare `canon(value)`. |
+| OC12 | A record with one field written as a pun is a block: `{ id }` is the value of `id` (a compiler fact, MODULES.md 15). The routes write `{ id: id }`. |
+
+Open points:
+
+| # | Point |
+| --- | --- |
+| OO1 | `Version.metadata!` and `Hyperdrive.config!` crash on a binding that is not in the config (OC6). A `Try` result (`[BadData(Str)]` or `[MissingBinding]`) is a change of the API: question for the API owner. |
+| OO2 | `Vectorize`: the extra options of `query_with!`, the `_with` form for `query` (the table has none), the type of `filter` (`Js`), the type `Vector(Meta)` with optional `namespace` and `metadata`, the three result types `Match`, `Stored` and `Mutation`. None is in the design. |
+| OO3 | `Assets.roc` has a copy of the request and response code of `Http.roc` (OC7). A function in `Http` that takes the object (`env[name]` or a service binding) removes the copy, and `Service.fetch!` of the Rpc part needs the same. |
+| OO4 | `Workflows`: `restart`, `createBatch`, `delete` and `subscribe` of an instance are not in the design and not built. `create_with!` has only `id`. |
+| OO5 | `Ai.run!` reads the output as typed data with `pf.pack`: a model that gives bytes (an image) or a `returnRawResponse` needs `Js`. `stream!` gives the raw server-sent events: no parser of events. |
+| OO6 | `Ai` and `Vectorize` have only stub tests. The shapes of the real results are the Cloudflare docs and the 11c list. |
+| OO7 | `SecretsStore`, `Workflows` and `Hyperdrive` texts and shapes are local (Miniflare 5.20261012.0-beta): the 11c list. |
+
 ## 9. JS shim
 
 | Gap | Now |
