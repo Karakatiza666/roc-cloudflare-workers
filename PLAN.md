@@ -1999,6 +1999,143 @@ Open points:
 | DO4 | `Object.Self` SQL (8f) uses `constraint_of` and the integer rules of `D1.roc`, and its tests also check `ForeignKey` and `Datatype` (O5). |
 | DO5 | 8g: `D1.all!` (CBOR, typed) against `D1.rows!` (`pf.limit`, `Js` tree) for 20 and 200 rows. |
 
+### Status of step 8f, part 1: Objects, RPC, Manifest (2026-10-16)
+
+Done: the event `Manifest` at load, the exports `objectClass` and `entrypointClass` in `js/`, the method names from the manifest (API.md AQ10), the `default` RPC methods and the `handlers` of each class. Durable Objects (`Object`, `Object.Self` with SQL, alarms, `list!`, `delete_all!`, `Object.SqlInfo`, `Object.Cell`): SQLite-backed classes only, `init!` in `blockConcurrencyWhile` with the `Init` deadline, `alarm!` with `retry_count` and `is_retry`, `id!`, `jurisdiction`, the `_with` forms with `location_hint`. RPC (`Rpc`, `Service`): `Rpc.entrypoint` with `fetch!`, the event `EntrypointFetch`, the RPC limit, `RpcErr` with the message of the callee, typed bytes (MC5). `Ctx.respond!` in the `Fetch` of an object and of a named entry point. The local part of 8d for object SQL. Not in part 1: `Queue`, `Kv`, `Email`, `Tail` (part 2), WebSocket and `Tcp`, the bindings of MODULES.md 13 (part 4). The edge parts stay for 11c (list below).
+
+| Run | Result |
+| --- | --- |
+| `bench/test-all.sh` | ALL PASS, 49 step lines (the same steps), 2 min 48 s. The first run failed `layout-test.mjs`: the manifest instance ran the data-first fixture at load (FC19). |
+| `node conformance/run.mjs bench/out/conformance.wasm` | 169 checks and `end`, PASS (45 new: 38 `objects`, 7 `rpc`), about 13 s |
+| `roc test platform/main.roc` | 53 `expect`s, PASS (the D1 rules moved to `platform/SqlRules.roc` with their `expect`s) |
+| `ROC=... node conformance/reverts.mjs 8f` | 37 of 37 caught (all new), about 35 minutes. The revert of FC19 (`layout-test`) was run alone: caught. |
+| `ROC=... node conformance/reverts.mjs` (all) | 134 of 134 caught (38 new, the 96 before: unchanged; the D1 reverts now edit `SqlRules.roc`). 74 minutes. A new test `layout-test` in the list. |
+
+```mermaid
+flowchart LR
+    L["load: makeHandler(module)"] -->|"Manifest, own instance (manifestOf)"| M["{ default, objects, entrypoints }"]
+    M -->|"check both ways, names of the exports"| X["objectClass / entrypointClass: a method on the prototype for each name"]
+    X -->|"stub.increment(arg)"| E["Object { class, id, event: Rpc { method, arg: Packed } }"]
+    E --> W["Worker.event!: Object.class run!(id, event)"]
+    W -->|"Rpc.on: Cbor.parse, handler, Cbor.encode"| R["Reply(Packed) or Failed(text): throw new Error(text)"]
+```
+
+| Part | What | Main files |
+| --- | --- | --- |
+| Manifest | `Worker` fields `rpc`, `entrypoints`, `objects`. `event!` runs `Rpc`, `EntrypointFetch`, `Object` and gives `Reply(manifest)` for `Manifest`. `makeHandler` gets the manifest from an instance of its own (`manifestOf`), checks it (names, reserved names), then defines the methods. | `platform/Worker.roc`, `platform/Entry.roc`, `js/index.js:32-60`, `js/index.js:157-275`, `js/runner.js:400` |
+| Events | The shapes `rpc`, `entrypointFetch`, `object` (`init`, `fetch`, `alarm`, `rpc`) and `manifest` (API.md 10.1, "As built") | `js/events.js`, `platform/Entry.roc` |
+| `Object` | `Object.namespace`, `named`, `named_with`, `from_id`, `from_id_with`, `unique!`, `unique_with!`, `jurisdiction`, `fetch`/`fetch!`, `call`/`call!`, `id!`. `Object.Self`: `id`, `sql!`, `sql_with!`, `sql_run!`, `sql_rows!`, `sql_rows_with!`, the alarm calls with twins, `delete_all`/`delete_all!`, `list!`, `list_with!`. `Object.class`, `Object.Class`, `Object.Cell` (`cell`, `get!`, `set!`, `delete!`). | `platform/Object.roc` |
+| `Rpc`, `Service` | `Rpc.method`, `name`, `on`, `Handler`, `entrypoint`, `Entrypoint`. `Service.binding`, `fetch`/`fetch!`, `call`/`call!`. | `platform/Rpc.roc`, `platform/Service.roc` |
+| Internal modules | `Remote` (the `fetch` and RPC `call` programs of `Object` and `Service`, the limit 32 MiB). `SqlRules` (the parameter rule, the integer rules and `constraint_of`, moved from `D1.roc`; D1 calls them). Not in `exposes`. | `platform/Remote.roc`, `platform/SqlRules.roc`, `platform/D1.roc` |
+| Shim | `objectClass(name)`: the SQLite check, `init!` in `blockConcurrencyWhile` with the `Init` timer. `entrypointClass(name)`. The helper `pf.keys`. `Ctx.respond!` hook for the `fetch` of an object (no `waitUntil`) and of an entry point (`waitUntil`). | `js/index.js`, `js/helpers.js` |
+| Headers | `Rpc`, `Service` in `exposes` and imported in both headers. The copies in `bench/platform/` are equal. | `platform/main.roc`, `bench/platform/` |
+| Conformance | `ObjectRoutes.roc` (classes `Counter`, `Store`, `Flaky`, `Slow`, `Ticker`, `KvOnly`), `RpcRoutes.roc` (default `rpc`, entry point `Admin`), `RpcMethods.roc` (the `Rpc` constants), `checks/objects.mjs`, `checks/rpc.mjs`. `worker.js` exports the classes, sets `initMs: 1000`, has the route `/__proto` and two JS methods (`inspect`, `big`). `run.mjs` gives a check `t.entry` and `t.start(opts, entry)` (a second Miniflare). | `conformance/` |
+| Probes | `research/objects-probe/`: object SQL (cursor, errors, integers), KV of an object, alarms (retries, `alarmInfo`), `deleteAll` and the compatibility date, jurisdiction, a KV-backed class, `init` that throws, RPC errors, `locationHint` | `research/objects-probe/out.txt`, `hint.txt` |
+
+Tests (names are the check names of `run.mjs`). Each revert is a real edit, a build, a run and a restore (`ROC=... node conformance/reverts.mjs 8f`).
+
+| Test | Result | Revert | Revert result |
+| --- | --- | --- | --- |
+| `objects load`: a class in Roc with no export stops the load with its name (`KvOnly`) | PASS | No check of a class with no export | FAIL: the worker loaded |
+| `objects load`: an export with no class in Roc stops the load with its name (`Ghost`) | PASS | No check of an export with no class | FAIL: the worker loaded |
+| `objects the manifest`: `alarm` only on a class with `alarm!`, the RPC methods on the prototype (`/__proto`) | PASS | The methods on the class, not on the prototype | FAIL: 37 checks, "Handler does not export a fetch() function." |
+| (same) | | No `default` methods on the prototype | FAIL: 3 checks, `default: constructor,fetch,scheduled` |
+| `objects a class with no alarm!`: `set_alarm!` gives `StorageErr` | PASS | The shim always defines `alarm` | FAIL: 2 checks, `Ok({})` |
+| `objects init! in blockConcurrencyWhile`: two `fetch!` at the same time to a new object both read its table | PASS | `Init` with no `blockConcurrencyWhile` | FAIL: 3 checks, "no such table: items" |
+| `objects init! that gives Err`: `ObjectErr` with `Flaky.init: failed: InitFailed`; the KV key deleted, the next `fetch!` passes | PASS | The shim does not throw on `Err` of `init!` | FAIL: the first `fetch!` gives `ok` |
+| `objects init! past the Init deadline` (`initMs: 1000`): `ObjectErr` "Slow.init: cancelled: deadline" in less than 2.5 s | PASS | No `Init` deadline (`js/tasks.js`) | FAIL: `ok` after the sleep |
+| (same) | | No timer (a sweep only at the next request) | FAIL: took 3025 ms |
+| `objects alarm!`: `Err` while `retry_count` < 2 runs 3 times: `0 false, 1 true, 2 true` | PASS | The shim always gives `retry_count` 0 | FAIL: `0 false, 0 true, 0 true` |
+| `objects a KV-backed class`: its first event names the class and `new_sqlite_classes` | PASS | No check in the constructor | FAIL: `status 500` (the first SQL call) |
+| `rpc` a service binding RPC call to an `rpc` method of the default export gives the reply (also the twin) | PASS | `Handler` does not extend `WorkerEntrypoint` | FAIL: 166 checks (the Worker does not run) |
+| `rpc one Rpc constant calls an object method and a service method` (`ping`) | PASS | (no `default` methods) | FAIL |
+| `rpc Service.fetch!` on a binding with `entrypoint = "Admin"` reaches the `fetch!` of `Admin` (also the twin) | PASS | The entry point sends `Fetch` with no name | FAIL: `404 no route` (the `fetch!` of the Worker) |
+| (same) | | `fetch` is called `fetchx` (`Remote.roc`) | FAIL: 30 checks |
+| `rpc a method of the named entry point Admin` (`purge`) | PASS | | |
+| `rpc an unknown method of a service throws (RpcErr)`; `objects rpc: an unknown method throws` | PASS | | |
+| `objects rpc`: a callee that gives `Err(Nope(3))`: `RpcErr` with the message `Nope(3)` | PASS | A fixed text | FAIL: "the RPC method failed" |
+| `objects rpc: call! and its twin with an Rpc constant on a stub` | PASS | The reply is not read with `pf.pack` | FAIL: 7 checks |
+| (same) | | `getByName` is called `getByNamex` | FAIL: 36 checks |
+| `objects rpc`: a `U64` of 2^60 in an argument and a reply comes back exact | PASS | | |
+| `rpc typed bytes (MC5)`: a `Cbor.Bytes` field reaches a JS callee as a `Uint8Array`, a `List(U8)` field as an `Array` | PASS | `Cbor.Bytes` with the derived `encoder_for` (an edit of the cached `roc-cbor` package) | FAIL: `data: "Array"` |
+| `rpc the RPC limit`: a reply above 32 MiB is `RpcErr`, a small one passes | PASS | (FO2: Workers stops it before `pf.pack`) | not run |
+| `objects respond! in the Fetch of an object`: the response first, the cell after | PASS | `respond!` gives `InvalidState` in an object | FAIL: `not sent: respond! gave Err(InvalidState)` |
+| `objects pass_through! in the Fetch of an object is InvalidState` | PASS | | |
+| `objects sql_run!` of an insert of 2 rows into a table with no index gives `rows_written` 2 | PASS | The module reads `changes` as for D1 | FAIL: 4 checks, `SqlErr` `BadData` "the cursor gave (Int(1), Undefined)" |
+| (same), `objects sql!: rows of the type of the call` | PASS | `exec` is called `execx` | FAIL: 16 checks |
+| `objects SQL`: a primary key `PrimaryKey`, a `UNIQUE` index `Unique`, `NotNull`, `Check`, `ForeignKey`, `Datatype`, a trigger `Trigger` (8d) | PASS (texts in `bench/README.md`) | No constraint map | FAIL: 7 checks, `SqlErr` |
+| `objects SQL: a syntax error is SqlErr` | PASS | | |
+| `objects sql!`: the integer rules of D1 (an `Int` parameter as text, `CAST(v AS TEXT)` into an `I64`, `BadData` with no cast) | PASS | (the D1 reverts, now in `SqlRules.roc`) | |
+| `objects sql_rows!, sql_rows_with!`: columns and `Sql` values; `TooLarge` | PASS | `raw` is called `rawx` | FAIL: 2 checks |
+| `objects sql!` of 2 MiB of rows is `TooLarge`, `sql_with!` with 4 MiB gives the rows | PASS | No `pf.pack` limit | FAIL: `default=Ok rows=22` |
+| `objects cells a1, a2, b1`: `list_with!` with prefix `"a"` gives `["a1", "a2"]` (also `start_after`) | PASS | The prefix is not sent | FAIL: `["a1", "a2", "b1"]` |
+| (same) | | `list` is called `listx` | FAIL |
+| `objects Object.Cell get!, set!, delete!` (an `I64` of -(2^53 + 1) exact) | PASS | `get` is called `getx` | FAIL: 5 checks |
+| (same) | | `put` is called `putx` | FAIL: 4 checks |
+| (same) | | `delete` is called `deletex` | FAIL |
+| `objects get_alarm!` after `set_alarm!(t)` gives `t` (and the `Io` twins) | PASS | `get_alarm` with `call!` (`Io.sync`) | FAIL: 3 checks, `PromiseInCall` |
+| (same), `objects ticker` | PASS | `setAlarm` is called `setAlarmx` | FAIL: 4 checks |
+| (same) | | `deleteAlarm` is called `deleteAlarmx` | FAIL |
+| `objects delete_all!`: the table, the cell and the alarm are gone (and the twin) | PASS | `deleteAll` is called `deleteAllx` | FAIL: 2 checks |
+| `objects delete_all!` with the compatibility date 2025-06-01 | PASS | No `deleteAlarm` in the program | FAIL: `alarm=Ok(<time>)` |
+| `objects id!` of a named stub equals `self.id` in the object | PASS | An id made in Roc from the name | FAIL: `same=False` |
+| `objects jurisdiction(Eu)`: `id!` gives `ObjectErr` in Miniflare | PASS | The jurisdiction is not sent | FAIL: an id |
+| `objects named_with and from_id_with with location_hint, unique!` | PASS | `idFromString` is called `idFromStringx` | FAIL: `same=False` |
+| (same) | | `newUniqueId` is called `newUniqueIdx` | FAIL: trap (the crash of `unique!`) |
+| `objects fetch (Io twin)` | PASS | (`fetchx`, `getByNamex`) | FAIL |
+| `layout-test.mjs`: a data-first module loads, and its first event throws (1b) | PASS | The manifest instance runs a module that is not stack-first | FAIL (`layout-test`) |
+| `end`: no task, ref, context, alarm or live byte | PASS | | |
+
+Edge parts for 11c (local workerd differs from the edge, or the plan says "on the edge"):
+
+| Part | What to run on the edge | Local result |
+| --- | --- | --- |
+| `jurisdiction` | `counters.jurisdiction(Eu).named("x").id!()` differs from `counters.named("x").id!()` (already in 11c). Revert (not sent): equal. | `ObjectErr` "Jurisdiction restrictions are not implemented in workerd." |
+| `location_hint` | `named_with(.., { location_hint: Some(Weur) })`: the object runs in that region (`request.cf.colo` of the object). Revert (not sent): any region. | Local workerd takes any hint, also `bogus` (`research/objects-probe/hint.txt`): no local test sees it |
+| Alarm retries | The backoff (docs: 2 s first, then up to 6 retries) and `alarmInfo` | Retries at about 2.4 s and 6.7 s, `retryCount` 1 and 2 |
+| `delete_all!` | With a compatibility date before 2026-02-24 the alarm is gone | PASS locally (the module calls `deleteAlarm` first) |
+| KV-backed class | The text of the edge for `ctx.storage.sql` in a class of `new_classes`, and does our constructor text reach the caller | PASS locally |
+| RPC limit | The text and the error of a reply above 32 MiB; is the `pf.pack` limit reachable (a reply between the Workers limit and ours) | Workers stops it first: "Serialized RPC arguments or return values are limited to 32MiB, ..." |
+| `respond!` in an object | The work after `respond!` runs with no `waitUntil` (API.md 10.2) | PASS locally |
+| `Init` deadline | The shim deadline (30 s) against the reset of Workers at 30 s: which comes first | PASS locally with `initMs: 1000` |
+| Object SQL texts | The 7 constraint kinds and the trigger: the texts of `bench/README.md`, "Error texts of Durable Objects and RPC" | PASS locally |
+| `blockConcurrencyWhile` with JSPI | Two requests at the same time to a new object, while `init!` waits (a JSPI suspend in the constructor) | PASS locally |
+
+Choices I made (the plan does not say):
+
+| # | Choice |
+| --- | --- |
+| FC1 | The manifest comes from an instance of its own at load (`manifestOf`, `js/runner.js:400`): workerd forbids random values at global scope (C3 of 8b), so the runner instance starts at the first event. The manifest instance makes no crossing and uses the default free mark. Then it is dropped. |
+| FC2 | The `objectClass` and `entrypointClass` lines must come before `export default makeHandler(...)`: `makeHandler` checks the registry of the module at that time. |
+| FC3 | The entry point name of the default export is `"default"`. A class named `default` and the names of handlers (`fetch`, `alarm`, `then`, ...) are a throw at load (`js/index.js:260`). |
+| FC4 | `Failed(text)` of an RPC method is a log line and `throw new Error(text)`. The text of `Rpc.on` is `Str.inspect` of the `Err`, and `bad argument: <error>` for an argument that does not parse. |
+| FC5 | The RPC reply has the limit 32 MiB in `pf.pack` (`Remote.rpc_max`), the Workers limit. Locally Workers stops it first. |
+| FC6 | The `Init` deadline: a timer of the constructor sweeps the task table at `initMs` + 50 ms. The sweep of 3b runs only at a new request, and none comes while `blockConcurrencyWhile` runs. |
+| FC7 | `Object.Cell`: `get!` gives `NotFound`, `BadData(Str)`, `StorageErr(Thrown)`; `set!` and `delete!` give `StorageErr(Thrown)`; `delete!` of a key with no value is `Ok`. The value is CBOR bytes in `storage.kv`. |
+| FC8 | `Object.Self` is opaque (`{ class, id }`), and `Object.Class.run!` takes the id: only `Object` makes a `Self`. |
+| FC9 | `Rpc.name` is public (the method name), because `Object` and `Service` build the call in the internal module `Remote`. |
+| FC10 | `SqlRules` and `Remote` are internal modules (not in `exposes`). |
+| FC11 | The socket events of an object give `Unhandled`, and `Object.class` has no socket fields yet (they come with `WebSocket`). |
+| FC12 | Twins: `fetch`, `call`, `set_alarm`, `get_alarm`, `delete_alarm`, `delete_all`. SQL, cells, `list!` and `id!` do not wait (sync storage of an object), so they have no twin (MC3). |
+| FC13 | `list!` gives the keys only, with the limit `Body.default_max` (`pf.keys`). |
+| FC14 | `sql_run!` runs the cursor to its end (`toArray`), then reads `rowsRead` and `rowsWritten`. |
+| FC15 | `unique!` crashes on a throw of `newUniqueId` (the type has no error). |
+| FC16 | `pass_through!` in the `Fetch` of an object and in `EntrypointFetch` is `InvalidState`. |
+| FC17 | After `respond!` in an object the shim does not call `waitUntil` (API.md 10.2). |
+| FC18 | `Flaky` (the init check) reads the KV flag with a raw program (`Io.await!`): `Kv` is part 2. |
+| FC19 | A module that is not stack-first is not run for the manifest (`js/runner.js`, `manifestOf`): `makeHandler` accepts it at load, as 1b says, and each event throws the layout error. An object class of such a module throws it in its constructor. Test: `layout-test.mjs`. Revert (the manifest instance runs it): `layout-test` FAIL, "manifest: the app trapped: Entry.event: unknown kind Text(\"manifest\")" at load. |
+
+Open points:
+
+| # | Point |
+| --- | --- |
+| FO1 | `location_hint` has no local test (11c). |
+| FO2 | The `pf.pack` limit of an RPC reply cannot fire locally: Workers stops the value first (FC5). Keep it as a second guard, or remove it? |
+| FO3 | The rule "the export lines come before `makeHandler`" (FC2) is not in the design. A missing export line after `makeHandler` is found only for a class of the manifest. |
+| FO4 | The manifest instance costs one more instance (its linear memory) at load, for each isolate, until V8 collects it. |
+| FO5 | The error types of `Object.Cell` (FC7) and the public `Rpc.name` (FC9) are not in the design. |
+| FO6 | An RPC call from JS with no argument (`stub.method()`) puts `undefined` in `Packed`. Not tested: it is likely `bad argument` for each type. Should a method with the argument type `{}` take no argument? |
+
 ### Status of step 8f, part 2: Queue, Kv, Email, Tail (2026-10-16)
 
 Done: the modules `Queue` (producer and consumer), `Kv` (with `Kv.Cell`) and `Email` (the binding and the functions of `Mail`), the entry points `queue`, `email` and `tail` of `makeHandler` with their events (`Entry` decodes them), `Worker.TraceItem` as typed CBOR data, the shim option `tailMaxBytes`, the helpers `pf.readMaybe`, `pf.kvMeta`, `pf.kvList` and `pf.emailMessage`, the conformance routes and checks in Miniflare (local queues, KV, email and a second Miniflare for the Tail Worker), and 29 revert checks. The edge parts stay for 11c (list below). Not in this part: Durable Objects, RPC, Manifest, WebSocket, Tcp (part 1 and later steps). `queue`, `email` and `tail` move from `Other` to their own entry points: this is a major release (API.md 10.1), and `other` refuses these three names now.

@@ -374,6 +374,7 @@ The platform helpers (root `pf`) that this file names. Each one is a loop or a b
 | `respond(outcome)` | The outcome `Respond` as a Workers `Response`, given to the entry now (10.2). An `InvalidStateError` when the entry gave no hook, or on a second call. | `Ctx.respond!` |
 | `passThrough()` | `ctx.passThroughOnException()` in the `fetch` of a Worker, else an `InvalidStateError` | `Ctx.pass_through!` |
 | `r2list(result)` | The result of `bucket.list()` as `{ objects: [{ meta, checksums }], prefixes, truncated, cursor }`, all plain data (built in `PLAN.md` 8c). A list has one object for each key, and a program has no loop (OP4). A class instance for each object would be a ref for each. | `R2.list!` |
+| `keys(entries, maxBytes)` | The keys of an iterator of `[key, value]` entries as a `Js` tree, with the limit of `limit` (built in `PLAN.md` 8f). The values stay in JS. | `Object.Self.list!` (a program has no loop, OP4) |
 | `pin(name, value, maxAgeMs)`, `pinned(name)`, `unpin(name)` | The pin table (RS2). `pinned` gives `undefined` for a name with no entry or an entry past its age (8a; `Js.pinned!` makes it `NotPinned` in 8c). | `Js.pin!`, `pinned!`, `unpin!` (built as `Io.pin!`, `Io.pinned!`, `Io.unpin!`, RS2), `Memo` |
 
 The app is trusted code: it is the developer's own Worker. A program can reach only the roots of OP3, and Workers does not allow `eval` or `new Function`.
@@ -623,7 +624,7 @@ As built in `PLAN.md` 8b (first half). The status there has the files, the tests
 | --- | --- | --- |
 | Header | `requires { event! : Worker.Event => Worker.Outcome }`. `Event` and `Outcome` are in the block of `Worker` (`MODULES.md` 3). | A platform header names the module of a type. |
 | Payload types of phase B | `Queue.Batch`, `Queue.Message`, `Email.Mail`, `Object.Event`, `Object.Socket`, `WebSocket.Message`, `WebSocket.Closed`, `Worker.TraceItem` exist as types only. | The type of `Event` is final in phase A (rules above). |
-| Entry points | `makeHandler` gives a class (a subclass of `WorkerEntrypoint`) with `fetch`, `scheduled`, and a method on the prototype for each name of the option `other`. `Rpc`, `EntrypointFetch`, `Object` and `Manifest` are 8f: the `Worker` wrapper gives `Unhandled` for them. | |
+| Entry points | `makeHandler` gives a class (a subclass of `WorkerEntrypoint`) with `fetch`, `scheduled`, and a method on the prototype for each name of the option `other`. 8f (part 1) adds `Rpc`, `EntrypointFetch`, `Object` and `Manifest`, the exports `objectClass` and `entrypointClass`, and the `default` methods (`MODULES.md` 3, "As built in 8f"). | |
 | `queue`, `email`, `tail` (8f, part 2) | The class has these three methods, and they send the events `Queue`, `Email` and `Tail`. So the option `other` refuses these three names now (a major release, the rules of 10.1: an app that had `other: ["queue"]` must move to `queue!`). `queue` and `email`: each outcome but `Done`, and a trap, are a log line and a throw (the batch is retried, the mail is rejected). `tail`: a log line only. | The rules of 10.1 |
 | First instance | At the first event (or the first read of the static `runner`), not in `makeHandler`. `resumeCheck: "off"` on a production host still throws in `makeHandler`: the shim reads the export list. A module that is not stack-first makes the first event throw: the platform has no fallback (`PLAN.md` 1b). | workerd forbids random values at global scope, and the free mark of an instance is random (`PLAN.md` 12). |
 | Log lines | `<entry>: failed: <message>`, `<entry>: unhandled: ...`, `<entry>: trap: <the text of a Roc crash, or the error>` through the option `log` (default `console.warn`) | `PLAN.md` 8a O2: the host writes the text of a `crash` to its log before the trap. |
@@ -639,6 +640,10 @@ The event and the outcome cross as `Js` trees (5) with these shapes (`platform/E
 | `Email` | `{ kind: "email", from, to, headers: [[name, value], ...], raw, raw_size_bytes, can_be_forwarded }`: `raw` is a stream (a ref) |
 | `Tail` | `{ kind: "tail", items }`: `items` is one `Packed` value with the items of `Worker.TraceItem`. A `Try` field is the value, or no key (MODULES.md 3). |
 | `Other` | `{ kind: "other", name, payload }`: the handler name and its first argument (J1 to J7) |
+| `Rpc` | `{ kind: "rpc", entrypoint, method, arg }`: `arg` is the JS argument of the caller as one `Packed` value (5.2). `entrypoint` is `"default"` for the default export (`PLAN.md` 8f). |
+| `EntrypointFetch` | `{ kind: "entrypointFetch", entrypoint, request }`: `request` as in `Fetch` |
+| `Object` | `{ kind: "object", class, id, event }` with `id` = `ctx.id.toString()` and `event` one of `{ kind: "init" }`, `{ kind: "fetch", request }`, `{ kind: "alarm", retry_count, is_retry }` (0 and false when Workers gives no `alarmInfo`), `{ kind: "rpc", method, arg }` (`arg` as in `Rpc`). The socket events come with `WebSocket`. |
+| `Manifest` | `{ kind: "manifest" }`. The reply: `{ default: [methods], objects: { Name: { handlers, methods } }, entrypoints: { Name: { handlers, methods } } }`. `makeHandler` sends it to an instance of its own, at load (`MODULES.md` 3, "As built in 8f"). |
 | `body` | absent (`Empty`), bytes, text, or a ref (`Stream`). The request body of `fetch` is always a ref (second half of 8b, `PLAN.md` 10a). |
 | `cf` | absent, or an object with each field of `Request.Cf` as `{ Ok: v }` or `{ Err: "Missing" }` (never `null`), and `is_eu_country` as a boolean |
 | Outcome | `{ outcome: "respond", status, headers, body, webSocket? }`, `{ outcome: "reply", value }`, `{ outcome: "done" }`, `{ outcome: "failed", message }`, `{ outcome: "unhandled" }` |
@@ -693,7 +698,7 @@ As built in `PLAN.md` 8b (second half). Measured in local workerd (`research/str
 | The client goes away after the body is complete | `request.signal` does not abort, and the work in `ctx.waitUntil` runs to its end |
 | A timer after the response with no `ctx.waitUntil` | It never fires. With `ctx.waitUntil`, it fires. |
 
-`respond!` works in the `Fetch` of a Worker now. `EntrypointFetch` and the `Fetch` of an object give the hook in 8f.
+`respond!` works in the `Fetch` of a Worker, in the `EntrypointFetch` of a named entry point and in the `Fetch` of an object (built in `PLAN.md` 8f, part 1). In the two new kinds `pass_through!` is `InvalidState`: `passThroughOnException` is for the `fetch` of a Worker only. The `Init` deadline is a timer of the constructor (`MODULES.md` 7, "As built"), because no other event of the object can come while `blockConcurrencyWhile` runs.
 
 ## 11. Tests and the contract
 

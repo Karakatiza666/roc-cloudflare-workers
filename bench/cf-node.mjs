@@ -11,5 +11,5 @@ registerHooks({
   },
 });
 
-export const { makeHandler } = await import('../js/index.js');
-export const { WorkerEntrypoint } = await import('cloudflare:workers');
+export const { makeHandler, objectClass, entrypointClass } = await import('../js/index.js');
+export const { WorkerEntrypoint, DurableObject } = await import('cloudflare:workers');

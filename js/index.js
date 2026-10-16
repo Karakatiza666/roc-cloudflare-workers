@@ -14,11 +14,56 @@
 //   js/budget.js   the memory budget of the isolate
 // `cloudflare:workers` resolves in workerd and in Wrangler. In Node, a test registers a resolve hook to a stand-in class
 // (`bench/cf-node.mjs`, `bench/cf-workers-stub.mjs`).
-import { WorkerEntrypoint } from 'cloudflare:workers';
+import { WorkerEntrypoint, DurableObject } from 'cloudflare:workers';
 import { checkOptions } from './options.js';
-import { makeRunner } from './runner.js';
-import { fetchEvent, scheduledEvent, queueEvent, emailEvent, tailEvent, otherEvent, responseOf } from './events.js';
+import { makeRunner, manifestOf, NOT_STACK_FIRST } from './runner.js';
+import { fetchEvent, scheduledEvent, queueEvent, emailEvent, tailEvent, otherEvent, responseOf, rpcEvent, entrypointFetchEvent, objectEvent, objectInit, objectFetch, objectAlarm, objectRpc, manifestEvent } from './events.js';
 import { isBenchHost } from './host.js';
+import { DEADLINES } from './tasks.js';
+
+// The classes of the entry file (PLAN.md 8f, API.md AQ10): `objectClass` and `entrypointClass` make a class for each
+// name, and `makeHandler` checks the names against the manifest of the app and puts the methods on each prototype.
+// `app`: the last `makeHandler` (one in a Worker).
+const classes = { objects: new Map(), entrypoints: new Map(), app: null };
+const KINDS = { objects: 'objectClass', entrypoints: 'entrypointClass' };
+
+// A Durable Object class of `Object.class(name, ...)` in Roc: `export const Room = objectClass("Room")`. Its methods come
+// from the manifest at `makeHandler`, so the export lines come before `export default makeHandler(...)`.
+export function objectClass(name) {
+  return register('objects', name, () => {
+    const C = class extends DurableObject {
+      // SQLite-backed classes only (MODULES.md 7): a KV-backed class throws at its first event, with the name of the class.
+      // A class with `init!` runs it in `blockConcurrencyWhile` (the event `Init`, API.md 10.1).
+      constructor(ctx, env) {
+        super(ctx, env);
+        if (C.refused) throw new Error(C.refused);
+        if (!C.app) throw new Error(`objectClass("${name}"): no makeHandler bound this class`);
+        try {
+          void ctx.storage.sql.databaseSize;
+        } catch (e) {
+          throw new Error(`Durable Object class ${name}: the platform needs a SQLite-backed class: put "${name}" in new_sqlite_classes (not new_classes) of the migrations in the Wrangler config. Workers: ${e.message}`);
+        }
+        if (C.handlers.has('init')) ctx.blockConcurrencyWhile(() => C.app.objectInit(name, ctx, env));
+      }
+    };
+    return C;
+  });
+}
+
+// A named entry point of `Rpc.entrypoint(name, ...)` in Roc: `export const Admin = entrypointClass("Admin")`.
+export function entrypointClass(name) {
+  return register('entrypoints', name, () => class extends WorkerEntrypoint {});
+}
+
+function register(kind, name, make) {
+  if (typeof name !== 'string' || !/^[A-Za-z_$][\w$]*$/.test(name)) throw new TypeError(`${KINDS[kind]}: the name must be a JS name, got ${JSON.stringify(name)}`);
+  if (classes.objects.has(name) || classes.entrypoints.has(name)) throw new Error(`${KINDS[kind]}("${name}"): a class of this name exists already`);
+  const C = make();
+  Object.defineProperty(C, 'name', { value: name });
+  classes[kind].set(name, C);
+  classes.app?.bind(kind, name, C);
+  return C;
+}
 
 // `module`: the compiled app (a `WebAssembly.Module`). Gives the class of the default export of the Worker: a subclass of
 // `WorkerEntrypoint`, so Workers sends RPC to it (API.md 10.1). Its `fetch` and `scheduled` methods, and one method for
@@ -131,6 +176,137 @@ export function makeHandler(module, opts = {}) {
   }
   // For tests and the bench: counters, the task table, the budget. A read starts the runner.
   Object.defineProperty(Handler, 'runner', { get: runnerOf });
-  // 8f: `objectClass(name)` and `entrypointClass(name)`, the event `Manifest` (AQ10), RPC methods, `queue`, `email`, `tail`.
+
+  // PLAN.md 8f. The manifest of the app (API.md AQ10): the RPC methods of the default export, the Durable Object classes
+  // and the named entry points, each with its handlers and methods. It runs now, at load, so a class in Roc with no
+  // export, or an export with no class in Roc, stops the load with its name (`wrangler deploy` fails).
+  // `undefined`: the module is not stack-first, so it is not run; each event of it throws (PLAN.md 1b).
+  const got = manifestOf(module, manifestEvent());
+  const manifest = checkManifest(got ?? { default: [], objects: {}, entrypoints: {} });
+  const initMs = runnerOpts.initMs ?? DEADLINES.initMs;
+  // A JS method on the prototype, where Workers finds a handler and an RPC method (an own property gives "The RPC
+  // receiver does not implement the method").
+  const method = (C, name, fn) => Object.defineProperty(C.prototype, name, { configurable: true, writable: true, value: fn });
+  // `Reply` gives its value to the caller. `Failed`: a log line and a throw with the text of the error, so the caller
+  // gets `RpcErr` with it (MODULES.md 8). Each other outcome and a trap: a log line and a throw.
+  const reply = (tag, r) => {
+    if (r.trap) throw new Error(`${tag}: ${r.cancelled ? `cancelled: ${r.cancelled}` : `trap ${r.trap}`}`);
+    if (r.outcome.outcome === 'reply') return r.outcome.value;
+    log(`${tag}: ${reason(r.outcome)}`);
+    if (r.outcome.outcome === 'failed') throw new Error(r.outcome.message);
+    throw new Error(`${tag}: ${reason(r.outcome)}`);
+  };
+  // `Done` ends the event. Each other outcome and a trap: a log line and a throw (`Init`: Workers resets the object and
+  // the event that started it fails; `Alarm`: Workers runs the alarm again).
+  const done = (tag, r) => {
+    if (r.trap) throw new Error(`${tag}: ${r.cancelled ? `cancelled: ${r.cancelled}` : `trap ${r.trap}`}`);
+    if (r.outcome.outcome === 'done') return;
+    log(`${tag}: ${reason(r.outcome)}`);
+    throw new Error(`${tag}: ${reason(r.outcome)}`);
+  };
+  // The `fetch` of a named entry point and of a Durable Object: as the `fetch` of the Worker, with the `respond` hook
+  // of `Ctx.respond!` (API.md 10.2) and no `pass_through!`. After `respond!`, an entry point gives the rest of the task
+  // to `ctx.waitUntil`; an object does not need it (`keep` false).
+  const fetchLike = async (tag, kind, ev, request, self, keep) => {
+    const hooks = { kind, ctx: self.ctx, respond: null, response: null, passThrough: false };
+    const early = new Promise((resolve) => (hooks.respond = resolve));
+    const running = run(tag, ev, { kind: 'Fetch', signal: request.signal, env: self.env, ctx: self.ctx, event: request, hooks });
+    const r = await Promise.race([running, early]);
+    if (hooks.response) {
+      const rest = running.then((x) => {
+        if (!x.trap && x.outcome.outcome !== 'respond') log(`${tag}: after respond: ${reason(x.outcome)}`);
+      });
+      if (keep) self.ctx?.waitUntil?.(rest);
+      return hooks.response;
+    }
+    if (r.trap) return new Response(`trap ${r.trap}`, { status: r.status ?? 500 });
+    if (r.outcome.outcome === 'respond') return responseOf(r.outcome);
+    log(`${tag}: ${reason(r.outcome)}`);
+    return new Response(null, { status: 500 });
+  };
+  const hooksOf = (kind, self) => ({ kind, ctx: self.ctx });
+  const app = {
+    // The event `Init` in `blockConcurrencyWhile`. Its deadline (API.md 10.2, shim option `initMs`): a timer sweeps the
+    // task table then, so the cancel names the task before Workers resets the object (30 s).
+    async objectInit(name, ctx, env) {
+      const timer = setTimeout(() => runnerOf().tasks.sweep(), initMs + 50);
+      try {
+        const r = await run(`${name}.init`, objectEvent(name, ctx.id.toString(), objectInit()), { kind: 'Init', env, ctx, event: ctx, hooks: { kind: 'Init', ctx } });
+        done(`${name}.init`, r);
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    bind(kind, name, C) {
+      const entry = manifest[kind][name];
+      if (!entry) throw new Error(`makeHandler: the export ${name} (${KINDS[kind]}) has no class in the app: add ${kind === 'objects' ? 'Object.class' : 'Rpc.entrypoint'}("${name}", ...) to the field ${kind} of Worker`);
+      C.app = app;
+      C.handlers = new Set(entry.handlers);
+      if (kind === 'objects') {
+        if (C.handlers.has('fetch')) method(C, 'fetch', function (request) {
+          return fetchLike(`${name}.fetch`, 'ObjectFetch', objectEvent(name, this.ctx.id.toString(), objectFetch(request)), request, this, false);
+        });
+        if (C.handlers.has('alarm')) method(C, 'alarm', async function (info) {
+          const r = await run(`${name}.alarm`, objectEvent(name, this.ctx.id.toString(), objectAlarm(info)), { kind: 'Alarm', env: this.env, ctx: this.ctx, event: info, hooks: hooksOf('Alarm', this) });
+          done(`${name}.alarm`, r);
+        });
+        for (const m of entry.methods) method(C, m, async function (arg) {
+          const r = await run(`${name}.${m}`, objectEvent(name, this.ctx.id.toString(), objectRpc(m, arg)), { kind: 'Rpc', env: this.env, ctx: this.ctx, event: arg, hooks: hooksOf('Rpc', this) });
+          return reply(`${name}.${m}`, r);
+        });
+      } else {
+        if (C.handlers.has('fetch')) method(C, 'fetch', function (request) {
+          return fetchLike(`${name}.fetch`, 'EntrypointFetch', entrypointFetchEvent(name, request), request, this, true);
+        });
+        for (const m of entry.methods) method(C, m, rpcMethod(name, m));
+      }
+    },
+  };
+  // An RPC method of the default export ("default") or of a named entry point: the event `Rpc`.
+  function rpcMethod(entrypoint, m) {
+    const tag = entrypoint === 'default' ? m : `${entrypoint}.${m}`;
+    return async function (arg) {
+      const r = await run(tag, rpcEvent(entrypoint, m, arg), { kind: 'Rpc', env: this.env, ctx: this.ctx, event: arg, hooks: hooksOf('Rpc', this) });
+      return reply(tag, r);
+    };
+  }
+  for (const m of manifest.default) {
+    if (RESERVED.has(m) || other.includes(m)) throw new Error(`makeHandler: the RPC method ${m} of the default export has the name of a handler`);
+    method(Handler, m, rpcMethod('default', m));
+  }
+  for (const kind of ['objects', 'entrypoints']) {
+    if (got === undefined) {
+      for (const [, C] of classes[kind]) C.refused = NOT_STACK_FIRST;
+      continue;
+    }
+    for (const name of Object.keys(manifest[kind])) {
+      if (!classes[kind].has(name)) throw new Error(`makeHandler: the class ${name} of the app has no export: add \`export const ${name} = ${KINDS[kind]}("${name}")\` to the entry file, before makeHandler`);
+    }
+    for (const [name, C] of classes[kind]) app.bind(kind, name, C);
+  }
+  classes.app = app;
   return Handler;
+}
+
+// Names that an RPC method cannot take: the handlers of the classes (`fetch`, `alarm`, ...) and `constructor`.
+const RESERVED = new Set(['fetch', 'scheduled', 'queue', 'email', 'tail', 'alarm', 'constructor', 'webSocketMessage', 'webSocketClose', 'webSocketError', 'then']);
+
+// The manifest must be `{ default: [names], objects: { Name: { handlers, methods } }, entrypoints: { ... } }`, with JS
+// names, no method twice in a class and no reserved name (a platform bug or an app with such a method name: a throw).
+function checkManifest(m) {
+  const isName = (n) => typeof n === 'string' && /^[A-Za-z_$][\w$]*$/.test(n);
+  const names = (list, what) => {
+    if (!Array.isArray(list) || !list.every(isName) || new Set(list).size !== list.length) throw new Error(`makeHandler: the manifest has bad ${what}: ${JSON.stringify(list)}`);
+    for (const n of list) if (RESERVED.has(n)) throw new Error(`makeHandler: the RPC method ${n} (${what}) has the name of a handler`);
+    return list;
+  };
+  const out = { default: names(m.default ?? [], 'default methods'), objects: {}, entrypoints: {} };
+  for (const kind of ['objects', 'entrypoints']) {
+    for (const [name, c] of Object.entries(m[kind] ?? {})) {
+      if (!isName(name)) throw new Error(`makeHandler: the class name ${JSON.stringify(name)} is not a JS name`);
+      if (name === 'default') throw new Error('makeHandler: a class cannot have the name default');
+      out[kind][name] = { handlers: c.handlers ?? [], methods: names(c.methods ?? [], `methods of ${name}`) };
+    }
+  }
+  return out;
 }

@@ -1,6 +1,7 @@
 // The events of API.md 10.1 as JS values, and the outcome of the app back to Workers. The host decodes the event into
 // a `Js` value, and `platform/Entry.roc` reads the same shapes (its table). PLAN.md 8b: `fetch`, `scheduled` and the
-// `other` kinds. 8f part 2: `queue`, `email` and `tail`. The other entry points (objects, RPC, the manifest) come in 8f part 1.
+// `other` kinds. 8f part 2: `queue`, `email` and `tail`. 8f part 1: RPC, `entrypointFetch`, the events of an object and the
+// manifest.
 import { Packed, pack } from './values.js';
 
 // The fields of `Request.Cf` (MODULES.md 4): Roc name, Workers name, test of a good value.
@@ -152,6 +153,35 @@ export function tailEvent(events, maxBytes = TAIL_MAX, warn = () => {}) {
   });
   if (dropped) warn(`tail: dropped ${dropped} log lines: the batch is larger than ${maxBytes} bytes`);
   return { kind: 'tail', items: new Packed(items) };
+}
+
+// The request of `fetch` as the value of the events `entrypointFetch` and the `fetch` of an object (as in `fetchEvent`).
+const requestOf = (request) => ({ method: request.method, url: request.url, headers: [...request.headers], body: bodyIn(request), cf: cfOf(request.cf) });
+
+// The event `Rpc` (API.md 10.1): a method of the default export (`entrypoint` "default") or of a named entry point. The
+// argument is the JS value of the caller as one `Packed` value (API.md 5.2): Roc parses it into the type of the method.
+export function rpcEvent(entrypoint, method, arg) {
+  return { kind: 'rpc', entrypoint, method, arg: new Packed(arg) };
+}
+
+// The event `EntrypointFetch`: the `fetch` of a named entry point (a service binding with `entrypoint`, MODULES.md 8).
+export function entrypointFetchEvent(entrypoint, request) {
+  return { kind: 'entrypointFetch', entrypoint, request: requestOf(request) };
+}
+
+// The event `Object` of a Durable Object (API.md 10.1): its class, its id (`ctx.id.toString()`), and the event of the
+// object: `init` (the constructor), `fetch`, `alarm` (`alarmInfo` of Workers, 0 and false when it gives none), `rpc`.
+export function objectEvent(cls, id, event) {
+  return { kind: 'object', class: cls, id, event };
+}
+export const objectInit = () => ({ kind: 'init' });
+export const objectFetch = (request) => ({ kind: 'fetch', request: requestOf(request) });
+export const objectAlarm = (info) => ({ kind: 'alarm', retry_count: Number(info?.retryCount ?? 0), is_retry: Boolean(info?.isRetry ?? false) });
+export const objectRpc = (method, arg) => ({ kind: 'rpc', method, arg: new Packed(arg) });
+
+// The event `Manifest` (API.md 10.1, AQ10): once, at load.
+export function manifestEvent() {
+  return { kind: 'manifest' };
 }
 
 // The outcome `Respond` as a Workers `Response`. The body: bytes, text, null, or a stream (a ref).

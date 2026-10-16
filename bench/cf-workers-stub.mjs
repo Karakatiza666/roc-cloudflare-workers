@@ -6,3 +6,10 @@ export class WorkerEntrypoint {
     this.env = env;
   }
 }
+// `DurableObject` takes `(ctx, env)` too (PLAN.md 8f: `objectClass` of `js/index.js`).
+export class DurableObject {
+  constructor(ctx, env) {
+    this.ctx = ctx;
+    this.env = env;
+  }
+}

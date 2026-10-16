@@ -289,6 +289,28 @@ The texts that `conformance/checks/queue.mjs` and `kv.mjs` got (Miniflare 5.2026
 | `Kv.get_with!` with `cache_ttl_ms` 5,000 | `KV GET failed: 400 Invalid cache_ttl of 5. Cache TTL must be at least 30.` | `KvErr` |
 | `Kv.put_with!` with `ttl_ms` 10,000 | `KV PUT failed: 400 Invalid expiration_ttl of 10. Expiration TTL must be at least 60.` | `KvErr` |
 
+## Error texts of Durable Objects and RPC (PLAN.md 8f, part 1, local, 2026-10-16)
+
+The texts that `research/objects-probe/probe.mjs` (`out.txt`) and `conformance/checks/objects.mjs` and `rpc.mjs` got (Miniflare 5.20261012.0-beta, workerd 2026-10-12). Object SQL gives the texts of D1 with no `D1_ERROR: ` at the start. Each SQL error has the JS `name` `Error` and the own properties `stack` and `message`. The edge run is 11c.
+
+| Call | JS `name` and `message` | Tag |
+| --- | --- | --- |
+| `sql_run!`: a primary key | `Error`: `UNIQUE constraint failed: t.id: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)` | `Constraint({ kind: PrimaryKey, message: "UNIQUE constraint failed: t.id" })` |
+| `sql_run!`: a `UNIQUE` index, `NOT NULL`, `CHECK`, a foreign key, a `STRICT` column | As D1 (section above) with no `D1_ERROR: ` | `Unique`, `NotNull`, `Check`, `ForeignKey` (foreign keys are on), `Datatype` |
+| `sql!`: a syntax error | `Error`: `near "SELEC": syntax error at offset 0: SQLITE_ERROR` | `SqlErr` |
+| A `BigInt` parameter | `TypeError`: `Cannot convert a BigInt value to a number` | (the parameter rule of D1 sends text) |
+| `sql!` of rows above the limit | `TooLarge`: `CBOR: output is larger than <n> bytes` | `TooLarge` |
+| `set_alarm!` in a class with no `alarm!` (no `alarm` method) | `TypeError`: `Your Durable Object class must have an alarm() handler in order to call setAlarm()` | `StorageErr` |
+| `jurisdiction(Eu)`, then `id!` | `Error`: `Jurisdiction restrictions are not implemented in workerd.` | `ObjectErr` |
+| A KV-backed class (`useSQLite: false`): `ctx.storage.sql.databaseSize` | `Error`: `SQL is not enabled for this Durable Object class. To enable it, change \`new_classes\` to \`new_sqlite_classes\` within the 'migrations' field in your wrangler.jsonc or wrangler.toml file. If using workerd directly,set \`enableSql = true\` in your workerd config for the class. Note that this change cannot be made after the class is already deployed to production.` (no class name) | The shim throws `Durable Object class KvOnly: the platform needs a SQLite-backed class: ...` with this text after it |
+| An `init!` that gives `Err` | The shim throws `<class>.init: failed: <error>`. The caller gets it as the error of its `fetch` (the next request makes a new object). | `ObjectErr` |
+| An `init!` past the `Init` deadline | `<class>.init: cancelled: deadline` | `ObjectErr` |
+| An RPC method that the callee does not have | `TypeError`: `The RPC receiver does not implement the method "nothere".` | `RpcErr` |
+| An RPC callee that gives `Err(Nope(3))` | `Error`: `Nope(3)` | `RpcErr` |
+| An RPC reply above 32 MiB (a text of 33,554,432 bytes) | Workers: `Serialized RPC arguments or return values are limited to 32MiB, but the size of this value was: 33554440 bytes.` (before `pf.pack` of the caller) | `RpcErr` |
+
+Facts of local workerd for the same run: `rowsWritten` of a cursor of an insert of 2 rows is 2 before and after the iteration, and `rowsRead` is 0. An INTEGER of 2^53 + 1 reads back as 2^53 (rounded), and `CAST(x AS TEXT)` gives the exact value. `storage.kv.list()` gives an iterator of `[key, value]`. `kv.get` of a missing key gives `undefined`. The alarm retries come at about 0 s, 2.4 s and 6.7 s, with `alarmInfo` `{ retryCount, isRetry }`. `deleteAll` with the compatibility date 2025-06-01 keeps the alarm, and with 2026-10-01 it removes it. `getByName(name, { locationHint: "bogus" })` gives no error locally (`research/objects-probe/hint.txt`).
+
 ## Edge (Q13, 2026-10-14, short test, not a full bench)
 
 `bench/deploy.sh` deploys `talon-bench-echo` and `talon-bench-{a,b,j}` (the setup of `config-*.capnp`). `bench/deploy.sh delete` removes them. `EDGE=<account>.workers.dev node bench/edge.mjs [n]` runs the load and joins the server CPU and wall time from `wrangler tail`. Tail drops events, so its numbers are a sample. Account: free plan (10 ms CPU per request), colo TBS.

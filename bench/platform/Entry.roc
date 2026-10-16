@@ -9,6 +9,10 @@
 ## | Email | `{ kind: "email", from, to, headers: [[name, value], ...], raw, raw_size_bytes, can_be_forwarded }`, `raw` a stream (a ref) |
 ## | Tail | `{ kind: "tail", items }`, `items` as `Packed`: the items of `Worker.TraceItem` in the tag form of `Try` |
 ## | Other | `{ kind: "other", name, payload }` |
+## | Rpc | `{ kind: "rpc", entrypoint, method, arg }`: `entrypoint` is "default" for the default export, `arg` is `Packed` |
+## | EntrypointFetch | `{ kind: "entrypointFetch", entrypoint, request }` |
+## | Object | `{ kind: "object", class, id, event }`, `event`: `{ kind: "init" }`, `{ kind: "fetch", request }`, `{ kind: "alarm", retry_count, is_retry }`, `{ kind: "rpc", method, arg }` |
+## | Manifest | `{ kind: "manifest" }` |
 ## | body | `undefined` (Empty), bytes, text, or a ref (a stream) |
 ## | cf | `undefined`, or an object with each field of `Request.Cf` as `{ Ok: v }` or `{ Err: "Missing" }` |
 ## | Outcome | `{ outcome: "respond", status, headers, body, webSocket? }`, `{ outcome: "reply", value }`, `{ outcome: "done" }`, `{ outcome: "failed", message }`, `{ outcome: "unhandled" }` |
@@ -19,6 +23,7 @@ import Response
 import Worker
 import Queue
 import Email
+import Object
 import cbor.Cbor
 import http.Header
 import http.Method
@@ -36,6 +41,10 @@ Entry :: [].{
 			Text("email") => Email(mail(fields))
 			Text("tail") => Tail(trace_items(fields))
 			Text("other") => Other({ kind: text(get(fields, "name"), "name"), payload: get(fields, "payload") })
+			Text("rpc") => Rpc({ entrypoint: text(get(fields, "entrypoint"), "entrypoint"), method: text(get(fields, "method"), "method"), arg: packed(get(fields, "arg"), "arg") })
+			Text("entrypointFetch") => EntrypointFetch({ entrypoint: text(get(fields, "entrypoint"), "entrypoint"), request: request(get(fields, "request")) })
+			Text("object") => Object({ class: text(get(fields, "class"), "class"), id: text(get(fields, "id"), "id"), event: object_event(get(fields, "event")) })
+			Text("manifest") => Manifest
 			other => crash "Entry.event: unknown kind ${Str.inspect(other)}"
 		}
 	}
@@ -59,6 +68,26 @@ Entry :: [].{
 		Failed(msg) => Obj([("outcome", Text("failed")), ("message", Text(msg))])
 		Unhandled => Obj([("outcome", Text("unhandled"))])
 	}
+}
+
+## The event of an object (API.md 10.1). The socket events come with `WebSocket`.
+object_event : Js -> Object.Event
+object_event = |js| {
+	f = obj(js, "object event")
+	match get(f, "kind") {
+		Text("init") => Init
+		Text("fetch") => Fetch(request(get(f, "request")))
+		Text("alarm") => Alarm({ retry_count: u32(get(f, "retry_count"), "retry_count"), is_retry: get(f, "is_retry") == Bool(Bool.True) })
+		Text("rpc") => Rpc({ method: text(get(f, "method"), "method"), arg: packed(get(f, "arg"), "arg") })
+		other => crash "Entry: unknown object event ${Str.inspect(other)}"
+	}
+}
+
+## Typed data as one `Packed` value (API.md 5.2): its CBOR bytes.
+packed : Js, Str -> List(U8)
+packed = |js, what| match js {
+	Packed(bytes) => bytes
+	other => crash "Entry: ${what} is ${Str.inspect(other)}"
 }
 
 request : Js -> Request

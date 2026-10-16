@@ -35,6 +35,8 @@ import WorkflowsRoutes
 import AssetsRoutes
 import VersionRoutes
 import SecretsStoreRoutes
+import ObjectRoutes
+import RpcRoutes
 
 fetch! : Request => Try(Response, _)
 fetch! = |req| {
@@ -63,6 +65,8 @@ fetch! = |req| {
 		["assets", .. as rest] => AssetsRoutes.route!(req, rest)
 		["version", .. as rest] => VersionRoutes.route!(req, rest)
 		["secretsstore", .. as rest] => SecretsStoreRoutes.route!(req, rest)
+		["objects", .. as rest] => ObjectRoutes.route!(req, rest)
+		["rpc", .. as rest] => RpcRoutes.route!(req, rest)
 		_ => Response.from_text(404, "no route")
 	}
 	Ok(res)
@@ -74,6 +78,6 @@ email! = |mail| EmailRoutes.handle!(mail)
 
 tail! = |items| TailRoutes.handle!(items)
 
-worker = Worker.{ fetch!, queue!, email!, tail! }
+worker = Worker.{ fetch!, queue!, email!, tail!, rpc: RpcRoutes.rpc, entrypoints: RpcRoutes.entrypoints, objects: ObjectRoutes.classes }
 
 event! = |e| worker.event!(e)

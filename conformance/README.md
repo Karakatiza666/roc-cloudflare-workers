@@ -42,6 +42,8 @@ What a check gets (`t`):
 | `t.server` | The URL of the local server: `/hello`, `/ten`, `/slow` (2 s), `/echo` (method, header `x-test`, body), `/status/<n>` |
 | `t.logs` | The structured log lines of workerd (`{ level, message }`) since the start |
 | `t.mf` | The Miniflare instance (`getD1Database`, `getR2Bucket`, ... to set up or read data) |
+| `t.entry` | The text of `worker.js` (8f: a check edits it to test the load) |
+| `t.start(opts, entry)` | A second Miniflare with the same modules, only the options `opts` (no options of the check files), and `entry` (default `t.entry`) as the entry file. The check calls `ready` and `dispose` (8f: an old compatibility date, a load that must fail). |
 | `t.modules`, `t.startMiniflare(options)` | For a check that needs more workers (the Tail Worker, 8f): the module list of the app worker, and a new Miniflare with the same date, flags and `cf`. Each worker of a `workers` list needs its own `modulesRoot`, `compatibilityDate` and flags (without them the app worker fails at its first event: no `FinalizationRegistry`). |
 
 A check can call the `queue` handler of the worker directly (`(await t.mf.getWorker()).queue(name, messages)`): the answer has `explicitAcks` (ids), `retryMessages` (`{ msgId, delaySeconds }`), `ackAll`, `retryBatch` and `outcome`. `/cdn-cgi/local/email` and `/cdn-cgi/local/scheduled` work (`unsafeTriggerHandlers` in `run.mjs`).

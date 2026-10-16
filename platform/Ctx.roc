@@ -8,8 +8,9 @@ import Entry
 Ctx :: [].{
 
 	## Give the response to Workers now. The task goes on, and the return value of `event!` is then ignored.
-	## Only in the `Fetch` of a Worker (phase B: also `EntrypointFetch` and the `Fetch` of an object). Elsewhere,
-	## and on a second call, `InvalidState`. Read the request body before: workerd ends it with the response.
+	## Only in the `Fetch` of a Worker, the `EntrypointFetch` of a named entry point and the `Fetch` of a Durable Object
+	## (API.md 10.2). Elsewhere, and on a second call, `InvalidState`. Read the request body before: workerd ends it with
+	## the response.
 	respond! : Response => Try({}, [InvalidState])
 	respond! = |res| match Io.call!([Call(Root("pf"), "respond", [Lit(Entry.outcome(Respond(res)))])]) {
 		Ok(_) => Ok({})

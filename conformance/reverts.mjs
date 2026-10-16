@@ -1,5 +1,5 @@
 // node conformance/reverts.mjs [name-filter]   (env: ROC; MINIFLARE as run.mjs)
-// Revert checks of PLAN.md 8c (wave 1, WebCrypto, R2 and Cache, D1, Sql and Memo) and 8d. Each revert is a real edit of a source file, a build of the conformance app
+// Revert checks of PLAN.md 8c (wave 1, WebCrypto, R2 and Cache, D1, Sql and Memo), 8d, and 8f (part 1: Objects, RPC, Manifest; part 2: Queue, Kv, Email, Tail; part 4: other bindings). Each revert is a real edit of a source file, a build of the conformance app
 // into .cache/conformance-reverts/ when a .roc file changed, a run of the test that must catch it, and a restore of the
 // file. A change that finds no text to replace is an error (the code moved: update this list).
 // The conformance app is on the bench platform, so a Roc edit is in bench/platform/ (the copy of platform/). The MC10
@@ -14,12 +14,16 @@ if (!ROC) throw new Error('set ROC');
 const out = `${root}.cache/conformance-reverts`;
 const env = { ...process.env, ROC_CACHE_DIR: `${root}.cache/roc`, XDG_CACHE_HOME: `${root}.cache` };
 const BP = 'bench/platform/';
+const IX = 'js/index.js';
+// The roc-cbor 0.1.0 package in the cache of the build (XDG_CACHE_HOME=.cache): a revert of `Cbor.Bytes` edits it.
+const CBOR = '.cache/roc/packages/9QL2dCyq7bcmvAEZfDFwi8kBvWLCZpEMS4WQYnZisezw/Cbor.roc';
 // The tests. `conformance`: run.mjs, which prints `FAIL <name>`; the others: a command whose exit code is the result.
 const TESTS = {
   conformance: () => [process.execPath, ['conformance/run.mjs', `${out}/conformance.wasm`]],
   'roc test': () => [ROC, ['test', 'platform/main.roc']],
   'must-not-compile': () => ['bash', ['conformance/must-not-compile.sh']],
   'handler-test': () => [process.execPath, ['bench/handler-test.mjs', 'bench/out/app.wasm', 'bench/out/app_prod.wasm']],
+  'layout-test': () => [process.execPath, ['bench/layout-test.mjs', 'bench/out/app.wasm']],
 };
 // name, the test, the checks that must fail (conformance only), edits: [file, from, to].
 const R = (name, test, checks, ...edits) => ({ name, test, checks, edits });
@@ -123,12 +127,12 @@ const reverts = [
   R('D1.exec: exec is called "execx"', 'conformance', ['d1 exec!, exec (Io twin)'], [BP + 'D1.roc', 'Call(Slot(0), "exec", [', 'Call(Slot(0), "execx", [']),
   R('D1.with_session!: withSession is called "withSessionx"', 'conformance', ['d1 with_session!: bookmark! before and after a query, and After(bookmark)'], [BP + 'D1.roc', '"withSession"', '"withSessionx"']),
   // The tests of PLAN.md 8c.
-  R('D1: an Int parameter is sent as a BigInt', 'conformance', ['d1 an Int parameter outside ±(2^53 - 1) stores the exact value'], [BP + 'D1.roc', 'Int(i) => if i > max_safe or i < -max_safe Text(i.to_str()) else Int(i)', 'Int(i) => Int(i)']),
-  R('D1: an Int parameter goes as text only above 2^53', 'conformance', ['d1 an Int parameter outside ±(2^53 - 1) stores the exact value'], [BP + 'D1.roc', 'if i > max_safe or i < -max_safe Text(', 'if i > max_safe Text(']),
+  R('D1: an Int parameter is sent as a BigInt', 'conformance', ['d1 an Int parameter outside ±(2^53 - 1) stores the exact value'], [BP + 'SqlRules.roc', 'Int(i) => if i > max_safe or i < -max_safe Text(i.to_str()) else Int(i)', 'Int(i) => Int(i)']),
+  R('D1: an Int parameter goes as text only above 2^53', 'conformance', ['d1 an Int parameter outside ±(2^53 - 1) stores the exact value'], [BP + 'SqlRules.roc', 'if i > max_safe or i < -max_safe Text(', 'if i > max_safe Text(']),
   R('D1: typed rows parse with no int_from_text (Cbor.parse)', 'conformance', ['d1 all! of CAST(id AS TEXT) into { id : I64 } gives the exact ids', 'd1 D1.Result.first of a batch! with no cast: BadData with the column'],
-    [BP + 'D1.roc', 'Cbor.parse_with(bytes, { fields: Snake, int_from_text: Bool.True })', 'Cbor.parse(bytes)']),
+    [BP + 'SqlRules.roc', 'Cbor.parse_with(bytes, { fields: Snake, int_from_text: Bool.True })', 'Cbor.parse(bytes)']),
   R('D1: BadData is Str.inspect of the parse error (no column)', 'conformance', ['d1 all! with no cast: BadData with the column, for a positive and a negative id', 'd1 D1.Result.first of a batch! with no cast: BadData with the column', "d1 the text '01' and '9223372036854775808' into an I64 field give BadData", 'd1 a missing column gives BadData("column id: missing")'],
-    [BP + 'D1.roc', 'Err(InvalidCbor(pos)) => Err(BadData(bad_data(bytes, pos)))\n\tErr(other) => Err(BadData(missing(Str.inspect(other))))', 'Err(InvalidCbor(pos)) => Err(BadData(Str.inspect(InvalidCbor(pos))))\n\tErr(other) => Err(BadData(Str.inspect(other)))']),
+    [BP + 'SqlRules.roc', 'Err(InvalidCbor(pos)) => Err(BadData(bad_data(bytes, pos)))\n\t\tErr(other) => Err(BadData(missing(Str.inspect(other))))', 'Err(InvalidCbor(pos)) => Err(BadData(Str.inspect(InvalidCbor(pos))))\n\t\tErr(other) => Err(BadData(Str.inspect(other)))']),
   R('D1.all: no Get "results" (API.md 6.2)', 'conformance', ['d1 all!'], [BP + 'D1.roc', 'Get(Slot(s + 1), "results"), Call(Root("pf"), "pack", [Slot(s + 2), Lit(Int(limit(max)))])', 'Call(Root("pf"), "pack", [Slot(s + 1), Lit(Int(limit(max)))])']),
   R('D1.all: no limit in pf.pack', 'conformance', ['d1 all! of rows above 1 MiB is TooLarge, all_with! with max_bytes of 2 MiB gives the rows'], [BP + 'D1.roc', '"pack", [Slot(s + 2), Lit(Int(limit(max)))]', '"pack", [Slot(s + 2)]']),
   R('D1.Session.bookmark!: getBookmark of null read as text', 'conformance', ['d1 with_session!: bookmark! before and after a query, and After(bookmark)'], [BP + 'D1.roc', 'Ok(Null) => Err(NotFound)', 'Ok(Null) => Ok("")']),
@@ -138,15 +142,15 @@ const reverts = [
     [BP + 'D1.roc', 'batch! = |db, stmts| Io.run!(batch(db, stmts))', 'batch! = |db, stmts| {\n\t\t_ = Io.call!([Get(Root("env"), db.name)])\n\t\tIo.run!(batch(db, stmts))\n\t}']),
   // PLAN.md 8d, D1.
   R('D1: the old map (constraint failed in the message)', 'conformance', ["d1 8d: a trigger RAISE(ABORT, 'label-conflict') in a batch! gives Trigger, and the batch writes nothing"],
-    [BP + 'D1.roc', 'thrown = |t| match constraint_of(t.message) {', 'thrown = |t| match (if t.message.contains("constraint failed") constraint_of(t.message) else Err(NotConstraint)) {']),
+    [BP + 'D1.roc', 'thrown = |t| match SqlRules.constraint_of(t.message) {', 'thrown = |t| match (if t.message.contains("constraint failed") SqlRules.constraint_of(t.message) else Err(NotConstraint)) {']),
   R('D1: the kind from the first words of the text', 'conformance', ['d1 8d: a primary key gives Constraint PrimaryKey'],
-    [BP + 'D1.roc', 'Ok({ kind: kind_of(after.drop_suffix(")")), message: before })', 'Ok({ kind: if before.starts_with("UNIQUE") Unique else kind_of(after.drop_suffix(")")), message: before })']),
+    [BP + 'SqlRules.roc', 'Ok({ kind: kind_of(after.drop_suffix(")")), message: before })', 'Ok({ kind: if before.starts_with("UNIQUE") Unique else kind_of(after.drop_suffix(")")), message: before })']),
   R('D1: message keeps the code at the end', 'conformance', ["d1 8d: a trigger RAISE(ABORT, 'label-conflict') in a batch! gives Trigger, and the batch writes nothing"],
-    [BP + 'D1.roc', 'Ok({ kind: kind_of(after.drop_suffix(")")), message: before })', 'Ok({ kind: kind_of(after.drop_suffix(")")), message: text })']),
+    [BP + 'SqlRules.roc', 'Ok({ kind: kind_of(after.drop_suffix(")")), message: before })', 'Ok({ kind: kind_of(after.drop_suffix(")")), message: text })']),
   R('D1: no map (D1Err for each throw)', 'conformance', ['d1 8d: a primary key gives Constraint PrimaryKey', 'd1 8d: a UNIQUE column gives Constraint Unique', 'd1 8d: NOT NULL gives Constraint NotNull', 'd1 8d: CHECK gives Constraint Check', 'd1 8d: a foreign key gives Constraint ForeignKey', 'd1 8d: a STRICT column gives Constraint Datatype', "d1 8d: a trigger RAISE(ABORT, 'UNIQUE constraint failed: x') gives Constraint Trigger"],
-    [BP + 'D1.roc', 'thrown = |t| match constraint_of(t.message) {', 'thrown = |t| match constraint_of("") {']),
-  R('D1 (roc test): the kind from the first words of the text', 'roc test', [], ['platform/D1.roc', 'Ok({ kind: kind_of(after.drop_suffix(")")), message: before })', 'Ok({ kind: if before.starts_with("UNIQUE") Unique else kind_of(after.drop_suffix(")")), message: before })']),
-  R('D1 (roc test): an Int parameter goes as text only above 2^53', 'roc test', [], ['platform/D1.roc', 'if i > max_safe or i < -max_safe Text(', 'if i > max_safe Text(']),
+    [BP + 'D1.roc', 'thrown = |t| match SqlRules.constraint_of(t.message) {', 'thrown = |t| match SqlRules.constraint_of("") {']),
+  R('D1 (roc test): the kind from the first words of the text', 'roc test', [], ['platform/SqlRules.roc', 'Ok({ kind: kind_of(after.drop_suffix(")")), message: before })', 'Ok({ kind: if before.starts_with("UNIQUE") Unique else kind_of(after.drop_suffix(")")), message: before })']),
+  R('D1 (roc test): an Int parameter goes as text only above 2^53', 'roc test', [], ['platform/SqlRules.roc', 'if i > max_safe or i < -max_safe Text(', 'if i > max_safe Text(']),
   // MC11 in the shim: pf.limit (rows!) and the budget of pf.packEach (batch!).
   R('pf.limit: no limit', 'conformance', ['d1 all! of rows above 1 MiB is TooLarge, all_with! with max_bytes of 2 MiB gives the rows'], ['js/values.js', 'w.limit = Math.min(saved, w.n + v.maxBytes);', 'w.limit = saved;']),
   R('pf.packEach: a limit for each item, not for all', 'conformance', ['d1 all! of rows above 1 MiB is TooLarge, all_with! with max_bytes of 2 MiB gives the rows'], ['js/helpers.js', 'new Packed(item?.[key], Infinity, budget)', 'new Packed(item?.[key], maxBytes ?? Infinity)']),
@@ -288,6 +292,73 @@ const reverts = [
   R("Ai.stream: a throw is a crash", "conformance", ["ai stream!: a throw is AiErr"], [BP + "Ai.roc", "Ok(other) => crash \"Ai.stream: run gave ${Str.inspect(other)}\"\n\t\t\tErr(t) => Err(AiErr(t))", "Ok(other) => crash \"Ai.stream: run gave ${Str.inspect(other)}\"\n\t\t\tErr(_) => crash \"a throw\""]),
   R("Assets.fetch: a throw is a crash", "conformance", ["assets fetch!: a binding that is not in the config, and a url with no host, are AssetsErr"], [BP + "Assets.roc", "Err(t) => Err(AssetsErr(t))", "Err(_) => crash \"a throw\""]),
   R("Vectorize.query: a throw is TooLarge", "conformance", ["vectorize query!: a binding that is not in the config is VectorizeErr"], [BP + "Vectorize.roc", "Ok(js) => matches_of(read, js).map_err(|why| BadData(why))\n\t\t\tErr(t) => Err(read_error(t))", "Ok(js) => matches_of(read, js).map_err(|why| BadData(why))\n\t\t\tErr(_) => Err(TooLarge)"]),
+  // PLAN.md 8f, part 1: Objects, RPC, Manifest. The shim (js/index.js, js/events.js, js/tasks.js) and the Roc modules.
+  R('8f manifest: no check of a class in Roc with no export', 'conformance', ['objects load: a class in Roc with no export stops the load with its name'],
+    [IX, 'if (!classes[kind].has(name)) throw new Error(', 'if (false) throw new Error(']),
+  R('8f manifest: no check of an export with no class in Roc', 'conformance', ['objects load: an export with no class in Roc stops the load with its name'],
+    [IX, '      if (!entry) throw new Error(', '      if (!entry) return;\n      if (false) throw new Error(']),
+  R('8f manifest: the methods are not on the prototype (on the class)', 'conformance', ['objects the manifest: alarm only on a class with alarm!, the RPC methods on the prototype', 'objects rpc: call! and its twin with an Rpc constant on a stub', 'rpc a service binding RPC call to an rpc method of the default export gives the reply'],
+    [IX, 'Object.defineProperty(C.prototype, name, { configurable: true', 'Object.defineProperty(C, name, { configurable: true']),
+  R('8f manifest: no default RPC methods on the prototype', 'conformance', ['rpc a service binding RPC call to an rpc method of the default export gives the reply', 'rpc one Rpc constant calls an object method and a service method'],
+    [IX, '  for (const m of manifest.default) {', '  for (const m of []) {']),
+  R('8f: the shim always defines alarm', 'conformance', ['objects a class with no alarm!: set_alarm! gives StorageErr', 'objects the manifest: alarm only on a class with alarm!, the RPC methods on the prototype'],
+    [IX, "if (C.handlers.has('alarm')) method(C, 'alarm'", "if (true) method(C, 'alarm'"]),
+  R('8f: Init runs with no blockConcurrencyWhile', 'conformance', ['objects init! in blockConcurrencyWhile: two fetch! at the same time to a new object both read its table'],
+    [IX, 'ctx.blockConcurrencyWhile(() => C.app.objectInit(name, ctx, env));', 'C.app.objectInit(name, ctx, env).catch(() => {});']),
+  R('8f: the shim does not throw on Err of init!', 'conformance', ['objects init! that gives Err: ObjectErr, and the next fetch! runs init! again'],
+    [IX, "        done(`${name}.init`, r);", "        if (r.trap) done(`${name}.init`, r);"]),
+  R('8f: no Init deadline (js/tasks.js)', 'conformance', ['objects init! past the Init deadline is cancelled: ObjectErr with the name of the task'],
+    ['js/tasks.js', "  if (t.kind === 'Init') return t.startedAt + d.initMs;\n", '']),
+  R('8f: no timer for the Init deadline (a sweep only at the next request)', 'conformance', ['objects init! past the Init deadline is cancelled: ObjectErr with the name of the task'],
+    [IX, 'const timer = setTimeout(() => runnerOf().tasks.sweep(), initMs + 50);', 'const timer = 0;']),
+  R('8f: the shim always gives retry_count 0', 'conformance', ['objects alarm!: Err while retry_count < 2 runs 3 times, with retry_count and is_retry'],
+    ['js/events.js', 'retry_count: Number(info?.retryCount ?? 0)', 'retry_count: 0']),
+  R('8f: no check of a SQLite-backed class in the constructor', 'conformance', ['objects a KV-backed class: its first event names the class and new_sqlite_classes'],
+    [IX, 'void ctx.storage.sql.databaseSize;', 'void 0;']),
+  R('8f: makeHandler gives a class that does not extend WorkerEntrypoint (RPC to the default export)', 'conformance', ['rpc a service binding RPC call to an rpc method of the default export gives the reply'],
+    [IX, 'class Handler extends WorkerEntrypoint {', 'class Handler {']),
+  R('8f: the fetch of a named entry point sends Fetch with no name', 'conformance', ['rpc Service.fetch! on a binding with entrypoint Admin reaches the fetch! of Admin'],
+    [IX, "'EntrypointFetch', entrypointFetchEvent(name, request), request", "'EntrypointFetch', { kind: 'fetch', request: entrypointFetchEvent(name, request).request }, request"]),
+  R('8f: an Err of an RPC callee is a fixed text', 'conformance', ['objects rpc: a callee that gives Err(Nope(3)): RpcErr with the message Nope(3)'],
+    [IX, "if (r.outcome.outcome === 'failed') throw new Error(r.outcome.message);", "if (r.outcome.outcome === 'failed') throw new Error('the RPC method failed');"]),
+  R('8f: respond! gives InvalidState in an object', 'conformance', ['objects respond! in the Fetch of an object: the response first, the cell after'],
+    [IX, 'const early = new Promise((resolve) => (hooks.respond = resolve));\n    const running = run(tag,', "const early = new Promise((resolve) => (hooks.respond = kind === 'ObjectFetch' ? null : resolve));\n    const running = run(tag,"]),
+  R('8f Object.get_alarm: call! in place of await!', 'conformance', ['objects get_alarm! after set_alarm!(t) gives t (and the Io twins)'],
+    [BP + 'Object.roc', 'get_alarm = |_self| Io.new(', 'get_alarm = |_self| Io.sync(']),
+  R('8f Object.delete_all: no deleteAlarm in the program', 'conformance', ['objects delete_all! with a compatibility date before 2026-02-24'],
+    [BP + 'Object.roc', 'Call(Slot(0), "deleteAlarm", []), Call(Slot(0), "deleteAll", [])', 'Call(Slot(0), "deleteAll", [])']),
+  R('8f Object.list_with: the prefix is not sent', 'conformance', ['objects cells a1, a2, b1: list_with! with prefix "a" gives ["a1", "a2"]'],
+    [BP + 'Object.roc', '\t\t\t\t|> text_opt("prefix", opts.?prefix)\n', '']),
+  R('8f Object.sql_run: the module reads changes as for D1', 'conformance', ['objects sql_run! of an insert of 2 rows into a table with no index gives rows_written 2'],
+    [BP + 'Object.roc', '(field(fields, "rowsRead"), field(fields, "rowsWritten"))', '(field(fields, "rowsRead"), field(fields, "changes"))']),
+  R('8f Object.sql: no pf.pack limit', 'conformance', ['objects sql! of 2 MiB of rows is TooLarge, sql_with! with max_bytes of 4 MiB gives the rows'],
+    [BP + 'Object.roc', 'Call(Root("pf"), "pack", [Slot(3), Lit(Int(limit(max)))])', 'Call(Root("pf"), "pack", [Slot(3)])']),
+  R('8f Object SQL: no constraint map (SqlErr)', 'conformance', ['objects SQL: a primary key gives Constraint PrimaryKey', 'objects SQL: an insert that breaks a UNIQUE index gives Constraint Unique', 'objects SQL: NOT NULL gives Constraint NotNull', 'objects SQL: CHECK gives Constraint Check', 'objects SQL: a foreign key gives Constraint ForeignKey', 'objects SQL: a STRICT column gives Constraint Datatype', "objects SQL: a trigger RAISE(ABORT, 'label-conflict') gives Constraint Trigger"],
+    [BP + 'Object.roc', 'match SqlRules.constraint_of(t.message) {', 'match SqlRules.constraint_of("") {']),
+  R('8f Object.id!: an id made in Roc from the name', 'conformance', ['objects id! of a named stub equals self.id in the object'],
+    [BP + 'Object.roc', 'Ok(Text(id)) => Ok(id)\n\t\t\t\tOk(other) => crash "Object.id!: idFromName', 'Ok(Text(_)) => Ok(name)\n\t\t\t\tOk(other) => crash "Object.id!: idFromName']),
+  R('8f Object: the jurisdiction is not sent', 'conformance', ['objects jurisdiction(Eu): id! gives ObjectErr in Miniflare'],
+    [BP + 'Object.roc', 'namespace_ops = |obj|\n\tif obj.jurisdiction == "" {', 'namespace_ops = |obj|\n\tif Bool.True {']),
+  // A wrong JS method name in one function (as in 8c): its route fails.
+  R('8f Object.sql: exec is called "execx"', 'conformance', ['objects sql!: rows of the type of the call', 'objects sql_run! of an insert of 2 rows into a table with no index gives rows_written 2'], [BP + 'Object.roc', 'Call(Slot(1), "exec", [', 'Call(Slot(1), "execx", [']),
+  R('8f Object.sql_rows: raw is called "rawx"', 'conformance', ['objects sql_rows!, sql_rows_with!: columns and Sql values'], [BP + 'Object.roc', 'Call(Slot(2), "raw", [])', 'Call(Slot(2), "rawx", [])']),
+  R('8f Object.set_alarm: setAlarm is called "setAlarmx"', 'conformance', ['objects get_alarm! after set_alarm!(t) gives t (and the Io twins)', 'objects ticker: set_alarm! for the retry check'], [BP + 'Object.roc', '"setAlarm"', '"setAlarmx"']),
+  R('8f Object.delete_alarm: deleteAlarm is called "deleteAlarmx"', 'conformance', ['objects get_alarm! after set_alarm!(t) gives t (and the Io twins)'], [BP + 'Object.roc', 'Io.new([Get(Root("ctx"), "storage"), Call(Slot(0), "deleteAlarm", [])]', 'Io.new([Get(Root("ctx"), "storage"), Call(Slot(0), "deleteAlarmx", [])]']),
+  R('8f Object.delete_all: deleteAll is called "deleteAllx"', 'conformance', ['objects delete_all!: the table, the cell and the alarm are gone (and the twin)'], [BP + 'Object.roc', 'Call(Slot(0), "deleteAll", [])', 'Call(Slot(0), "deleteAllx", [])']),
+  R('8f Object.list: kv.list is called "listx"', 'conformance', ['objects cells a1, a2, b1: list_with! with prefix "a" gives ["a1", "a2"]'], [BP + 'Object.roc', 'Call(Slot(1), "list", [Lit(Obj(o3))])', 'Call(Slot(1), "listx", [Lit(Obj(o3))])']),
+  R('8f Object.Cell.get: kv.get is called "getx"', 'conformance', ['objects Object.Cell get!, set!, delete!'], [BP + 'Object.roc', 'kv_ops("get", ', 'kv_ops("getx", ']),
+  R('8f Object.Cell.set: kv.put is called "putx"', 'conformance', ['objects Object.Cell get!, set!, delete!'], [BP + 'Object.roc', 'kv_ops("put", ', 'kv_ops("putx", ']),
+  R('8f Object.Cell.delete: kv.delete is called "deletex"', 'conformance', ['objects Object.Cell get!, set!, delete!'], [BP + 'Object.roc', 'kv_ops("delete", ', 'kv_ops("deletex", ']),
+  R('8f Object.named: getByName is called "getByNamex"', 'conformance', ['objects rpc: call! and its twin with an Rpc constant on a stub', 'objects fetch (Io twin)'], [BP + 'Object.roc', '"getByName"', '"getByNamex"']),
+  R('8f Object.from_id: idFromString is called "idFromStringx"', 'conformance', ['objects named_with and from_id_with with location_hint, unique!'], [BP + 'Object.roc', '"idFromString"', '"idFromStringx"']),
+  R('8f Object.unique!: newUniqueId is called "newUniqueIdx"', 'conformance', ['objects named_with and from_id_with with location_hint, unique!'], [BP + 'Object.roc', '"newUniqueId"', '"newUniqueIdx"']),
+  R('8f Object.fetch, Service.fetch: fetch is called "fetchx"', 'conformance', ['objects fetch (Io twin)', 'rpc Service.fetch! on a binding with entrypoint Admin reaches the fetch! of Admin'], [BP + 'Remote.roc', 'Call(Slot(target), "fetch",', 'Call(Slot(target), "fetchx",']),
+  R('8f Rpc: the reply is not read with pf.pack', 'conformance', ['objects rpc: call! and its twin with an Rpc constant on a stub', 'rpc a service binding RPC call to an rpc method of the default export gives the reply'], [BP + 'Remote.roc', 'Call(Root("pf"), "pack", [Slot(n), Lit(Int(', 'Call(Root("pf"), "packx", [Slot(n), Lit(Int(']),
+  R('8f manifest: the manifest instance runs a module that is not stack-first', 'layout-test', [],
+    ['js/runner.js', '  if (!x.stack_first()) return undefined;\n', '']),
+  // MC5: `Cbor.Bytes` of roc-cbor (the package in the cache of the build) with the derived `encoder_for`.
+  R('8f MC5: Cbor.Bytes with the derived encoder_for', 'conformance', ['rpc typed bytes (MC5): a Cbor.Bytes field reaches a JS callee as a Uint8Array, a List(U8) field as an Array'],
+    [CBOR, '\t\tencoder_for : encoding -> (Cbor.Bytes, state -> Try(state, err))\n\t\t\twhere [\n\t\t\t\tencoding.encode_bytes : List(U8), state -> Try(state, err),\n\t\t\t]\n\t\tencoder_for = |_| {\n\t\t\tEncoding : encoding\n\n\t\t\t|Cbor.Bytes.(bytes), state| Encoding.encode_bytes(bytes, state)\n\t\t}\n', '\t\tencoder_for : _\n']),
 ];
 
 // The filter: texts of names, joined by `|` (a revert runs when its name has one of them).
