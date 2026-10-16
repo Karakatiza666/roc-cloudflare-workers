@@ -746,7 +746,7 @@ WebCrypto :: [].{
 	decrypt! : { cipher : WebCrypto.Cipher, key : WebCrypto.Key, data : List(U8) } => Try(List(U8), [CryptoErr(Thrown)])
 	derive_bits! : { alg : WebCrypto.Derive, key : WebCrypto.Key, length_bits : U32 } => Try(List(U8), [CryptoErr(Thrown)])
 	import_key! : WebCrypto.KeyAlg, WebCrypto.Key => Try(WebCrypto.Key, [CryptoErr(Thrown)])   # gives Imported, for many ops in one task
-	export_key! : WebCrypto.Key, [Raw, Pkcs8, Spki, Jwk] => Try(WebCrypto.Key, [CryptoErr(Thrown)])   # an Imported key as data
+	export_key! : WebCrypto.Key, [Raw, Pkcs8, Spki, Jwk] => Try(WebCrypto.Key, [CryptoErr(Thrown)])   # an Imported key as data (a key that is data gives its own form only)
 	generate_key! : WebCrypto.KeyAlg => Try(WebCrypto.Generated, [CryptoErr(Thrown)])
 	generate_key_with! : WebCrypto.KeyAlg, { modulus_bits ?: U32, length_bits ?: U32 } => Try(WebCrypto.Generated, [CryptoErr(Thrown)])
 	hmac_sha256 : List(U8), List(U8) -> List(U8)            # pure Roc over the builtin SHA-256: no crossing
@@ -757,7 +757,7 @@ WebCrypto :: [].{
 	Key : [Jwk(Str), Raw(List(U8)), Pkcs8(List(U8)), Spki(List(U8)), Imported(Js.Ref)]
 	Generated : [One(WebCrypto.Key), Pair({ private : WebCrypto.Key, public : WebCrypto.Key })]
 	Alg : [Hmac(Hash), RsaPkcs1(Hash), RsaPss({ hash : Hash, salt_length_bytes : U32 }), Ecdsa(Curve, Hash), Ed25519]
-	Cipher : [AesGcm({ iv : List(U8) }), AesCbc({ iv : List(U8) }), AesCtr({ counter : List(U8), length_bits : U32 }), RsaOaep({ label : List(U8) })]
+	Cipher : [AesGcm({ iv : List(U8) }), AesCbc({ iv : List(U8) }), AesCtr({ counter : List(U8), length_bits : U32 }), RsaOaep({ label : List(U8), hash : Hash })]
 	Derive : [Pbkdf2({ salt : List(U8), iterations : U32, hash : Hash }), Hkdf({ salt : List(U8), info : List(U8), hash : Hash }), Ecdh({ curve : Curve, public : WebCrypto.Key }), X25519({ public : WebCrypto.Key })]
 	KeyAlg : [Hmac(Hash), RsaPkcs1(Hash), RsaPss(Hash), RsaOaep(Hash), Ecdsa(Curve), Ecdh(Curve), Ed25519, X25519, AesGcm, AesCbc, AesCtr, Pbkdf2, Hkdf]
 	Hash : [Sha256, Sha384, Sha512]
@@ -788,7 +788,7 @@ RateLimit :: { name : Str }.{
 | Waits | Each `crypto.subtle` method gives a promise (Cloudflare docs), so `sign!`, `verify!`, `encrypt!`, `decrypt!`, `derive_bits!`, `import_key!`, `export_key!` and `generate_key!` each wait once (`await!`), with `importKey` in the same program. Only `timingSafeEqual`, `getRandomValues` and `randomUUID` are sync: `timing_safe_equal!`, `random!` and `random_uuid!` use `call!`. |
 | Algorithms | The table of the Workers docs: sign and verify with RSASSA-PKCS1-v1_5, RSA-PSS, ECDSA, HMAC and Ed25519; encrypt and decrypt with AES-GCM, AES-CBC, AES-CTR and RSA-OAEP; derive with PBKDF2, HKDF, ECDH and X25519. The curves of ECDSA and ECDH are P-256, P-384 and P-521 (workerd source, `api/crypto/ec.c++`: the docs do not list them). AES-KW, `wrapKey`, `unwrapKey` and `deriveKey` have no function: use `Js` (`API.md` 6.4). |
 | `generate_key!` | `generateKey` with `extractable: true`, then `exportKey` of each key, in one program, so the key is data: `One(Raw(bytes))` for an AES or HMAC key, `Pair({ private: Pkcs8(...), public: Spki(...) })` for the others. `modulus_bits` is for RSA (default 2048, public exponent 65537). `length_bits` is for AES (default 256) and HMAC (default: the block size of the hash). PBKDF2 and HKDF have no `generateKey` (Cloudflare docs), so they give `CryptoErr`. |
-| `export_key!` | `exportKey` of an `Imported` key (`import_key!` imports with `extractable: true`). A key that is already data gives the same key in the other form (one import and one export). |
+| `export_key!` | `exportKey` of an `Imported` key (`import_key!` imports with `extractable: true`). A key that is data has no algorithm: it gives its own form, and another form is `CryptoErr` (as built, see below). |
 | `derive_bits!` | `length_bits` is in bits, as in `deriveBits` (MC10). For `Ecdh` and `X25519`, `key` is the private key of the app and `public` the public key of the peer. |
 | Webhook HMAC (RN9) | `hmac_sha256(secret, body)` in Roc, then `timing_safe_equal!` with the header value. No wait. |
 | `Secret` | `Str.inspect` shows `Secret(...)`. `Secret` has no codec, so a `Log` line with a secret in its fields is a compile error, and so is a secret in typed data that goes to JS (an RPC argument, a queue message). Only `reveal` gives the text. The backing is a record: an opaque type over a bare `Str` gets the codecs of `Str`, for `Json` and for `Cbor` (section 15). |
@@ -803,6 +803,18 @@ As built in `PLAN.md` 8c, wave 1 (`platform/Env.roc`, `Secret.roc`, `RateLimit.r
 | `RateLimit.limit` | The twin of `limit!`: `env[name].limit({ key })`, then `Get "success"`. A `success` that is not a `Bool` is `LimitErr` with the name `BadData`. | MC3. The type has no `BadData`. |
 | Must not compile | A `Secret` in `Log` fields and in a CBOR encode: `conformance/must-not-compile/`, with a control that compiles | Each check shows that the error is the secret |
 
+As built in `PLAN.md` 8c, `WebCrypto` (`platform/WebCrypto.roc`):
+
+| Item | Built as | Why |
+| --- | --- | --- |
+| `Io` twins | `sign`, `verify`, `encrypt`, `decrypt`, `derive_bits`, `import_key`, `export_key`, `generate_key`, `generate_key_with` (MC3). `timing_safe_equal!`, `random!`, `random_uuid!` have none: they do not wait (as `Env`). | MC3 |
+| `Cipher.RsaOaep` | `RsaOaep({ label, hash })` | `importKey` of an RSA-OAEP key needs a hash, and a key as data has none |
+| `export_key!` of a key as data | Its own form (no crossing), else `CryptoErr` with the name `BadData` | A key as data has no algorithm, so it cannot be imported: "one import and one export" cannot work. Open: `PLAN.md` 8c WebCrypto, Q1 |
+| Usages of `import_key!` | By algorithm and key: a private key signs, decrypts or derives, a public key verifies or encrypts. A JWK is private when it has the member `d`. | `importKey` needs the usages, and a wrong one throws `SyntaxError` |
+| `timing_safe_equal!` | Lists of different lengths: `False`, no crossing | workerd throws for different lengths |
+| `random!` | One `getRandomValues` for each 65,536 bytes | The limit of Workers. A JS throw is a crash. |
+| One crossing | `verify!` with a JWK is 1 wait. `import_key!` then `verify!` is 2. | `PLAN.md` 8c WebCrypto, C8 |
+
 The builtin `Crypto` of Roc and `WebCrypto` do different work:
 
 | Need | Use | Why |
@@ -811,7 +823,7 @@ The builtin `Crypto` of Roc and `WebCrypto` do different work:
 | HMAC-SHA256 (webhooks, RN9) | `WebCrypto.hmac_sha256` | Pure Roc over the builtin SHA-256 |
 | BLAKE3 (archive hashes, RN8) | `Crypto.BLAKE3` (builtin), `Native` for chunks (`API.md` 8) | Workers has no BLAKE3 |
 | SHA-256 of a body | `Body.sha256!` | `crypto.DigestStream`: the bytes do not go into wasm memory |
-| SHA-256 of a large value already in wasm memory | Measure (`PLAN.md` 8g) | The builtin runs in wasm, and `digest` runs native code after a copy and a wait. 8g finds the size where `digest` is faster. |
+| SHA-256 of a large value already in wasm memory | Measure (`PLAN.md` 8g) | The builtin runs in wasm, and `digest` runs native code after a copy and a wait. In Node (`bench/sha256-bench.mjs`, with no copy and no wait for `digest`) the builtin takes 2.5 us for 1 KB (`digest`: 6 to 8 us), about 10 us for 4 KB (the same), 36 us for 16 KB (`digest`: 14 us), 145 us for 64 KB (`digest`: 36 to 43 us) and 2.3 to 2.8 ms for 1 MB (`digest`: 0.5 to 0.8 ms). `digest` is faster from about 4 KB there. With the copy, the crossing and the wait the size is higher: 8g measures it in the platform. |
 | Signatures, encryption, key derivation, random bytes, UUIDs | `WebCrypto` | The builtin has none of them |
 
 So `Crypto` is useful on Workers, and `WebCrypto` is not a replacement for it. The two names must stay different: a module named `Crypto` hides the builtin (section 15).

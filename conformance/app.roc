@@ -13,6 +13,7 @@ import LogRoutes
 import RateLimitRoutes
 import CfRoutes
 import ShimRoutes
+import WebCryptoRoutes
 
 fetch! : Request => Try(Response, [])
 fetch! = |req| {
@@ -24,6 +25,7 @@ fetch! = |req| {
 		["ratelimit", .. as rest] => RateLimitRoutes.route!(req, rest)
 		["cf", .. as rest] => CfRoutes.route!(req, rest)
 		["shim", .. as rest] => ShimRoutes.route!(req, rest)
+		["webcrypto", .. as rest] => WebCryptoRoutes.route!(req, rest)
 		_ => Response.from_text(404, "no route")
 	}
 	Ok(res)
