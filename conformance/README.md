@@ -40,6 +40,9 @@ What a check gets (`t`):
 | `t.server` | The URL of the local server: `/hello`, `/ten`, `/slow` (2 s), `/echo` (method, header `x-test`, body), `/status/<n>` |
 | `t.logs` | The structured log lines of workerd (`{ level, message }`) since the start |
 | `t.mf` | The Miniflare instance (`getD1Database`, `getR2Bucket`, ... to set up or read data) |
+| `t.modules`, `t.startMiniflare(options)` | For a check that needs more workers (the Tail Worker, 8f): the module list of the app worker, and a new Miniflare with the same date, flags and `cf`. Each worker of a `workers` list needs its own `modulesRoot`, `compatibilityDate` and flags (without them the app worker fails at its first event: no `FinalizationRegistry`). |
+
+A check can call the `queue` handler of the worker directly (`(await t.mf.getWorker()).queue(name, messages)`): the answer has `explicitAcks` (ids), `retryMessages` (`{ msgId, delaySeconds }`), `ackAll`, `retryBatch` and `outcome`. `/cdn-cgi/local/email` and `/cdn-cgi/local/scheduled` work (`unsafeTriggerHandlers` in `run.mjs`).
 
 Local facts: Miniflare 5 takes the V4 options through `convertV4MiniflareOptions` (the runner does it). `request.cf` is the object in `run.mjs` (the placeholder of Miniflare with no `metroCode`), so the run needs no network. Storage is in memory: each run starts empty. `port: 0`: Miniflare takes a free port, so a run does not clash with the workerd tests.
 

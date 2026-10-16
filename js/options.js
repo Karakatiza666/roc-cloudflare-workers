@@ -30,8 +30,10 @@ const RULES = {
   // library, a binding): a program reaches its methods with `Get` and `Call` (PLAN.md 8a O4). RS2: the size of the pin table.
   ops: [(v) => v !== null && typeof v === 'object' && !Array.isArray(v) && Object.values(v).every(isOp), 'an object whose values are functions or objects'],
   pinLimit: [(v) => isInt(v) && v >= 0, 'an integer, 0 or more'],
-  // API.md 10.1: the Workers handler names that reach the app as `Other` (for example "queue" in phase A).
-  other: [(v) => Array.isArray(v) && new Set(v).size === v.length && v.every((n) => typeof n === 'string' && /^[A-Za-z_$][\w$]*$/.test(n) && !RESERVED.has(n)), 'an array of handler names, each once, not fetch, scheduled or constructor'],
+  // MODULES.md 3: the limit of one tail batch in bytes (default 1 MiB, MC11). The log lines past it are dropped. Tests make it smaller.
+  tailMaxBytes: [(v) => isInt(v) && v > 0, 'an integer number of bytes above 0'],
+  // API.md 10.1: the Workers handler names that reach the app as `Other` (a kind with no entry point of its own: `queue`, `email` and `tail` have their own since 8f).
+  other: [(v) => Array.isArray(v) && new Set(v).size === v.length && v.every((n) => typeof n === 'string' && /^[A-Za-z_$][\w$]*$/.test(n) && !RESERVED.has(n)), 'an array of handler names, each once, not fetch, scheduled, queue, email, tail or constructor'],
   // Hooks of the runner that tests use.
   log: fn,
   onLog: fn,
@@ -39,7 +41,7 @@ const RULES = {
 };
 
 // Names that `other` cannot take: the class has these methods already.
-const RESERVED = new Set(['fetch', 'scheduled', 'constructor']);
+const RESERVED = new Set(['fetch', 'scheduled', 'queue', 'email', 'tail', 'constructor']);
 
 // Options of the table that a later step adds (none now).
 const LATER = {};

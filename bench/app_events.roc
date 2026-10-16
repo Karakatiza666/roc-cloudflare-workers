@@ -6,6 +6,7 @@ import pf.Worker
 import pf.Request
 import pf.Response
 import pf.Js
+import pf.Queue
 
 ## | Request | Answer |
 ## | --- | --- |
@@ -47,10 +48,10 @@ scheduled! = |s| match s.cron {
 	other => Err(UnknownCron(other))
 }
 
-## `makeHandler(module, { other: ["queue"] })`: the kind and the payload back to the JS caller.
+## `makeHandler(module, { other: ["ping"] })`: the kind and the payload back to the JS caller.
 other! : Str, Js => Try(Js, _)
 other! = |kind, payload| match kind {
-	"queue" => Ok(Obj([("kind", Text(kind)), ("got", payload)]))
+	"ping" => Ok(Obj([("kind", Text(kind)), ("got", payload)]))
 	_ => Err(UnknownKind(kind))
 }
 
@@ -75,7 +76,11 @@ cf_text = |req| match req.?cf {
 	Err(_) => "no cf"
 }
 
-worker = Worker.{ fetch!, scheduled!, other! }
+## The event `Queue` (8f): the batch of one message that `bench/entry-workerd.mjs` sends.
+queue! : Queue.Batch => Try({}, _)
+queue! = |batch| if batch.queue == "jobs" and batch.messages.len() == 1 Ok({}) else Err(WrongBatch(batch.queue))
+
+worker = Worker.{ fetch!, scheduled!, queue!, other! }
 
 ## For the tests of a missing handler.
 no_fetch = Worker.{ scheduled! }

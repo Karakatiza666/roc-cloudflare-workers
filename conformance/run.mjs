@@ -77,6 +77,8 @@ const mf = new Miniflare(convertV4MiniflareOptions({
   compatibilityFlags: ['enable_request_signal'],
   port: 0,
   cf,
+  // `/cdn-cgi/local/scheduled` and `/cdn-cgi/local/email` (the checks of the cron and the email handlers, 8f).
+  unsafeTriggerHandlers: true,
   handleStructuredLogs: (l) => logs.push(l),
   ...merged,
 }));
@@ -94,6 +96,10 @@ const t = {
   server: serverUrl,
   mf,
   logs,
+  // For a check that needs more workers (a Tail Worker, 8f): a new Miniflare with these V4 options, with the same `compatibilityDate`,
+  // `cf` and flags, and the modules of the worker of the app (`modules`, with `app.wasm`).
+  modules,
+  startMiniflare: (o) => new Miniflare(convertV4MiniflareOptions({ modulesRoot: here, compatibilityDate: '2026-10-01', compatibilityFlags: ['enable_request_signal'], port: 0, cf, ...o })),
   async get(path, init) {
     const res = await mf.dispatchFetch(`http://localhost${path}`, init);
     const n = (h) => Number(res.headers.get(h));

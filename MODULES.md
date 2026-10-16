@@ -141,7 +141,7 @@ Worker(e) := {
 		script_name : Try(Str, [Missing]),
 		outcome : Str,                                   # "ok", "exception", "exceededCpu", ... (Cloudflare docs)
 		event_timestamp_ms : Try(U64, [Missing]),
-		event : Try({ request : { method : Str, url : Str, headers : List(Header), cf : Try(Request.Cf, [Missing]) }, response : Try({ status : U16 }, [Missing]) }, [Missing]),
+		event : Try({ request : { method : Str, url : Str, headers : List({ name : Str, value : Str }), cf : Try(Request.Cf, [Missing]) }, response : Try({ status : U16 }, [Missing]) }, [Missing]),   # headers: records, not Header (PLAN.md 8f, O1 of 8b)
 		logs : List({ timestamp_ms : U64, level : Str, message : Str }),       # message: the console arguments as JSON text
 		exceptions : List({ timestamp_ms : U64, name : Str, message : Str }),
 	}.{
@@ -184,7 +184,7 @@ Tail rules (`tail!`):
 | `message` of a log | The array of the console arguments, as `JSON.stringify` gives it in JS. The arguments can be any JS value, and a Tail Worker usually sends logs on as JSON. A value that `JSON.stringify` cannot write (a `BigInt`, a cycle) gives its `String(value)`. |
 | `message` of an exception | Text. The docs give the type "object", but their example is text, so JS writes `String(message)`. |
 | Not typed | `workerd` also gives `entrypoint`, `scriptVersion`, `scriptTags`, `dispatchNamespace`, `cpuTime`, `wallTime` and `truncated`. The docs do not list them, so `TraceItem` does not have them. A field added later is a change of the payload type, so a major release (`API.md` 10.1). |
-| Crossing | The shim maps each item to these fields in JS and sends the batch as one `Packed` value (`API.md` 5.2). The derived parser reads a `Try` field only in the tag form, so the shim writes `{"Ok": v}` or `{"Err": "Missing"}`, never `null` (15). The batch has the limit of MC11 (1 MiB). Past it, the shim drops log lines, from the last item back, and writes one warning (`console.warn`) in the Tail Worker with the count of dropped lines. A tail handler has no `Err` path for its input, so `TooLarge` would lose the whole batch. |
+| Crossing | The shim maps each item to these fields in JS and sends the batch as one `Packed` value (`API.md` 5.2). The derived parser of `roc-cbor` 0.1.0 reads a `Try(a, [Missing])` field as the value, and as `Err(Missing)` when the key is absent, so the shim writes the value, or no key (never `null`, never `{"Ok": v}`: `research/f2-queue/try_shape.roc`). The batch has the limit of MC11 (1 MiB, the shim option `tailMaxBytes`). Past it, the shim drops log lines, from the last line back and over all items, and writes one warning (`console.warn`) in the Tail Worker with the count of dropped lines. Local workerd cuts the logs of one trace to about 200 kB before the shim sees them, so the 1 MiB limit is tested with a smaller `tailMaxBytes` (`PLAN.md` 8f). A tail handler has no `Err` path for its input, so `TooLarge` would lose the whole batch. |
 
 Names of classes and methods come from Roc only (`API.md` AQ10). At load, the shim sends the event `Manifest`, and `Worker` answers with the names of its `objects`, `entrypoints` and their `Rpc` methods, the `rpc` methods of the default entry point, and the handlers that each class has:
 
@@ -213,7 +213,7 @@ As built in `PLAN.md` 8b (first half) (`platform/Worker.roc`):
 | Fields | `fetch!`, `scheduled!`, `queue!`, `email!`, `tail!`, `other!`. Not yet `rpc`, `entrypoints`, `objects`. | Phase B (`PLAN.md` 8f). An optional field added later does not break an app. |
 | `event!` | `Rpc`, `EntrypointFetch`, `Object` and `Manifest` give `Unhandled` | 8f |
 | `no_retry!` | One `call!` of `noRetry` on the root `event` (the controller). A throw is dropped. | The type is `=> {}`. Only a `Scheduled` event has a controller. |
-| `TraceItem` | The type above, with `parser_for : _`. Nothing parses it yet. | 8f. `Header` of `roc-lang/http` has no `parser_for` (`PLAN.md` 8b, open point O1). |
+| `TraceItem` | The type above, with `parser_for : _`. Built in 8f part 2: `Entry` parses the `Packed` batch with `Cbor.parse`. The request headers are `{ name, value }` records, because `Header` of `roc-lang/http` has no `parser_for` (`PLAN.md` 8b, O1). | The type of the field changed from `List(Header)` (`PLAN.md` 8f, part 2). |
 | `other` methods | A method on the prototype of the class for each name. `makeHandler` refuses `fetch`, `scheduled`, `constructor` and a name twice. | Workers finds a handler on the prototype. |
 | Local test of a cron | No Miniflare yet: a workerd config with an entry service that serves `/cdn-cgi/local/scheduled` as Miniflare does (`bench/entry-worker.js`) | `PLAN.md` 8b |
 
@@ -451,7 +451,7 @@ Kv(a) :: { ... }.{
 	get_with_metadata! : Kv(a), Str => Try({ value : a, metadata : Try(m, [Missing]) }, [NotFound, KvErr(Thrown), BadData(Str), TooLarge]) where [m.Parseable]
 	get_with_metadata_with! : Kv(a), Str, { cache_ttl_ms ?: U64, max_bytes ?: U64 } => Try({ value : a, metadata : Try(m, [Missing]) }, [NotFound, KvErr(Thrown), BadData(Str), TooLarge]) where [m.Parseable]
 	put! : Kv(a), Str, a => Try({}, [KvErr(Thrown)])
-	put_with! : Kv(a), Str, a, { ttl_ms ?: U64, expires_ms ?: U64, metadata ?: m } => Try({}, [KvErr(Thrown)]) where [m.Encodable]
+	put_with! : Kv(a), Str, a, { ttl_ms ?: U64, expires_ms ?: U64, metadata ?: Kv.Metadata } => Try({}, [KvErr(Thrown)])   # metadata: Kv.Metadata.of(m), see Metadata below
 	delete! : Kv(a), Str => Try({}, [KvErr(Thrown)])
 	list! : Kv(a), { prefix ?: Str, cursor ?: Str, limit ?: U32 } => Try({ keys : List(Kv.Key), next : [More(Str), Done] }, [KvErr(Thrown)])
 
@@ -459,6 +459,7 @@ Kv(a) :: { ... }.{
 	Cell(a) := { ... }.{ get!, set!, set_with!, delete! }
 	Key : { name : Str, expires_ms : [Never, At(U64)], metadata : Try(Kv.Metadata, [Missing]) }
 	Metadata :: { cbor : List(U8) }.{
+		of : m -> Kv.Metadata where [m.Encodable]                          # typed at the use, for put_with!
 		parse : Kv.Metadata -> Try(m, [BadData(Str)]) where [m.Parseable]   # typed at the use (MC7)
 	}
 }
@@ -473,6 +474,7 @@ Kv(a) :: { ... }.{
 | Size (MC11) | A KV value can be 25 MiB (Cloudflare docs, KV limits). `get!` reads at most 1 MiB: JS reads the value as a stream (`type: "stream"`) with `pf.readUpTo`, so a larger value is `TooLarge` with no copy into wasm memory. `get_with!` takes `max_bytes`. |
 | Metadata | `getWithMetadata` and the `metadata` of `put`, typed. The type of `get_with_metadata!` comes from the annotation at the call (MC7). A key with no metadata gives `Err(Missing)` in the `metadata` field, not an error of the call. `list!` cannot take a type: a type variable that only a `where` clause names, with no annotation at the call, is a compile error ("type not determined", checked on nightly 10-12). So a `Kv.Key` holds the metadata as CBOR, and `(key.metadata ? |_| Missing).parse()?` reads it with the type of the use (a bare `?` on a `Try(_, [Missing])` field does not compile, section 15). Metadata crosses as CBOR (MC5), and KV stores it as JSON, 1,024 bytes or less (Cloudflare docs), else `KvErr`. An integer above 2^53 in metadata is a `BigInt` that `JSON.stringify` cannot write, so it is `KvErr`. |
 | `get_with_metadata!` | Its own function, because its result has another shape than `get!` (MC4: an option does not change the result) |
+| As built (`PLAN.md` 8f, part 2) | `put_with!` takes `metadata ?: Kv.Metadata`, made by `Kv.Metadata.of(m)`, and not `metadata ?: m`: a call with no `metadata` leaves the type of `m` open, and that does not compile ("type not determined", checked on nightly 10-12, the same fault as `list!` above). A read is one program: `get(key, { type: "stream" })`, then `pf.readMaybe(stream, max)` (the stream to the limit, or `undefined` for a key that is not there). `get_with_metadata!` ends with `pf.kvMeta`, `list!` with `pf.kvList` (a program has no loop, OP4). A KV error of the limit is `TooLarge`, each other throw is `KvErr`. `Kv.Cell.set_with!` takes `ttl_ms` and `expires_ms`. Each function has its `Io` twin (MC3). |
 
 ### 5.3 `R2`
 
@@ -578,6 +580,7 @@ Queue(a) :: { ... }.{
 | Low level | `batch.messages` with `Message.ack!` and `retry!` for an app that decides alone. |
 | Delays (MC10) | `delay_ms` of `send_with!`, `send_batch_with!`, `retry_with!` and `retry_all_with!` goes to `delaySeconds`, which takes whole seconds from 0 to 86,400 (24 h, Cloudflare docs). The module rounds up to the next whole second, so a message never comes before its delay. More than 24 h is `QueueErr` for a send. A retry is sync and has no `Try`, so the module gives Workers at most 86,400 s. |
 | Limits | A message is 128 KB or less, and a `send_batch!` is 100 messages and 256 KB or less (Cloudflare docs, Queues limits). More is `QueueErr`. |
+| As built (`PLAN.md` 8f, part 2) | `Queue(a) :: { name, content_type, write, read }`: `json` and `v8` write `Packed(Cbor.encode(v))` (JS gets the object), `text` writes `Text`, `bytes` writes `Bytes`. `Queue.Message` and `Queue.Batch` hold no ref: `ack!` and `retry!` find the message in the batch of the task with `pf.findById` (the root `event` is the `MessageBatch`). `ack`, `retry`, `ack_all` and `retry_all` have no `Try`: a throw is dropped. A delay above 86,400 s is not checked in Roc: Workers gives `QueueErr` for a send, and a retry is cut to 86,400 s. A message body that CBOR cannot write (a class instance) is an empty body in the event, so `each!` retries it. `retry_all_with!` and `retry_with!` take the options record, not an optional one. |
 | Size of a batch (MC11) | A batch crosses into wasm memory with the event, with no `max_bytes`: its limit is the Queues config. A consumer batch is `max_batch_size` messages (100 or less) of 128 KB or less, so 12.8 MB at most. Set `max_batch_size` in the Wrangler config to keep a batch in the memory budget of the app (`PLAN.md` problem 4). |
 
 ## 7. Durable Objects: `Object`
@@ -1061,7 +1064,7 @@ Each follows MC1 to MC13. Most functions are one `Call` op.
 
 | Module | Declaration | Functions | Phase |
 | --- | --- | --- | --- |
-| `Email` | `Email.binding("EMAIL")`; incoming mail is the `email!` field | `send!({ from, to, subject, text ?, html ?, cc ?, bcc ?, reply_to ? })` (the structured send that the docs recommend), `send_raw!({ from, to, raw })` (`EmailMessage`, MIME). `Email.Mail`: `from`, `to`, `header`, `raw : Body`, `raw_size_bytes` (MC10), `can_be_forwarded`, `forward!(to)`, `forward_with!(to, { headers ? })` (Workers keeps only `X-` headers, Cloudflare docs), `reply!(raw)`, `set_reject!(reason)` | B |
+| `Email` | `Email.binding("EMAIL")`; incoming mail is the `email!` field | `send!({ from, to, subject, text ?, html ?, cc ?, bcc ?, reply_to ? })` (the structured send that the docs recommend), `send_raw!({ from, to, raw })` (`EmailMessage`, MIME). `Email.Mail`: `from`, `to`, `header`, `raw : Body`, `raw_size_bytes` (MC10), `can_be_forwarded`, `forward!(to)`, `forward_with!(to, { headers ? })` (Workers keeps only `X-` headers, Cloudflare docs), `reply!(raw)`, `set_reject!(reason)`. As built (`PLAN.md` 8f, part 2): `send!` takes `to : List(Str)`, `cc` and `bcc : List(Str)`, `reply_to : Str`, and gives `{ message_id : Str }`. `send_raw!` gives it too (`raw : Str`, made into an `EmailMessage` by `pf.emailMessage`, a dynamic import of `cloudflare:email`). `Mail := { from, to, headers, raw, raw_size_bytes, can_be_forwarded }` is plain data (MC13): its functions reach the message through the root `event`. `can_be_forwarded` is not in the Workers API: the shim gives `message.canBeForwarded !== false`. `set_reject!` waits (`await!`): the local runtime gives the message as an RPC stub, so a sync call would be status 2. Each function has its `Io` twin. An `Err` of `email!` is a throw: the mail is rejected | B |
 | `Ai` | `Ai.binding("AI")` | `run!(model, input) => Try(out, [AiErr(Thrown), BadData(Str)])`, typed in and out (MC5). `run_with!(model, input, { gateway ? })` with `gateway : { id : Str, skip_cache ?: Bool, cache_ttl_ms ?: U64, cache_key ?: Str }` (AI Gateway, Cloudflare docs; `cacheTtl` is in seconds, rounded up, MC10). `stream!(model, input) => Try(Body, _)` | B |
 | `Vectorize` | `index : Vectorize(Meta)`, `Vectorize.json("INDEX")` | `query!(values, { top_k ?, filter ?, return_metadata ? })`, `upsert!`, `insert!`, `get!(ids)`, `delete!(ids)` | B |
 | `Analytics` | `Analytics.binding("STATS")` | `write!({ blobs, doubles, indexes })`, sync | B |

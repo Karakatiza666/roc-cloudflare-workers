@@ -113,6 +113,30 @@ export function makeHelpers(t, c, shim, tasks) {
     r2list(res) {
       return { objects: res.objects.map(r2pair), prefixes: [...(res.delimitedPrefixes ?? [])], truncated: Boolean(res.truncated), cursor: res.cursor };
     },
+    // `Kv.get!`: the stream of `get(key, { type: "stream" })` to `max` bytes, or undefined for a key that is not there
+    // (`null`). `readUpTo(null)` is no bytes, so a missing key needs its own helper.
+    async readMaybe(stream, max) {
+      if (stream === null || stream === undefined) return undefined;
+      return this.readUpTo(stream, max);
+    },
+    // `Kv.get_with_metadata!`: the result of `getWithMetadata(key, { type: "stream" })` as `{ value, metadata }`: the bytes
+    // to `max` (undefined: no key), and the metadata as `Packed` (undefined: none).
+    async kvMeta(res, max) {
+      const value = await this.readMaybe(res?.value, max);
+      return { value, metadata: res?.metadata === null || res?.metadata === undefined ? undefined : new Packed(res.metadata) };
+    },
+    // `Kv.list!`: the result of `list()` as `{ keys: [{ name, expiration, metadata }], cursor }`, with the metadata as `Packed`.
+    // A program has no loop (OP4). `cursor` is undefined for the last page.
+    kvList(res) {
+      const keys = res.keys.map((k) => ({ name: k.name, expiration: k.expiration, metadata: k.metadata === null || k.metadata === undefined ? undefined : new Packed(k.metadata) }));
+      return { keys, cursor: res.list_complete ? undefined : res.cursor };
+    },
+    // `Email.send_raw!` and `reply!`: `new EmailMessage(from, to, raw)` of `cloudflare:email`. It is a dynamic import, so
+    // a Node test of the shim loads with no stand-in for that module.
+    async emailMessage(from, to, raw) {
+      const { EmailMessage } = await import('cloudflare:email');
+      return new EmailMessage(from, to, raw);
+    },
     // The pin table (RS2): `Js.pin!`, `pinned!`, `unpin!` (8c).
     pin(name, value, maxAgeMs) {
       shim.pins.pin(name, value, maxAgeMs);

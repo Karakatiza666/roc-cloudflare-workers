@@ -6,7 +6,7 @@
 // 2. `GET /cdn-cgi/local/scheduled?cron=*/5+*+*+*+*&time=1700000000000&format=json` reaches `scheduled!` with that
 //    cron and `time_ms`, and answers the outcome `ok`. `Err`: not `ok` (500) and `noRetry: false`. `no_retry!` then
 //    `Err`: `noRetry: true`. No `scheduled!`: not `ok` and `noRetry: false`.
-// 3. A queue event (`queue` in the option `other`) reaches `Other`: the outcome `ok`.
+// 3. A queue event reaches `queue!` of the app (8f: it had been `Other` in 8b): the outcome `ok`.
 // 4. `Unhandled`: a 500 and a log line. `Err`: a 500 and a log line with the error. A `crash`: its text in the log line.
 // Exit 1 on a failure.
 import { spawn } from 'node:child_process';

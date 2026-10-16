@@ -5,6 +5,9 @@
 ## | --- | --- |
 ## | Fetch | `{ kind: "fetch", request: { method, url, headers: [[name, value], ...], body, cf } }` |
 ## | Scheduled | `{ kind: "scheduled", cron, time_ms }` |
+## | Queue | `{ kind: "queue", queue, messages: [{ id, timestamp_ms, attempts, body }] }`, `body` as `Packed` (CBOR), or undefined for a body that CBOR cannot write |
+## | Email | `{ kind: "email", from, to, headers: [[name, value], ...], raw, raw_size_bytes, can_be_forwarded }`, `raw` a stream (a ref) |
+## | Tail | `{ kind: "tail", items }`, `items` as `Packed`: the items of `Worker.TraceItem` in the tag form of `Try` |
 ## | Other | `{ kind: "other", name, payload }` |
 ## | body | `undefined` (Empty), bytes, text, or a ref (a stream) |
 ## | cf | `undefined`, or an object with each field of `Request.Cf` as `{ Ok: v }` or `{ Err: "Missing" }` |
@@ -14,6 +17,9 @@ import Body
 import Request
 import Response
 import Worker
+import Queue
+import Email
+import cbor.Cbor
 import http.Header
 import http.Method
 
@@ -26,6 +32,9 @@ Entry :: [].{
 		match get(fields, "kind") {
 			Text("fetch") => Fetch(request(get(fields, "request")))
 			Text("scheduled") => Scheduled(Worker.Scheduled.{ cron: text(get(fields, "cron"), "cron"), time_ms: u64(get(fields, "time_ms"), "time_ms") })
+			Text("queue") => Queue(queue_batch(fields))
+			Text("email") => Email(mail(fields))
+			Text("tail") => Tail(trace_items(fields))
 			Text("other") => Other({ kind: text(get(fields, "name"), "name"), payload: get(fields, "payload") })
 			other => crash "Entry.event: unknown kind ${Str.inspect(other)}"
 		}
@@ -66,6 +75,59 @@ request = |js| {
 		Undefined => Request.{ method, url, headers, body }
 		cf => Request.{ method, url, headers, body, cf: cf_of(cf) }
 	}
+}
+
+## A queue batch. A message with no body (JS could not write it as CBOR) has an empty one: `each!` retries it.
+queue_batch : List((Str, Js)) -> Queue.Batch
+queue_batch = |f| {
+	messages = match get(f, "messages") {
+		Arr(items) => items.map(queue_message)
+		other => crash "Entry: messages is ${Str.inspect(other)}"
+	}
+	Queue.Batch.{ queue: text(get(f, "queue"), "queue"), messages }
+}
+
+queue_message : Js -> Queue.Message
+queue_message = |js| {
+	m = obj(js, "message")
+	body = match get(m, "body") {
+		Packed(bytes) => bytes
+		_ => []
+	}
+	Queue.Message.{
+		id: text(get(m, "id"), "id"),
+		timestamp_ms: u64(get(m, "timestamp_ms"), "timestamp_ms"),
+		attempts: u32(get(m, "attempts"), "attempts"),
+		body,
+	}
+}
+
+mail : List((Str, Js)) -> Email.Mail
+mail = |f| Email.Mail.{
+	from: text(get(f, "from"), "from"),
+	to: text(get(f, "to"), "to"),
+	headers: match get(f, "headers") {
+		Arr(items) => items.map(header_of)
+		other => crash "Entry: headers is ${Str.inspect(other)}"
+	},
+	raw: body_of(get(f, "raw")),
+	raw_size_bytes: u64(get(f, "raw_size_bytes"), "raw_size_bytes"),
+	can_be_forwarded: get(f, "can_be_forwarded") == Bool(Bool.True),
+}
+
+## The batch of a Tail Worker: one `Packed` value, parsed into the typed items (MODULES.md 3). A shape that does not
+## fit is a platform bug: a crash, with the text of the parse error.
+trace_items : List((Str, Js)) -> List(Worker.TraceItem)
+trace_items = |f| match get(f, "items") {
+	Packed(bytes) => {
+		items : Try(List(Worker.TraceItem), _)
+		items = Cbor.parse(bytes)
+		match items {
+			Ok(list) => list
+			Err(e) => crash "Entry.event: the tail items do not fit Worker.TraceItem: ${Str.inspect(e)}"
+		}
+	}
+	other => crash "Entry: items is ${Str.inspect(other)}"
 }
 
 method_of : Str -> Method

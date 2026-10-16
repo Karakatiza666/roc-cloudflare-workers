@@ -9,11 +9,26 @@ import { makeHandler } from './js/index.js';
 const ops = {
   lib: { twice: (n) => n * 2 },
 };
-const Handler = makeHandler(app, { ops, heapCheckWhenIdle: false });
+// `tailMaxBytes`: 100 kB, so a trace with the logs of 2 MiB (cut by workerd to 200 kB) is above the limit (checks/tail.mjs).
+const Handler = makeHandler(app, { ops, heapCheckWhenIdle: false, tailMaxBytes: 100_000 });
+
+// The messages that the JS consumer of the queue `v8` got (PLAN.md 8f): a `Queue.v8` message with a `Cbor.Bytes` field is
+// a `Uint8Array` here, and a `U64` of 2^60 is a `BigInt`. `GET /__queue_seen` gives them.
+const seen = [];
 
 export default class extends Handler {
+  async queue(batch) {
+    if (batch.queue !== 'v8') return super.queue(batch);
+    for (const m of batch.messages) {
+      const b = m.body;
+      seen.push({ id: m.id, n: b.n, big: `${typeof b.big} ${String(b.big)}`, isUint8Array: b.data instanceof Uint8Array, data: b.data instanceof Uint8Array ? [...b.data] : b.data });
+      m.ack();
+    }
+  }
+
   async fetch(request) {
     const path = new URL(request.url).pathname;
+    if (path === '/__queue_seen') return Response.json(seen);
     const r = Handler.runner;
     if (path === '/__stats') {
       const s = r.tasks.stats;

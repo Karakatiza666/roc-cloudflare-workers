@@ -6,7 +6,7 @@ import { makeHandler } from './js/index.js';
 
 const lines = [];
 const Handler = makeHandler(app, {
-  other: ['queue'],
+  other: ['ping'],
   log: (text) => {
     lines.push(text);
     console.warn(text);

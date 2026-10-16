@@ -1,6 +1,7 @@
 // The events of API.md 10.1 as JS values, and the outcome of the app back to Workers. The host decodes the event into
 // a `Js` value, and `platform/Entry.roc` reads the same shapes (its table). PLAN.md 8b: `fetch`, `scheduled` and the
-// `other` kinds. The other entry points (objects, RPC, the manifest) come in 8f.
+// `other` kinds. 8f part 2: `queue`, `email` and `tail`. The other entry points (objects, RPC, the manifest) come in 8f part 1.
+import { Packed, pack } from './values.js';
 
 // The fields of `Request.Cf` (MODULES.md 4): Roc name, Workers name, test of a good value.
 const isText = (v) => typeof v === 'string';
@@ -48,6 +49,109 @@ export function scheduledEvent(controller) {
 // The event `Other` for a handler name of the option `other` (API.md 10.1). The payload is the first argument (J1 to J7).
 export function otherEvent(name, payload) {
   return { kind: 'other', name, payload };
+}
+
+// The event `Queue` (MODULES.md 6): the name of the queue and its messages. The body of a message crosses as `Packed`
+// (CBOR, MC5), with no limit: a batch has the limit of the Queues config (MC11). A body that CBOR cannot write (a class
+// instance, a number outside i64 and u64) is `undefined`, so one bad message does not fail the batch: Roc retries it.
+export function queueEvent(batch) {
+  const messages = Array.from(batch.messages ?? [], (m) => ({
+    id: String(m.id),
+    timestamp_ms: m.timestamp instanceof Date ? m.timestamp.getTime() : Math.trunc(Number(m.timestamp)),
+    attempts: Number(m.attempts),
+    body: packable(m.body) ? new Packed(m.body) : undefined,
+  }));
+  return { kind: 'queue', queue: String(batch.queue), messages };
+}
+function packable(body) {
+  try {
+    pack(body);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// The event `Email` (MODULES.md 13): the fields of `ForwardableEmailMessage`. `raw` is a stream (a ref of the task).
+// `canBeForwarded` is not in the Workers API: it is true unless the runtime says false.
+export function emailEvent(message) {
+  return {
+    kind: 'email',
+    from: String(message.from),
+    to: String(message.to),
+    headers: message.headers ? [...message.headers] : [],
+    raw: message.raw ?? undefined,
+    raw_size_bytes: Math.trunc(Number(message.rawSize ?? 0)),
+    can_be_forwarded: message.canBeForwarded !== false,
+  };
+}
+
+// The event `Tail` (MODULES.md 3): the items of `Worker.TraceItem` as one `Packed` value. The derived parser of `roc-cbor`
+// 0.1.0 reads a `Try(a, [Missing])` field as the value, or as `Err(Missing)` when the key is absent: so a missing value is
+// a missing key here (never `null`, never the tag form: `research/f2-queue/try_shape.roc`). `maxBytes`: the limit of the
+// batch (MC11). Past it, the log lines are dropped from the end, over all items, and `warn` gets one text with the count.
+export const TAIL_MAX = 1 << 20;
+const present = (v) => v !== null && v !== undefined;
+// `obj` with the keys of `fields` whose value is present.
+const keep = (fields) => Object.fromEntries(Object.entries(fields).filter(([, v]) => present(v)));
+const u64 = (v) => (Number.isSafeInteger(v) && v >= 0 ? v : undefined);
+const headersOf = (h) => (h instanceof Headers ? [...h] : Object.entries(h ?? {})).map(([name, value]) => ({ name: String(name), value: String(value) }));
+// `request.cf` as `Request.Cf` for the parser of CBOR: the same fields as `cfOf`, with no key for a missing one.
+function cfPlain(cf) {
+  const tagged = cfOf(cf);
+  if (!tagged) return undefined;
+  return Object.fromEntries(Object.entries(tagged).flatMap(([k, v]) => (v === MISSING ? [] : [[k, v.Ok ?? v]])));
+}
+// The console arguments as `JSON.stringify` writes them. A value that it cannot write (a BigInt, a cycle) is its `String(value)`.
+function jsonText(m) {
+  const one = (v) => {
+    try {
+      return JSON.stringify(v) === undefined ? String(v) : v;
+    } catch {
+      return String(v);
+    }
+  };
+  try {
+    return JSON.stringify(m) ?? String(m);
+  } catch {
+    return JSON.stringify(Array.isArray(m) ? m.map(one) : String(m));
+  }
+}
+function traceItem(e) {
+  const info = e.event;
+  const fetched = info && typeof info === 'object' && info.request && typeof info.request === 'object';
+  const r = fetched ? info.request : null;
+  return keep({
+    script_name: present(e.scriptName) ? String(e.scriptName) : undefined,
+    outcome: String(e.outcome),
+    event_timestamp_ms: u64(e.eventTimestamp),
+    event: fetched
+      ? keep({ request: keep({ method: String(r.method), url: String(r.url), headers: headersOf(r.headers), cf: cfPlain(r.cf) }), response: info.response && Number.isInteger(info.response.status) ? { status: info.response.status } : undefined })
+      : undefined,
+    logs: Array.from(e.logs ?? [], (l) => ({ timestamp_ms: Math.trunc(Number(l.timestamp)), level: String(l.level), message: jsonText(l.message) })),
+    exceptions: Array.from(e.exceptions ?? [], (x) => ({ timestamp_ms: Math.trunc(Number(x.timestamp)), name: String(x.name), message: String(x.message) })),
+  });
+}
+export function tailEvent(events, maxBytes = TAIL_MAX, warn = () => {}) {
+  const items = Array.from(events, traceItem);
+  const logs = items.map((i) => i.logs);
+  for (const i of items) i.logs = [];
+  let left = maxBytes - pack(items).byteLength;
+  let dropped = 0, full = false;
+  items.forEach((item, n) => {
+    for (const l of logs[n]) {
+      const size = pack(l).byteLength;
+      if (!full && size <= left) {
+        item.logs.push(l);
+        left -= size;
+      } else {
+        full = true;
+        dropped++;
+      }
+    }
+  });
+  if (dropped) warn(`tail: dropped ${dropped} log lines: the batch is larger than ${maxBytes} bytes`);
+  return { kind: 'tail', items: new Packed(items) };
 }
 
 // The outcome `Respond` as a Workers `Response`. The body: bytes, text, null, or a stream (a ref).
