@@ -1,5 +1,6 @@
 app [event!] {
 	pf: platform "../bench/platform/main.roc",
+	http: "https://github.com/roc-lang/http/releases/download/2.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
 	cbor: "https://github.com/Karakatiza666/roc-cbor/releases/download/0.1.0/9QL2dCyq7bcmvAEZfDFwi8kBvWLCZpEMS4WQYnZisezw.tar.zst",
 }
 
@@ -22,8 +23,12 @@ import CacheRoutes
 import D1Routes
 import MemoRoutes
 import PinRoutes
+import QueueRoutes
+import KvRoutes
+import EmailRoutes
+import TailRoutes
 
-fetch! : Request => Try(Response, [])
+fetch! : Request => Try(Response, _)
 fetch! = |req| {
 	res = match req.segments() {
 		["http", .. as rest] => HttpRoutes.route!(req, rest)
@@ -39,11 +44,20 @@ fetch! = |req| {
 		["d1", .. as rest] => D1Routes.route!(req, rest)
 		["memo", .. as rest] => MemoRoutes.route!(req, rest)
 		["pin", .. as rest] => PinRoutes.route!(req, rest)
+		["queue", .. as rest] => QueueRoutes.route!(req, rest)
+		["kv", .. as rest] => KvRoutes.route!(req, rest)
+		["email", .. as rest] => EmailRoutes.route!(req, rest)
 		_ => Response.from_text(404, "no route")
 	}
 	Ok(res)
 }
 
-worker = Worker.{ fetch! }
+queue! = |batch| QueueRoutes.consume!(batch)
+
+email! = |mail| EmailRoutes.handle!(mail)
+
+tail! = |items| TailRoutes.handle!(items)
+
+worker = Worker.{ fetch!, queue!, email!, tail! }
 
 event! = |e| worker.event!(e)

@@ -67,7 +67,8 @@ const bad = {
   'an unknown option': [{ ops, nope: 1 }, /unknown option "nope"/],
   'other: a name of the class (8b)': [{ ops, other: ['fetch'] }, /"other"/],
   'other: not an array (8b)': [{ ops, other: 'queue' }, /"other"/],
-  'other: a name twice (8b)': [{ ops, other: ['queue', 'queue'] }, /"other"/],
+  'other: a name twice (8b)': [{ ops, other: ['ping', 'ping'] }, /"other"/],
+  'other: queue, email and tail have an entry point of their own (8f)': [{ ops, other: ['queue'] }, /"other"/],
   'requestText (removed in 8b)': [{ ops, requestText: () => '' }, /unknown option "requestText"/],
   pinLimit: [{ ops, pinLimit: -1 }, /"pinLimit"/],
   // 8a O4: a value of `ops` is a function or an object (`lib` in `good` below), not a number.
@@ -92,7 +93,7 @@ const bad = {
 for (const [what, [opts, re]] of Object.entries(bad)) throwsWith(what, re, () => makeHandler(bench, opts));
 throwsWith('module is not a Module', /WebAssembly.Module/, () => makeHandler({}, { ops }));
 const good = { isolateBytes: 2 ** 40, jsReserveBytes: 0, maxInstanceBytes: Infinity, growStepBytes: 65536, graceMs: 0, resumeCheck: 'afterAlarm', heapCheckEvery: 0, heapCheckWhenIdle: false, taskDeadlineMs: 1000, pinLimit: 10, ops: { ...ops, f: () => 1, lib: { g: () => 2 } } };
-const G = makeHandler(bench, { ...good, other: ['queue', 'email'] });
+const G = makeHandler(bench, { ...good, other: ['ping', 'pong'] });
 const gr = await new G({}, {}).fetch(post('7 0 5'));
 if (gr.status !== 200 || !check('7', await gr.text(), 5)) fail('a handler with all options set gave a bad response');
 console.log('options: bad values throw at makeHandler time, good ones are accepted');

@@ -601,7 +601,7 @@ Outcome : [
 | Durable Object constructor, in `ctx.blockConcurrencyWhile` (only for a class with `init!`) | `Object` with `Init` | `Done` | `Failed`, `Unhandled`: a throw. Workers resets the object, and the event that started it fails. |
 | Durable Object `alarm` (only for a class with `alarm!`) | `Object` with `Alarm` | `Done` | `Failed`: a throw, and Workers retries the alarm (6 times or less, `MODULES.md` 7) |
 | None: the shim, once at load | `Manifest` | `Reply` with the names of classes and methods | `Unhandled`: the app has no classes |
-| A kind with no tag, or with no entry point yet. In phase A: `queue`, `email`, `tail`, when the app names them in `makeHandler(module, { other: ["queue"] })`. A later release that gives such a kind its entry point is a major release (rules above). | `Other` | `Reply` with the value for JS (the `Ok` of `other!`) | `Failed`: a throw |
+| A kind with no tag, or with no entry point yet. In phase A: `queue`, `email`, `tail`, when the app names them in `makeHandler(module, { other: ["queue"] })`. A later release that gives such a kind its entry point is a major release (rules above). Done in 8f, part 2: `queue`, `email` and `tail` have their own entry points, and `makeHandler` refuses them in `other`. | `Other` | `Reply` with the value for JS (the `Ok` of `other!`) | `Failed`: a throw |
 
 Cost of one entry for all kinds, against one export for each kind:
 
@@ -624,6 +624,7 @@ As built in `PLAN.md` 8b (first half). The status there has the files, the tests
 | Header | `requires { event! : Worker.Event => Worker.Outcome }`. `Event` and `Outcome` are in the block of `Worker` (`MODULES.md` 3). | A platform header names the module of a type. |
 | Payload types of phase B | `Queue.Batch`, `Queue.Message`, `Email.Mail`, `Object.Event`, `Object.Socket`, `WebSocket.Message`, `WebSocket.Closed`, `Worker.TraceItem` exist as types only. | The type of `Event` is final in phase A (rules above). |
 | Entry points | `makeHandler` gives a class (a subclass of `WorkerEntrypoint`) with `fetch`, `scheduled`, and a method on the prototype for each name of the option `other`. `Rpc`, `EntrypointFetch`, `Object` and `Manifest` are 8f: the `Worker` wrapper gives `Unhandled` for them. | |
+| `queue`, `email`, `tail` (8f, part 2) | The class has these three methods, and they send the events `Queue`, `Email` and `Tail`. So the option `other` refuses these three names now (a major release, the rules of 10.1: an app that had `other: ["queue"]` must move to `queue!`). `queue` and `email`: each outcome but `Done`, and a trap, are a log line and a throw (the batch is retried, the mail is rejected). `tail`: a log line only. | The rules of 10.1 |
 | First instance | At the first event (or the first read of the static `runner`), not in `makeHandler`. `resumeCheck: "off"` on a production host still throws in `makeHandler`: the shim reads the export list. A module that is not stack-first makes the first event throw: the platform has no fallback (`PLAN.md` 1b). | workerd forbids random values at global scope, and the free mark of an instance is random (`PLAN.md` 12). |
 | Log lines | `<entry>: failed: <message>`, `<entry>: unhandled: ...`, `<entry>: trap: <the text of a Roc crash, or the error>` through the option `log` (default `console.warn`) | `PLAN.md` 8a O2: the host writes the text of a `crash` to its log before the trap. |
 | Outcomes that an entry does not take | `fetch`: a log line and a 500 with no body. `scheduled`: each outcome but `Done` is a log line and a throw. A method of `other`: each outcome but `Reply` is a log line and a throw. | |
@@ -634,6 +635,9 @@ The event and the outcome cross as `Js` trees (5) with these shapes (`platform/E
 | --- | --- |
 | `Fetch` | `{ kind: "fetch", request: { method, url, headers: [[name, value], ...], body, cf } }` |
 | `Scheduled` | `{ kind: "scheduled", cron, time_ms }`: `controller.cron`, `controller.scheduledTime` |
+| `Queue` | `{ kind: "queue", queue, messages: [{ id, timestamp_ms, attempts, body }] }`: `body` is a `Packed` value (CBOR), or `undefined` when CBOR cannot write it (a class instance) |
+| `Email` | `{ kind: "email", from, to, headers: [[name, value], ...], raw, raw_size_bytes, can_be_forwarded }`: `raw` is a stream (a ref) |
+| `Tail` | `{ kind: "tail", items }`: `items` is one `Packed` value with the items of `Worker.TraceItem`. A `Try` field is the value, or no key (MODULES.md 3). |
 | `Other` | `{ kind: "other", name, payload }`: the handler name and its first argument (J1 to J7) |
 | `body` | absent (`Empty`), bytes, text, or a ref (`Stream`). The request body of `fetch` is always a ref (second half of 8b, `PLAN.md` 10a). |
 | `cf` | absent, or an object with each field of `Request.Cf` as `{ Ok: v }` or `{ Err: "Missing" }` (never `null`), and `is_eu_country` as a boolean |

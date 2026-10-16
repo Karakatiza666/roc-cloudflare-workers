@@ -17,7 +17,7 @@
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { checkOptions } from './options.js';
 import { makeRunner } from './runner.js';
-import { fetchEvent, scheduledEvent, otherEvent, responseOf } from './events.js';
+import { fetchEvent, scheduledEvent, queueEvent, emailEvent, tailEvent, otherEvent, responseOf } from './events.js';
 import { isBenchHost } from './host.js';
 
 // `module`: the compiled app (a `WebAssembly.Module`). Gives the class of the default export of the Worker: a subclass of
@@ -28,7 +28,7 @@ import { isBenchHost } from './host.js';
 // `opts.ops`: the JS functions of the app (API.md 6.4). The class has the static `runner` for tests and the bench.
 export function makeHandler(module, opts = {}) {
   if (!(module instanceof WebAssembly.Module)) throw new TypeError('makeHandler: module must be a WebAssembly.Module');
-  const { other = [], ...runnerOpts } = checkOptions(opts);
+  const { other = [], tailMaxBytes, ...runnerOpts } = checkOptions(opts);
   const log = runnerOpts.log ?? ((text) => console.warn(text));
   // workerd forbids random values at global scope (the free mark of an instance, `freeMark`), and the default export
   // is made there. So the runner and its first instance start at the first use (an event, or a read of `runner`), and
@@ -87,6 +87,31 @@ export function makeHandler(module, opts = {}) {
       if (r.outcome.outcome === 'done') return;
       log(`scheduled: ${reason(r.outcome)}`);
       throw new Error(`scheduled: ${reason(r.outcome)}`);
+    }
+
+    // `Queue` (API.md 10.1): `Done` leaves the messages with no ack or retry to the queue default. Each other outcome
+    // and a trap: a log line and a throw, so Workers retries the batch. An explicit ack or retry stands.
+    async queue(batch) {
+      const r = await run('queue', queueEvent(batch), { kind: 'Queue', env: this.env, ctx: this.ctx, event: batch, hooks: { kind: 'Queue', ctx: this.ctx } });
+      if (r.trap) throw new Error(`queue: trap ${r.trap}`);
+      if (r.outcome.outcome === 'done') return;
+      log(`queue: ${reason(r.outcome)}`);
+      throw new Error(`queue: ${reason(r.outcome)}`);
+    }
+
+    // `Email` (API.md 10.1): `Done` accepts the mail. Each other outcome and a trap: a log line and a throw, so the mail is rejected.
+    async email(message) {
+      const r = await run('email', emailEvent(message), { kind: 'Email', env: this.env, ctx: this.ctx, event: message, hooks: { kind: 'Email', ctx: this.ctx } });
+      if (r.trap) throw new Error(`email: trap ${r.trap}`);
+      if (r.outcome.outcome === 'done') return;
+      log(`email: ${reason(r.outcome)}`);
+      throw new Error(`email: ${reason(r.outcome)}`);
+    }
+
+    // `Tail` (API.md 10.1): the batch with its log lines cut to 1 MiB (MC11). Each outcome but `Done` and a trap: a log line only.
+    async tail(events) {
+      const r = await run('tail', tailEvent(events, tailMaxBytes, log), { kind: 'Tail', env: this.env, ctx: this.ctx, event: events, hooks: { kind: 'Tail', ctx: this.ctx } });
+      if (!r.trap && r.outcome.outcome !== 'done') log(`tail: ${reason(r.outcome)}`);
     }
   }
   // `Other` (API.md 10.1): a method on the prototype for each name of `opts.other`, as Workers finds a handler or an RPC

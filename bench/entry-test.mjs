@@ -14,7 +14,7 @@ const fail = (...m) => {
   console.log('FAIL', ...m);
 };
 const lines = [];
-const Handler = makeHandler(module, { other: ['queue'], log: (text) => lines.push(text) });
+const Handler = makeHandler(module, { other: ['ping'], log: (text) => lines.push(text) });
 const env = { name: 'env' };
 const ctx = { waitUntil() {} };
 const h = () => new Handler(ctx, env);
@@ -28,7 +28,7 @@ const logOf = async (f) => {
 // 1. The class of the default export is a subclass of `WorkerEntrypoint`, and its methods are on its prototype.
 {
   const sub = Handler.prototype instanceof WorkerEntrypoint;
-  const own = ['fetch', 'scheduled', 'queue'].every((m) => Object.hasOwn(Handler.prototype, m));
+  const own = ['fetch', 'scheduled', 'queue', 'email', 'tail', 'ping'].every((m) => Object.hasOwn(Handler.prototype, m));
   const inst = h();
   console.log('1 subclass:', { sub, own, env: inst.env === env, ctx: inst.ctx === ctx });
   if (!sub) fail('1: makeHandler does not give a subclass of WorkerEntrypoint');
@@ -96,19 +96,19 @@ const cron = async (c) => {
   }
 }
 
-// 6. `queue` in the option `other` reaches `Other`. The `Ok(v)` of `other!` is the value that the caller gets.
+// 6. `ping` in the option `other` reaches `Other` (`queue`, `email` and `tail` have their own entry points since 8f). The `Ok(v)` of `other!` is the value that the caller gets.
 {
   const payload = { messages: [1, 2], queue: 'jobs' };
   let got;
   try {
-    got = await h().queue(payload);
+    got = await h().ping(payload);
   } catch (e) {
     got = `throw ${e}`;
   }
-  const ok = got?.kind === 'queue' && JSON.stringify(got.got) === JSON.stringify(payload);
-  console.log('6 other:', got, { email: typeof Handler.prototype.email });
-  if (!ok) fail(`6: queue gave ${JSON.stringify(got)}`);
-  if (typeof Handler.prototype.email !== 'undefined') fail('6: a name that is not in `other` has a method');
+  const ok = got?.kind === 'ping' && JSON.stringify(got.got) === JSON.stringify(payload);
+  console.log('6 other:', got, { pong: typeof Handler.prototype.pong });
+  if (!ok) fail(`6: ping gave ${JSON.stringify(got)}`);
+  if (typeof Handler.prototype.pong !== 'undefined') fail('6: a name that is not in `other` has a method');
 }
 
 // 7. `Unhandled`: a 500 and a log line. 8. `Err`: `Failed`, a 500 with no body and a log line with the error.

@@ -1999,6 +1999,138 @@ Open points:
 | DO4 | `Object.Self` SQL (8f) uses `constraint_of` and the integer rules of `D1.roc`, and its tests also check `ForeignKey` and `Datatype` (O5). |
 | DO5 | 8g: `D1.all!` (CBOR, typed) against `D1.rows!` (`pf.limit`, `Js` tree) for 20 and 200 rows. |
 
+### Status of step 8f, part 2: Queue, Kv, Email, Tail (2026-10-16)
+
+Done: the modules `Queue` (producer and consumer), `Kv` (with `Kv.Cell`) and `Email` (the binding and the functions of `Mail`), the entry points `queue`, `email` and `tail` of `makeHandler` with their events (`Entry` decodes them), `Worker.TraceItem` as typed CBOR data, the shim option `tailMaxBytes`, the helpers `pf.readMaybe`, `pf.kvMeta`, `pf.kvList` and `pf.emailMessage`, the conformance routes and checks in Miniflare (local queues, KV, email and a second Miniflare for the Tail Worker), and 29 revert checks. The edge parts stay for 11c (list below). Not in this part: Durable Objects, RPC, Manifest, WebSocket, Tcp (part 1 and later steps). `queue`, `email` and `tail` move from `Other` to their own entry points: this is a major release (API.md 10.1), and `other` refuses these three names now.
+
+| Run | Result |
+| --- | --- |
+| `bench/test-all.sh` | ALL PASS, 49 step lines |
+| `node conformance/run.mjs bench/out/conformance.wasm` | 160 passed (with `end`), PASS (was 122: `queue` 11, `kv` 12, `email` 8, `tail` 6 checks are new, plus the setup and teardown lines) |
+| `roc test platform/main.roc` | 72 `expect`s (was 53: `Queue` 5, `Kv` 7, `Email` 5, `Worker` 2) |
+| `ROC=... node conformance/reverts.mjs '(8f2)'` | 29 of 29 caught (the other 95: unchanged), about 55 minutes |
+
+```mermaid
+flowchart LR
+    W["Workers: queue(batch), email(message), tail(events)"] --> H["js/index.js: three methods of the class"]
+    H -->|"js/events.js: queueEvent, emailEvent, tailEvent"| E["Entry.roc: Worker.Event Queue, Email, Tail"]
+    E --> A["app: queue!, email!, tail! of Worker"]
+    A -->|"Queue.each!, Mail.forward!, ..."| P["programs on the root event (the batch, the message)"]
+    P --> W
+```
+
+| Part | What | Main files |
+| --- | --- | --- |
+| `Queue` | `json`, `v8`, `text`, `bytes` (a constant gives the type and the content type, MC6), `send!`, `send_with!` (`delay_ms`), `send_batch!`, `send_batch_with!`, each with its `Io` twin. `each!` reads each message as `a`: `Ok` acks, `Err(e)` and a body that is not an `a` log a warning and retry. `Batch.ack_all!`, `retry_all!`, `retry_all_with!`. `Message.ack!`, `retry!`, `retry_with!`: no ref, the function finds its message in the batch of the task (`pf.findById` of the root `event`). | `platform/Queue.roc` |
+| `Kv` | `json`, `text`, `bytes`, `get!`, `get_with!` (`cache_ttl_ms`, `max_bytes`), `get_with_metadata!` and `_with!`, `put!`, `put_with!` (`ttl_ms`, `expires_ms`, `metadata`), `delete!`, `list!`, `Kv.Key`, `Kv.Metadata` (`of`, `parse`), `cell` and `Kv.Cell` (`get!`, `set!`, `set_with!`, `delete!`). Each function has its `Io` twin. A read is `get(key, { type: "stream" })` and `pf.readMaybe(stream, max)`: a value above the limit is `TooLarge` before any copy into wasm. | `platform/Kv.roc` |
+| `Email` | `binding`, `send!` (structured), `send_raw!` (MIME text), `Mail` with `header`, `forward!`, `forward_with!`, `reply!`, `set_reject!` and the twins. `Mail` is plain data: its functions use the root `event` (the message). | `platform/Email.roc` |
+| Events | `queue(batch)`, `email(message)`, `tail(events)` on the class. `queue` and `email`: each outcome but `Done` and a trap are a log line and a throw. `tail`: a log line only. The tail batch is one `Packed` value of `Worker.TraceItem`; past `tailMaxBytes` (1 MiB) the log lines are dropped from the end and one `console.warn` gives the count. | `js/events.js`, `js/index.js`, `platform/Entry.roc` |
+| `TraceItem` | The request headers are `{ name, value }` records (O1 of 8b). The CBOR parser reads a `Try` field as the value, or `Err(Missing)` for a key that is not there: the shim writes no key for a missing value. | `platform/Worker.roc`, `research/f2-queue/` |
+| Shim | `queue`, `email`, `tail` are reserved in `other`. The option `tailMaxBytes`. The helpers `readMaybe`, `kvMeta`, `kvList`, `emailMessage` (a dynamic import of `cloudflare:email`, so Node tests load with no stand-in). | `js/options.js`, `js/helpers.js` |
+| Conformance | `QueueRoutes.roc` (with the `queue!` of the app), `KvRoutes.roc`, `EmailRoutes.roc` (with the `email!`), `TailRoutes.roc` (the `tail!`), `checks/queue.mjs`, `kv.mjs`, `email.mjs`, `tail.mjs`. `worker.js`: a JS consumer for the queue `v8`, `/__queue_seen`, `tailMaxBytes` 100 kB. `run.mjs`: `unsafeTriggerHandlers` (for `/cdn-cgi/local/email`) and `t.modules`, `t.startMiniflare` (the Tail Worker check starts its own Miniflare with two workers). | `conformance/` |
+| Probes | The bytes that the derived `Cbor.encode` and `Cbor.parse` use for a `Try` field, and the CBOR of two trace items (the `expect`s of `Worker.roc`) | `research/f2-queue/try_shape.roc`, `research/f2-queue/trace_bytes.mjs` |
+| 8b tests | The `Other` tests used `other: ["queue"]`. They use `"ping"` now, and `bench/app_events.roc` has a real `queue!`, so `bench/entry-workerd.mjs` sends a native queue event to it. | `bench/` |
+
+Tests (names are the check names of `run.mjs`). Each revert is a real edit, a build, a run and a restore (`ROC=... node conformance/reverts.mjs '(8f2)'`, or a part of a name).
+
+| Test | Result | Revert | Revert result |
+| --- | --- | --- | --- |
+| `queue send!, and each! reads the same type`: `Queue.json` `Job` goes in, `each!` gives the same record, `attempts` 1; the twins `send`, `send_with!`, `send_with` | PASS | `send` is called `sendx` | FAIL: 5 checks (`QueueErr TypeError: o[name] is not a function`) |
+| `queue text and bytes`: `Queue.text` and `Queue.bytes` round trip | PASS | (in `sendx`) | |
+| `queue each!: a body that is not an a is retried, not acked`: a direct call of the `queue` handler with a body of another shape and a good one: `retryMessages` is the bad one, `explicitAcks` the good one | PASS | The body that does not fit is `Ok` | FAIL: `retried: got "[]", want "[\"bad\"]"` |
+| `queue Message.ack! of the second message acks only it` (`pf.findById`): `explicitAcks` is `["m2"]` | PASS | `ack!` is `ackAll` | FAIL: 2 checks |
+| (same) | | `pf.findById` gives the first item | FAIL: 3 checks |
+| `queue Message.retry_with! and the batch functions`: `retry_with!` 2,500 ms is `delaySeconds` 3, `retry_all_with!` 1,500 ms is 2, `retry_all!` has no delay, `ack_all!` is `ackAll` | PASS | `retry_all_with!` sends no delay | FAIL: `{"retry":true}`, want `delaySeconds` 2 |
+| `queue queue!: an Err is a throw, so Workers retries the batch`: `outcome` is `exception` | PASS | `Failed` does not throw | FAIL: `outcome: got "ok", want "exception"` |
+| `queue each!: msg.attempts is 1, then 2 after an Err`: a real queue, the first attempt gives `Err`, the log has `attempts` 1 then 2 and one warning (`Log.warn!`) | PASS: `attempts 1,2` | The event has `attempts` 1 | FAIL: `got "[1,1]", want "[1,2]"` |
+| `queue send_batch! and send_batch_with! with delay_ms`: `send_batch!` of 3 comes after 112 ms, the same with `delay_ms` 2,500 only after 3,114 ms (`delaySeconds` 3) | PASS | `sendBatch` gets no delay | FAIL: `a delayed message came early: got 3, want 0` |
+| `queue send_batch! of 101 messages is QueueErr` | PASS: `Unknown Internal Error (15000)` | An error of `sendBatch` is `Ok` | FAIL: `got 200 Ok` |
+| `queue v8: a Cbor.Bytes field reaches a JS consumer as Uint8Array`: `{ n, big: 2^60, data: Cbor.Bytes }` reaches a JS consumer as `bigint` and `Uint8Array` | PASS | The content type is `"json"` | FAIL: `QueueErr TypeError: Do not know how to serialize a BigInt` |
+| `kv get!, get (Io twin), put!, delete!, and the twins: text`: `NotFound`, `Ok`, 1 wait | PASS | `get` is called `getx` | FAIL: 7 checks (`KvErr TypeError: o[name] is not a function`) |
+| (same) | | `delete` is called `deletex` | FAIL: 2 checks |
+| `kv json`: a record with a `U64` of 2^60 is exact in both directions, the stored text is JSON, a JS Worker's text reads; a text that is not JSON is `BadData` | PASS | (in `getx`) | |
+| `kv bytes`: `put!` and `get!` keep each byte (0, 1, 254, 255) | PASS | (in `getx`) | |
+| `kv get! of 2 MiB is TooLarge, get_with! with max_bytes gives it`: also at `max_bytes` 2 MiB less 1 (`TooLarge`) and 2 MiB (`Ok`) | PASS | `pf.readMaybe` has no limit | FAIL: 3 checks (`Ok len=2097152`) |
+| (same) | | `get_with!` does not read `max_bytes` | FAIL: `Err TooLarge` for the 4 MiB limit |
+| `kv get! of 2 MiB takes no wasm memory` | PASS: 0 bytes | (in `readMaybe`) | FAIL |
+| `kv get_with! cache_ttl_ms: 30 s is Ok, less is KvErr` | PASS: `KV GET failed: 400 Invalid cache_ttl of 5. Cache TTL must be at least 30.` | `cacheTtl` is not sent | FAIL: `Ok "hello"` |
+| `kv put_with! metadata, and get_with_metadata!`: the metadata is typed (`{ tag, n }`), JS reads the same object, a key with no metadata has `Err(Missing)`, a missing key is `NotFound`, `max_bytes` gives `TooLarge` | PASS | The metadata is not sent | FAIL: `metadata: Err(Missing)` |
+| (same) | | `pf.kvMeta` drops the metadata | FAIL: the same |
+| `kv put_with! ttl_ms rounds up to whole seconds, and expires_ms`: 60,001 ms is 61 s, `expires_ms` is rounded up, `ttl_ms` 10,000 is `KvErr` | PASS: `KV PUT failed: 400 Invalid expiration_ttl of 10. Expiration TTL must be at least 60.` | `ttl_ms` is rounded down | FAIL: `expiration 1792177461, want 1792177462 to 1792177463` |
+| `kv list!: names, expires_ms and typed metadata`: a page of `limit` 2 gives `More(cursor)`, the next page `Done` | PASS | `pf.kvList` drops the metadata | FAIL: `p/b:Never:none` |
+| `kv Cell: set!, get!, delete! and the twins`; `kv Cell set_with!: ttl_ms` | PASS | `get!` reads another key | FAIL: `Err NotFound` |
+| `email forward!: the mail goes to the address`; the twin | PASS | | |
+| `email forward_with!: an X-Test header`: `forwards[0].headers` is `[["x-test","yes"]]` | PASS | The headers are not sent | FAIL: 2 checks (`got undefined, want "yes"`) |
+| `email header: the case does not matter, a missing header is Missing` | PASS | The case matters | FAIL: `SUBJECT: got "none"` |
+| `email set_reject!: the mail is rejected with the reason`: `rejectReason` is `no thanks` | PASS | `setReject` is called `setRejectx` | FAIL: `reason: got undefined` |
+| `email reply!: a reply to the sender`: one reply from the address that got the mail | PASS | `reply` is called `replyx` | FAIL: `outcome "exception"` |
+| `email an Err of email! rejects the mail (a throw)`: `outcome` is `exception`, status 500; a mail with no action is accepted | PASS | `Failed` does not throw | FAIL: `outcome: got "ok"` |
+| `email raw, raw_size_bytes, can_be_forwarded, from`: `raw.text!()` has the size of the mail | PASS | | |
+| `email send!, send (Io twin) and send_raw!, send_raw (Io twin) give a message id` (the local `send_email` binding) | PASS | `send` of `send_raw!` is called `sendx` | FAIL: `The RPC receiver does not implement the method "sendx".` |
+| `tail the trace of a fetch that logs and throws`: `outcome` is `exception`, `event` has the method and the URL and no response, the log `message` is `["a",1]` (level `log`), `exceptions` has `Error: boom` | PASS | A `Try` field in the tag form | FAIL: 4 checks (`tail: trap: Entry.event: the tail items do not fit Worker.TraceItem: InvalidCbor(39)`) |
+| `tail the trace of a scheduled run: no event, and the cron log`: `event` is `Err(Missing)` | PASS | `event` is read for each kind (BadData in the plan: a trap, the handler has typed input) | FAIL: no trace line for the cron run |
+| `tail a log message that JSON cannot write (a BigInt, a cycle) is its text`: 2 logs, no crash | PASS | | |
+| `tail a trace with 2 MiB of logs`: the handler gets 2 logs of 7 (workerd cut the 2 MiB to about 250 kB), `tailMaxBytes` is 100 kB, and the Tail Worker logs one warning (`tail: dropped 5 log lines: ...`) | PASS | The shim has no limit | FAIL: `the handler got 7 logs of 246068 bytes` |
+| `Worker.TraceItem` parse (`roc test`, 2 `expect`s): the CBOR that the shim writes for a fetch and a cron run | PASS | | |
+| `Queue` (`roc test`, 5), `Kv` (7), `Email` (5): the delay rules, the seconds rounding, the page and the key reader, the `Header` lookup | PASS | | |
+| `end`: no task, ref, context, alarm or live byte | PASS | | |
+
+Tests that changed what they check:
+
+| Test | Change |
+| --- | --- |
+| `bench/entry-test.mjs`, `bench/events-worker.js`, `bench/app_events.roc` | `other: ["queue"]` is `other: ["ping"]` (the class has `queue`, `email` and `tail` now, and `other` refuses them). Test 1 checks the three methods. |
+| `bench/entry-workerd.mjs` (3) | The native queue event reaches `queue!` of `app_events.roc` (it reached `other!` in 8b). |
+| `bench/handler-test.mjs` | `other: ["queue"]` is a bad option (a new case). The good options use `ping` and `pong`. |
+
+Edge parts for 11c (Miniflare differs from the edge, or the plan says "on the edge"):
+
+| Part | What to run on the edge | Local result |
+| --- | --- | --- |
+| Tail, 2 MiB of logs | A real trace with 2 MiB of logs: how much does the edge give to the handler, and is the 1 MiB limit (default `tailMaxBytes`) the one that cuts? | Local workerd cuts a trace to about 250 kB before the shim sees it, so the local test uses `tailMaxBytes` 100 kB |
+| Tail, fields | `scriptName`, `eventTimestamp`, `event.request.cf`, `response`, the `outcome` values; a batch with many items; the `event` of a cron run and of a queue run (the docs say null) | `event` is a plain object for a cron run, with no `request` |
+| Queue, limits | A message of 128 KB and a batch of 100 messages (256 KB or less); `delaySeconds` above 86,400; the text of the errors | `Unknown Internal Error (15000)` for 101 messages |
+| Queue, retries | `attempts` after a retry, `max_retries`, the dead letter queue for a body that is not an `a`, `retry_all_with!` delay, a `Queue.v8` message with a `BigInt` and bytes to a JS consumer | Local queues give `attempts` 1 then 2, and `Uint8Array` and `bigint` for `v8` |
+| Queue, a throw of `ack` or `retry` | A message that is not of the batch of the task (a kept `Message`): does `ack()` throw? The module drops the throw. | |
+| Kv | Eventual consistency (a read in another place after a write); `ttl_ms` below 60 s and `cache_ttl_ms` below 30 s (the text of the error); a value of 25 MiB; metadata above 1,024 bytes; a page of 1,000 keys; `get` of a missing key is `null`. | The texts are in `bench/README.md` |
+| Email | `forward_with!`: only the `X-` headers stay; `can_be_forwarded` (is `canBeForwarded` a field of the edge?); `set_reject!` is sync on the edge; `reply!` needs a valid `In-Reply-To`; the structured `send!` of the Email Service and the `send_raw!` size limits | The local `/cdn-cgi/local/email` gives the message as an RPC stub (`set_reject!` waits) |
+| `tail` and `email` on every Worker | `makeHandler` always defines `queue`, `email` and `tail`: does the edge list a Worker as a consumer of each, for a Worker that has no handler in Roc? | |
+
+Choices I made (the plan does not say):
+
+| # | Choice |
+| --- | --- |
+| QC1 | `Queue(a) :: { name, content_type, write, read }`: the same closures as `Memo` (MC6). `json` and `v8` write `Packed(Cbor.encode(v))`. `text` writes `Text` and `bytes` writes `Bytes` (the derived encoder would write an array of numbers for `List(U8)`). |
+| QC2 | `ack`, `retry`, `ack_all`, `retry_all` have no `Try` (MODULES.md 6), so a throw is dropped, as in `Worker.Scheduled.no_retry!`. `retry_with!` and `retry_all_with!` take `{ delay_ms }`, not an optional record: the record is the only argument. A retry delay is cut to 86,400 s. |
+| QC3 | A delay above 24 h for a send is not checked in Roc: Workers gives `QueueErr`. (Local queues were not asked: the test of the plan is the count of 101.) |
+| QC4 | `each!` logs a failed message with `Log.warn!("queue message failed", { queue, id, attempts, error })`. MODULES.md 6 says "logs `Str.inspect(e)`" and gives no format. |
+| QC5 | A message body that CBOR cannot write (a class instance, a number outside i64 and u64) is `undefined` in the event: the message has an empty body, and `each!` retries it. One such message does not fail the batch. The check `pack(body)` costs a second encode for each message. |
+| QC6 | `Kv.put_with!` takes `metadata ?: Kv.Metadata`, made by `Kv.Metadata.of(m)`. MODULES.md 5.2 has `metadata ?: m where [m.Encodable]`: a call with no `metadata` does not compile ("type not determined"), as the list note of 5.2 says. `MODULES.md` 5.2 is changed. |
+| QC7 | `Kv.Cell.set_with!` takes `ttl_ms` and `expires_ms` only (no metadata). Each `Kv` and `Kv.Cell` function has its `Io` twin (MC3). `list` has no `list_with` (as `R2.list`, RC9). |
+| QC8 | `Kv` reads with `{ type: "stream" }` and `pf.readMaybe` (null is `NotFound`; `pf.readUpTo(null)` is no bytes, for a 204 body). `get_with_metadata!` ends with `pf.kvMeta`, and `list!` with `pf.kvList` (no loop in a program, OP4). The metadata crosses as `Packed`. |
+| QC9 | `Email.send!` takes `to : List(Str)`, `cc`, `bcc : List(Str)` and `reply_to : Str`, and gives `{ message_id : Str }`; `send_raw!` takes `raw : Str`. MODULES.md 13 gives the names only. |
+| QC10 | `Email.Mail` is `:=` (plain data, MC13), not `::`: a test can build one, and `mail.from`, `mail.to`, `mail.raw` are fields. `can_be_forwarded` is `message.canBeForwarded !== false`: workerd and Miniflare have no such field. |
+| QC11 | `Mail.set_reject!` uses `await!`: the local runtime gives the message as an RPC stub, so a sync `call!` is status 2. A throw is dropped (`=> {}`). It has an `Io` twin. |
+| QC12 | `Worker.TraceItem` request headers are `List({ name : Str, value : Str })`. `Header` of `roc-lang/http` has no `parser_for` (O1 of 8b). The type of the field changed from `List(Header)`. |
+| QC13 | The derived CBOR parser reads a `Try(a, [Missing])` field as the value, or `Err(Missing)` for an absent key (`research/f2-queue/try_shape.roc`): the "tag form" of MODULES.md 3 and 15 is wrong for `roc-cbor` 0.1.0. The shim writes no key for a missing value. MODULES.md 3 is changed. `Request.Cf` inside a trace uses the same rule (`cfPlain`). |
+| QC14 | An item that does not parse is a crash in `Entry.event` (a platform bug, as the other shape faults of `Entry`), with the text of the parse error. The plan says `BadData` for a scheduled trace with `event` read as a fetch: the handler has typed input, so `BadData` has no place to go; the test sees the trap and the missing trace line. |
+| QC15 | The shim option `tailMaxBytes` (default 1 MiB, MC11) is new: local workerd cuts a trace to about 250 kB before the shim, so the limit cannot be reached with 2 MiB of logs. The conformance worker sets 100 kB. Past the limit the shim keeps the log lines in order (item by item) until one does not fit, and drops the rest of all items. The size of a line is its own CBOR size, so the batch can be a few bytes above the limit. |
+| QC16 | `makeHandler` defines `queue`, `email` and `tail` for every app. An app with no `queue!`, `email!` or `tail!` gets `Unhandled`: a throw for `queue` and `email` (log line `queue: unhandled`), a log line for `tail`. The manifest of part 1 (the `handlers` of the default entry) can restrict them later. |
+| QC17 | `Email.send_raw!` and `reply!` make the `EmailMessage` with `pf.emailMessage`, a dynamic `import("cloudflare:email")`: no static import in `js/`, so Node tests of the shim need no stand-in module. |
+| QC18 | The conformance check of a consumer calls `worker.queue(name, messages)` of Miniflare for exact acks and retries (the answer has `explicitAcks`, `retryMessages`). The checks of `attempts` and of the delays use real local queues (batch timeout 0.1 s). |
+| QC19 | A multi-worker Miniflare needs `modulesRoot`, `compatibilityDate` and flags in each worker, or the app worker fails at its first event (`FinalizationRegistry is not defined`, no weak refs at an old date). |
+
+Open points:
+
+| # | Point |
+| --- | --- |
+| QO1 | `Kv.put_with!` metadata (QC6) is a change of the public signature. If the API owner wants `metadata ?: m`, a call with no metadata needs a type annotation, and the doc must say so. |
+| QO2 | MODULES.md 3 and 15 say that a `Try` field is read in the tag form (QC13). The roc-cbor derived parser reads the plain value or an absent key. Question for the owner of `roc-cbor`: is this the final rule? |
+| QO3 | `Email.Mail.can_be_forwarded` is not in the Workers API (QC10). The edge run (11c) says if the field exists. |
+| QO4 | `Worker.TraceItem` has no `entrypoint`, `scriptVersion`, `cpuTime` or `wallTime` (MODULES.md 3, "Not typed"). A field added later is a major release. |
+| QO5 | `queue`, `email` and `tail` exist for every app (QC16). Should the manifest hide them? |
+| QO6 | A body that CBOR cannot write is retried as an empty body (QC5). Should the batch instead give the handler the raw message? |
+
 ## 9. JS shim
 
 | Gap | Now |

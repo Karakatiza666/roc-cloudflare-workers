@@ -279,6 +279,16 @@ The docs give no example of a D1 constraint error. These are the texts that `con
 | `all!`, `rows!`, `batch!` of rows above the limit (`pf.pack`, `pf.limit`, `pf.packEach`) | name `TooLarge`: `CBOR: output is larger than <n> bytes` (`<n>`: the end of the limit in the result block) | `TooLarge` |
 | `with_session!(After(b))` with a bad bookmark | no throw locally (the workerd source has `D1_SESSION_ERROR`) | |
 
+## Error texts of Queue and Kv (PLAN.md 8f, part 2, local, 2026-10-16)
+
+The texts that `conformance/checks/queue.mjs` and `kv.mjs` got (Miniflare 5.20261012.0-beta, workerd 2026-10-12). Each error has the JS `name` `Error`. The edge run is 11c.
+
+| Call | JS `message` | Tag |
+| --- | --- | --- |
+| `Queue.send_batch!` of 101 messages | `Unknown Internal Error (15000)` | `QueueErr` |
+| `Kv.get_with!` with `cache_ttl_ms` 5,000 | `KV GET failed: 400 Invalid cache_ttl of 5. Cache TTL must be at least 30.` | `KvErr` |
+| `Kv.put_with!` with `ttl_ms` 10,000 | `KV PUT failed: 400 Invalid expiration_ttl of 10. Expiration TTL must be at least 60.` | `KvErr` |
+
 ## Edge (Q13, 2026-10-14, short test, not a full bench)
 
 `bench/deploy.sh` deploys `talon-bench-echo` and `talon-bench-{a,b,j}` (the setup of `config-*.capnp`). `bench/deploy.sh delete` removes them. `EDGE=<account>.workers.dev node bench/edge.mjs [n]` runs the load and joins the server CPU and wall time from `wrangler tail`. Tail drops events, so its numbers are a sample. Account: free plan (10 ms CPU per request), colo TBS.
