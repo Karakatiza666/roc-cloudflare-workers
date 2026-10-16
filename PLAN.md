@@ -1702,6 +1702,84 @@ Open points:
 | O3 | Found: two closed error unions of two modules join in `Io.both!` (`Http.get(url)` and `limiter.limit(key)` compiled and built): a non-empty union in the `Io` of a return type is open (the compiler warns that `..` there is redundant). Only the empty `[]` does not join (MODULES.md 15). |
 | O4 | A `Log` line has the fields in the order of the derived JSON encoder (by name), after `level` and `msg`. |
 
+### Status of step 8c, WebCrypto (2026-10-16)
+
+Done: the module `WebCrypto` (`platform/WebCrypto.roc`, with an equal copy in `bench/platform/`), its `Io` twins, the routes `conformance/WebCryptoRoutes.roc`, the checks `conformance/checks/webcrypto.mjs` (17 checks), the reverts (28, in `conformance/reverts.mjs`), and the SHA-256 measure `bench/sha256-bench.mjs`. `roc test platform/main.roc`: 26 `expect`s (3 new: RFC 4231 cases 1, 2 and 6 of `hmac_sha256`).
+
+| Part | What | Main files |
+| --- | --- | --- |
+| Operations | `sign`, `verify`, `encrypt`, `decrypt`, `derive_bits`, `import_key`, `export_key`, `generate_key`, `generate_key_with`, each with its `!` form. One program for each: `crypto`, `subtle`, the `importKey` of the key as data (`raw`, `pkcs8`, `spki`, or `JSON.parse` then `jwk`), then the operation. An `Imported` key is a ref (`Lit(Ref)`) and needs no import. `Io.new`: one wait. | `platform/WebCrypto.roc` |
+| Sync | `timing_safe_equal!` (`subtle.timingSafeEqual`), `random!` (`getRandomValues` of a new `Uint8Array`), `random_uuid!`: `Io.call!`, no wait. No `Io` twin (MC3: they do not wait, as `Env`). | same |
+| Pure | `hmac_sha256`: RFC 2104 over the builtin `Crypto.SHA256`. | same |
+| Headers | `WebCrypto` in `exposes` and imported in both headers (`exports-test.mjs` checks them). | `platform/main.roc`, `bench/platform/main.roc` |
+| Conformance | The line in `conformance/app.roc`, the routes (hex in the query for the keys and signatures of Node), the checks, the reverts | `conformance/` |
+
+Tests (`node conformance/run.mjs bench/out/conformance.wasm`: 49 PASS lines with `end`; Node `crypto` makes the RSA key pair of the registry cases). Each revert is a real edit, a build, a run and a restore (`ROC=... node conformance/reverts.mjs WebCrypto`, and `"Js pins"`).
+
+| Test (PLAN 8c) | Result | Revert | Revert result |
+| --- | --- | --- | --- |
+| `generate_key!(Ecdh(P256))` for two sides, `derive_bits!` on each side: same bytes (also P-384, P-521). A third key gives other bytes. | PASS `same=True bytes=32 third_differs=True` | Ecdh uses the key of the app as the peer key | FAIL (2 checks) |
+| The same with `X25519` | PASS | X25519 uses the key of the app as the peer key | FAIL (2 checks) |
+| `generate_key!(Ed25519)`: the signature of the private key verifies with the public key. A changed text is `BadSignature`. | PASS `sig=64 verify=Ok changed=BadSignature`, 4 waits | `verify!` gives `Ok` for each result | FAIL (4 checks: Ed25519, JWK, HMAC) |
+| `RsaOaep` (2048 bits, SHA-256, a label) and `AesGcm` (256 and 128 bits), also `AesCbc` and `AesCtr`: encrypt, then decrypt, gives the text. A wrong key does not decrypt. | PASS | The data is reversed before `encrypt` | FAIL (3 checks: RSA, AES, twins) |
+| `export_key!` of `import_key!` of `Raw(b)` is `Raw(b)`. A JWK export has `"kty":"oct"`. `Pkcs8` and `Spki` of an ECDSA pair round trip. | PASS | `Raw` reads the bytes reversed | FAIL |
+| `decrypt!` with `call!` in place of `await!`: status 2 | PASS (clean tree) | `Io.sync` in `decrypt` | FAIL: `CryptoErr PromiseInCall: op 2 (call) gave a promise: the program needs await!` (3 checks) |
+| `timing_safe_equal!`, `random!`, `random_uuid!` run in `call!`: 0 waits. `random!(100000)` is 100,000 bytes. | PASS `0 waits` | `await!` in each of the three, one revert each | FAIL: 2 waits, 1 wait, 1 wait. No chunks of 65,536 bytes: `random!(100000)` crashes (500, unreachable) |
+| `verify!` with a JWK is one crossing: 1 wait. The control, `import_key!` then `verify!`, is 2. | PASS | `verify!` runs `import_key!` first | FAIL (4 checks: waits 6, want 4, and 2, want 1) |
+| RN6: RS256 `verify!` of a JWT signature (made by Node) with the public JWK; a wrong signature and a wrong text are `BadSignature` | PASS | `verify!` gives `Ok` for each result | FAIL |
+| RN9, RN18: RS256 `sign!` with a PKCS#8 key (of Node): Node verifies the 256 bytes. | PASS | (the method name revert of `sign`) | FAIL |
+| `import_key!` of a private and of a public RSA JWK: sign, then verify | PASS | `is_private` never true | FAIL: `SyntaxError: Attempt to import private RSASSA-PKCS1-v1_5 key with invalid usage "verify".` |
+| RN9: HMAC-SHA256 `sign!`, `verify!` and `hmac_sha256` (Roc) give the bytes of Node `createHmac` (a key of 100 bytes too) | PASS | The inner pad is 0x5c; a key longer than the block is not hashed | FAIL (`roc test`, both) |
+| A pinned `CryptoKey` used by a later request: `import_key!`, `pf.pin`; the next request `pf.pinned` and `sign!`, `verify!` | PASS (an unknown name is `CryptoErr TypeError`) | `pf.pin` does not keep the value (`js/helpers.js`) | FAIL: `parameter 2 is not of type 'CryptoKey'` |
+| Each `Io` twin: 12 calls, 12 waits | PASS | `random!` with `await!` (13 waits); a wrong method name | FAIL |
+| A wrong JS method name in one function: its route fails | 13 reverts: `sign`, `verify`, `encrypt`, `decrypt`, `deriveBits`, `importKey`, `JSON.parse` (JWK import), `exportKey`, `JSON.stringify` (JWK export), `generateKey`, `timingSafeEqual`, `getRandomValues`, `randomUUID` | each name gets an `x` | FAIL in the checks of that function (1 to 8 checks) |
+| `generate_key!(Pbkdf2)` | `CryptoErr NotSupportedError: Unrecognized key generation algorithm "PBKDF2" requested.` | | |
+
+Measure (no test): `node bench/sha256-bench.mjs bench/out/conformance.wasm`. The route `/webcrypto/sha256` hashes `n` buffers of `size` bytes in one request (the first byte changes each time), and the digest of the last one is compared with Node `crypto`. Node 26, the runner of `js/` (`makeHandler`), the request and the buffer cancel (n hashes less 0 hashes). `crypto.subtle.digest` in the same process, one `await` for each hash. Median of 5 runs, 3 runs of the script, load average 3 to 5.
+
+| Size | `Crypto.SHA256.hash` in wasm (us) | `crypto.subtle.digest` (us) | wasm / digest |
+| --- | --- | --- | --- |
+| 1 KB | 2.5 | 6 to 8.4 | 0.3 to 0.4 |
+| 4 KB | 9.1 to 11.6 | 7.4 to 11.3 | 1.0 to 1.2 |
+| 16 KB | 35.8 to 37.2 | 13.7 to 14.9 | 2.4 to 2.7 |
+| 64 KB | 143.6 to 151.9 | 35.9 to 43 | 3.3 to 4.1 |
+| 1 MB | 2,329 to 2,808 | 507 to 793 | 3.5 to 5.5 |
+
+The builtin hashes about 400 MB/s in wasm. `digest` is faster from about 4 KB. In this measure `digest` has no bridge crossing and no JSPI wait, and the bytes are in JS already. In the platform it adds a `Lit(Bytes)` copy from wasm memory, one crossing and one wait, so the size where `digest` wins is higher there: 8g measures it in the platform.
+
+Choices I made (the plan does not say):
+
+| # | Choice |
+| --- | --- |
+| C1 | `Cipher.RsaOaep` is `{ label, hash }` (MODULES.md 10 had only `label`). `importKey` of an RSA-OAEP key needs a hash, and a key as data has none. The other ciphers need no import parameter. |
+| C2 | `export_key!` of a key that is data (not `Imported`) has no algorithm, so it cannot import it (MODULES.md 10 said "one import and one export"). It gives the same key when the form is the key's own form (no crossing), else `CryptoErr` with the name `BadData`. See Q1. |
+| C3 | `import_key!` picks the usages from the algorithm and the key: HMAC `sign`, `verify`; AES `encrypt`, `decrypt`; PBKDF2 and HKDF `deriveBits`; a private key `sign`, `decrypt` or `deriveBits`; a public key `verify` or `encrypt` (none for ECDH and X25519). A key is private when it is `Pkcs8`, or a JWK with the member `d` (`Json.parse` into `{ d : Str }`). The one-crossing functions use the usage of their own operation. |
+| C4 | `timing_safe_equal!` of two lists of different lengths is `False` with no crossing (workerd throws for different lengths). A throw of the call is `False`. |
+| C5 | `random!` makes one `getRandomValues` call for each 65,536 bytes (the Workers limit). A JS throw in `random!` and `random_uuid!` is a crash, as `Time.now_ms!` (the types have no error). |
+| C6 | The names `"Ed25519"` and `"X25519"` work in workerd (2026-10-12): no `NODE-ED25519` name. The ECDSA hash is in `sign` and `verify` (`Ecdsa(Curve, Hash)`), the curve in the import. |
+| C7 | `Imported(ref)` goes in a program as `Lit(Ref)`, and `import_key` ends with `Keep` on the key, so JS gives a ref. The ref is good for the task only (RS1). The pin test uses `pf.pin` and `pf.pinned` with `Io.call!`: `Js.pin!` is not built (it is in a later wave). |
+| C8 | "One crossing" is shown by the waits of the task (`x-waits`): `verify!` with a JWK is 1 wait, `import_key!` then `verify!` is 2. The sync functions: 0 waits, and a promise in `call!` is status 2 (OP1), so a sync function cannot hide a wait. There is no counter of `call!` crossings. See Q2. |
+| C9 | The key pair of the registry cases comes from Node `crypto` in the check (RSA 2048, JWK for the public key, DER PKCS#8 for the private key). The keys and signatures reach the routes as hex or JWK text in the query. |
+| C10 | `hmac_sha256` is not in `Io` (pure). Its three `expect`s are the vectors of RFC 4231. |
+
+Found:
+
+| # | Fact |
+| --- | --- |
+| F1 | `{ iv }` with one field in an expression is a block, not a record: `AesGcm({ iv })` gave `AesGcm(List(U8))`. Write `{ iv: iv }`. |
+| F2 | `Str.inspect` of a `Bool` is `True` and `False`, not `Bool.True`. |
+| F3 | A record pattern must name all fields: `RsaPss({ salt_length_bytes })` does not match a record with `hash`. Write `hash: _`. |
+| F4 | `List.set` gives a `Try`, and the list reverse is `List.rev`. |
+| F5 | Node `createPublicKey(publicKey)` of a public `KeyObject` throws "Invalid key object type public, expected private". Use the key object. |
+
+Open points:
+
+| # | Point |
+| --- | --- |
+| Q1 | `export_key!` of a key as data in another form needs an algorithm (C2). Options: a `KeyAlg` argument, or only `Imported` keys. A decision for the API owner. |
+| Q2 | A counter of crossings (`js_await` and `js_call`) in `stats` would show "one crossing" for the sync functions, and `D1.batch!` needs the same. The shim has none today. |
+| Q3 | Edge: `Ed25519`, `X25519` and P-521 on the real edge are not tested (local Miniflare only). 11c. |
+
 ## 9. JS shim
 
 | Gap | Now |

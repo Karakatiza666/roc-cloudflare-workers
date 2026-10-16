@@ -37,6 +37,7 @@ Question: a Roc wasm32 app with a Zig host serves concurrent requests that wait 
 | `app_stream.roc`, `stream-test.mjs`, `stream-workerd.mjs`, `stream-reverts.mjs`, `stream-worker.js`, `config-stream.capnp` | Streams and the context of a task (PLAN.md 8b second half, 9c, 10a, 10b). A 50 MB request body back as the response body, the first chunk and a 1 KB limit of a 50 MB body: wasm memory grows by less than 1 MB. `tee!`, `sha256!`, `compress!` and `decompress!` (Node `zlib` as the reference). `Ctx.respond!` (the work after it, a second call, the 30 s limit at 100 ms, `InvalidState` in a cron run, `BodyErr` for a read of the request body after it in workerd), `Ctx.pass_through!`, `Body.writer!` (the first chunk before the second, the limit at `close!`, a cancel of the stream), `Ctx.wait_until!` (the promise in `ctx.waitUntil`, the context until it settles, the `waitUntil` limit, the log rule), the client that goes away in workerd (`request.signal`). Port 8136. `stream-reverts.mjs` makes each revert (18), runs both tests and restores the file |
 | `wait-test.mjs`, `trapclean-test.mjs`, `tasktable-test.mjs` | The wait import never rejects (2b), TRAP_CLEAN (2d), the task table (2c). Since 8a they use `makeBridge` of `../js/bridge.js`; tasktable part 2 aims `fail_alloc_at` with `alloc_count` |
 | `cbor-js-test.mjs`, `cbor-js-reverts.mjs`, `cbor-wasm-test.mjs`, `hd4-test.mjs`, `hd4/oracle.roc`, `jsgen.js`, `program-test.mjs` | The CBOR profile (API.md 5): the JS codec and its revert checks, the Zig codec in the wasm32 host (HD5 corpus, HD6, same bytes as JS), HD4 (the Zig decoder against the Roc oracle; the inputs go to `hd4/*.bin`, ignored), the seeded value generator, the program interpreter and the result block |
+| `sha256-bench.mjs` | PLAN.md 8c (the measure for 8g): `Crypto.SHA256.hash` in wasm (the route `/webcrypto/sha256` of `../conformance/WebCryptoRoutes.roc`, run by `makeHandler` in Node) against `crypto.subtle.digest`, for 1 KB to 1 MB. `node bench/sha256-bench.mjs bench/out/conformance.wasm` |
 | `test-all.sh` | Builds everything and runs all tests with `timeout 600`: one line for each, exit 1 when one fails. Env: `ZIG`, `WORKERD` |
 | `check-layout.mjs` | Reads a linked wasm: STACK-FIRST, DATA-FIRST or UNKNOWN (exit 0, 1, 2). `build.sh` runs it on its outputs and fails on a result that is not STACK-FIRST |
 | `get-roc.sh`, `ci-layout.sh`, `../compat/last-stack-first-nightly` | Nightly download, the CI check of one nightly (`../.github/workflows/nightly-layout.yml`), the pinned nightly. A nightly that is not stack-first fails the job: it cannot be used at all, the platform has no fallback |
@@ -218,6 +219,29 @@ The docs do not give the JS `name` and `message` of a failed `fetch`. These are 
 | A host that does not exist: `http://no-such-host.invalid/` | `Error` | `internal error; reference = <id>` (a new id each time) | `Network` |
 | `"not a url"` | `TypeError` | `Invalid URL: not a url` | `HttpErr` |
 | `send_with!` with `timeout_ms` 100 on an answer after 2 s | `TimeoutError` | `The operation was aborted due to timeout` | `Network` |
+
+## SHA-256 in wasm against `crypto.subtle.digest` (PLAN.md 8c, Node 26, 2026-10-16)
+
+`node bench/sha256-bench.mjs bench/out/conformance.wasm`: `n` hashes of one buffer size in one request of `makeHandler` (less a request with no hash), and `digest` in the same process (one `await` each). The digest of the last buffer is compared with Node `crypto`. Median of 5, three runs of the script, load average 3 to 5 (the numbers move by about 20 %).
+
+| Size | `Crypto.SHA256.hash` in wasm (us) | `crypto.subtle.digest` (us) |
+| --- | --- | --- |
+| 1 KB | 2.5 | 6 to 8.4 |
+| 4 KB | 9.1 to 11.6 | 7.4 to 11.3 |
+| 16 KB | 35.8 to 37.2 | 13.7 to 14.9 |
+| 64 KB | 143.6 to 151.9 | 35.9 to 43 |
+| 1 MB | 2,329 to 2,808 | 507 to 793 |
+
+`digest` here has no copy from wasm memory, no bridge crossing and no JSPI wait. In the platform it has all three, so the size where it wins is higher (8g).
+
+## Error texts of `WebCrypto` (PLAN.md 8c, local, 2026-10-16)
+
+| Call | JS `name` | JS `message` |
+| --- | --- | --- |
+| `generate_key!(Pbkdf2)` | `NotSupportedError` | `Unrecognized key generation algorithm "PBKDF2" requested.` |
+| `import_key!` of a private RSA JWK with the usage `verify` | `SyntaxError` | `Attempt to import private RSASSA-PKCS1-v1_5 key with invalid usage "verify".` |
+| `sign!` with a ref that is not a `CryptoKey` (a pin that is not there) | `TypeError` | `Failed to execute 'sign' on 'SubtleCrypto': parameter 2 is not of type 'CryptoKey'.` |
+| `decrypt!` in `call!` (the revert) | `PromiseInCall` (status 2) | `op 2 (call) gave a promise: the program needs await!` |
 
 ## Edge (Q13, 2026-10-14, short test, not a full bench)
 
