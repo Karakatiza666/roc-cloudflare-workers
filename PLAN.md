@@ -1345,7 +1345,7 @@ Open points:
 | O1 | Removed 2026-10-16: stack-first is guaranteed by the compiler. Settled in 8e: the bound of the test was wrong, not the code ("Fallback queue in workerd"). Was: `fallback-budget-test.mjs` part 1 is flaky: it failed 3 of 3 runs at load average 4 and 1 of 5 at load average 2 ("the budget went over 32 MB and one instance": 16 instances). Two idle starts in a row with no collection between them go over by two instances. The JS of the budget did not change in 8a. |
 | O2 | Closed in 8b: `LOG_CRASH` is on, and the shim writes the crash text in the log line of the trap. Was: the host does not log the text of a Roc `crash` (`hostlib/roc.zig` `LOG_CRASH` is off), so a status 3 crash ("bad program: ...") shows only as a trap |
 | O3 | In workerd, a request that waits only on a promise with no I/O is cancelled as hung with no abort of `request.signal`. The task then stays until the deadline sweep (3b) |
-| O4 | `ops` must be an object of functions (option check). A D1 binding as an op is an object: give it as a function with methods, or change the check in 8c |
+| O4 | Closed in 8c (wave 1): a value of `ops` is a function or an object ("Status of step 8c, wave 1", C11). Was: `ops` must be an object of functions (option check). A D1 binding as an op is an object: give it as a function with methods, or change the check in 8c |
 | O5 | The numbers in `bench/README.md` "Results" are from before 8a (the old wait import) |
 
 ### Status of step 8e (2026-10-16)
@@ -1615,6 +1615,92 @@ Open points:
 | O4 | The numbers in `bench/README.md` "Results" are older still (O3 of the first half). |
 | O6 | Removed 2026-10-16: stack-first is guaranteed by the compiler. Variant a (an instance for each request, the fallback of a build that is not stack-first) admits a new instance by the memory of an instance at the first wait of a task (`note` in `js/runner.js`). An app that waits before its work (a read of a body stream first) gives a small number there, so at a burst too many instances start and the requests trap with OOM (seen in `fallback-workerd.mjs` with the body as a stream: 26 of 40 in round 0; round 1 and 2 were good). The bench avoids it (the header), but an app can do it. A better estimate (for example the largest end size of a task) is for 4f to decide. |
 | O5 | `stream-workerd.mjs` sends the two 50 MB uploads of `10b` with a raw socket: the app answers after the first chunk, and workerd closes the connection while the client still sends, so `fetch` of Node can fail with "terminated" (1 of 4 runs). A Worker that answers before it reads the whole body has the same effect on a client. |
+
+### Status of step 8c, wave 1 (2026-10-16)
+
+Done: the modules `Http` (with the error map of 8d), `Env`, `Secret`, `Time`, `Log` and `RateLimit`, the conversion of MC10 (`Time.seconds_up`) with its `roc test`, the `Request.Cf` test in Miniflare, the option `ops` (O4 of 8a), and the conformance app `conformance/` that the next waves extend (D1, Sql, Memo; R2, Cache; WebCrypto). The local part of 8d for `Http` is done; the D1 part comes with `D1`, and the edge parts stay for 11c. `bench/test-all.sh` gives ALL PASS in 2 minutes 37 seconds: 51 step lines (2 new: `conformance/run.mjs` and `conformance/must-not-compile.sh`).
+
+```mermaid
+flowchart LR
+    R["conformance/run.mjs"] -->|"checks/*.mjs: bindings"| M["Miniflare 5 (library): worker.js, js/*.js, app.wasm"]
+    R -->|"/module/function"| A["conformance/app.roc: one line per module"]
+    A --> F["HttpRoutes, EnvRoutes, TimeRoutes, LogRoutes, RateLimitRoutes, CfRoutes, ShimRoutes"]
+    F --> P["pf.Http, Env, Secret, Time, Log, RateLimit"]
+    P -->|"Io programs"| J["fetch, env, scheduler.wait, console, env.LIMITER.limit"]
+```
+
+| Part | What | Main files |
+| --- | --- | --- |
+| `Http` | `send!`, `send_with!` (`max_bytes`, `timeout_ms`, `cf`), `open!`, `get!` and their `Io` twins. One program: the `RequestInit` as a `Record` (with `AbortSignal.timeout` for `timeout_ms`), `fetch`, then the body to the limit (`pf.readUpTo`), the status and the headers in one `Record` (`send`), or `Fields` with the body as a stream (`open`). `Http.error` maps a throw: `TooLarge`, `TypeError` is `HttpErr`, each other throw is `Network`. | `platform/Http.roc` |
+| `Env`, `Secret` | `var!`, `json!`, `secret!` (`call!`, no wait). `Secret :: { text : Str }` with `from_str`, `reveal`, `to_inspect`. | `platform/Env.roc`, `platform/Secret.roc` |
+| `Time` | `now_ms!` (`Date.now`, `call!`), `sleep!` and `sleep : U64 -> Io({}, e)` (`scheduler.wait(ms, { signal })` with the root `signal`, so a lost race stops the timer), `seconds_up` (MC10, 5 `expect`s) | `platform/Time.roc` |
+| `Log` | `info!`, `warn!`, `error!`: one JSON line `{"level":..,"msg":..,<fields>}` to `console.info`, `console.warn`, `console.error` (3 `expect`s) | `platform/Log.roc` |
+| `RateLimit` | `binding`, `limit!` and `limit` (`env[name].limit({ key })`, then `success`) | `platform/RateLimit.roc` |
+| Headers | The 6 modules in `exposes` and imported in both headers. The copies in `bench/platform/` are equal (`exports-test.mjs`). | `platform/main.roc`, `bench/platform/` |
+| Shim | `ops`: a value is a function or an object (C11). `pf.readUpTo(null)` gives no bytes (the body of a 204 response). | `js/options.js`, `js/helpers.js` |
+| Conformance | The app on the bench platform, the runner with Miniflare as a library, the revert helper, the must-not-compile checks, the README with the steps to add a module | `conformance/` |
+
+Tests (`node conformance/run.mjs bench/out/conformance.wasm`: 32 checks and `end`, PASS, about 1 s; `conformance/must-not-compile.sh`: 4 checks, PASS; `roc test platform/main.roc`: 23 `expect`s, was 10). Each revert is a real edit, a build, a run and a restore: `ROC=... node conformance/reverts.mjs` does all of them (14 of 14 caught, 48 s).
+
+| Test | Result | Revert | Revert result |
+| --- | --- | --- | --- |
+| `http send!`, `send (Io twin)`, `get!`, `get (Io twin)`: `200 hello`, one wait | PASS | `fetch` is called `fetchx` | FAIL: 15 checks (`HttpErr TypeError: o[name] is not a function`) |
+| `http send!` of a 404 is `Ok`, of a 204 (null body) `204 ` | PASS | No `null` branch in `pf.readUpTo` | FAIL: `HttpErr TypeError: readUpTo: the first argument must be a ReadableStream` |
+| `http send!` with a body and a header: the server gets `POST yes a body` | PASS | (in `fetchx`) | |
+| `http send_with!` and its twin: `max_bytes` 4 of 10 bytes is `TooLarge`, 10 is `Ok` | PASS | (in `fetchx`) | |
+| `http send_with!` `timeout_ms` 100 on a 2 s answer: `Network`, after about 100 ms | PASS: `Network TimeoutError: The operation was aborted due to timeout` | No map (below) | FAIL: `HttpErr TimeoutError` |
+| `http open!` and its twin: a `Stream` body, `text!` is a second wait | PASS: 2 waits | (in `fetchx`) | |
+| `http get` in `Io.both!` with `Time.sleep(10)`: the errors join, one wait | PASS | (in `fetchx`) | |
+| 8d: a closed port (`http://127.0.0.1:1/`) is `Network` | PASS: `Error: Network connection lost.` | No map: `HttpErr` for each throw | FAIL: the closed port, the DNS failure and the timeout give `HttpErr` |
+| 8d: a host that does not exist (`http://no-such-host.invalid/`) is `Network` | PASS: `Error: internal error; reference = <id>` | Map by the message "Network connection lost" only | FAIL: the DNS failure (and the timeout) give `HttpErr` |
+| 8d: `"not a url"` is `HttpErr` with `TypeError` | PASS: `TypeError: Invalid URL: not a url` | (the two reverts above keep it) | |
+| `env var!`: `Ok("hello")`; a name that is not set and a JSON var are `MissingEnv` | PASS | | |
+| `env json!`: an object var and a text var with JSON text parse; not set is `MissingEnv`; a text var that is not JSON is `BadData` | PASS | `JSON.stringify` is called `stringifyx` | FAIL: `env json!` (`BadData`) |
+| `env secret!`: `inspect=Secret(...) reveal=hunter2`; not set is `MissingEnv` | PASS | | |
+| `Secret` in a record: `Str.inspect` gives `{ token: Secret(...) }` | PASS | | |
+| `Secret` in `Log` fields and in a CBOR encode do not compile; the controls with `reveal` do | PASS (4) | `Secret :: Str` (with `Secret.(text)`) | FAIL: both `*_bad.roc` compile |
+| `time now_ms!`: within 5 s of the clock of Node | PASS | `Date.now` is called `nowx` | FAIL: a crash (500) |
+| `time sleep!(100)` and `sleep` (twin): one wait, about 100 ms | PASS: 1 wait, 101 to 103 ms | `scheduler.wait` is called `waitx` | FAIL: 1 wait, 0 ms (the three sleep checks) |
+| `Io.race!` of `Time.sleep(500)` and `Time.sleep(50)`: index 1, one wait, about 50 ms | PASS: 53 to 55 ms | (in `waitx`) | |
+| `log info!`, `warn!`, `error!`: one line each, with its level in the log of workerd | PASS: `info {"level":"info","msg":"conformance <id>","n":7,"route":"info"}` | `console.info` is called `infox` | FAIL: `log info!` (a crash) |
+| `ratelimit limit!` and twin (limit 2 in 60 s): `Ok`, `Ok`, `RateLimited`; another key `Ok`; no binding: `LimitErr TypeError` | PASS | `limit` is called `limitx` | FAIL: both checks (`LimitErr TypeError`) |
+| `Request.Cf` in Miniflare: `colo=Ok("DFW") metro_code=Err(Missing)` | PASS | The shim reads null as an empty text | FAIL: `metro_code=Ok("")` |
+| The MC10 conversion (`roc test`): 1 ms is 1 s, 1,000 ms is 1 s, 1,001 ms is 2 s | PASS | Round down | FAIL: `Time.roc:42` (1,001 ms gives 1 s) |
+| `ops` with an object value: `Get(Root("ops"), "lib")`, `Call(Slot(0), "twice", [21])` gives 42 | PASS | The old check (functions only) | FAIL: the worker does not start (`FAIL start`), and `handler-test.mjs` fails |
+| `end`: no task, ref, context, alarm or live byte | PASS | | |
+
+Tests that changed what they check:
+
+| Test | Change |
+| --- | --- |
+| `handler-test.mjs` | The good options have `ops.lib`, an object (C11). The bad case `{ f: 1 }` still throws. |
+| `roc test platform/main.roc` | 23 `expect`s (13 new: `Time` 5, `Log` 3, `Http` 3, `Secret` 2) |
+
+Choices I made (the plan does not say):
+
+| # | Choice |
+| --- | --- |
+| C1 | The conformance app is on the bench platform: the worker reads the waits of each task (`task_waits`, a bench export) and the task table. The modules are the same files in both platforms (`exports-test.mjs`). |
+| C2 | Miniflare 5 (5.20261012.0-beta, workerd 2026-10-12) takes the V4 options through `convertV4MiniflareOptions`. `port: 0`, so no port of the workerd tests is used. Storage is in memory. |
+| C3 | `request.cf` is an object in `run.mjs`: the placeholder of Miniflare (`fallbackCf`) with no `metroCode`. With no `cf` option, Miniflare fetches the cf of this machine from `workers.cloudflare.com` (network, and the fields change with the place), and its placeholder sets every field of `Request.Cf`. |
+| C4 | The check files are found by name (`checks/*.mjs`), each with its own options (bindings): a new module adds no line to `run.mjs`. |
+| C5 | `Secret.from_str` is public: `Env` must make a `Secret`, and the type is opaque. An app can also wrap a text that it must not log. |
+| C6 | The MC10 conversion is `Time.seconds_up` (public): `Kv`, `Queue` and `Ai` (phase B) need it, and an app can use it for a `max-age`. |
+| C7 | `Log` writes to `console.info`, `console.warn` and `console.error` (API.md 7 said `console.log`), so Workers Logs has the level. A value that is not a record goes in the field `fields`. A throw of `console` is a crash. |
+| C8 | `Env.var!` of a var that is not text (a JSON var) is `MissingEnv`. `Env.json!` parses a text var as JSON text, and gives an object var to `JSON.stringify` (a second `call!`). `Env` has no `Io` twins: it does not wait (MC3). |
+| C9 | `Http` needs no new helper: J rules give `Headers` as pairs, and `pf.readUpTo` reads the body. `readUpTo(null)` gives no bytes. An empty body of `send!` is `Empty`. The task `signal` is not given to `fetch`: the stream of `open!` can be the body of the response, which Workers reads after the task. `timeout_ms` is `AbortSignal.timeout`: a timeout is `Network(TimeoutError)`. |
+| C10 | `RateLimit`: a `success` that is not a `Bool` is `LimitErr` with the name `BadData` (the type has no `BadData`). |
+| C11 | The option `ops` takes a function or an object as a value (O4 of 8a): a program reaches a method of an object with `Get` and `Call`, as for a root (OP3), so a library (an npm module namespace) or a binding needs no wrapper function. A number, a text or `null` still throws at `makeHandler` time. |
+| C12 | The must-not-compile checks for `Secret` are app files on the bench platform, checked in a copy in `.cache/must-not-compile/` next to `bench/Cbor.roc`: the platform has no `Cbor` yet (the `roc-cbor` package of 8c). Each has a control with `s.reveal()`, so the error is the secret and not another fault. |
+
+Open points:
+
+| # | Point |
+| --- | --- |
+| O1 | The CBOR must-not-compile check uses `bench/Cbor.roc`. When `Cbor` is in the platform (the package `roc-cbor`), the check must import that one. |
+| O2 | 8d on the edge (11c): a host that does not answer, and the texts of the DNS failure and the closed port there. Locally the DNS failure is `Error: internal error; reference = <id>`, with a new id each time. |
+| O3 | Found: two closed error unions of two modules join in `Io.both!` (`Http.get(url)` and `limiter.limit(key)` compiled and built): a non-empty union in the `Io` of a return type is open (the compiler warns that `..` there is redundant). Only the empty `[]` does not join (MODULES.md 15). |
+| O4 | A `Log` line has the fields in the order of the derived JSON encoder (by name), after `level` and `msg`. |
 
 ## 9. JS shim
 

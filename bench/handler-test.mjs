@@ -70,7 +70,8 @@ const bad = {
   'other: a name twice (8b)': [{ ops, other: ['queue', 'queue'] }, /"other"/],
   'requestText (removed in 8b)': [{ ops, requestText: () => '' }, /unknown option "requestText"/],
   pinLimit: [{ ops, pinLimit: -1 }, /"pinLimit"/],
-  'ops is not an object of functions': [{ ops: { f: 1 } }, /"ops"/],
+  // 8a O4: a value of `ops` is a function or an object (`lib` in `good` below), not a number.
+  'ops: a value that is not a function or an object': [{ ops: { f: 1 } }, /"ops"/],
   isolateBytes: [{ ops, isolateBytes: -1 }, /"isolateBytes"/],
   jsReserveBytes: [{ ops, jsReserveBytes: '48' }, /"jsReserveBytes"/],
   'reserve over isolate': [{ ops, isolateBytes: 2 ** 20, jsReserveBytes: 2 ** 21 }, /jsReserveBytes.*less than isolateBytes/],
@@ -90,7 +91,7 @@ const bad = {
 };
 for (const [what, [opts, re]] of Object.entries(bad)) throwsWith(what, re, () => makeHandler(bench, opts));
 throwsWith('module is not a Module', /WebAssembly.Module/, () => makeHandler({}, { ops }));
-const good = { isolateBytes: 2 ** 40, jsReserveBytes: 0, maxInstanceBytes: Infinity, growStepBytes: 65536, graceMs: 0, resumeCheck: 'afterAlarm', heapCheckEvery: 0, heapCheckWhenIdle: false, taskDeadlineMs: 1000, pinLimit: 10, ops: { ...ops, f: () => 1 } };
+const good = { isolateBytes: 2 ** 40, jsReserveBytes: 0, maxInstanceBytes: Infinity, growStepBytes: 65536, graceMs: 0, resumeCheck: 'afterAlarm', heapCheckEvery: 0, heapCheckWhenIdle: false, taskDeadlineMs: 1000, pinLimit: 10, ops: { ...ops, f: () => 1, lib: { g: () => 2 } } };
 const G = makeHandler(bench, { ...good, other: ['queue', 'email'] });
 const gr = await new G({}, {}).fetch(post('7 0 5'));
 if (gr.status !== 200 || !check('7', await gr.text(), 5)) fail('a handler with all options set gave a bad response');

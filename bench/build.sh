@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the two hosts, the glue, and the apps. The bench host (zig build -Dbench=true) and the bench platform
 # (bench/platform/main.roc) give bench/out/app.wasm, app_pad.wasm, app_deep.wasm, app_strloop.wasm, app_wait.wasm, app_bridge.wasm, app_events.wasm, app_stream.wasm,
-# app_stack.wasm, app_native.wasm. The production host and platform (platform/main.roc) give bench/out/app_prod.wasm (PLAN.md 7a).
+# app_stack.wasm, app_native.wasm, conformance.wasm (conformance/app.roc). The production host and platform (platform/main.roc) give bench/out/app_prod.wasm (PLAN.md 7a).
 # Env: ZIG (Zig 0.17).
 # Optional: ROC (default: the nightly in compat/last-stack-first-nightly, see bench/get-roc.sh),
 # ZIG_FLAGS (e.g. "-Downer_tag=false -Dtrack_live=false"), OUT (default bench/out).
@@ -29,6 +29,8 @@ for app in app app_pad app_deep app_strloop app_wait app_stack app_bridge app_na
   "$ROC" build --opt=speed --target=wasm32 --no-cache \
     --output="$OUT/$app.wasm" bench/$app.roc || [ $? -eq 2 ]
 done
+# The conformance app (PLAN.md 8c) on the bench platform: conformance/run.mjs runs it in Miniflare.
+"$ROC" build --opt=speed --target=wasm32 --no-cache --output="$OUT/conformance.wasm" conformance/app.roc || [ $? -eq 2 ]
 # The production build of bench/app.roc: the same app on the production platform and host.
 sed '1s|platform "platform/main.roc"|platform "../platform/main.roc"|' bench/app.roc > bench/app_prod.roc
 "$ROC" build --opt=speed --target=wasm32 --no-cache --output="$OUT/app_prod.wasm" bench/app_prod.roc || [ $? -eq 2 ]
