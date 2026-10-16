@@ -1,7 +1,8 @@
 ## The entry types (API.md 10.1) and the `Worker` wrapper (MODULES.md 3): a record of handlers, all optional,
 ## each with the result type of its kind. `e` is one error type for all handlers: their tag unions join.
-## The fields `rpc`, `entrypoints` and `objects` come in phase B (PLAN.md 8f).
+## `rpc`, `entrypoints` and `objects` (PLAN.md 8f): their handlers erase their types, so each has its own error type.
 import Io
+import Rpc
 import Js
 import Request
 import Response
@@ -17,9 +18,13 @@ Worker(e) := {
 	email! ?: Email.Mail => Try({}, e),
 	tail! ?: List(Worker.TraceItem) => Try({}, e),
 	other! ?: Str, Js => Try(Js, e),
+	rpc ?: List(Rpc.Handler({})),
+	entrypoints ?: List(Rpc.Entrypoint),
+	objects ?: List(Object.Class),
 }.{
 
-	## One event of Workers (API.md 10.1). Phase A has all tags. The shim sends `Fetch`, `Scheduled` and `Other`.
+	## One event of Workers (API.md 10.1). Phase A has all tags. The shim sends `Fetch`, `Scheduled`, `Other`, and since
+	## PLAN.md 8f `Rpc`, `EntrypointFetch`, `Object` and `Manifest`.
 	Event : [
 		Fetch(Request),
 		Scheduled(Worker.Scheduled),
@@ -101,11 +106,42 @@ Worker(e) := {
 			}
 			Err(MissingField) => Unhandled
 		}
-		# Phase B (PLAN.md 8f): RPC, named entry points, objects and the manifest of their names.
-		Rpc(_) => Unhandled
-		EntrypointFetch(_) => Unhandled
-		Object(_) => Unhandled
-		Manifest => Unhandled
+		# RPC of the default entry point ("default") or of a named one: the handler of the method (MODULES.md 8).
+		Rpc({ entrypoint, method, arg }) => {
+			handlers = if entrypoint == "default" (w.?rpc ?? []) else match (w.?entrypoints ?? []).find_first(|ep| ep.name == entrypoint) {
+				Ok(ep) => ep.rpc
+				Err(_) => []
+			}
+			match handlers.find_first(|h| h.name == method) {
+				Ok(h) => {
+					run! = h.run!
+					match run!({}, arg) {
+						Ok(bytes) => Reply(Packed(bytes))
+						Err(text) => Failed(text)
+					}
+				}
+				Err(_) => Unhandled
+			}
+		}
+		EntrypointFetch({ entrypoint, request }) => match (w.?entrypoints ?? []).find_first(|ep| ep.name == entrypoint) {
+			Ok(ep) => {
+				f! = ep.fetch!
+				match f!(request) {
+					Respond(res) => Respond(res)
+					Failed(text) => Failed(text)
+					Unhandled => Unhandled
+				}
+			}
+			Err(_) => Unhandled
+		}
+		Object({ class, id, event }) => match (w.?objects ?? []).find_first(|c| c.name == class) {
+			Ok(c) => {
+				run! = c.run!
+				run!(id, event)
+			}
+			Err(_) => Unhandled
+		}
+		Manifest => Reply(manifest(w))
 	}
 }
 
@@ -113,4 +149,17 @@ done : Try({}, e) -> Worker.Outcome
 done = |r| match r {
 	Ok({}) => Done
 	Err(e) => Failed(Str.inspect(e))
+}
+
+## The names of classes and methods (API.md AQ10): `{ default: [methods], objects: { Name: { handlers, methods } },
+## entrypoints: { Name: { handlers, methods } } }`. The shim defines a JS method only for a name in it (MODULES.md 3).
+manifest : Worker(e) -> Js
+manifest = |w| {
+	texts = |names| Arr(names.map(|n| Text(n)))
+	class_of = |handlers, methods| Obj([("handlers", texts(handlers)), ("methods", texts(methods))])
+	Obj([
+		("default", texts((w.?rpc ?? []).map(|h| h.name))),
+		("objects", Obj((w.?objects ?? []).map(|c| (c.name, class_of(c.handlers, c.methods))))),
+		("entrypoints", Obj((w.?entrypoints ?? []).map(|ep| (ep.name, class_of(ep.handlers, ep.rpc.map(|h| h.name)))))),
+	])
 }

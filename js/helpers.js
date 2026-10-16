@@ -89,6 +89,13 @@ export function makeHelpers(t, c, shim, tasks) {
     limit(value, maxBytes) {
       return new Limited(value, maxBytes ?? Infinity);
     },
+    // The keys of an iterator of `[key, value]` entries (the sync KV `list()` of a Durable Object, `Object.Self.list!`),
+    // as a `Js` tree with a limit of its CBOR size (MC11): the values stay in JS.
+    keys(entries, maxBytes) {
+      const out = [];
+      for (const [k] of entries) out.push(k);
+      return new Limited(out, maxBytes ?? Infinity);
+    },
     // The item whose `id` is `id`, else undefined (OP7). `Queue.Message.ack!` finds its message with it.
     findById(array, id) {
       if (!Array.isArray(array)) throw new TypeError('findById: the first argument must be an array');
@@ -224,11 +231,11 @@ export function makeHelpers(t, c, shim, tasks) {
       if (t && t.responseWriter === s && t.response === 'open') tasks.bodyComplete(t);
     },
     // `Ctx.respond!` (API.md 10.2): the outcome `Respond` (the shape of `platform/Entry.roc`) as a `Response` for
-    // Workers now. The task goes on. Only in an event whose entry gave a `respond` hook (the `fetch` of a Worker),
-    // once: else an InvalidStateError (status 1, `InvalidState`).
+    // Workers now. The task goes on. Only in an event whose entry gave a `respond` hook (the `fetch` of a Worker, of a
+    // named entry point and of a Durable Object), once: else an InvalidStateError (status 1, `InvalidState`).
     respond(o) {
       const h = t?.hooks;
-      if (!h?.respond) throw new DOMException(`respond: not in the Fetch of a Worker (${t?.kind ?? 'no task'})`, 'InvalidStateError');
+      if (!h?.respond) throw new DOMException(`respond: not in a Fetch (${t?.kind ?? 'no task'})`, 'InvalidStateError');
       if (h.response) throw new DOMException('respond: the task responded already', 'InvalidStateError');
       const res = responseOf(o);
       h.response = res;

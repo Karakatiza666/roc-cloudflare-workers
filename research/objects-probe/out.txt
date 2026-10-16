@@ -1,0 +1,151 @@
+== sql
+{
+ "insertBeforeIter": {
+  "rowsRead": 0,
+  "rowsWritten": 2,
+  "keys": [],
+  "proto": [
+   "next",
+   "toArray",
+   "one",
+   "raw",
+   "columnNames",
+   "rowsRead",
+   "rowsWritten",
+   "constructor"
+  ]
+ },
+ "insertToArray": [],
+ "insertAfterIter": {
+  "rowsRead": 0,
+  "rowsWritten": 2
+ },
+ "columnNames": [
+  "id",
+  "u",
+  "b"
+ ],
+ "rows": [
+  {
+   "id": "number 1",
+   "u": "string a",
+   "b": "ArrayBuffer 1,2,3"
+  }
+ ],
+ "raw": "RawIterator",
+ "rawArray": [
+  [
+   1,
+   "a"
+  ]
+ ],
+ "pk": "Error: UNIQUE constraint failed: t.id: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY) | own: stack,message",
+ "unique": "Error: UNIQUE constraint failed: t.u: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_UNIQUE) | own: stack,message",
+ "notnull": "Error: NOT NULL constraint failed: t.n: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_NOTNULL) | own: stack,message",
+ "check": "Error: CHECK constraint failed: c >= 0: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_CHECK) | own: stack,message",
+ "fk": "Error: FOREIGN KEY constraint failed: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_FOREIGNKEY) | own: stack,message",
+ "datatype": "Error: cannot store TEXT value in INTEGER column s.v: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_DATATYPE) | own: stack,message",
+ "trigger": "Error: label-conflict: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER) | own: stack,message",
+ "syntax": "Error: near \"SELEC\": syntax error at offset 0: SQLITE_ERROR | own: stack,message",
+ "bind 9007199254740992 number": [
+  {
+   "x": 9007199254740992,
+   "t": "real"
+  }
+ ],
+ "bind 9007199254740993 string": [
+  {
+   "x": 9007199254740992,
+   "t": "text"
+  }
+ ],
+ "bind 1152921504606846976 bigint": "TypeError: Cannot convert a BigInt value to a number",
+ "bigread": [
+  {
+   "x": 9007199254740992
+  }
+ ],
+ "bigreadText": [
+  {
+   "x": "9007199254740993"
+  }
+ ],
+ "bigneg": [
+  {
+   "x": -9223372036854776000
+  }
+ ],
+ "kvGet": "Uint8Array 1",
+ "kvMissing": "undefined",
+ "kvList": "ListIterator",
+ "kvListItems": [
+  "a1:Uint8Array",
+  "a2:Uint8Array"
+ ],
+ "kvDelete": true,
+ "kvDelete2": false,
+ "dbSize": "number",
+ "id": "c6149333e73839fbde75d9714e471957854d083dfd6ad4b58714971e5a96fcff",
+ "idName": "one",
+ "setAlarmNoHandler": "TypeError: Your Durable Object class must have an alarm() handler in order to call setAlarm()"
+}
+== ids
+{
+ "byName": "c6149333e73839fbde75d9714e471957854d083dfd6ad4b58714971e5a96fcff",
+ "jur": "Error: Jurisdiction restrictions are not implemented in workerd.",
+ "jurGet": "Error: Jurisdiction restrictions are not implemented in workerd.",
+ "stubKind": "DurableObject",
+ "stubId": "c6149333e73839fbde75d9714e471957854d083dfd6ad4b58714971e5a96fcff",
+ "locHint": "DurableObject",
+ "unique": 64
+}
+== kvbacked
+{
+ "size": "Error: SQL is not enabled for this Durable Object class. To enable it, change `new_classes` to `new_sqlite_classes` within the 'migrations' field in your wrangler.jsonc or wrangler.toml file. If using workerd directly,set `enableSql = true` in your workerd config for the class. Note that this change cannot be made after the class is already deployed to production.",
+ "kv": "Error: The storage.kv (synchronous KV) API is only available for SQLite-backed Durable Objects, but this object's namespace is not declared to use SQLite. You can use the older, asyncronous interface via methods of `storage` itself (e.g. `storage.get()`). Alternatively, to enable SQLite, change `new_classes` to `new_sqlite_classes` within the 'migrations' field in your wrangler.jsonc or wrangler.toml file. If using workerd directly, set `enableSql = true` in your workerd config for the class. Note that this change cannot be made after the class is already deployed to production."
+}
+== init 1
+throw Error: init failed once
+== init 2
+init ok 2
+== rpc
+{
+ "hello": {
+  "got": {
+   "data": {
+    "0": 1,
+    "1": 2
+   },
+   "list": [
+    1,
+    2
+   ]
+  },
+  "kind": "Uint8Array",
+  "list": "Array"
+ },
+ "boom": "Error: Nope(3)",
+ "nothere": "TypeError: The RPC receiver does not implement the method \"nothere\".",
+ "adminPing": "admin ping 7",
+ "adminFetch": "admin fetch",
+ "selfPing": "self 2"
+}
+== alarm set
+{
+ "set": 1792174364011
+}
+alarm runs at 1007 ms: [{"t":62,"info":{"scheduledTime":1792174364011,"retryCount":0,"isRetry":false}}]
+alarm runs at 3015 ms: [{"t":62,"info":{"scheduledTime":1792174364011,"retryCount":0,"isRetry":false}},{"t":2376,"info":{"scheduledTime":1792174364011,"retryCount":1,"isRetry":true}}]
+alarm runs at 7028 ms: [{"t":62,"info":{"scheduledTime":1792174364011,"retryCount":0,"isRetry":false}},{"t":2376,"info":{"scheduledTime":1792174364011,"retryCount":1,"isRetry":true}},{"t":6717,"info":{"scheduledTime":1792174364011,"retryCount":2,"isRetry":true}}]
+== deleteAll, date 2025-06-01
+{
+ "alarm": 1792174984114,
+ "cell": null,
+ "tables": []
+}
+== deleteAll, date 2026-10-01
+{
+ "alarm": null,
+ "cell": null,
+ "tables": []
+}

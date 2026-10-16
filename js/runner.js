@@ -5,10 +5,11 @@ import { makeBudget } from './budget.js';
 import { hostCancel } from './wait.js';
 import { makeBridge } from './bridge.js';
 import { makePins } from './helpers.js';
+import { Refs } from './values.js';
 import { SUM_MODES, ALARM_OF, CHECK_NAMES, CHECK_BUSY, CAUSE_CPU, CAUSE_OOM, HEAP_CHECK_EVERY, TERMINATED, LOG_CRASH, readFlag, readOutcome, drainLog, hostCounters, freeMark, isStackError, encEvent, eventBytes } from './host.js';
 
 // The error for a module that is not stack-first (PLAN.md 1b): the platform has no fallback.
-const NOT_STACK_FIRST =
+export const NOT_STACK_FIRST =
   'the module is not stack-first: its shadow stack lies above its data (stack_first() is 0), so a stack overflow can write over data. ' +
   'The platform needs a stack-first build and has no fallback. Build with a Roc nightly that puts the stack first ' +
   '(compat/last-stack-first-nightly) and check the file with bench/check-layout.mjs.';
@@ -388,4 +389,35 @@ export function makeRunner(module, opts = {}) {
   };
   fresh(cur);
   return runner;
+}
+
+// The event `Manifest` (API.md 10.1, AQ10) at load: the names of the classes and methods of the app, as a JS value
+// (`{ default, objects, entrypoints }`), or null when the app answers `Unhandled` (no `Worker` wrapper: no classes).
+// It runs on an instance of its own, made and dropped here, with no task table and no budget: `makeHandler` runs at
+// global scope, where workerd forbids random values (the free mark of a runner instance, C3 of PLAN.md 8b). The event
+// makes no crossing, so `handle` runs as a plain call (no JSPI). A crash of the app or an outcome of another kind is a
+// throw, so the load fails with the text. A module that is not stack-first is not run: the result is `undefined`, and
+// its first event throws (PLAN.md 1b).
+export function manifestOf(module, ev) {
+  const none = () => 3; // status 3: the Manifest event has no program
+  const x = new WebAssembly.Instance(module, { env: { js_await: new WebAssembly.Suspending(async () => 3), js_call: none, js_grow: () => 1 } }).exports;
+  x.init(1);
+  if (!x.stack_first()) return undefined;
+  const refs = new Refs();
+  const arg = encEvent(x, eventBytes(ev, refs));
+  if (!arg) throw new Error('manifest: no memory for the event');
+  let crash;
+  let blk;
+  try {
+    blk = x.handle(...arg, 1);
+  } catch (e) {
+    drainLog(x, (level, text) => {
+      if (level === LOG_CRASH) crash = text;
+    });
+    throw new Error(`manifest: the app trapped: ${crash ?? e}`);
+  }
+  const o = readOutcome(x, blk, refs);
+  if (o.outcome === 'unhandled') return null;
+  if (o.outcome !== 'reply') throw new Error(`manifest: the outcome ${o.outcome} is not Reply`);
+  return o.value;
 }

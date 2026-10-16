@@ -1,6 +1,6 @@
 platform ""
 	requires { event! : Worker.Event => Worker.Outcome }
-	exposes [Js, Io, Native, Worker, Request, Response, Body, Ctx, Queue, Email, Object, WebSocket, Http, Env, Secret, Time, Log, RateLimit, WebCrypto, R2, Cache, Sql, D1, Memo]
+	exposes [Js, Io, Native, Worker, Request, Response, Body, Ctx, Queue, Email, Object, WebSocket, Http, Env, Secret, Time, Log, RateLimit, WebCrypto, R2, Cache, Sql, D1, Memo, Rpc, Service]
 	packages {
 		http: "https://github.com/roc-lang/http/releases/download/2.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
 		cbor: "https://github.com/Karakatiza666/roc-cbor/releases/download/0.1.0/9QL2dCyq7bcmvAEZfDFwi8kBvWLCZpEMS4WQYnZisezw.tar.zst",
@@ -46,6 +46,8 @@ import Cache
 import Sql
 import D1
 import Memo
+import Rpc
+import Service
 import Entry
 
 ## API.md 4: the host decodes the event bytes into a `Js` value, and encodes the result for JS.

@@ -1,11 +1,107 @@
-## Durable Objects (MODULES.md 7). Phase A has the payload types of the event `Object` (API.md 10.1) only.
-## Stubs, `class`, `Self` and the storage functions come in phase B (PLAN.md 8f).
+## Durable Objects (MODULES.md 7). Outside: a namespace and a stub are plain data (MC1); each call starts its program
+## with `env[namespace]`, then the jurisdiction, then `getByName` or `get(idFromString(id))`. Inside: a class is a
+## record of handlers (`class`), and `Object.Self` reaches the storage of the object that runs (the root `ctx`, a
+## `DurableObjectState`). SQL, cells and `list!` are sync (`call!`, no wait, AQ3); the alarm calls and `delete_all!`
+## wait once. SQLite-backed classes only (`new_sqlite_classes`): the shim checks it in the constructor.
+## The sockets of the hibernation API (12.1) are not here yet: their events give `Unhandled`.
 import Io
 import Js
+import Body
 import Request
+import Response
+import Rpc
+import Sql
+import SqlRules
+import Remote
 import WebSocket
+import cbor.Cbor
 
-Object :: { namespace : Str, name : Str }.{
+Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)], location_hint : Str }.{
+
+	namespace : Str -> Object.Namespace
+	namespace = |binding| Object.Namespace.{ binding, jurisdiction: "" }
+
+	## A namespace: the binding name and its jurisdiction ("" for none). Data.
+	Namespace := { binding : Str, jurisdiction : Str }.{
+		## A stub of the object with this name: `getByName(name)` runs in the program of each call.
+		named : Object.Namespace, Str -> Object
+		named = |ns, name| stub(ns, Named(name), Err(MissingField))
+
+		named_with : Object.Namespace, Str, { location_hint ?: Object.Location } -> Object
+		named_with = |ns, name, opts| stub(ns, Named(name), opts.?location_hint)
+
+		## A stub of the object with this id (the text of `id.toString()`): `get(idFromString(id))`.
+		from_id : Object.Namespace, Str -> Object
+		from_id = |ns, id| stub(ns, Id(id), Err(MissingField))
+
+		from_id_with : Object.Namespace, Str, { location_hint ?: Object.Location } -> Object
+		from_id_with = |ns, id, opts| stub(ns, Id(id), opts.?location_hint)
+
+		## `newUniqueId()`, sync (one `call!`). A throw is a crash: the type has no error.
+		unique! : Object.Namespace => Object
+		unique! = |ns| match unique_id!(ns, []) {
+			Ok(id) => stub(ns, Id(id), Err(MissingField))
+			Err(t) => crash "Object.unique!: ${t.name}: ${t.message}"
+		}
+
+		## `newUniqueId({ jurisdiction })`, sync. The Cloudflare docs recommend `jurisdiction` on the namespace.
+		unique_with! : Object.Namespace, { jurisdiction ?: Object.Jurisdiction, location_hint ?: Object.Location } => Try(Object, [ObjectErr(Io.Thrown)])
+		unique_with! = |ns, opts| {
+			args = match opts.?jurisdiction {
+				Ok(j) => [Lit(Obj([("jurisdiction", Text(jurisdiction_text(j)))]))]
+				Err(_) => []
+			}
+			match unique_id!(ns, args) {
+				Ok(id) => Ok(stub(ns, Id(id), opts.?location_hint))
+				Err(t) => Err(ObjectErr(t))
+			}
+		}
+
+		## `namespace.jurisdiction(j)`: data. The same name gives another object in another jurisdiction.
+		jurisdiction : Object.Namespace, Object.Jurisdiction -> Object.Namespace
+		jurisdiction = |ns, j| { ..ns, jurisdiction: jurisdiction_text(j) }
+	}
+
+	Jurisdiction : [Eu, Us, Fedramp]
+
+	## `ApacNe` is "apac-ne". Best effort: only the first `get` of an object uses it (Cloudflare docs).
+	Location : [Wnam, Enam, Sam, Weur, Eeur, Apac, ApacNe, ApacSe, Oc, Afr, Me]
+
+	## `stub.fetch(request)`: a 101 response keeps its `web_socket`, so a Worker can give it to the client.
+	fetch : Object, Request -> Io(Response, [ObjectErr(Io.Thrown)])
+	fetch = |obj, req| {
+		s = stub_ops(obj)
+		Remote.fetch(s.ops, s.slot, req, |t| ObjectErr(t))
+	}
+
+	fetch! : Object, Request => Try(Response, [ObjectErr(Io.Thrown)])
+	fetch! = |obj, req| Io.run!(fetch(obj, req))
+
+	## `stub[method](arg)` with an `Rpc` constant: the reply is read to the RPC limit of Workers (32 MiB).
+	call : Object, Rpc(arg, ret), arg -> Io(ret, [RpcErr(Io.Thrown), BadData(Str)]) where [arg.Cbor.Encodable([]), ret.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+	call = |obj, m, a| {
+		s = stub_ops(obj)
+		Remote.call(s.ops, s.slot, m, a, Remote.rpc_max)
+	}
+
+	call! : Object, Rpc(arg, ret), arg => Try(ret, [RpcErr(Io.Thrown), BadData(Str)]) where [arg.Cbor.Encodable([]), ret.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+	call! = |obj, m, a| Io.run!(call(obj, m, a))
+
+	## The id of the object (`id.toString()`). The runtime makes the id of a named object from the name and the namespace
+	## (and its jurisdiction), so a named object takes one `call!` (`idFromName`). A stub of an id needs no crossing.
+	id! : Object => Try(Str, [ObjectErr(Io.Thrown)])
+	id! = |obj| match obj.target {
+		Id(id) => Ok(id)
+		Named(name) => {
+			ns = namespace_ops(obj)
+			n = ns.len().to_u32_wrap()
+			match Io.call!(ns.concat([Call(Slot(n - 1), "idFromName", [Lit(Text(name))]), Call(Slot(n), "toString", [])])) {
+				Ok(Text(id)) => Ok(id)
+				Ok(other) => crash "Object.id!: idFromName gave ${Str.inspect(other)}"
+				Err(t) => Err(ObjectErr(t))
+			}
+		}
+	}
 
 	## The events of an object (API.md 10.1).
 	Event : [
@@ -20,4 +116,352 @@ Object :: { namespace : Str, name : Str }.{
 
 	## A WebSocket that the object accepted with the hibernation API (MODULES.md 12.1). It holds a ref (MC13).
 	Socket :: { ref : Js.Ref }
+
+	## The object that runs: its class and its id. Each storage function reaches `ctx.storage` of the task.
+	Self :: { class : Str, id : Str }.{
+		## `ctx.id.toString()`: pure, the event carries it.
+		id : Object.Self -> Str
+		id = |self| self.id
+
+		## Rows as the type of the call (`rows : List(Row)`), to `Body.default_max` bytes of CBOR: `sql.exec(...).toArray()`,
+		## then `pf.pack`. The integer rules of `D1.all!` (MODULES.md 5.1): `CAST(x AS TEXT)` reads into an `I64`.
+		sql! : Object.Self, Str, List(Sql) => Try(rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+		sql! = |self, sql, params| sql_typed!(self, sql, params, Body.default_max)
+
+		sql_with! : Object.Self, Str, List(Sql), { max_bytes : U64 } => Try(rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+		sql_with! = |self, sql, params, opts| sql_typed!(self, sql, params, opts.max_bytes)
+
+		## A write: `rowsRead` and `rowsWritten` of the cursor (an object cursor has no `changes` and no last row id).
+		sql_run! : Object.Self, Str, List(Sql) => Try(Object.SqlInfo, [SqlErr(Io.Thrown), Constraint(Sql.Constraint)])
+		sql_run! = |_self, sql, params| match Io.call!(sql_ops(sql, params).concat([Call(Slot(2), "toArray", []), Fields(Slot(2), ["rowsRead", "rowsWritten"])])) {
+			Ok(Obj(fields)) => match (field(fields, "rowsRead"), field(fields, "rowsWritten")) {
+				(Int(r), Int(w)) => Ok({ rows_read: r.to_u64_try() ?? 0, rows_written: w.to_u64_try() ?? 0 })
+				other => Err(SqlErr({ name: "BadData", message: "the cursor gave ${Str.inspect(other)}" }))
+			}
+			Ok(other) => Err(SqlErr({ name: "BadData", message: "the cursor gave ${Str.inspect(other)}" }))
+			Err(t) => match sql_error(t) {
+				Constraint(c) => Err(Constraint(c))
+				SqlErr(e) => Err(SqlErr(e))
+				TooLarge => Err(SqlErr(t))
+			}
+		}
+
+		## Rows with no types: the column names, then the values (`raw()`), to `Body.default_max` bytes.
+		sql_rows! : Object.Self, Str, List(Sql) => Try(Sql.Rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), TooLarge])
+		sql_rows! = |self, sql, params| sql_raw!(self, sql, params, Body.default_max)
+
+		sql_rows_with! : Object.Self, Str, List(Sql), { max_bytes : U64 } => Try(Sql.Rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), TooLarge])
+		sql_rows_with! = |self, sql, params, opts| sql_raw!(self, sql, params, opts.max_bytes)
+
+		## `storage.setAlarm(time_ms)`: a promise, one wait. A class with no `alarm!` has no `alarm` method in JS, so
+		## Workers throws: `StorageErr`.
+		set_alarm : Object.Self, U64 -> Io({}, [StorageErr(Io.Thrown)])
+		set_alarm = |_self, time_ms| Io.new(
+			[Get(Root("ctx"), "storage"), Call(Slot(0), "setAlarm", [Lit(Int(time_ms.to_i64_try() ?? I64.highest))])],
+			|r| r.map_ok(|_| {}).map_err(|t| StorageErr(t)),
+		)
+
+		set_alarm! : Object.Self, U64 => Try({}, [StorageErr(Io.Thrown)])
+		set_alarm! = |self, time_ms| Io.run!(set_alarm(self, time_ms))
+
+		## `storage.getAlarm()`: the time in ms, or `NotFound`.
+		get_alarm : Object.Self -> Io(U64, [NotFound, StorageErr(Io.Thrown)])
+		get_alarm = |_self| Io.new(
+			[Get(Root("ctx"), "storage"), Call(Slot(0), "getAlarm", [])],
+			|r| match r {
+				Ok(Int(t)) => Ok(t.to_u64_try() ?? 0)
+				Ok(Num(f)) => Ok(f.to_u64_try() ?? 0)
+				Ok(_) => Err(NotFound)
+				Err(t) => Err(StorageErr(t))
+			},
+		)
+
+		get_alarm! : Object.Self => Try(U64, [NotFound, StorageErr(Io.Thrown)])
+		get_alarm! = |self| Io.run!(get_alarm(self))
+
+		delete_alarm : Object.Self -> Io({}, [StorageErr(Io.Thrown)])
+		delete_alarm = |_self| Io.new([Get(Root("ctx"), "storage"), Call(Slot(0), "deleteAlarm", [])], |r| r.map_ok(|_| {}).map_err(|t| StorageErr(t)))
+
+		delete_alarm! : Object.Self => Try({}, [StorageErr(Io.Thrown)])
+		delete_alarm! = |self| Io.run!(delete_alarm(self))
+
+		## All storage of the object: the SQL tables, the cells and the alarm. `deleteAlarm`, then `deleteAll`, in one
+		## program: with a compatibility date before 2026-02-24, `deleteAll` keeps the alarm (Cloudflare docs).
+		delete_all : Object.Self -> Io({}, [StorageErr(Io.Thrown)])
+		delete_all = |_self| Io.new(
+			[Get(Root("ctx"), "storage"), Call(Slot(0), "deleteAlarm", []), Call(Slot(0), "deleteAll", [])],
+			|r| r.map_ok(|_| {}).map_err(|t| StorageErr(t)),
+		)
+
+		delete_all! : Object.Self => Try({}, [StorageErr(Io.Thrown)])
+		delete_all! = |self| Io.run!(delete_all(self))
+
+		## The keys of the sync KV storage (the cells), in UTF-8 order: `storage.kv.list()`. The values stay in JS. All keys
+		## to `Body.default_max` bytes (MC11): `TooLarge` past it.
+		list! : Object.Self => Try(List(Str), [TooLarge, StorageErr(Io.Thrown)])
+		list! = |self| self.list_with!({})
+
+		list_with! : Object.Self, { prefix ?: Str, start ?: Str, start_after ?: Str, end ?: Str, limit ?: U32, reverse ?: Bool } => Try(List(Str), [TooLarge, StorageErr(Io.Thrown)])
+		list_with! = |_self, opts| {
+			text_opt = |acc, name, v| match v {
+				Ok(s) => acc.append((name, Text(s)))
+				Err(_) => acc
+			}
+			o1 = []
+				|> text_opt("prefix", opts.?prefix)
+				|> text_opt("start", opts.?start)
+				|> text_opt("startAfter", opts.?start_after)
+				|> text_opt("end", opts.?end)
+			o2 = match opts.?limit {
+				Ok(n) => o1.append(("limit", Int(n.to_i64())))
+				Err(_) => o1
+			}
+			o3 = match opts.?reverse {
+				Ok(b) => o2.append(("reverse", Bool(b)))
+				Err(_) => o2
+			}
+			ops = [
+				Get(Root("ctx"), "storage"),
+				Get(Slot(0), "kv"),
+				Call(Slot(1), "list", [Lit(Obj(o3))]),
+				Call(Root("pf"), "keys", [Slot(2), Lit(Int(limit(Body.default_max)))]),
+			]
+			match Io.call!(ops) {
+				Ok(Arr(keys)) => Ok(keys.map(|k| match k {
+					Text(s) => s
+					other => crash "Object.list!: a key is ${Str.inspect(other)}"
+				}))
+				Ok(other) => crash "Object.list!: pf.keys gave ${Str.inspect(other)}"
+				Err(t) => if t.name == "TooLarge" Err(TooLarge) else Err(StorageErr(t))
+			}
+		}
+	}
+
+	## What a SQL cursor of a Durable Object gives (rowsRead, rowsWritten). D1 also gives changes and last_row_id (Sql.Info).
+	SqlInfo : { rows_read : U64, rows_written : U64 }
+
+	## A class of Durable Objects: a record of handlers, all optional (MODULES.md 7). Each class can have its own error
+	## type: an `Err(e)` becomes a log line with `Str.inspect(e)` (the outcome `Failed`). The name is the name of the JS
+	## export (`export const Counter = objectClass("Counter")`) and of the Wrangler config.
+	class : Str, {
+		init! ?: Object.Self => Try({}, e),
+		fetch! ?: Object.Self, Request => Try(Response, e),
+		rpc ?: List(Rpc.Handler(Object.Self)),
+		alarm! ?: Object.Self, { retry_count : U32, is_retry : Bool } => Try({}, e),
+	} -> Object.Class
+	class = |name, h| {
+		name,
+		handlers: [("init", h.?init!.is_ok()), ("fetch", h.?fetch!.is_ok()), ("alarm", h.?alarm!.is_ok())].keep_if(|(_, present)| present).map(|(n, _)| n),
+		methods: (h.?rpc ?? []).map(|m| m.name),
+		run!: |id, ev| {
+			self = Object.Self.{ class: name, id }
+			match ev {
+				Init => match h.?init! {
+					Ok(f!) => done(f!(self))
+					Err(MissingField) => Unhandled
+				}
+				Fetch(req) => match h.?fetch! {
+					Ok(f!) => match f!(self, req) {
+						Ok(res) => Respond(res)
+						Err(e) => Failed(Str.inspect(e))
+					}
+					Err(MissingField) => Unhandled
+				}
+				Alarm(info) => match h.?alarm! {
+					Ok(f!) => done(f!(self, info))
+					Err(MissingField) => Unhandled
+				}
+				Rpc({ method, arg }) => match (h.?rpc ?? []).find_first(|m| m.name == method) {
+					Ok(m) => {
+						run! = m.run!
+						match run!(self, arg) {
+							Ok(bytes) => Reply(Packed(bytes))
+							Err(text) => Failed(text)
+						}
+					}
+					Err(_) => Unhandled
+				}
+				# The hibernation API (MODULES.md 12.1) comes with `WebSocket`.
+				SocketMessage(_, _) => Unhandled
+				SocketClose(_, _) => Unhandled
+				SocketError(_, _) => Unhandled
+			}
+		},
+	}
+
+	## A class with its types erased: the handlers that its JS class has (`init`, `fetch`, `alarm`) and its RPC methods
+	## (the manifest, API.md AQ10), and the function that runs an event for the object of an id.
+	Class : { name : Str, handlers : List(Str), methods : List(Str), run! : Str, Object.Event => [Respond(Response), Reply(Js), Done, Failed(Str), Unhandled] }
+
+	## A typed value in the sync KV storage of the object (MODULES.md 9): CBOR bytes under one key. A constant (WR1).
+	cell : Str -> Object.Cell(a) where [a.Cbor.Encodable([]), a.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+	cell = |key| Object.Cell.{ key, write: |v| Cbor.encode(v), read: |bytes| Cbor.parse(bytes).map_err(|e| Str.inspect(e)) }
+
+	## Each function takes the `Object.Self` and is one `call!` (no wait).
+	Cell(a) :: { key : Str, write : a -> List(U8), read : List(U8) -> Try(a, Str) }.{
+		## `storage.kv.get(key)`: `NotFound` when there is no value.
+		get! : Object.Cell(a), Object.Self => Try(a, [NotFound, BadData(Str), StorageErr(Io.Thrown)])
+		get! = |c, _self| {
+			read = c.read
+			match Io.call!(kv_ops("get", [Lit(Text(c.key))])) {
+				Ok(Bytes(bytes)) => read(bytes).map_err(|m| BadData(m))
+				Ok(Undefined) | Ok(Null) => Err(NotFound)
+				Ok(other) => Err(BadData("the cell ${c.key} holds ${Str.inspect(other)}, not CBOR bytes"))
+				Err(t) => Err(StorageErr(t))
+			}
+		}
+
+		## `storage.kv.put(key, bytes)`.
+		set! : Object.Cell(a), Object.Self, a => Try({}, [StorageErr(Io.Thrown)])
+		set! = |c, _self, v| {
+			write = c.write
+			Io.call!(kv_ops("put", [Lit(Text(c.key)), Lit(Bytes(write(v)))])).map_ok(|_| {}).map_err(|t| StorageErr(t))
+		}
+
+		## `storage.kv.delete(key)`. A key with no value is `Ok` too.
+		delete! : Object.Cell(a), Object.Self => Try({}, [StorageErr(Io.Thrown)])
+		delete! = |c, _self| Io.call!(kv_ops("delete", [Lit(Text(c.key))])).map_ok(|_| {}).map_err(|t| StorageErr(t))
+	}
+}
+
+stub : Object.Namespace, [Named(Str), Id(Str)], Try(Object.Location, [MissingField]) -> Object
+stub = |ns, target, hint| Object.{
+	namespace: ns.binding,
+	jurisdiction: ns.jurisdiction,
+	target,
+	location_hint: hint.map_ok(location_text) ?? "",
+}
+
+## `env[namespace]`, then `jurisdiction(j)` when the namespace has one. The namespace is in the last slot.
+namespace_ops : Object -> List(Js.Op)
+namespace_ops = |obj|
+	if obj.jurisdiction == "" {
+		[Get(Root("env"), obj.namespace)]
+	} else {
+		[Get(Root("env"), obj.namespace), Call(Slot(0), "jurisdiction", [Lit(Text(obj.jurisdiction))])]
+	}
+
+## The ops that make the stub, and its slot: `getByName(name, opts)`, or `get(idFromString(id), opts)`.
+stub_ops : Object -> { ops : List(Js.Op), slot : U32 }
+stub_ops = |obj| {
+	ns = namespace_ops(obj)
+	n = ns.len().to_u32_wrap()
+	opts = if obj.location_hint == "" [] else [Lit(Obj([("locationHint", Text(obj.location_hint))]))]
+	match obj.target {
+		Named(name) => { ops: ns.append(Call(Slot(n - 1), "getByName", [Lit(Text(name))].concat(opts))), slot: n }
+		Id(id) => { ops: ns.concat([Call(Slot(n - 1), "idFromString", [Lit(Text(id))]), Call(Slot(n - 1), "get", [Slot(n)].concat(opts))]), slot: n + 1 }
+	}
+}
+
+unique_id! : Object.Namespace, List(Js.Arg) => Try(Str, Io.Thrown)
+unique_id! = |ns, args| {
+	start = if ns.jurisdiction == "" [Get(Root("env"), ns.binding)] else [Get(Root("env"), ns.binding), Call(Slot(0), "jurisdiction", [Lit(Text(ns.jurisdiction))])]
+	n = start.len().to_u32_wrap()
+	match Io.call!(start.concat([Call(Slot(n - 1), "newUniqueId", args), Call(Slot(n), "toString", [])])) {
+		Ok(Text(id)) => Ok(id)
+		Ok(other) => crash "Object.unique!: newUniqueId gave ${Str.inspect(other)}"
+		Err(t) => Err(t)
+	}
+}
+
+jurisdiction_text : Object.Jurisdiction -> Str
+jurisdiction_text = |j| match j {
+	Eu => "eu"
+	Us => "us"
+	Fedramp => "fedramp"
+}
+
+location_text : Object.Location -> Str
+location_text = |l| match l {
+	Wnam => "wnam"
+	Enam => "enam"
+	Sam => "sam"
+	Weur => "weur"
+	Eeur => "eeur"
+	Apac => "apac"
+	ApacNe => "apac-ne"
+	ApacSe => "apac-se"
+	Oc => "oc"
+	Afr => "afr"
+	Me => "me"
+}
+
+## `ctx.storage.sql.exec(sql, ...params)`: the cursor is in slot 2. A parameter follows the rule of D1 (MODULES.md 5.1):
+## object SQL takes no `BigInt` either ("Cannot convert a BigInt value to a number", PLAN.md 8f, part 1).
+sql_ops : Str, List(Sql) -> List(Js.Op)
+sql_ops = |sql, params| [
+	Get(Root("ctx"), "storage"),
+	Get(Slot(0), "sql"),
+	Call(Slot(1), "exec", [Lit(Text(sql))].concat(params.map(|p| Lit(SqlRules.param(p))))),
+]
+
+sql_typed! : Object.Self, Str, List(Sql), U64 => Try(rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+sql_typed! = |_self, sql, params, max| match Io.call!(sql_ops(sql, params).concat([Call(Slot(2), "toArray", []), Call(Root("pf"), "pack", [Slot(3), Lit(Int(limit(max)))])])) {
+	Ok(Packed(bytes)) => match SqlRules.typed(bytes) {
+		Ok(v) => Ok(v)
+		Err(BadData(text)) => Err(BadData(text))
+	}
+	Ok(other) => crash "Object.Self.sql!: pf.pack gave ${Str.inspect(other)}"
+	Err(t) => match sql_error(t) {
+		Constraint(c) => Err(Constraint(c))
+		SqlErr(e) => Err(SqlErr(e))
+		TooLarge => Err(TooLarge)
+	}
+}
+
+sql_raw! : Object.Self, Str, List(Sql), U64 => Try(Sql.Rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), TooLarge])
+sql_raw! = |_self, sql, params, max| {
+	ops = sql_ops(sql, params).concat([
+		Get(Slot(2), "columnNames"),
+		Call(Slot(2), "raw", []),
+		Get(Root("global"), "Array"),
+		Call(Slot(5), "from", [Slot(4)]),
+		Record([("columns", Slot(3)), ("rows", Slot(6))]),
+		Call(Root("pf"), "limit", [Slot(7), Lit(Int(limit(max)))]),
+	])
+	match Io.call!(ops) {
+		Ok(Obj(fields)) => match (field(fields, "columns"), field(fields, "rows")) {
+			(Arr(names), Arr(rows)) => Ok({ columns: names.map(SqlRules.column_name), rows: rows.map(SqlRules.row_of) })
+			other => crash "Object.Self.sql_rows!: the cursor gave ${Str.inspect(other)}"
+		}
+		Ok(other) => crash "Object.Self.sql_rows!: the cursor gave ${Str.inspect(other)}"
+		Err(t) => match sql_error(t) {
+			Constraint(c) => Err(Constraint(c))
+			SqlErr(e) => Err(SqlErr(e))
+			TooLarge => Err(TooLarge)
+		}
+	}
+}
+
+## MC9 and MC11: the limit of `pf.pack` and `pf.limit` is `TooLarge`, a constraint failure is `Constraint` (the texts of
+## D1 with no `D1_ERROR: `, MODULES.md 5.1), each other throw `SqlErr`.
+sql_error : Io.Thrown -> [SqlErr(Io.Thrown), Constraint(Sql.Constraint), TooLarge]
+sql_error = |t|
+	if t.name == "TooLarge" {
+		TooLarge
+	} else {
+		match SqlRules.constraint_of(t.message) {
+			Ok(c) => Constraint(c)
+			Err(NotConstraint) => SqlErr(t)
+		}
+	}
+
+## `ctx.storage.kv[method](...args)`.
+kv_ops : Str, List(Js.Arg) -> List(Js.Op)
+kv_ops = |method, args| [Get(Root("ctx"), "storage"), Get(Slot(0), "kv"), Call(Slot(1), method, args)]
+
+done : Try({}, e) -> [Respond(Response), Reply(Js), Done, Failed(Str), Unhandled]
+done = |r| match r {
+	Ok({}) => Done
+	Err(e) => Failed(Str.inspect(e))
+}
+
+## A limit as the `Int` of a program (I64).
+limit : U64 -> I64
+limit = |n| n.to_i64_try() ?? I64.highest
+
+field : List((Str, Js)), Str -> Js
+field = |fields, name| match fields.find_first(|(k, _)| k == name) {
+	Ok((_, v)) => v
+	Err(_) => Undefined
 }

@@ -210,12 +210,22 @@ As built in `PLAN.md` 8b (first half) (`platform/Worker.roc`):
 
 | Item | Built as | Why |
 | --- | --- | --- |
-| Fields | `fetch!`, `scheduled!`, `queue!`, `email!`, `tail!`, `other!`. Not yet `rpc`, `entrypoints`, `objects`. | Phase B (`PLAN.md` 8f). An optional field added later does not break an app. |
-| `event!` | `Rpc`, `EntrypointFetch`, `Object` and `Manifest` give `Unhandled` | 8f |
+| Fields | `fetch!`, `scheduled!`, `queue!`, `email!`, `tail!`, `other!`. Since `PLAN.md` 8f (part 1): also `rpc`, `entrypoints`, `objects`. | An optional field added later does not break an app. |
+| `event!` | 8f (part 1): `Rpc` runs the handler of the method in `rpc` (entry point `"default"`) or in the `rpc` of the named entry point, `EntrypointFetch` the `fetch!` of the entry point, `Object` the class of the name, `Manifest` gives `Reply` with the names. A name with no handler gives `Unhandled`. | API.md 10.1 |
 | `no_retry!` | One `call!` of `noRetry` on the root `event` (the controller). A throw is dropped. | The type is `=> {}`. Only a `Scheduled` event has a controller. |
 | `TraceItem` | The type above, with `parser_for : _`. Nothing parses it yet. | 8f. `Header` of `roc-lang/http` has no `parser_for` (`PLAN.md` 8b, open point O1). |
 | `other` methods | A method on the prototype of the class for each name. `makeHandler` refuses `fetch`, `scheduled`, `constructor` and a name twice. | Workers finds a handler on the prototype. |
 | Local test of a cron | No Miniflare yet: a workerd config with an entry service that serves `/cdn-cgi/local/scheduled` as Miniflare does (`bench/entry-worker.js`) | `PLAN.md` 8b |
+
+As built in `PLAN.md` 8f, part 1 (`platform/Worker.roc`, `js/index.js`, `js/runner.js`), where the code differs from the text above or adds to it:
+
+| Item | Built as | Why |
+| --- | --- | --- |
+| The manifest at load | `makeHandler` makes an instance of its own for the event `Manifest` (no task table, no budget, the default free mark), calls `handle` as a plain call (the event makes no crossing, so no JSPI), reads the reply and drops the instance (`manifestOf`). An app that answers `Unhandled` has no classes. A module that is not stack-first is not run (`manifestOf` gives `undefined`): `makeHandler` accepts it at load, and each event throws the layout error (`PLAN.md` 1b), also the constructor of each object class. | workerd forbids random values at global scope, so the instance of the runner starts at the first event (C3 of `PLAN.md` 8b). The check of the exports must stop the load, so it cannot wait for the first event. |
+| Order in the entry file | The `objectClass` and `entrypointClass` lines come before `export default makeHandler(...)`. `makeHandler` checks both directions: a class of the manifest with no export, and an export with no class. An `objectClass` line after `makeHandler` is checked against the manifest at once, but a missing export is found only by `makeHandler`. | An ES module runs its lines in order, and `makeHandler` cannot see the exports of the module |
+| Event names | `Rpc` of the default export has the entry point `"default"`. A class named `default` is a throw at load. | `default` is the name of the default export |
+| Method names | The manifest refuses a method twice in a class, a name that is not a JS name, and the names of handlers: `fetch`, `scheduled`, `queue`, `email`, `tail`, `alarm`, `constructor`, `webSocketMessage`, `webSocketClose`, `webSocketError`, `then` (a stub with `then` is a thenable). A default method with the name of an `other` handler is a throw too. | The JS method of a handler and of an RPC method is the same property |
+| `rpc` methods | A method on the prototype of the class (default export, object, entry point): `Reply` gives the value; `Failed(text)` is a log line `<class>.<method>: failed: <text>` and `throw new Error(text)`, so the caller gets `RpcErr({ name: "Error", message: text })`; `Unhandled` and a trap are a log line and a throw | MODULES.md 8, "Errors" |
 
 ## 4. HTTP: `Request`, `Response`, `Body`, `Http`
 
@@ -702,7 +712,28 @@ n = counters.named("global").call!(increment, { by: 1 })?
 | Class names | Only in `Object.class("Counter", ...)` and the Wrangler config. The JS entry file exports the class with one line, and a missing or extra export stops the load (3, `API.md` AQ10). |
 | Errors | Each class can have its own error type: `Object.class` turns errors into log text. |
 
-## 8. RPC: `Rpc` and `Service`
+As built in `PLAN.md` 8f, part 1 (`platform/Object.roc`, `platform/Remote.roc`, `platform/SqlRules.roc`, `js/index.js`), where the code differs from the text above or adds to it. The facts of local workerd are in `research/objects-probe/out.txt`.
+
+| Item | Built as | Why |
+| --- | --- | --- |
+| Backing | `Object :: { namespace, jurisdiction, target : [Named(Str), Id(Str)], location_hint }`, `Namespace := { binding, jurisdiction }` (`""` for none), `Self :: { class, id }` | Data only (MC1) |
+| Twins | `fetch`, `call` (stubs) and `set_alarm`, `get_alarm`, `delete_alarm`, `delete_all` (`Self`) give an `Io`. SQL, cells, `list!` and `id!` do not wait: no twin. | MC3 |
+| `unique!` | A throw of `newUniqueId` is a crash | The type has no error |
+| `id!` | `idFromName(name).toString()` with `call!`. A stub of an id gives its id with no crossing. | |
+| `jurisdiction` | Local workerd throws "Jurisdiction restrictions are not implemented in workerd." at `jurisdiction(j)`, so `id!`, `fetch!` and `call!` of such a stub give `ObjectErr`/`RpcErr` locally | `PLAN.md` 11c checks the edge |
+| `location_hint` | The option `{ locationHint }` of `getByName` and `get`. Local workerd takes any text (also `bogus`, `research/objects-probe/hint.txt`), so no local test sees it. | `PLAN.md` 11c |
+| The SQL rules | `SqlRules.roc` (not in `exposes`) has the parameter rule, the typed rows with the integer rules, the rows with no types and `constraint_of` of `D1` (moved from `D1.roc`). Local object SQL gives the same texts as D1 with no `D1_ERROR: `, also for `ForeignKey` (foreign keys are on) and `Datatype`. A `BigInt` parameter throws "Cannot convert a BigInt value to a number", so an `Int` outside ±(2^53 - 1) goes as text, as for D1. An INTEGER of size 2^53 or more comes back rounded, as for D1. | DO4 of `PLAN.md` 8c |
+| `sql!` | `exec(sql, ...params).toArray()`, then `pf.pack` with the limit. `sql_rows!`: `columnNames`, `Array.from(raw())`, then `pf.limit`. Both one `call!`. | MC11 |
+| `sql_run!` | `exec`, then `toArray()` (the cursor runs to its end), then `Fields` of `rowsRead` and `rowsWritten`. A cursor that gives other values is `SqlErr` with the name `BadData` (the type has no `BadData`). | `rowsWritten` is 2 for an insert of 2 rows before and after the iteration (probe) |
+| `list!` | `storage.kv.list(options)`, then the new helper `pf.keys(entries, max)`: the keys as a `Js` tree with the limit of MC11 (`TooLarge`). The values stay in JS. Options: `prefix`, `start`, `startAfter`, `end`, `limit`, `reverse`. | OP4: a program has no loop |
+| `Object.Cell` | `get! : Object.Cell(a), Object.Self => Try(a, [NotFound, BadData(Str), StorageErr(Thrown)])`, `set! : Object.Cell(a), Object.Self, a => Try({}, [StorageErr(Thrown)])`, `delete! : Object.Cell(a), Object.Self => Try({}, [StorageErr(Thrown)])` (a key with no value is `Ok`). The value is CBOR bytes (`kv.put(key, Uint8Array)`). | The design gives only the names (9) |
+| `class` | The fields `init!`, `fetch!`, `rpc`, `alarm!`. The socket fields and events of 12.1 are not built: a socket event gives `Unhandled`. `Object.Class` is `{ name, handlers, methods, run! : Str, Object.Event => Outcome }`: `run!` takes the id, so only `Object` makes a `Self`. | 12.1 comes with `WebSocket` |
+| The handlers of one class | One error type `e` for all handlers of a class, as in `Worker(e)`. A handler that gives only `Ok` needs `Try(_, e)` in its annotation, not `Try(_, [])`, to join the others. | The record of `class` has one `e` |
+| SQLite check | The constructor reads `ctx.storage.sql.databaseSize`. On a throw it throws `Durable Object class <name>: the platform needs a SQLite-backed class: put "<name>" in new_sqlite_classes ...`, with the text of Workers after it. Local workerd already names `new_sqlite_classes`, but not the class. | 7, "SQLite only" |
+| `init!` | `ctx.blockConcurrencyWhile` of the task `<class>.init` (the event `Init`). A timer of the constructor sweeps the task table at `initMs` + 50 ms (shim option, default 30 s), so the cancel names the task: the caller gets `ObjectErr` with `<class>.init: cancelled: deadline`. An `Err`: a log line and the throw `<class>.init: failed: <error>`. | The sweep of `PLAN.md` 3b runs only at a new request, and no other event of the object comes in `blockConcurrencyWhile` |
+| `alarm!` | `retry_count` is `alarmInfo.retryCount`, `is_retry` is `alarmInfo.isRetry` (0 and false with no `alarmInfo`). Locally the retries come after 2 s and 4 s. | 7, "alarm!" |
+| `fetch!` | As the `fetch` of a Worker, with the `respond` hook of `Ctx.respond!` and no `waitUntil` after it (API.md 10.2). `pass_through!` is `InvalidState`. | |
+
 
 One constant names a method and its types. Both sides use it: the caller with `call!`, the callee with `on`.
 
@@ -742,6 +773,17 @@ Limits: Workers RPC can carry more than this module. The module keeps to typed d
 | Promise pipelining | No. Each `call!` is one wait. | A pipelined call needs a stub |
 | An error with its name, message and own properties (Cloudflare docs, RPC error handling) | Text only: the caller gets `RpcErr({ name, message })`. An `Err(e)` of a Roc callee is the message `Str.inspect(e)`. To give a typed error, put it in the reply type: `Rpc(arg, Try(ret, err))`. | A thrown error crosses as `Error(name, message)` (`API.md` 5, J6) |
 | 32 MiB for one call (Cloudflare docs) | The same limit. The reply is a read into wasm memory (MC11). | |
+
+As built in `PLAN.md` 8f, part 1 (`platform/Rpc.roc`, `platform/Service.roc`, `platform/Remote.roc`, `js/index.js`, `js/events.js`):
+
+| Item | Built as | Why |
+| --- | --- | --- |
+| `Rpc.name` | Public: `Rpc(arg, ret) -> Str`, the method name | `Object` and `Service` build the call in `Remote` (not exposed), and `Rpc` is opaque |
+| `Handler(self)` | `{ name : Str, run! : self, List(U8) => Try(List(U8), Str) }`: `run!` parses the argument with `Cbor.parse`, a parse error is `Err("bad argument: <error>")`, an `Err(e)` is `Err(Str.inspect(e))` | The prototype (15) |
+| `Entrypoint` | `{ name, handlers : List(Str), rpc, fetch! : Request => [Respond(Response), Failed(Str), Unhandled] }` | The manifest needs the handlers |
+| `call!` | One `await!`: the stub or the binding, `Call(target, name, [Lit(Packed(Cbor.encode(arg)))])` (JS gives the callee the plain value), then `pf.pack` of the reply with the limit 32 MiB. A reply that does not fit `ret` is `BadData(Str.inspect(error))`. A throw (of the callee, of Workers, `TooLarge` of `pf.pack`) is `RpcErr`. Twins `call` and `fetch` (MC3). | Locally Workers stops a reply above 32 MiB first: "Serialized RPC arguments or return values are limited to 32MiB, but the size of this value was: 33554440 bytes." |
+| `fetch!` | `target.fetch(url, init)` with the method, the headers and the body (a stream is its ref), then `Fields` of `status`, `headers`, `body` and `webSocket` (a 101 keeps its socket). A throw is `ObjectErr` or `ServiceErr`. | The same `RequestInit` as `Http` |
+| Typed bytes (MC5) | A `Cbor.Bytes` field reaches a JS callee as a `Uint8Array`, a `List(U8)` field as an `Array` | `checks/rpc.mjs` |
 
 ## 9. State: `Memo`, `Kv.Cell`, `Object.Cell`
 
@@ -899,7 +941,7 @@ As built in `PLAN.md` 8b (second half) and 9c (`platform/Ctx.roc`, `js/helpers.j
 
 | Item | Built as | Why |
 | --- | --- | --- |
-| `respond!` | One `call!` of `pf.respond` with the outcome `Respond` of the response (the shape of `Entry`). The shim makes the Workers `Response` at once and gives it to the `fetch` handler, which returns it and gives the rest of the task to `ctx.waitUntil`. Only the `fetch` of a Worker gives the hook now (`EntrypointFetch` and the `Fetch` of an object are 8f). | API.md 10.2 |
+| `respond!` | One `call!` of `pf.respond` with the outcome `Respond` of the response (the shape of `Entry`). The shim makes the Workers `Response` at once and gives it to the `fetch` handler, which returns it and gives the rest of the task to `ctx.waitUntil`. Since `PLAN.md` 8f (part 1) the `fetch` of a named entry point gives the hook too (with `ctx.waitUntil`), and the `fetch` of a Durable Object (no `ctx.waitUntil`: the object finishes its work, API.md 10.2). | API.md 10.2 |
 | Errors of `respond!` | `InvalidStateError` (no hook, a second call) is `InvalidState`. Any other throw (a status or a header that Workers refuses) is a `crash`, as the same response from `event!` is a 500. | The type has only `InvalidState` |
 | After `respond!` | The outcome of `event!` is ignored. `Failed` and `Unhandled` give the log line `fetch: after respond: <reason>`, a trap gives its trap line. | Something must show an error that no client sees |
 | `pass_through!` | `pf.passThrough`: `ctx.passThroughOnException()` in the `fetch` of a Worker, else `InvalidState`. After it, `Failed` and a trap make the `fetch` handler throw. A shed and a cancel keep their 503. | A trap is an exception of the handler too |

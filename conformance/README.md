@@ -40,6 +40,8 @@ What a check gets (`t`):
 | `t.server` | The URL of the local server: `/hello`, `/ten`, `/slow` (2 s), `/echo` (method, header `x-test`, body), `/status/<n>` |
 | `t.logs` | The structured log lines of workerd (`{ level, message }`) since the start |
 | `t.mf` | The Miniflare instance (`getD1Database`, `getR2Bucket`, ... to set up or read data) |
+| `t.entry` | The text of `worker.js` (8f: a check edits it to test the load) |
+| `t.start(opts, entry)` | A second Miniflare with the same modules, only the options `opts` (no options of the check files), and `entry` (default `t.entry`) as the entry file. The check calls `ready` and `dispose` (8f: an old compatibility date, a load that must fail). |
 
 Local facts: Miniflare 5 takes the V4 options through `convertV4MiniflareOptions` (the runner does it). `request.cf` is the object in `run.mjs` (the placeholder of Miniflare with no `metroCode`), so the run needs no network. Storage is in memory: each run starts empty. `port: 0`: Miniflare takes a free port, so a run does not clash with the workerd tests.
 

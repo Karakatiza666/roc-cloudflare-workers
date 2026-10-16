@@ -99,6 +99,13 @@ const t = {
     const n = (h) => Number(res.headers.get(h));
     return { status: res.status, body: await res.text(), waits: n('x-waits'), awaits: n('x-awaits'), calls: n('x-calls'), ms: n('x-ms') };
   },
+  // PLAN.md 8f: another Miniflare with the same modules and `opts` (no options of the check files): `entry`, when given,
+  // is the text of worker.js (`t.entry` is the real one). The check awaits `ready` and calls `dispose`.
+  entry: readFileSync(join(here, 'worker.js'), 'utf8'),
+  start(opts = {}, entry = undefined) {
+    const mods = entry === undefined ? modules : [{ ...modules[0], contents: entry }, ...modules.slice(1)];
+    return new Miniflare(convertV4MiniflareOptions({ modules: mods, modulesRoot: here, compatibilityDate: '2026-10-01', compatibilityFlags: ['enable_request_signal'], port: 0, cf, ...opts }));
+  },
 };
 
 let failed = 0, passed = 0;

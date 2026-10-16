@@ -22,6 +22,8 @@ import CacheRoutes
 import D1Routes
 import MemoRoutes
 import PinRoutes
+import ObjectRoutes
+import RpcRoutes
 
 fetch! : Request => Try(Response, [])
 fetch! = |req| {
@@ -39,11 +41,13 @@ fetch! = |req| {
 		["d1", .. as rest] => D1Routes.route!(req, rest)
 		["memo", .. as rest] => MemoRoutes.route!(req, rest)
 		["pin", .. as rest] => PinRoutes.route!(req, rest)
+		["objects", .. as rest] => ObjectRoutes.route!(req, rest)
+		["rpc", .. as rest] => RpcRoutes.route!(req, rest)
 		_ => Response.from_text(404, "no route")
 	}
 	Ok(res)
 }
 
-worker = Worker.{ fetch! }
+worker = Worker.{ fetch!, rpc: RpcRoutes.rpc, entrypoints: RpcRoutes.entrypoints, objects: ObjectRoutes.classes }
 
 event! = |e| worker.event!(e)
