@@ -1,0 +1,96 @@
+# On a tag X.Y.Z (or X.Y.Z-pre): test, build the production host with the pinned nightly, check the layout, make the
+# bundle and the shim package (scripts/bundle.sh), publish the GitHub Release with both files, then build the example
+# from the published URLs on a clean runner (scripts/test_bundle.sh).
+# The first run of this file is the first real run: PLAN.md "Status of steps 11a, 11b" lists what was only run locally.
+name: release
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+      - '[0-9]+.[0-9]+.[0-9]+-*'
+permissions: {}
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    permissions: { contents: read }
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+      - run: npm install -g wrangler
+      - name: All tests
+        run: |
+          export ZIG=$(which zig)
+          export WORKERD="$(npm root -g)/wrangler/node_modules/@cloudflare/workerd-linux-64/bin/workerd"
+          bench/test-all.sh
+  release:
+    needs: tests
+    runs-on: ubuntu-24.04
+    permissions: { contents: write }
+    env:
+      GH_TOKEN: ${{ github.token }}
+    outputs:
+      url: ${{ steps.make.outputs.url }}
+      shim_url: ${{ steps.make.outputs.shim_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || [[ "$TAG" == 0.0.0* ]]; then
+            echo "The tag must be X.Y.Z or X.Y.Z-pre, not 0.0.0: $TAG" >&2
+            exit 1
+          fi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+      - name: Bundle
+        id: make
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          export ZIG=$(which zig)
+          scripts/bundle.sh "$TAG" | tee bundle.txt
+          for key in asset url shim shim_url; do echo "$key=$(sed -n "s/^$key: //p" bundle.txt)" >> "$GITHUB_OUTPUT"; done
+      - name: Publish
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          nightly=$(tr -d '\r\n' < compat/last-stack-first-nightly)
+          pre=()
+          [[ "$TAG" == *-* ]] && pre=(--prerelease)
+          sed -e "s|@URL@|${{ steps.make.outputs.url }}|g" \
+              -e "s|@SHIM_URL@|${{ steps.make.outputs.shim_url }}|g" \
+              -e "s|@BUNDLE_NAME@|$(basename '${{ steps.make.outputs.asset }}')|g" \
+              -e "s|@SHIM_NAME@|$(basename '${{ steps.make.outputs.shim }}')|g" \
+              -e "s|@NIGHTLY@|$nightly|g" \
+              .github/release-notes.md > notes.md
+          gh release create "$TAG" '${{ steps.make.outputs.asset }}' '${{ steps.make.outputs.shim }}' \
+            --title "$TAG" --notes-file notes.md --verify-tag "${pre[@]}"
+  test-published:
+    needs: release
+    runs-on: ubuntu-24.04
+    permissions: { contents: read }
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      - run: npm install -g wrangler
+      - name: Build and run the example from the release URLs
+        run: scripts/test_bundle.sh '${{ needs.release.outputs.url }}' '${{ needs.release.outputs.shim_url }}'

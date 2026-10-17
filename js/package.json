@@ -1,0 +1,20 @@
+{
+  "name": "roc-cloudflare-workers",
+  "version": "0.0.0-dev",
+  "description": "The JS shim of the Roc platform for Cloudflare Workers: makeHandler(module, opts), objectClass, entrypointClass.",
+  "type": "module",
+  "license": "UPL-1.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Karakatiza666/roc-cloudflare-workers.git",
+    "directory": "js"
+  },
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "*.js",
+    "LICENSE"
+  ],
+  "sideEffects": false
+}

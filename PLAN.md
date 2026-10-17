@@ -35,7 +35,7 @@ Problem 12 (2026-10-14) is the goal of problem 4: one wasm instance per isolate.
 | 8 | 9a and 9b, then 8a, 8b with 9c, 8c with 10a and 10b, 8d, 8e (`API.md` phase A). 10c is part of the test of 8a. | the split ABI (7a), the header settings (7b), the task table (2c), cancel (3c). 8a needs the per-task roots and ref table of 9b, and 8b and 8c need `makeHandler` of 9a. |
 | 9 | 8f (`API.md` phase B). Done 2026-10-17: parts 1 to 4 (the status sections of 8f); the edge parts are on the 11c lists. | 8a to 8e |
 | 10 | 8g, local. Done 2026-10-17 (the section "Status of step 8g"). The edge part runs after 11: the list "Edge parts for 11c" of that section. | 8a to 8e |
-| 11 | 11a to 11c, then 5d on the edge | 7 to 10 |
+| 11 | 11a to 11c, then 5d on the edge. 11a and 11b: done locally 2026-10-17 (the section "Status of steps 11a, 11b"). | 7 to 10 |
 | 12 | Update DESIGN.md §6.1, Q12 and Q14, DESIGN-REGISTRY.md §8 and `bench/README.md` (API.md RF10) | all |
 | 13 | 12g: measure with talon | talon runs on the platform |
 
@@ -2790,6 +2790,88 @@ Removed 2026-10-16: stack-first is guaranteed by the compiler. Observation (not 
 | 11a | A release workflow: build the production host (7a) with the pinned nightly (`compat/last-stack-first-nightly`), bundle the platform with `roc bundle`, and attach the bundle and the `js/` package to a GitHub Release. The platform header has two packages by release URL (8c): `http` (roc-lang/http 2.0.0) and `cbor` (`roc-cbor` 0.1.0). The bundle keeps them as URLs (no copy, never a path). A platform cannot re-export a module of a package, so the platform has its own module `Cbor` that wraps the package (DC1, DO1): the release notes say that an app needs no `cbor` entry, and that an app may still add the same URL (the types are the same, MODULES.md 15). Roc downloads the packages to `$XDG_CACHE_HOME/roc/packages/` (the tests set `XDG_CACHE_HOME=.cache`). | Run on a test tag. A new app builds with the release URL. An app with no `cbor` entry builds, and a `D1.all!` into its record type with `Cbor.Bytes` works. An app that also has its own `cbor` entry of the same URL builds. |
 | 11b | Publish `js/` (npm, or a file in the release that the app copies) | A new Worker project uses it with wrangler |
 | 11c | An example Worker app with a wrangler config (with the compatibility flag `enable_request_signal`, for 3b), deployed by CI. 5d (CPU limit on the edge) runs on it. Also check what the edge does at 128 MB: is only the isolate stopped, and do the requests in flight fail? Also check the facts of API.md 10.2 on the edge: does `request.signal` fire when the client goes away after the response body is complete, and does a `Body.writer!` stream keep the request past 30 s while the task writes? The cron edge test of API.md AQ12: two cron triggers (`*/2 * * * *` and `1-59/2 * * * *`). The `scheduled!` handler writes a row (`cron`, `time_ms`, the time of the run) to D1 for each run, then gives `Err`. For the second cron it calls `no_retry!` first. It runs for 1 hour. The jurisdiction of MODULES.md 7 on the edge (local workerd does not have it). (The item "the fallback under load on the edge" is removed 2026-10-16: stack-first is guaranteed by the compiler.) | The deployed example answers. 5d and the 128 MB check give their results. The two facts of API.md 10.2 give their results, and API.md 10.2 is changed if they differ. AQ12: the rows show for each `time_ms` how many runs each cron got. More than one run for a `time_ms` of the first cron, and one for the second, shows that production retries and that `noRetry` stops it. Write the answer in MODULES.md 3 and settle AQ12. Revert (the handler gives `Ok`): one run for each `time_ms` of both crons. `counters.jurisdiction(Eu).named("x").id!()` differs from `counters.named("x").id!()`. Revert (the jurisdiction is not sent): they are equal. The 8g edge run (the list "Edge parts for 11c" in "Status of step 8g": `bench/8g/deploy-edge.sh` and `run-edge.mjs`): the edge numbers of AQ4, AQ5 and the size where `crypto.subtle.digest` is faster than the builtin SHA-256, to put in `bench/README.md` and MODULES.md 10. |
+
+### Status of steps 11a, 11b (2026-10-17)
+
+Done locally. Nothing is created or published: no GitHub repository, no push, no release, no npm publish, no Cloudflare deploy. The user decides when.
+
+| Step | State | Where |
+|---|---|---|
+| 11a | Written and run locally. The workflow (`.github/workflows/release.yml`) has not run on GitHub. | `scripts/bundle.sh`, `scripts/test_bundle.sh`, `scripts/test_example.sh`, `.github/workflows/release.yml`, `.github/release-notes.md` |
+| 11b | Done locally | `js/package.json`, `examples/hello/`, `scripts/test_example.sh` |
+
+What each file does:
+
+| File | Does |
+|---|---|
+| `scripts/bundle.sh [version]` | Checks the glue against the pinned nightly (as `bench/ci-layout.sh`). Builds the production host (`zig build`). Builds `bench/app.roc` on `platform/main.roc` and runs `bench/check-layout.mjs --header` and `bench/exports-test.mjs` on it (stack first, 1 MB, the 33 production exports, no bench symbol in the host). Bundles a stage directory (`main.roc`, the modules, `LICENSE`, `targets/wasm32/host.wasm`) into `dist/<hash>.tar.zst`. Fails if the archive has a package copy or a path out. Packs `js/` with the release version into `dist/roc-cloudflare-workers-<version>.tgz`. Prints `url:` and `shim_url:`. |
+| `scripts/test_bundle.sh [bundle] [shim]` | Serves the bundle on `http://127.0.0.1` (or takes an https URL). With empty caches: `roc check` and `roc build` of `examples/hello/app.roc` and `examples/hello/with_cbor.roc` with `--replace-dep ./platform/main.roc <url>`, the layout check, and a check that the package cache has the bundle, `http` and `cbor`, each by its hash. Then `scripts/test_example.sh`. |
+| `scripts/test_example.sh <app.wasm> <shim>` | Copies the project, `npm install` of the shim (file or URL), `wrangler dev --local`, 6 requests (`/`, `/d1`, `/cbor`, `/fetch` 200 and 404, `/nowhere`), then `wrangler deploy --dry-run`. Stops each server it started. |
+| `release.yml` | On a tag `X.Y.Z` or `X.Y.Z-pre`: `tests` (`bench/test-all.sh`), `release` (`scripts/bundle.sh`, `gh release create` with the 2 files and the notes), `test-published` (`scripts/test_bundle.sh <url> <shim url>` on a clean runner). |
+
+Local proof (nightly-2026-10-12-2664a27, Zig 0.17.0, wrangler 4.151.0, Node 26.7.0):
+
+| Check | Result |
+|---|---|
+| `scripts/bundle.sh 0.1.0-rc.1` | Bundle 132,842 bytes (1.28 MB open): `main.roc`, 41 modules, `LICENSE`, `targets/wasm32/host.wasm`. No `http` or `cbor` file in it. Layout STACK-FIRST, 33 exports, 0 bench names, 200 + 200 requests with 4 traps pass. |
+| Roc accepts a bundle that is not on https | Yes: `http://127.0.0.1:<port>/<hash>.tar.zst` (plain http only for 127.0.0.1) and `--replace-dep OLD NEW`. OLD is a path from the current directory that resolves to the platform file the app names (`./platform/main.roc` from the repo root, for the app line `../../platform/main.roc`). `roc check` and `roc build --target=wasm32` both work. |
+| Empty `ROC_CACHE_DIR` and `XDG_CACHE_HOME` | `http` and `cbor` download from their GitHub URLs to `$XDG_CACHE_HOME/roc/packages/<hash>`. The bundle extracts to the same place. `ROC_CACHE_DIR` is the build cache, not the package cache. |
+| The bundle gives the same wasm as the path | `cmp` of `examples/hello/app.roc` built with the bundle and with `../../platform/main.roc` (both cold): equal. |
+| `examples/hello/app.roc` (`pf.Cbor`, `pf.D1`, `pf.Http`, no `cbor` entry, no `http` entry) | Builds with the bundle. STACK-FIRST. |
+| `examples/hello/with_cbor.roc` (also a `cbor` entry of the same URL, `pf.Cbor.Bytes` and the package `Bytes` in both directions) | Builds with the bundle. |
+| `wrangler dev --local` with the shim from the `.tgz` (file and `http://127.0.0.1` URL) | `/` gives `hello from Roc`. `/d1` gives `Ok [{ avatar: [1, 2, 3], id: 1, name: "ann" }]`. `/cbor` gives `16 bytes, Ok({ avatar: [1, 2, 3], id: 7 })`. `/fetch` gives `status 200` and `status 404` from a local server. Unknown path: `no route`. |
+| `wrangler deploy --dry-run` | Passes. |
+| Revert: the app answers another text | `scripts/test_example.sh` exits 1 (`FAIL /: got [hello WRONG]`). |
+| Revert: the shim file is missing | `scripts/test_example.sh` exits non-zero. |
+
+Choices:
+
+| Choice | Reason |
+|---|---|
+| The bundle holds a stage directory, not `platform/`. | The bundle has exactly its files. `platform/targets/` is git-ignored, and `LICENSE` is in the bundle (UPL asks for the notice with copies). `roc bundle` takes `main.roc LICENSE targets/wasm32/host.wasm` and follows the imports. |
+| The shim is an npm package in the release (`.tgz` by `npm pack`), not a registry package and not files to copy. | The shim and the host must have the same version (the ABI of `js_await`, the exports). A file of the same release cannot differ. `npm install <URL>` works with no registry and no account, and the same file can go to the registry later with `npm publish`. A copy of 13 files in each project would lose the version. The package name is `roc-cloudflare-workers` (unscoped): change it in `js/package.json` before the first publish if the user wants a scope. `exports` has `.` only. |
+| `js/package.json` has `0.0.0-dev`. `scripts/bundle.sh` writes the tag in a copy. | No second place for the version in the tree. |
+| The example app has a path platform line, and tests use `--replace-dep`. | The same model as roc-cbor (`examples` keep the path). A user copies the project and writes the URL. |
+| `roc build --no-cache` in the scripts and in the README. | A warm build cache gave other code (see Findings). |
+| `release.yml` runs `bench/test-all.sh` first. | `bench/test-all.sh` needs `WORKERD`: the job installs wrangler and takes the workerd of its package. |
+| One example app (`hello`) for 11b and for the 11a proof. | The same app has `pf.Cbor`, D1 and `Http`. `with_cbor.roc` is the second app of the 11a test row. |
+
+Findings:
+
+| Finding | Effect |
+|---|---|
+| A build with a warm `ROC_CACHE_DIR` gives other code than a cold one: `examples/hello/app.roc` is 475,805 bytes cold and 461,058 bytes warm (same exports, both STACK-FIRST). Two cold builds are equal byte by byte. | All scripts use `--no-cache` (as `bench/build.sh`). Not reduced to an upstream issue yet: it needs a small case. |
+| A D1 BLOB column into a `Cbor.Bytes` field gives `Err BadData("column avatar: the value does not fit the type")`. D1 gives a BLOB as an array of numbers (`MODULES.md` 5.1). The field type for a BLOB is `List(U8)`. | The example uses `List(U8)`. The 11a test row says "`D1.all!` into its record type with `Cbor.Bytes`": it compiles (the `Parseable` constraint holds), and it does not read a BLOB. Decide: change the row, or make the D1 helper turn a BLOB into a byte string (open question for the user). |
+| `roc check` takes `--replace-dep` too. `roc bundle` gives the same file name (the hash) for the same files. | Used in `scripts/test_bundle.sh`. |
+
+Not done locally (what the real release needs):
+
+| Item | Why |
+|---|---|
+| `.github/workflows/release.yml` has not run. | No repository. The syntax is checked (YAML parses). The action versions are those of `nightly-layout.yml` (`checkout@v4`, `setup-node@v4`, `setup-zig@v2`). |
+| A download of the bundle by an https URL from GitHub. | The same code path as `http://127.0.0.1` in Roc. The URL has the hash of the file. `test-published` checks it. |
+| Other OS (macOS, Windows, arm). | The bundle holds a wasm host, so it does not depend on the OS. The tests ran only on Linux x86_64. The release workflow has one runner. |
+| `bench/test-all.sh` on a GitHub runner. | It needs workerd of the global wrangler: the `tests` job sets `WORKERD` from `npm root -g`. Not run there. |
+| `wrangler deploy` of `examples/hello`. | A deploy is outward-facing. The edge tests are step 11c. |
+
+Commands for the real release (the user runs them, from a clean checkout of the merged `main`):
+
+```sh
+# 1. The repository (the owner and the name are in scripts/bundle.sh and the README: change them first if they differ)
+gh repo create Karakatiza666/roc-cloudflare-workers --public --source . --remote origin --push
+# 2. Check the files again, with the real tools
+ZIG=<zig 0.17> scripts/bundle.sh 0.1.0-rc.1 && scripts/test_bundle.sh
+# 3. A test tag first: a pre-release runs the whole workflow
+git tag 0.1.0-rc.1 && git push origin 0.1.0-rc.1
+gh run watch
+# 4. The first release (delete the pre-release if the run was green)
+gh release delete 0.1.0-rc.1 --cleanup-tag --yes
+git tag 0.1.0 && git push origin 0.1.0
+# 5. Optional, later: the shim on the npm registry (the .tgz of the release)
+npm publish dist/roc-cloudflare-workers-0.1.0.tgz --access public
+```
+
+After step 4: put the release URL in `README.md`, and check the `test-published` job.
 
 ## 12. One instance per isolate: check memory at resume
 

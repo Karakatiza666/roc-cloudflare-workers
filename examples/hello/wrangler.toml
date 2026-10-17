@@ -1,0 +1,12 @@
+name = "roc-hello"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+# Needed (API.md 3b): without it `request.signal` never fires, and a task cannot stop when the client goes away.
+compatibility_flags = ["enable_request_signal"]
+
+# The binding `DB` of `D1.binding("DB")` in app.roc. Local runs (`wrangler dev`) make an empty database.
+# For a deploy: `wrangler d1 create roc-hello`, and put its id here.
+[[d1_databases]]
+binding = "DB"
+database_name = "roc-hello"
+database_id = "00000000-0000-0000-0000-000000000000"

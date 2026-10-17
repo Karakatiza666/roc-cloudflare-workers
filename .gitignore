@@ -14,3 +14,6 @@ bench/platform/targets/
 bench/app_prod.roc
 bench/hd4/*.bin
 bench/8g/out/
+dist/
+examples/*/node_modules/
+examples/*/app.wasm
