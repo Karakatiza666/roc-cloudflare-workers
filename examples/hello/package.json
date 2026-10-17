@@ -1,0 +1,13 @@
+{
+  "name": "roc-hello",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "roc build --target=wasm32 --no-cache --output=app.wasm app.roc",
+    "dev": "wrangler dev --local",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "roc-cloudflare-workers": "https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/X.Y.Z/roc-cloudflare-workers-X.Y.Z.tgz"
+  }
+}
