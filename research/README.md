@@ -9,6 +9,7 @@ Prototypes and measurements for PLAN.md. They are not part of the platform build
 | `hash/` | Change-detection sums in wasm: Fletcher (SIMD), wyhash, XOR | The sum at each wait |
 | `heap-options/` | Heap options H1 to H9 on a standalone harness | Heap optimization table in PLAN.md |
 | `traps/` | V1 to V4 trap tests, wild-write test, on the v0 allocator with a walk sum | Clean and unclean traps |
+| `starttls/` | A STARTTLS probe (raw sockets, the shim helpers, a local SMTP-like server with a TLS upgrade) for E47 and EP6 (results in `starttls/README.md`) | PLAN.md 11c, EP6 |
 | `workerd/` | workerd probes: TCP reset, request signal, JSPI stack, FinalizationRegistry, JS heap | The workerd facts in PLAN.md |
 
 Only `alloc/` and `api-probe/` have scripts that works from this layout (`alloc/build.sh`). The other folders keep the sources as they ran: their paths point to a repo copy with `out/` and `bench/` beside the scripts.

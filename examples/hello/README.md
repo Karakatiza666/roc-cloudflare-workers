@@ -6,7 +6,7 @@ A Worker with a Roc app. It shows the files of a project that uses a release of 
 | --- | --- |
 | `app.roc` | The app. Its platform line is a path, so the repo can test it. In your project, write the release URL. |
 | `worker.js` | The entry: `makeHandler(app)` from the shim package. |
-| `wrangler.toml` | The config, with the flag `enable_request_signal` and one D1 binding `DB`. |
+| `wrangler.toml` | The config, with the flags `enable_request_signal` and `global_fetch_strictly_public` (a `fetch` of another Worker of the same account on workers.dev gives 404 `error code: 1042` without it), and one D1 binding `DB`. |
 | `package.json` | The shim package by release URL, and the scripts `build`, `dev`, `deploy`. |
 | `with_cbor.roc` | A second app: it adds the roc-cbor URL too. Only for the tests (`scripts/test_bundle.sh`). |
 

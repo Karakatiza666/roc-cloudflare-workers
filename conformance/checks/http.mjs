@@ -50,14 +50,18 @@ export const checks = [
     once(r);
   }],
   // PLAN.md 8d: the error map. The texts go to bench/README.md.
+  // Local form: a throw, so `Network`. Edge form (`t.edge`, PLAN.md 11c, E17, E18, EP1): no throw, a Cloudflare error response,
+  // so `Ok` with the status and the body: 403 `error code: 1003` (a closed port of 127.0.0.1), 530 `error code: 1016` (no DNS name).
   ['http 8d: a closed port is Network', async (t) => {
     const r = await t.get(`/http/get?url=${q('http://127.0.0.1:1/')}`);
-    ok(r.body.startsWith('Network '), `got ${r.body}, want Network`);
+    if (t.edge) ok(r.body === '403 error code: 1003', `got ${r.body}, want 403 error code: 1003 (edge form)`);
+    else ok(r.body.startsWith('Network '), `got ${r.body}, want Network`);
     return r.body;
   }],
   ['http 8d: a host that does not exist is Network', async (t) => {
     const r = await t.get(`/http/get?url=${q('http://no-such-host.invalid/')}`);
-    ok(r.body.startsWith('Network '), `got ${r.body}, want Network`);
+    if (t.edge) ok(r.body === '530 error code: 1016', `got ${r.body}, want 530 error code: 1016 (edge form)`);
+    else ok(r.body.startsWith('Network '), `got ${r.body}, want Network`);
     return r.body;
   }],
   ['http 8d: "not a url" is HttpErr with TypeError', async (t) => {

@@ -110,14 +110,14 @@ export const checks = [
     const want = createHmac('sha256', key).update(body).digest('hex');
     answer(await t.get(`/webcrypto/hmac?key=${q(key)}&data=${q(body)}`), `sign=${want} roc=${want} same=True verify=Ok changed=BadSignature`);
   }],
-  // PLAN.md 8g P2: `sha256!` is the builtin below 2,700 bytes (no crossing) and `crypto.subtle.digest` from 2,700 bytes (one
+  // PLAN.md 8g P2: `sha256!` is the builtin below 4,096 bytes (no crossing) and `crypto.subtle.digest` from 4,096 bytes (one
   // crossing with a wait). The digest equals the one of Node on both sides. The bytes are `(i * 31 + 7) % 256`, as in the route.
-  ['webcrypto sha256!: the digest of Node, 0 crossings below 2,700 bytes and 1 above', async (t) => {
+  ['webcrypto sha256!: the digest of Node, 0 crossings below 4,096 bytes and 1 above', async (t) => {
     const out = [];
-    for (const size of [0, 1, 1024, 2699, 2700, 2701, 65536, 1048576]) {
+    for (const size of [0, 1, 1024, 4095, 4096, 4097, 65536, 1048576]) {
       const r = await t.get(`/webcrypto/sha256_pick?size=${size}`);
       answer(r, createHash('sha256').update(Buffer.from(pickBytes(size))).digest('hex'));
-      const above = size >= 2700;
+      const above = size >= 4096;
       eq(r.awaits, above ? 1 : 0, `js_await at ${size} bytes`);
       eq(r.calls, 0, `js_call at ${size} bytes`);
       eq(r.waits, above ? 1 : 0, `waits at ${size} bytes`);
@@ -127,12 +127,12 @@ export const checks = [
   }],
   // The twin gives the same digests. Above the crossover it is one `js_await`. Below it the program has no op: `Io.run!` makes
   // one `js_call` of an empty program.
-  ['webcrypto sha256 (Io twin): the digest of Node, a wait above 2,700 bytes only', async (t) => {
+  ['webcrypto sha256 (Io twin): the digest of Node, a wait above 4,096 bytes only', async (t) => {
     const out = [];
-    for (const size of [0, 2699, 2700, 1048576]) {
+    for (const size of [0, 4095, 4096, 1048576]) {
       const r = await t.get(`/webcrypto/sha256_pick_io?size=${size}`);
       answer(r, createHash('sha256').update(Buffer.from(pickBytes(size))).digest('hex'));
-      const above = size >= 2700;
+      const above = size >= 4096;
       eq(r.awaits, above ? 1 : 0, `js_await at ${size} bytes`);
       eq(r.calls, above ? 0 : 1, `js_call at ${size} bytes`);
       eq(r.waits, above ? 1 : 0, `waits at ${size} bytes`);

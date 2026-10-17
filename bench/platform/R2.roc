@@ -202,6 +202,8 @@ R2 :: { name : Str }.{
 		upload_part_with! : R2.Upload, U32, Body, { length_bytes ?: U64 } => Try(R2.Part, [R2Err(Io.Thrown)])
 		upload_part_with! = |up, number, body, opts| Io.run!(upload_part_with(up, number, body, opts))
 
+		## On the edge the `R2.Meta` of the result has no `http` and no `custom` (Miniflare has them): read them with `head!`
+		## (MODULES.md 5.3, PLAN.md 11c, E28).
 		complete : R2.Upload, List(R2.Part) -> Io(R2.Meta, [R2Err(Io.Thrown)])
 		complete = |up, parts| {
 			parts_js = Arr(parts.map(|p| Obj([("partNumber", Int(p.part_number.to_i64())), ("etag", Text(p.etag))])))

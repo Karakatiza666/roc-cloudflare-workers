@@ -415,7 +415,7 @@ sha_wasm! = |n, size| {
 	"sha ${n.to_str()} ${size.to_str()} ${if n == 0 "" else $last.to_hex()}"
 }
 
-## PLAN.md 8g P2: `n` times `WebCrypto.sha256!` of a buffer of `size` bytes (the builtin below 2,700 bytes, `digest` above).
+## PLAN.md 8g P2: `n` times `WebCrypto.sha256!` of a buffer of `size` bytes (the builtin below 4,096 bytes, `digest` above).
 sha_pick! : U64, U64 => Str
 sha_pick! = |n, size| {
 	var $data = List.repeat(7, size)

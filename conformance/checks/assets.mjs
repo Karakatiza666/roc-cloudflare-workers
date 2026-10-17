@@ -7,23 +7,25 @@ export const options = {
   assets: { directory: fileURLToPath(new URL('../assets', import.meta.url)), binding: 'ASSETS', run_worker_first: true, routerConfig: { has_user_worker: true } },
 };
 
-const HELLO = 'status=200 type=text/plain; charset=utf-8 body=hello-asset\n';
+// Local form: Miniflare adds `; charset=utf-8` to a text type. Edge form (`t.edge`, PLAN.md 11c, E43): the bare media type.
+const charset = (t) => (t.edge ? '' : '; charset=utf-8');
+const hello = (t) => `status=200 type=text/plain${charset(t)} body=hello-asset\n`;
 
 export const checks = [
   ['assets fetch!: a file, one wait (the body of the answer is read in a second one)', async (t) => {
     const r = await t.get('/assets/fetch?path=/hello.txt');
-    answer(r, HELLO);
+    answer(r, hello(t));
     eq(r.awaits, 2, 'js_await of fetch! and text!');
     const p = await t.get('/assets/pass?path=/hello.txt');
     answer(p, 'hello-asset\n');
     eq(p.awaits, 1, 'js_await of fetch! with the response passed on');
   }],
-  ['assets fetch (Io twin)', async (t) => answer(await t.get('/assets/fetch_io?path=/hello.txt'), HELLO)],
+  ['assets fetch (Io twin)', async (t) => answer(await t.get('/assets/fetch_io?path=/hello.txt'), hello(t))],
   ['assets fetch!: a file that does not exist is an answer, not an error', async (t) => {
     const r = await t.get('/assets/fetch?path=/nope.txt');
     ok(r.status === 200 && r.body.startsWith('status=404 '), `got ${r.status} ${r.body}`);
   }],
-  ['assets fetch!: the url of the request', async (t) => answer(await t.get('/assets/fetch?path=/index.html'), 'status=200 type=text/html; charset=utf-8 body=<h1>index</h1>\n')],
+  ['assets fetch!: the url of the request', async (t) => answer(await t.get('/assets/fetch?path=/index.html'), `status=200 type=text/html${charset(t)} body=<h1>index</h1>\n`)],
   ['assets fetch!: the method of the request (a POST is 405)', async (t) => {
     const r = await t.get('/assets/fetch?path=/hello.txt&method=POST');
     ok(r.status === 200 && r.body.startsWith('status=405 '), `got ${r.status} ${r.body}`);
@@ -39,7 +41,7 @@ export const checks = [
     for (const p of ['pass', 'pass_io']) {
       const r = await t.mf.dispatchFetch(`http://localhost/assets/${p}?path=/hello.txt`);
       eq(await r.text(), 'hello-asset\n', `${p} body`);
-      eq(r.headers.get('content-type'), 'text/plain; charset=utf-8', `${p} content-type`);
+      eq(r.headers.get('content-type'), `text/plain${charset(t)}`, `${p} content-type`);
       eq(r.status, 200, `${p} status`);
     }
   }],

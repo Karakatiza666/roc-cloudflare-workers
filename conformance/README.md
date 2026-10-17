@@ -24,6 +24,7 @@ flowchart LR
 | `assert.mjs` | `eq`, `ok`, `answer(r, text)` (a 200 with that body) |
 | `reverts.mjs` | The revert checks: a real edit, a build, a run, a restore (`PLAN.md` 8c, "Status of step 8c, wave 1") |
 | `must-not-compile.sh`, `must-not-compile/` | A `Secret` in `Log` fields and in a CBOR encode (`pf.Cbor`) does not compile; the controls with `s.reveal()` do |
+| `edge-forms-test.mjs` | The checks that have a local form and an edge form of an answer (`t.edge`): each passes with the answers of the edge when `t.edge` is true and fails with them when it is not (`PLAN.md` 11c, EP7). No Miniflare. |
 | `tmpdir-test.sh` | `run.mjs` leaves no temp dir: a normal run, a `FAIL start` run and a run killed with SIGTERM |
 
 Run:
@@ -35,6 +36,7 @@ Run:
 | `ROC=... node conformance/reverts.mjs [filter]` | The revert checks. The filter is a text of a name, or texts joined by a vertical bar. At its start it removes the `.cache/tmp/run-<pid>` dirs of runs that are not alive. |
 | `ROC=... conformance/must-not-compile.sh` | The must-not-compile checks |
 | `conformance/tmpdir-test.sh [wasm]` | The temp dir check of `run.mjs` |
+| `node conformance/edge-forms-test.mjs` | The edge forms of the checks, with the answers of the edge (no Miniflare) |
 
 What a check gets (`t`):
 
@@ -42,6 +44,7 @@ What a check gets (`t`):
 | --- | --- |
 | `t.get(path, init)` | `{ status, body, waits, awaits, calls, ms }` of `dispatchFetch`. `awaits` and `calls` count the crossings of the request ("one crossing" tests). |
 | `t.server` | The URL of the local server: `/hello`, `/ten`, `/slow` (2 s), `/echo` (method, header `x-test`, body), `/status/<n>` |
+| `t.edge` | `undefined` here, `true` in `edge/run-edge.mjs`. A check with a local form and an edge form of an answer reads it (assets media type, workflow id, rate limit, jurisdiction, queue batch text, `Http` errors of 8d, R2 multipart `Meta`: `PLAN.md` 11c, EP7). The local form stays strict. |
 | `t.logs` | The structured log lines of workerd (`{ level, message }`) since the start |
 | `t.mf` | The Miniflare instance (`getD1Database`, `getR2Bucket`, ... to set up or read data) |
 | `t.entry` | The text of `worker.js` (8f: a check edits it to test the load) |

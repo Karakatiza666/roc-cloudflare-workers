@@ -289,11 +289,11 @@ arg_of = |t| match t {
 bad_data : Str -> Io.Thrown
 bad_data = |message| { name: "BadData", message }
 
-## The size from which `crypto.subtle.digest` is faster than the builtin SHA-256 in workerd: 2.7 KB, measured with the
-## copy of the bytes out of wasm memory and the wait (PLAN.md 8g, bench/README.md "Step 8g"; Node: 6 KB). At 2.3 to
-## 4 KB the two cost about the same, so the measured point is used. The edge value is on the PLAN.md 11c list.
+## The size from which `crypto.subtle.digest` is faster than the builtin SHA-256 on the edge: about 4 KB (+-20 %),
+## measured with the copy of the bytes out of wasm memory and the wait (PLAN.md 8g and 11c, bench/README.md "Step 8g on
+## the edge"). Local workerd: 2.7 KB, Node: 6 KB. The edge is the production target, so its value is used.
 sha256_crossover_bytes : U64
-sha256_crossover_bytes = 2_700
+sha256_crossover_bytes = 4_096
 
 use_builtin : List(U8) -> Bool
 use_builtin = |bytes| bytes.len() < sha256_crossover_bytes
@@ -492,8 +492,8 @@ expect hex(WebCrypto.hmac_sha256(List.repeat(0x0b, 20), "Hi There".to_utf8())) =
 expect hex(WebCrypto.hmac_sha256("Jefe".to_utf8(), "what do ya want for nothing?".to_utf8())) == "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
 expect hex(WebCrypto.hmac_sha256(List.repeat(0xaa, 131), "Test Using Larger Than Block-Size Key - Hash Key First".to_utf8())) == "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
 
-# MODULES.md 10: the builtin below 2,700 bytes, `digest` from 2,700 bytes.
+# MODULES.md 10: the builtin below 4,096 bytes, `digest` from 4,096 bytes.
 expect use_builtin(List.repeat(0, 0))
-expect use_builtin(List.repeat(0, 2_699))
-expect !use_builtin(List.repeat(0, 2_700))
+expect use_builtin(List.repeat(0, 4_095))
+expect !use_builtin(List.repeat(0, 4_096))
 expect !use_builtin(List.repeat(0, 1_048_576))

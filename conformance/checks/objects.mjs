@@ -77,8 +77,16 @@ export const checks = [
     }
   }],
   ['objects id! of a named stub equals self.id in the object', async (t) => has(await t.get('/objects/id?name=x'), 'same=True')],
-  ['objects jurisdiction(Eu): id! gives ObjectErr in Miniflare', async (t) =>
-    answer(await t.get('/objects/jurisdiction?name=x'), 'Err(ObjectErr({ message: "Jurisdiction restrictions are not implemented in workerd.", name: "Error" }))')],
+  // Local form: `ObjectErr` (workerd does not have jurisdictions). Edge form (`t.edge`, PLAN.md 11c, E15): an id that differs from
+  // the id of the same name with no jurisdiction.
+  ['objects jurisdiction(Eu): id! gives ObjectErr in Miniflare, a different id on the edge', async (t) => {
+    const r = await t.get('/objects/jurisdiction?name=x');
+    if (!t.edge) return answer(r, 'Err(ObjectErr({ message: "Jurisdiction restrictions are not implemented in workerd.", name: "Error" }))');
+    const plain = /outside=Ok\("([0-9a-f]{64})"\)/.exec((await t.get('/objects/id?name=x')).body);
+    const eu = /^Ok\("([0-9a-f]{64})"\)$/.exec(r.body);
+    ok(plain && eu, `got ${r.body} and the id ${plain && plain[1]}`);
+    ok(plain[1] !== eu[1], 'the id with the jurisdiction equals the id with none');
+  }],
   ['objects named_with and from_id_with with location_hint, unique!', async (t) => answer(await t.get('/objects/location?name=loc'), 'same=True unique=True len=64')],
   ['objects fetch (Io twin)', async (t) => {
     const r = await t.get('/objects/fetch_io?name=x');

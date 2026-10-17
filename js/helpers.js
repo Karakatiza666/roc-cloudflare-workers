@@ -308,8 +308,17 @@ export function makeHelpers(t, c, shim, tasks) {
       }
       return undefined;
     },
-    // `Tcp.start_tls!`: `socket.startTls()`, then a wait for `opened` of the new socket.
+    // `Tcp.start_tls!` (MODULES.md 12.3): `socket.startTls()` needs a socket with no reader and no writer locked, so the
+    // locks go first (a new reader and writer on the next call, of the new socket). It is an error, and the socket stays
+    // plain and usable, when a read is in flight (`pending`, also one that a lost race left) or when received bytes are
+    // unread (`rest`): bytes that came before the upgrade must never be read as if they came over TLS (STARTTLS injection).
     async tcpStartTls(socket) {
+      const st = tcpOf(socket);
+      if (st.pending) throw new Error('tcp: start_tls! while a read is in flight (a read that a lost race left): finish that read first');
+      if (st.rest) throw new Error('tcp: unread bytes before start_tls!: read them first');
+      st.reader?.releaseLock();
+      st.writer?.releaseLock();
+      st.reader = st.writer = null;
       return this.tcpOpen(socket.startTls());
     },
     // `Tcp.close!`: `socket.close()` with no wait; a rejection is dropped.

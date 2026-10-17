@@ -1,5 +1,8 @@
 // `R2` (MODULES.md 5.3): routes of conformance/R2Routes.roc, on the local R2 bucket `BUCKET` of Miniflare. Each check gives the
 // text that the route answered. Miniflare differs from the edge in some places: the notes say where (PLAN.md 8c, for 11c).
+import { readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { answer, eq, ok } from '../assert.mjs';
 
 export const options = { r2Buckets: ['BUCKET'] };
@@ -14,6 +17,20 @@ async function etagOf(t, key) {
   return m[1];
 }
 const put = (t, key, text) => t.get(`/r2/put?key=${key}&text=${q(text)}`);
+// PLAN.md EP10: a multipart upload that is not complete keeps a real bucket from a delete, and nothing else knows its id.
+// `uploads` runs `body(open)`; `open(upload)` notes an upload, and each noted upload is aborted at the end, also when a
+// check fails. An upload that is complete or aborted gives `Err R2Err(...)` at the abort: that is no error here.
+async function uploads(t, body) {
+  const noted = [];
+  const abortAll = async () => {
+    for (const upload of noted) await t.get(`/r2/mp_abort?upload=${q(JSON.stringify(upload))}`).catch(() => {});
+  };
+  try {
+    return await body((upload) => (noted.push(upload), upload));
+  } finally {
+    await abortAll();
+  }
+}
 
 export const checks = [
   ['r2 put!', async (t) => {
@@ -133,11 +150,12 @@ export const checks = [
     answer(await t.get('/r2/head?key=del3'), 'Err NotFound');
   }],
   // Multipart (MODULES.md 5.3): three requests, the upload as JSON between them.
-  ['r2 multipart: create, upload_part, complete in three requests', async (t) => {
+  ['r2 multipart: create, upload_part, complete in three requests', (t) => uploads(t, async (open) => {
     const key = 'mp1';
     const r1 = await t.get(`/r2/mp_create?key=${key}`);
     ok(r1.status === 200 && r1.body.startsWith('{"upload":'), `request 1: ${r1.body.slice(0, 200)}`);
     const { upload, part: part1 } = JSON.parse(r1.body);
+    open(upload);
     eq(upload.key, key, 'the key of the upload');
     eq(upload.bucket, 'BUCKET', 'the bucket of the upload');
     eq(part1.part_number, 1, 'part 1');
@@ -152,33 +170,86 @@ export const checks = [
     ok(bytes.subarray(0, 5 * MiB).every((b) => b === 65), 'the bytes of part 1');
     ok(bytes.subarray(5 * MiB).every((b) => b === 66), 'the bytes of part 2');
     return `${bytes.length} bytes`;
-  }],
-  ['r2 multipart (Io twins): create, upload_part, complete', async (t) => {
+  })],
+  ['r2 multipart (Io twins): create, upload_part, complete', (t) => uploads(t, async (open) => {
     const r1 = await t.get('/r2/mp_create_io?key=mp2');
     const { upload, part: part1 } = JSON.parse(r1.body);
+    open(upload);
     const part2 = JSON.parse((await t.get(`/r2/mp_part_io?upload=${q(JSON.stringify(upload))}`)).body);
     const res = await t.mf.dispatchFetch(`http://localhost/r2/mp_complete_io?upload=${q(JSON.stringify(upload))}&parts=${q(JSON.stringify([part1, part2]))}`);
     eq((await res.arrayBuffer()).byteLength, 5 * MiB + 1024, 'the object');
-  }],
-  ['r2 multipart: resume_multipart_upload needs no crossing and abort! stops the upload', async (t) => {
+  })],
+  ['r2 multipart: resume_multipart_upload needs no crossing and abort! stops the upload', (t) => uploads(t, async (open) => {
     const r = await t.get('/r2/mp_resume?key=k&id=abc');
     answer(r, '{"bucket":"BUCKET","key":"k","upload_id":"abc"}');
     eq(r.waits, 0, 'waits');
-    const { upload } = JSON.parse((await t.get('/r2/mp_create?key=mp3')).body);
+    const upload = open(JSON.parse((await t.get(`/r2/mp_create?key=mp3`)).body).upload);
     answer(await t.get(`/r2/mp_abort?upload=${q(JSON.stringify(upload))}`), 'Ok aborted');
     // A part after the abort is R2Err.
     ok((await t.get(`/r2/mp_part?upload=${q(JSON.stringify(upload))}`)).body.startsWith('Err R2Err('), 'a part after the abort');
-    const { upload: up2 } = JSON.parse((await t.get('/r2/mp_create_io?key=mp4')).body);
+    const up2 = open(JSON.parse((await t.get('/r2/mp_create_io?key=mp4')).body).upload);
     answer(await t.get(`/r2/mp_abort_io?upload=${q(JSON.stringify(up2))}`), 'Ok aborted');
-  }],
-  ['r2 multipart: upload_part_with! length_bytes, create_multipart_upload_with!', async (t) => {
+  })],
+  ['r2 multipart: upload_part_with! length_bytes, create_multipart_upload_with!', (t) => uploads(t, async (open) => {
     const { upload } = JSON.parse((await t.get('/r2/mp_create?key=mp5')).body);
+    open(upload);
     const partNumber = async (path) => JSON.parse((await t.get(`${path}?upload=${q(JSON.stringify(upload))}&len=1024`)).body).part_number;
     eq(await partNumber('/r2/mp_part_with'), 2, 'upload_part_with!');
     eq(await partNumber('/r2/mp_part_with_io'), 2, 'upload_part_with (twin)');
-    const w = await t.get('/r2/mp_with?key=mp6');
+    // Local form: the result of `complete!` has `http` and `custom`. Edge form (`t.edge`, PLAN.md 11c, E28, EP5): it has none, and
+    // `head!` of the key has them.
+    const meta = async (path, key) => {
+      const r = await t.get(path);
+      if (!t.edge) return r;
+      ok(r.body.startsWith(`Ok key=${key} size=9 `), `got ${r.body}`);
+      return t.get(`/r2/head?key=${key}`);
+    };
+    const w = await meta('/r2/mp_with?key=mp6', 'mp6');
     ok(w.body.startsWith('Ok key=mp6 size=9 ') && w.body.includes(' cc=max-age=30 ') && w.body.includes(' custom=origin=mp '), `got ${w.body}`);
-    ok((await t.get('/r2/mp_with_io?key=mp7')).body.includes(' cc=max-age=30 '), 'the twin');
+    ok((await meta('/r2/mp_with_io?key=mp7', 'mp7')).body.includes(' cc=max-age=30 '), 'the twin');
+  })],
+  // PLAN.md EP10: the helper `uploads` aborts the upload of a check that fails.
+  ['r2 multipart: an upload of a check that fails is aborted', async (t) => {
+    let upload;
+    const failed = await uploads(t, async (open) => {
+      upload = open(JSON.parse((await t.get('/r2/mp_create?key=mpf')).body).upload);
+      throw new Error('a check fails');
+    }).then(() => null, (e) => e.message);
+    eq(failed, 'a check fails', 'the throw of the check');
+    ok((await t.get(`/r2/mp_part?upload=${q(JSON.stringify(upload))}`)).body.startsWith('Err R2Err('), 'the upload is still open');
+  }],
+  // PLAN.md EP10: a route that cannot finish its upload aborts it, because the caller has no upload id. Part number 10001 is
+  // refused, and a wrong etag makes `complete!` fail. The check after these ones counts the open uploads.
+  ['r2 multipart: a route with a part or a complete that fails aborts its upload', async (t) => {
+    for (const path of ['/r2/mp_create?key=mpb1&part=10001', '/r2/mp_create_io?key=mpb2&part=10001', '/r2/mp_with?key=mpb3&part=10001', '/r2/mp_with?key=mpb4&etag=wrong', '/r2/mp_with_io?key=mpb5&etag=wrong']) {
+      const r = await t.get(path);
+      ok(r.status === 200 && r.body.startsWith('Err R2Err('), `${path}: got ${r.status} ${r.body.slice(0, 200)}`);
+    }
+  }],
+  // PLAN.md EP10: no upload of the checks above is open. Miniflare keeps the bucket on disk in its temp dir (`run.mjs` sets
+  // TMPDIR to the dir of the run): the SQLite file in the dir `r2` has the table `_mf_multipart_uploads` (state 0: in
+  // progress, 1: complete, 2: aborted; Miniflare, `bucket.worker.js`).
+  ['r2 multipart: no upload is open after the checks', async (t) => {
+    // Local only: the file of the bucket. On the edge `uploads` has aborted each upload, and a delete of the bucket shows it.
+    if (t.edge) throw new Error('MF-ONLY: the SQLite file of the local bucket');
+    const root = process.env.TMPDIR;
+    const files = readdirSync(root, { recursive: true }).filter((f) => /(^|\/)r2\/.*\.sqlite$/.test(f));
+    ok(files.length > 0, `no SQLite file of an r2 bucket in ${root}`);
+    const states = [];
+    for (const f of files) {
+      const db = new DatabaseSync(join(root, f), { readOnly: true });
+      try {
+        states.push(...db.prepare('SELECT state FROM _mf_multipart_uploads').all().map((r) => r.state));
+      } catch (e) {
+        if (!String(e.message).includes('no such table')) throw e;
+      } finally {
+        db.close();
+      }
+    }
+    const count = (n) => states.filter((s) => s === n).length;
+    ok(count(1) >= 4, `the checks made at least 4 complete uploads: ${JSON.stringify(states)}`);
+    eq(count(0), 0, `open uploads (states ${JSON.stringify(states)})`);
+    return `uploads: ${count(1)} complete, ${count(2)} aborted, ${count(0)} open`;
   }],
   // 10a with R2: an object of 50 MB through get! to the response, as a stream. wasm memory grows by less than 1 MB.
   ['r2 10a: a 50 MB object through get! to the response, wasm memory grows by less than 1 MB', async (t) => {

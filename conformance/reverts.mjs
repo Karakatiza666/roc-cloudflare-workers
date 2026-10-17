@@ -101,12 +101,21 @@ const reverts = [
   R('Js pins: pf.pin does not keep the value', 'conformance', ['webcrypto a pinned CryptoKey used by a later request'], ['js/helpers.js', '      shim.pins.pin(name, value, maxAgeMs);\n', '']),
   R('WebCrypto.hmac_sha256: the inner pad uses 0x5c', 'roc test', [], ['platform/WebCrypto.roc', 'bitwise_xor(0x36)', 'bitwise_xor(0x5c)']),
   R('WebCrypto.hmac_sha256: a key longer than the block is not hashed', 'roc test', [], ['platform/WebCrypto.roc', 'if key.len() > block Crypto', 'if key.len() > 100_000 Crypto']),
-  // PLAN.md 8g P2: `WebCrypto.sha256!` picks the builtin below 2,700 bytes and `crypto.subtle.digest` from there.
-  R('WebCrypto.sha256!: always the builtin (no crossing at 1 MB)', 'conformance', ['webcrypto sha256!: the digest of Node, 0 crossings below 2,700 bytes and 1 above', 'webcrypto sha256 (Io twin): the digest of Node, a wait above 2,700 bytes only'], [BP + 'WebCrypto.roc', 'bytes.len() < sha256_crossover_bytes', 'Bool.True']),
-  R('WebCrypto.sha256!: always digest (a crossing at 1 KB)', 'conformance', ['webcrypto sha256!: the digest of Node, 0 crossings below 2,700 bytes and 1 above', 'webcrypto sha256 (Io twin): the digest of Node, a wait above 2,700 bytes only'], [BP + 'WebCrypto.roc', 'bytes.len() < sha256_crossover_bytes', 'Bool.False']),
-  R('WebCrypto.sha256!: the wrong side of the crossover', 'conformance', ['webcrypto sha256!: the digest of Node, 0 crossings below 2,700 bytes and 1 above', 'webcrypto sha256 (Io twin): the digest of Node, a wait above 2,700 bytes only'], [BP + 'WebCrypto.roc', 'bytes.len() < sha256_crossover_bytes', 'bytes.len() >= sha256_crossover_bytes']),
-  R('WebCrypto.sha256!: the crossover size itself is the builtin side', 'conformance', ['webcrypto sha256!: the digest of Node, 0 crossings below 2,700 bytes and 1 above', 'webcrypto sha256 (Io twin): the digest of Node, a wait above 2,700 bytes only'], [BP + 'WebCrypto.roc', 'bytes.len() < sha256_crossover_bytes', 'bytes.len() <= sha256_crossover_bytes']),
-  R('WebCrypto.sha256_crossover_bytes is 2,800', 'roc test', [], ['platform/WebCrypto.roc', 'sha256_crossover_bytes = 2_700', 'sha256_crossover_bytes = 2_800']),
+  // PLAN.md 8g P2: `WebCrypto.sha256!` picks the builtin below 4,096 bytes and `crypto.subtle.digest` from there.
+  R('WebCrypto.sha256!: always the builtin (no crossing at 1 MB)', 'conformance', ['webcrypto sha256!: the digest of Node, 0 crossings below 4,096 bytes and 1 above', 'webcrypto sha256 (Io twin): the digest of Node, a wait above 4,096 bytes only'], [BP + 'WebCrypto.roc', 'bytes.len() < sha256_crossover_bytes', 'Bool.True']),
+  R('WebCrypto.sha256!: always digest (a crossing at 1 KB)', 'conformance', ['webcrypto sha256!: the digest of Node, 0 crossings below 4,096 bytes and 1 above', 'webcrypto sha256 (Io twin): the digest of Node, a wait above 4,096 bytes only'], [BP + 'WebCrypto.roc', 'bytes.len() < sha256_crossover_bytes', 'Bool.False']),
+  R('WebCrypto.sha256!: the wrong side of the crossover', 'conformance', ['webcrypto sha256!: the digest of Node, 0 crossings below 4,096 bytes and 1 above', 'webcrypto sha256 (Io twin): the digest of Node, a wait above 4,096 bytes only'], [BP + 'WebCrypto.roc', 'bytes.len() < sha256_crossover_bytes', 'bytes.len() >= sha256_crossover_bytes']),
+  R('WebCrypto.sha256!: the crossover size itself is the builtin side', 'conformance', ['webcrypto sha256!: the digest of Node, 0 crossings below 4,096 bytes and 1 above', 'webcrypto sha256 (Io twin): the digest of Node, a wait above 4,096 bytes only'], [BP + 'WebCrypto.roc', 'bytes.len() < sha256_crossover_bytes', 'bytes.len() <= sha256_crossover_bytes']),
+  R('WebCrypto.sha256_crossover_bytes is 4,097', 'roc test', [], ['platform/WebCrypto.roc', 'sha256_crossover_bytes = 4_096', 'sha256_crossover_bytes = 4_097']),
+  R('WebCrypto.sha256_crossover_bytes is 4,095', 'roc test', [], ['platform/WebCrypto.roc', 'sha256_crossover_bytes = 4_096', 'sha256_crossover_bytes = 4_095']),
+  // The old local value (2,700): the conformance check sees a crossing at 4,095 bytes.
+  R('WebCrypto.sha256_crossover_bytes is the local value 2,700', 'conformance', ['webcrypto sha256!: the digest of Node, 0 crossings below 4,096 bytes and 1 above', 'webcrypto sha256 (Io twin): the digest of Node, a wait above 4,096 bytes only'], [BP + 'WebCrypto.roc', 'sha256_crossover_bytes = 4_096', 'sha256_crossover_bytes = 2_700']),
+  // PLAN.md EP10: no incomplete multipart upload stays in the bucket. The helper `uploads` of checks/r2.mjs, and the routes of R2Routes.roc.
+  R('R2 checks: the helper aborts no upload', 'conformance', ['r2 multipart: an upload of a check that fails is aborted', 'r2 multipart: no upload is open after the checks'], ['conformance/checks/r2.mjs', 'for (const upload of noted) await', 'for (const upload of []) await']),
+  R('R2 checks: the helper aborts only after a pass (no finally)', 'conformance', ['r2 multipart: an upload of a check that fails is aborted'], ['conformance/checks/r2.mjs', '    return await body((upload) => (noted.push(upload), upload));\n  } finally {\n    await abortAll();\n  }', '    const r = await body((upload) => (noted.push(upload), upload));\n    await abortAll();\n    return r;\n  } catch (e) {\n    throw e;\n  }']),
+  R('R2Routes mp_create: a refused part does not abort the upload', 'conformance', ['r2 multipart: no upload is open after the checks'], ['conformance/R2Routes.roc', 'so the upload is aborted here.\n\t\t\t\tErr(e) => {\n\t\t\t\t\t_aborted = up.abort!()', 'so the upload is aborted here.\n\t\t\t\tErr(e) => {\n\t\t\t\t\t_aborted = Ok({})']),
+  R('R2Routes mp_with: a refused part does not abort the upload', 'conformance', ['r2 multipart: no upload is open after the checks'], ['conformance/R2Routes.roc', 'Ok(up) => match up.upload_part!(number, Text("last part")) {\n\t\t\tErr(e) => {\n\t\t\t\t_aborted = up.abort!()', 'Ok(up) => match up.upload_part!(number, Text("last part")) {\n\t\t\tErr(e) => {\n\t\t\t\t_aborted = Ok({})']),
+  R('R2Routes mp_with: a failed complete does not abort the upload', 'conformance', ['r2 multipart: no upload is open after the checks'], ['conformance/R2Routes.roc', 'if done.is_err() {\n\t\t\t\t\t_aborted = up.abort!()', 'if done.is_err() {\n\t\t\t\t\t_aborted = Ok({})']),
   // PLAN.md 8c, R2 and Cache. A wrong JS method name in one function: its route fails.
   R('R2.head: head is called "headx"', 'conformance', ['r2 head!', 'r2 head (Io twin)'], [BP + 'R2.roc', 'call_ops(bucket, "head",', 'call_ops(bucket, "headx",']),
   R('R2.get: get is called "getx"', 'conformance', ['r2 get!', 'r2 get (Io twin)'], [BP + 'R2.roc', 'call_ops(bucket, "get", [Lit(Text(key))], [])', 'call_ops(bucket, "getx", [Lit(Text(key))], [])']),
@@ -376,7 +385,7 @@ const reverts = [
     [BP + 'Object.roc', 'match SqlRules.constraint_of(t.message) {', 'match SqlRules.constraint_of("") {']),
   R('8f Object.id!: an id made in Roc from the name', 'conformance', ['objects id! of a named stub equals self.id in the object'],
     [BP + 'Object.roc', 'Ok(Text(id)) => Ok(id)\n\t\t\t\tOk(other) => crash "Object.id!: idFromName', 'Ok(Text(_)) => Ok(name)\n\t\t\t\tOk(other) => crash "Object.id!: idFromName']),
-  R('8f Object: the jurisdiction is not sent', 'conformance', ['objects jurisdiction(Eu): id! gives ObjectErr in Miniflare'],
+  R('8f Object: the jurisdiction is not sent', 'conformance', ['objects jurisdiction(Eu): id! gives ObjectErr in Miniflare, a different id on the edge'],
     [BP + 'Object.roc', 'namespace_ops = |obj|\n\tif obj.jurisdiction == "" {', 'namespace_ops = |obj|\n\tif Bool.True {']),
   // A wrong JS method name in one function (as in 8c): its route fails.
   R('8f Object.sql: exec is called "execx"', 'conformance', ['objects sql!: rows of the type of the call', 'objects sql_run! of an insert of 2 rows into a table with no index gives rows_written 2'], [BP + 'Object.roc', 'Call(Slot(1), "exec", [', 'Call(Slot(1), "execx", [']),
@@ -425,6 +434,18 @@ const reverts = [
     ['js/helpers.js', 'tasks.respond(t, Boolean((s && !s.closed) || (ws && !ws.closed)));', 'tasks.respond(t, Boolean(s && !s.closed));']),
   R('8f3 pf.wsReceive: a wait on a socket has the deadline of a wait', 'conformance', ['websocket a 101 response keeps the task: the socket answers after afterRespondMs, and a wait on a socket has no deadline'],
     ['js/helpers.js', '      if (st.closed) return st.closed;\n      c.socketWait = true;\n', '      if (st.closed) return st.closed;\n']),
+  // PLAN.md 11c, E47, EP6: the plain steps of a StartTls socket, and the error of start_tls! on a socket of tls Off.
+  R('8f3 Tcp.connect_with: StartTls is sent as "on"', 'conformance', ['tcp connect_with! tls StartTls: write! and read! twice before start_tls!'],
+    [BP + 'Tcp.roc', 'Ok(StartTls) => "starttls"', 'Ok(StartTls) => "on"']),
+  R('8f3 Tcp.connect_with: Off is sent as "starttls"', 'conformance', ['tcp start_tls! on a socket of tls Off is SocketErr (the option secureTransport)'],
+    [BP + 'Tcp.roc', 'Ok(Off) | Err(_) => "off"', 'Ok(Off) | Err(_) => "starttls"']),
+  // EP11: `start_tls!` releases the locks, and refuses a read in flight and unread bytes.
+  R('8f3 EP11 pf.tcpStartTls: the reader and the writer stay locked (opened never settles: the route times out)', 'conformance', ['tcp start_tls! upgrades a socket of tls StartTls: write! and read! over TLS (a local STARTTLS server)'],
+    ['js/helpers.js', '      st.reader?.releaseLock();\n      st.writer?.releaseLock();\n', '']),
+  R('8f3 EP11 pf.tcpStartTls: no check of unread bytes', 'conformance', ['tcp start_tls! with unread bytes is SocketErr (bytes before the upgrade are never read as TLS), the socket stays plain'],
+    ['js/helpers.js', '      if (st.rest) throw new Error(', '      if (false) throw new Error(']),
+  R('8f3 EP11 pf.tcpStartTls: no check of a read in flight', 'conformance', ['tcp start_tls! with a read in flight (a read that lost a race) is SocketErr, the socket stays plain'],
+    ['js/helpers.js', '      if (st.pending) throw new Error(', '      if (false) throw new Error(']),
   R('8f3 Tcp.write: pf.tcpWrite is called "tcpWritex"', 'conformance', ['tcp connect!, write!, read!, close!', 'tcp connect (Io twin), write (Io twin), read (Io twin), connect_with! tls Off'],
     [BP + 'Tcp.roc', '"tcpWrite"', '"tcpWritex"']),
   R('8f3 pf.tcpRead: the lost branch takes the bytes', 'conformance', ['tcp Io.race! of read and Time.sleep(50), the bytes at 100 ms: the sleep wins, the next read gets them'],

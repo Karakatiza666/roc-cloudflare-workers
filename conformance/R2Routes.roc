@@ -29,8 +29,8 @@ R2Routes :: [].{
 			["list"] => out(bucket.list!(list_options(req)), show_list)
 			["list_io"] => out(Io.run!(bucket.list(list_options(req))), show_list)
 			["put_stream"] => put_stream!(key, Q.text(req, "len"))
-			["mp_create"] => mp_create!(key, Bool.False)
-			["mp_create_io"] => mp_create!(key, Bool.True)
+			["mp_create"] => mp_create!(key, part_number(req), Bool.False)
+			["mp_create_io"] => mp_create!(key, part_number(req), Bool.True)
 			["mp_resume"] => Response.from_text(200, Json.to_str(bucket.resume_multipart_upload(key, Q.text(req, "id"))))
 			["mp_part"] => mp_part!(req, Bool.False)
 			["mp_part_io"] => mp_part!(req, Bool.True)
@@ -40,8 +40,8 @@ R2Routes :: [].{
 			["mp_complete_io"] => mp_complete!(req, Bool.True)
 			["mp_abort"] => mp_abort!(req, Bool.False)
 			["mp_abort_io"] => mp_abort!(req, Bool.True)
-			["mp_with"] => mp_with!(key, Bool.False)
-			["mp_with_io"] => mp_with!(key, Bool.True)
+			["mp_with"] => mp_with!(key, part_number(req), Q.text(req, "etag"), Bool.False)
+			["mp_with_io"] => mp_with!(key, part_number(req), Q.text(req, "etag"), Bool.True)
 			["big"] => big!(key)
 			_ => Response.from_text(404, "no route")
 		}
@@ -253,17 +253,28 @@ part_one = Bytes(List.repeat(65, 5_242_880))
 part_two : Body
 part_two = Bytes(List.repeat(66, 1024))
 
-## Request 1: the upload and its part 1 (5 MiB), as JSON.
-mp_create! : Str, Bool => Response
-mp_create! = |key, twin| {
+## The part number of the first part (`part`, default 1). A number that R2 refuses makes the route abort the upload (PLAN.md EP10).
+part_number : Request -> U32
+part_number = |req| {
+	n = Q.num(req, "part")
+	if n == 0 1 else n.to_u32_wrap()
+}
+
+## Request 1: the upload and its part (5 MiB), as JSON.
+mp_create! : Str, U32, Bool => Response
+mp_create! = |key, number, twin| {
 	made = if twin Io.run!(bucket.create_multipart_upload(key)) else bucket.create_multipart_upload!(key)
 	match made {
 		Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
 		Ok(up) => {
-			part = if twin Io.run!(up.upload_part(1, part_one)) else up.upload_part!(1, part_one)
+			part = if twin Io.run!(up.upload_part(number, part_one)) else up.upload_part!(number, part_one)
 			match part {
 				Ok(p) => Response.from_text(200, "{\"upload\":${Json.to_str(up)},\"part\":${Json.to_str(p)}}")
-				Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+				# PLAN.md EP10: the caller has no upload id on an error, so the upload is aborted here.
+				Err(e) => {
+					_aborted = up.abort!()
+					Response.from_text(200, "Err ${Str.inspect(e)}")
+				}
 			}
 		}
 	}
@@ -329,16 +340,27 @@ mp_abort! = |req, twin| {
 }
 
 ## `create_multipart_upload_with!`: the headers and the custom metadata of the object, then one part and `complete!`.
-mp_with! : Str, Bool => Response
-mp_with! = |key, twin| {
+## `etag` (not empty) replaces the etag of the part, so that `complete!` fails (PLAN.md EP10).
+mp_with! : Str, U32, Str, Bool => Response
+mp_with! = |key, number, etag, twin| {
 	opts : { http ?: R2.Http, custom ?: List((Str, Str)) }
 	opts = { http: { cache_control: "max-age=30" }, custom: [("origin", "mp")] }
 	made = if twin Io.run!(bucket.create_multipart_upload_with(key, opts)) else bucket.create_multipart_upload_with!(key, opts)
 	match made {
 		Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
-		Ok(up) => match up.upload_part!(1, Text("last part")) {
-			Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
-			Ok(p) => out(up.complete!([p]), show_meta)
+		# PLAN.md EP10: an upload that does not complete is aborted here (the caller has no upload id).
+		Ok(up) => match up.upload_part!(number, Text("last part")) {
+			Err(e) => {
+				_aborted = up.abort!()
+				Response.from_text(200, "Err ${Str.inspect(e)}")
+			}
+			Ok(p) => {
+				done = up.complete!([if etag == "" p else { ..p, etag }])
+				if done.is_err() {
+					_aborted = up.abort!()
+				}
+				out(done, show_meta)
+			}
 		}
 	}
 }

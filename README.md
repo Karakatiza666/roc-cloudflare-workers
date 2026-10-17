@@ -74,6 +74,7 @@ export default makeHandler(app);
 | `main` | The `worker.js` of step 3 | Wrangler compiles the `app.wasm` import itself. |
 | `compatibility_date` | `2026-10-01` or newer | The date of the tests (`conformance/run.mjs`). |
 | `compatibility_flags` | `["enable_request_signal"]` | Without it `request.signal` never fires: a task does not stop when the client goes away (`API.md` 10.2). |
+| `compatibility_flags` (the same list) | `"global_fetch_strictly_public"` too | Without it a `fetch` of another Worker of your account on workers.dev gives 404 `error code: 1042` on the edge (local runs do not show it). With it, `fetch` goes to the public internet. For a Worker of your account, a service binding is the other way. |
 | Bindings | Names that the app uses in `X.binding("NAME")` | One binding for each name. |
 | Durable Object classes | `new_sqlite_classes` in the migration | The platform needs SQLite-backed classes (`MODULES.md` 7). |
 

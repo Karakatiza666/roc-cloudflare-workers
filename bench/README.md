@@ -397,7 +397,7 @@ The routes `/sha/<name>?size=`. `wasm`: the builtin on a `List(U8)` of wasm memo
 | Slope: builtin, `digest` | 2.1 and 0.6 us per KB | 2.5 and 0.5 us per KB |
 | Share of the copy and the wait in `digest` at 1 MB | 35 % | 24 % |
 
-`WebCrypto.sha256!` in the platform (PLAN.md 8g, P2, built 2026-10-17: route `/sha/pick`, `sha256_crossover_bytes = 2_700`, 3 runs, us):
+`WebCrypto.sha256!` in the platform (PLAN.md 8g, P2, built 2026-10-17: route `/sha/pick`, `sha256_crossover_bytes = 2_700` at that time, 3 runs, us; the constant is 4_096 since 2026-10-17, see below):
 
 | Size | workerd `wasm` | workerd `digest` | workerd `pick` | Node `wasm` | Node `digest` | Node `pick` |
 |---|---|---|---|---|---|---|
@@ -409,7 +409,7 @@ The routes `/sha/<name>?size=`. `wasm`: the builtin on a `List(U8)` of wasm memo
 | 64 KB | 162.4 | 39.8 | 39.6 | 137.7 | 48.9 | 51.4 |
 | 1 MB | 2,587 | 557 | 559 | 2,206 | 677 | 734 |
 
-In workerd `pick` follows the faster of the two at each size (the check of the length costs nothing that shows): 1 MB 559 against 2,587 us (4.6 times), 64 KB 39.6 against 162.4 us. In Node the crossover is 6 KB, so between 2.7 and 6 KB `pick` takes `digest` where the builtin is faster (4 KB: 11.5 against 8.81 us). Node is for the tests only, so one constant for workerd is used. The constant is one line in `platform/WebCrypto.roc` (`sha256_crossover_bytes`), and the edge run of 11c can change it.
+In workerd `pick` follows the faster of the two at each size (the check of the length costs nothing that shows): 1 MB 559 against 2,587 us (4.6 times), 64 KB 39.6 against 162.4 us. In Node the crossover is 6 KB, so between 2.7 and 6 KB `pick` takes `digest` where the builtin is faster (4 KB: 11.5 against 8.81 us). Node is for the tests only, so one constant is used. The constant is one line in `platform/WebCrypto.roc` (`sha256_crossover_bytes`). The edge run of 11c gave about 4 KB, and the production target is the edge, so the constant is 4_096 since 2026-10-17 (local workerd: the `pick` rows from 2.7 to 4 KB are then the builtin, which costs at most 2.7 us more at 4 KB: 10.3 against 7.6 us).
 
 `resumeCheck: off` changes `digest` by 5 % to 10 % at 1 MB (workerd 560 to 536 us) and by 0.5 us for small sizes (`8g/results/*-off.md`). The builtin blocks the isolate while it runs, and `digest` is a wait: other tasks run during it. The edge numbers are on the 11c list (PLAN.md, "Status of step 8g").
 

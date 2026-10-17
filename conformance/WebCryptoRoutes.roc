@@ -26,7 +26,7 @@ WebCryptoRoutes :: [].{
 			["sync"] => reply(sync!({}))
 			# PLAN.md 8c, the measure: `n` hashes of `size` bytes in wasm (`bench/sha256-bench.mjs`).
 			["sha256"] => Response.from_text(200, sha256_loop(Q.num(req, "size"), Q.num(req, "n")))
-			# PLAN.md 8g P2: `WebCrypto.sha256!` of `size` bytes (the builtin below 2,700 bytes, `digest` above), and its twin.
+			# PLAN.md 8g P2: `WebCrypto.sha256!` of `size` bytes (the builtin below 4,096 bytes, `digest` above), and its twin.
 			["sha256_pick"] => reply(sha256_pick!(Q.num(req, "size")))
 			["sha256_pick_io"] => reply(sha256_pick_io!(Q.num(req, "size")))
 			# The registry cases (API.md RN6, RN9, RN18).

@@ -64,6 +64,8 @@ tailProc.stdout.on('data', (d) => {
 await new Promise((r) => setTimeout(r, 6000)); // the tail needs a few seconds to connect
 
 const t = {
+  // A check that has a local form and an edge form of an answer reads this (PLAN.md 11c, EP7). `undefined` in conformance/run.mjs.
+  edge: true,
   server: SERVER,
   url: EDGE,
   mfDir: '/nonexistent',

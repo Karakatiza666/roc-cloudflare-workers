@@ -10,7 +10,8 @@ export const options = {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const calls = async (t) => JSON.parse((await t.get('/__stub_calls')).body);
-const UUID = '[0-9a-f-]{36}';
+// The id of an instance made with no id. Local form: a UUID. Edge form (`t.edge`, PLAN.md 11c, E42): `cf_` and 64 hex digits.
+const newId = (t) => (t.edge ? 'cf_[0-9a-f]{64}' : '[0-9a-f-]{36}');
 
 // The status of an instance, until its state is `want` (the local engine runs the workflow in the background).
 const until = async (t, path, want) => {
@@ -27,7 +28,7 @@ export const checks = [
   ['workflows create!, create (Io twin): an instance with a new id, and its output has the parameters', async (t) => {
     for (const p of ['create', 'create_io']) {
       const r = await t.get(`/workflows/${p}?binding=FLOW&pname=x&n=3`);
-      const m = new RegExp(`^Ok id=(${UUID})$`).exec(r.body);
+      const m = new RegExp(`^Ok id=(${newId(t)})$`).exec(r.body);
       ok(r.status === 200 && m, `${p}: got ${r.status} ${r.body}`);
       eq(r.awaits, 1, 'js_await');
       const s = await until(t, `/workflows/status?binding=FLOW&id=${m[1]}`, 'Complete');
@@ -42,7 +43,7 @@ export const checks = [
     const s = await until(t, '/workflows/status?binding=FLOW&id=my-1', 'Complete');
     eq(s.endsWith('done payload=y/4 id=my-1'), true, s);
     // No `id` field: a new id.
-    ok(new RegExp(`^Ok id=${UUID}$`).test((await t.get('/workflows/create_with_none?binding=FLOW&pname=x&n=1')).body), 'create_with with no id');
+    ok(new RegExp(`^Ok id=${newId(t)}$`).test((await t.get('/workflows/create_with_none?binding=FLOW&pname=x&n=1')).body), 'create_with with no id');
   }],
   ['workflows get!, get (Io twin): the instance of an id, or NotFound', async (t) => {
     answer(await t.get('/workflows/get?binding=FLOW&id=my-1'), 'Ok id=my-1');

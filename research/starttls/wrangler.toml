@@ -1,0 +1,6 @@
+# The edge run of EP6 (not run in the task of 2026-10-17: no deploy). Needs a Cloudflare account with a Workers plan that allows
+# `connect()` (a Free plan did in 11c). Deploy: `wrangler deploy` here. Delete after: `wrangler delete`.
+# Then: curl "$URL/raw?host=smtp.gmail.com&port=587" and the variants in README.md.
+name = "rocplat-test-starttls"
+main = "worker.js"
+compatibility_date = "2026-10-01"
