@@ -1,0 +1,28 @@
+## d1
+────────────────────
+
+## r2
+───────────────────────────────────────────────
+Listing buckets...
+name:           bellup-weur-0
+creation_date:  2023-05-13T14:55:49.722Z
+
+name:           bellup-weur-0-preview
+creation_date:  2023-05-14T13:13:02.743Z
+
+name:           lottery0weur
+creation_date:  2023-06-07T15:40:14.346Z
+## kv
+    "id": "26d38271aba14a6bad76fe972dda7862",
+    "title": "bellup-sveltekit-edge-bellup_kv_0",
+    "supports_url_encoding": true
+  },
+  {
+    "id": "5af50a5e6b7b430c8ef311890a8286d3",
+    "title": "bellup-sveltekit-edge-bellup_kv_0_preview",
+    "supports_url_encoding": true
+  }
+]
+## queues
+───────────────────────────────────────────────
+

@@ -1,0 +1,10 @@
+{"part":"fetch8d","tag":"fetch8d-mvcccyl4","start":"2026-10-17T11:56:56.728Z"}
+{"url":"http://1.1.1.1:1/","path":"/http/send?url=http%3A%2F%2F1.1.1.1%3A1%2F&tag=fetch8d-mvcccyl4","status":200,"ms":266,"body":"200 <!DOCTYPE html><html theme=\"light\" lang=\"en-US\" prefix=\"og: http://ogp.me/ns#\"><head><meta charset=\"utf-8\"><title>1.1.1.1 — The free app that makes your Internet faster.</title><!-- Early iOS detection--><script>if (/iPad|iPhone|iPod/.test(navigator.userAgent)) {\n  document.documentElement.setAt","ray":"a4bf1f7719049317-TBS"}
+{"url":"http://no-such-host.invalid/","path":"/http/send?url=http%3A%2F%2Fno-such-host.invalid%2F&tag=fetch8d-mvcccyl4","status":200,"ms":20,"body":"530 error code: 1016\n","ray":"a4bf1f785a9e9317-TBS"}
+{"url":"https://10.255.255.1/","path":"/http/send?url=https%3A%2F%2F10.255.255.1%2F&tag=fetch8d-mvcccyl4","status":200,"ms":16,"body":"403 error code: 1003\n","ray":"a4bf1f787ac59317-TBS"}
+{"url":"https://rocplat-test-echo.bellup.workers.dev/hang","path":"/http/send?url=https%3A%2F%2Frocplat-test-echo.bellup.workers.dev%2Fhang&tag=fetch8d-mvcccyl4","status":503,"ms":120060,"body":"trap cancelled: deadline","ray":"a4bf1f788b029317-TBS"}
+{"url":"not a url","path":"/http/send?url=not%20a%20url&tag=fetch8d-mvcccyl4","status":200,"ms":19,"body":"HttpErr TypeError: Invalid URL: not a url","ray":"a4bf2266ee239317-TBS"}
+{"tail":{"url":"/http/send?url=https%3A%2F%2F10.255.255.1%2F&tag=fetch8d-mvcccyl4","outcome":"ok","cpuTime":1,"wallTime":2,"status":200,"logs":[],"exceptions":[]}}
+{"tail":{"url":"/http/send?url=http%3A%2F%2Fno-such-host.invalid%2F&tag=fetch8d-mvcccyl4","outcome":"ok","cpuTime":2,"wallTime":4,"status":200,"logs":[],"exceptions":[]}}
+{"tail":{"url":"/http/send?url=http%3A%2F%2F1.1.1.1%3A1%2F&tag=fetch8d-mvcccyl4","outcome":"ok","cpuTime":4,"wallTime":101,"status":200,"logs":[],"exceptions":[]}}
+{"tail":{"url":"/http/send?url=https%3A%2F%2Frocplat-test-echo.bellup.workers.dev%2Fhang&tag=fetch8d-mvcccyl4","outcome":"ok","cpuTime":1,"wallTime":120046,"status":503,"logs":[],"exceptions":[]}}

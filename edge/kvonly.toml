@@ -1,0 +1,7 @@
+# PLAN.md 8f part 1, 11c: the KV-backed class `KvOnly` (a class of `new_classes`). edge/deploy.sh with EXTRA_TOML=edge/kvonly.toml.
+[[durable_objects.bindings]]
+name = "KVONLY"
+class_name = "KvOnly"
+[[migrations]]
+tag = "v2"
+new_classes = ["KvOnly"]

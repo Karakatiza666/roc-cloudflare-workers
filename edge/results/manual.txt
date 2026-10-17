@@ -1,0 +1,79 @@
+# PLAN.md 11c: single curl runs of the edge run (2026-10-17, UTC times), copied from the terminal.
+
+## 11:47 fetch of the echo Worker with no flag global_fetch_strictly_public
+curl /http/get?url=https://rocplat-test-echo.bellup.workers.dev/hello  ->  404 error code: 1042
+(after the flag: 200 hello)
+
+## 11:48 limits.cpu_ms = 30000
+CPU limits are not supported for the Free plan. Switch to a paid plan ... [code: 100328]
+
+## 12:00 objects
+/r2/head?key=mp6 -> Ok key=mp6 size=9 etag=82e34654a8c13cc90c3e82739db112a0-1 cc=max-age=30 type=none custom=origin=mp md5=none sha256=none
+/objects/respond?name=rr1 -> early fast=False
+/objects/respond?name=rr1 -> early fast=True
+/objects/counter/late?name=rr1 -> Ok("written")
+/objects/jurisdiction?name=x -> Ok("5d29e523c196555b0d870a7925f27dc4e0b52bed5f735cc1e73b11da43a6957b")
+/objects/id?name=x -> outside=Ok("e7d53d3046a4a72909e8c9790e89a3eeb1acfced9749fe0a0dbb63fb6791f4d5") same=True
+
+## 12:01 workflows
+/workflows/create_with?binding=FLOW&id=e-1 -> Ok id=e-1
+/workflows/create_with?binding=FLOW&id=e-1 -> AlreadyExists
+/workflows/get?binding=FLOW&id=nope-1 -> NotFound
+/workflows/create_with?id=<100 x a> -> Ok id=<100 x a>
+/workflows/create_with?id=<101 x a> -> WorkflowsErr Error: (instance.invalid_id) Instance has invalid id
+(create! with no id, conformance run 2: Ok id=cf_d9276dfc6e7e1feadb151c9c823c7e71b8453c511d468d4a5033af909f0229a1)
+
+## 12:03 D1 BLOB (/__blob)
+{"literal":{"all":"[object Array] len=3 [0,255,16]","raw":"[object Array] len=3 [0,255,16]","first":"[object Array] len=3 [0,255,16]","firstRow":"[object Array] len=3 [0,255,16]"},"bound":{"sqliteType":"blob","all":"[object Array] len=3 [0,255,16]","raw":"[object Array] len=3 [0,255,16]","first":"[object Array] len=3 [0,255,16]"}}
+
+## 12:03 Tcp tls On
+/edge/tls?host=example.com&port=443 -> connect SocketErr({ message: "proxy request failed, cannot connect to the specified address. It looks like you might be trying to connect to a HTTP-based service (dash) consider using fetch instead", name: "Error" })
+/edge/tls?host=1.1.1.1&port=443 -> (the same)
+/edge/tls?host=no-such-host.invalid&port=443 -> (the same)
+/edge/tls?host=example.com&port=81 -> connect SocketErr({ message: "proxy request failed, cannot connect to the specified address", name: "Error" })
+/edge/tls?host=imap.gmail.com&port=993 -> write=Ok({}) read=* OK Gimap ready for requests from <the address of the Worker> ... [200 0.61 s]
+/edge/starttls?host=smtp.gmail.com&port=587 -> (no answer, curl gave up at 90 s)
+## 12:19 /edge/starttls?host=smtp.office365.com&port=587 and smtp.gmail.com -> no answer in 40 s
+## 12:21 /edge/starttls?host=smtp.gmail.com&port=587&plain=1 -> banner=220 smtp.gmail.com ESMTP ... ehlo=250-smtp.gmail.com at your service, [...] ready=220 2.0.0 Ready to start TLS start_tls=SocketErr({ message: "The `secureTransport` socket option must be set to 'starttls' for startTls to be used.", name: "TypeError" }) [200 0.91 s]
+## 12:21 /edge/starttls?host=smtp.gmail.com&port=587 -> no answer in 25 s; tail: "edge starttls banner" logged, then "task cancelled (signal): task 2, Fetch, in a wait for 24380 ms"
+
+## 12:08 the 128 MB check, ISOLATE_BYTES=1073741824 (fresh isolate e0dfda02)
+/edge/grow?mb=100&hold=2000 -> 200 grew mb=100 (witness /time/sleep?ms=4000 200); after: isolate e0dfda02 mem 113049600 budget asked 4 denied 0
+/edge/grow?mb=112 -> 503 trap out of memory (witness 200); budget asked 4 (the allocator cap, no js_grow)
+/edge/grow?mb=120 -> 503 trap out of memory (witness 200)
+## 12:09 then /__jsgrow?mb=64&hold=2000 on isolate e0dfda02 (wasm 113 MB): 200 "jsgrew mb=64 isolate=e0dfda02", witness 200 4.24 s; the next /__edge: isolate eb37459c requests 1 (a new isolate)
+
+## 12:10 KV-backed class (EXTRA_TOML=edge/kvonly.toml)
+In order to use Durable Objects with a free plan, you must create a namespace using a `new_sqlite_classes` migration. [code: 10097]
+
+## 12:11 R2 (/__js)
+BUCKET.get("put1") -> {"key":"put1","size":5,...,"range":{"offset":0,"length":5},"checksums":{"md5":"5d41402abc4b2a76b9719d911017c592"},...}
+## 12:11 10a: wrangler r2 object put rocplat-test-r2/big (50 MiB), then 2 times /r2/big?key=big:
+status 200 size 52428800 time 7.63 s; /__edge memBytes before 7864320 after 7864320 (isolate dcc3f631); cmp: the same bytes
+status 200 size 52428800 time 6.69 s; before 7864320 after 7864320
+
+## 12:27 objects init! that gives Err (class Flaky), with a wait for KV
+OBJFLAGS.put("fail-init", "1"); /objects/flaky?name=f9 -> Err ObjectErr({ message: "Flaky.init: failed: InitFailed", name: "Error" })
+OBJFLAGS.delete("fail-init"); 70 s later /objects/flaky?name=f9 -> ok 65f6a26c4d27a2b09ae38df6faa7356d3c3869c26c4f694bf102fcddfc8070dc
+
+## 12:31 Memo: 40 requests of /memo/get one after the other, the `made` value (one `load!` each)
+     39 Ok kid=k1 big=1152921504606846976 made=bab88813-117b-4ea3-a7fb-264941b52070
+      1 Ok kid=k1 big=1152921504606846976 made=cc0ae5e2-210d-4a69-8fe7-dd4e2de39d44
+
+## 12:32 Queue delays (/queue/send_with?delay=<ms>)
+delay_ms=86400000 -> Ok
+delay_ms=86401000 -> Err QueueErr({ message: "Invalid message delay: Expected a number between 0 and 86400, received 86401 (10210)", name: "Error" })
+delay_ms=90000000 -> Err QueueErr({ message: "Invalid message delay: Expected a number between 0 and 86400, received 90000 (10210)", name: "Error" })
+
+## 12:36 delete_all! with the compatibility date 2025-06-01 (edge/deploy-old.sh, Worker rocplat-test-old)
+/objects/counter/delete_all?name=old -> del=Ok({}) table=False cell=Err(NotFound) alarm=Err(NotFound)
+/objects/counter/delete_all?name=old2&twin=1 -> del=Ok({}) table=False cell=Err(NotFound) alarm=Err(NotFound)
+
+## 12:34 to 12:39 a socket wait before respond! (/edge/tcpwait?host=imap.gmail.com)
+greeting=* OK Gimap ready for requests from <the address of the Worker> ... second=Closed waited_ms=270076 [200 270.87 s]
+
+## 12:55 to 12:58 wrangler tail of 4 cron runs (event, outcome, cpu ms, wall ms, logs)
+{"event":{"cron":"*/5 * * * *","scheduledTime":1792241739472},"outcome":"ok","cpu":11,"wall":182,"logs":[]}
+{"event":{"cron":"1-59/2 * * * *","scheduledTime":1792241750792},"outcome":"exception","cpu":14,"wall":184,"logs":["scheduled: failed: CronFailed(\"1-59/2 * * * *\")"]}
+{"event":{"cron":"*/2 * * * *","scheduledTime":1792241799437},"outcome":"exception","cpu":16,"wall":272,"logs":["scheduled: failed: CronFailed(\"*/2 * * * *\")"]}
+{"event":{"cron":"1-59/2 * * * *","scheduledTime":1792241870792},"outcome":"exception","cpu":10,"wall":356,"logs":["scheduled: failed: CronFailed(\"1-59/2 * * * *\")"]}

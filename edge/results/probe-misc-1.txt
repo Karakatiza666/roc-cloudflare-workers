@@ -1,0 +1,7 @@
+{"websocket":["0 s: echo a","40 s: echo b after 40 s"],"close":{"code":1000,"reason":"bye","at":1792239349076}}
+{"client":"wss://echo.websocket.org","answer":"200 sent=Ok({}) got=Ok(Text(\"Request served by 4d896d95b55478\"))"}
+{"client":"https://echo.websocket.org","answer":"200 sent=Ok({}) got=Ok(Text(\"Request served by 4d896d95b55478\"))"}
+{"version":"500 trap RuntimeError: unreachable"}
+{"v8":"200 Ok"}
+{"tail":"https://rocplat-test-app.bellup.workers.dev/websocket/echo","outcome":"ok","logs":["{\"level\":\"info\",\"msg\":\"echo closed\",\"clean\":true,\"code\":1000,\"reason\":\"\"}"]}
+{"tail":"rocplat-test-v8","outcome":"ok","logs":["v8 seen {\"id\":\"e094efd81b5dbf1595e0fe49c3235120\",\"n\":5,\"big\":\"bigint 1152921504606846976\",\"isUint8Array\":true,\"data\":[1,2,3]}"]}

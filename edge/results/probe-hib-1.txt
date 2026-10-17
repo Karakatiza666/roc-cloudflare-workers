@@ -1,0 +1,6 @@
+{"hib":"before","got":"user=a starts=1 events=1 tags=room,a auto=False peers=1 tagged=1"}
+{"auto":"set","got":"Ok({})"}
+{"auto":"before","got":"user=a starts=1 events=1 tags=room,a auto=False peers=1 tagged=1"}
+{"auto":"ping after 90 s","got":"pong"}
+{"auto":"info after the ping","got":"user=a starts=2 events=2 tags=room,a auto=True peers=1 tagged=1"}
+{"hib":"after 90 s idle","got":"user=a starts=2 events=2 tags=room,a auto=False peers=1 tagged=1"}

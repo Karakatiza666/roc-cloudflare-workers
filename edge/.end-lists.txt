@@ -1,0 +1,21 @@
+## d1
+[]
+## r2
+name:           bellup-weur-0
+name:           bellup-weur-0-preview
+name:           lottery0weur
+name:           rocplat-test-r2
+## kv
+    "title": "bellup-sveltekit-edge-bellup_kv_0",
+    "title": "bellup-sveltekit-edge-bellup_kv_0_preview",
+## queues
+0
+## workflows
+▲ [WARNING] There are no deployed Workflows in this account
+## workers (mine)
+rocplat-test-app gone
+rocplat-test-echo gone
+rocplat-test-8g gone
+rocplat-test-old gone
+## bellup-sveltekit-edge
+exists

@@ -35,7 +35,7 @@ Problem 12 (2026-10-14) is the goal of problem 4: one wasm instance per isolate.
 | 8 | 9a and 9b, then 8a, 8b with 9c, 8c with 10a and 10b, 8d, 8e (`API.md` phase A). 10c is part of the test of 8a. | the split ABI (7a), the header settings (7b), the task table (2c), cancel (3c). 8a needs the per-task roots and ref table of 9b, and 8b and 8c need `makeHandler` of 9a. |
 | 9 | 8f (`API.md` phase B). Done 2026-10-17: parts 1 to 4 (the status sections of 8f); the edge parts are on the 11c lists. | 8a to 8e |
 | 10 | 8g, local. Done 2026-10-17 (the section "Status of step 8g"). The edge part runs after 11: the list "Edge parts for 11c" of that section. | 8a to 8e |
-| 11 | 11a to 11c, then 5d on the edge. 11a and 11b: done locally 2026-10-17 (the section "Status of steps 11a, 11b"). | 7 to 10 |
+| 11 | 11a to 11c, then 5d on the edge. 11a and 11b: done locally 2026-10-17 (the section "Status of steps 11a, 11b"). The edge run of 11c, 5d and 8g: 2026-10-17, the section "Status of the edge run (11c, 5d, 8g edge)" (after 8g). The example app deployed by CI (11c) is not done. | 7 to 10 |
 | 12 | Update DESIGN.md §6.1, Q12 and Q14, DESIGN-REGISTRY.md §8 and `bench/README.md` (API.md RF10) | all |
 | 13 | 12g: measure with talon | talon runs on the platform |
 
@@ -2705,6 +2705,111 @@ Questions: none. Choices I made (the plan does not say):
 | GC2 | A D1 case uses a fake `DB` object in JS, not the local D1: the local query takes 2.1 ms and moves by 20 %, which hides the 0.1 to 0.2 ms of the shim. The real D1 has its own section (`d1real`). |
 | GC3 | The 8g `Field` variant is run in two forms: the exact compare (correct, 78 of 78 `expect`s) and a compare of the length and the first byte (also 78 of 78, but not correct in general), to bound what a faster lookup could save. |
 | GC4 | `owner_tag` is read as "the cost of the owner in the allocation": the flag does nothing, so its cost is 0, and the owner work that stays (`taskOf` by page) is inside the 46 ns of each allocation. It cannot be switched off without changing the allocator, and no allocator code was changed. |
+
+### Status of the edge run (11c, 5d, 8g edge) (2026-10-17)
+
+Run on the real Cloudflare network, 2026-10-17, 11:40 to 13:05 UTC. Account: a Workers Free plan (wrangler 4.151.0). The client is in Tbilisi: the requests went to the colo `TBS`, and D1 is in `EEUR` (served by `MXP`). No platform code changed. All resources had the prefix `rocplat-test-`, and all are deleted (`edge/ledger.md`) but one: the R2 bucket `rocplat-test-r2` has no object, but incomplete multipart uploads of the checks keep it ("not empty", code 10008). A lifecycle rule aborts them after 1 day; then `wrangler r2 bucket delete rocplat-test-r2` (EP10).
+
+What was deployed:
+
+| Worker | What | Script |
+| --- | --- | --- |
+| `rocplat-test-app` | The edge app: the conformance app (`conformance/*.roc`, bench platform) and `edge/EdgeRoutes.roc` (5d, 128 MB, API.md 10.2, AQ12, Tcp TLS). `edge/worker.js`: `conformance/worker.js` and the routes `/__edge` (the isolate, the flags of 5a, the counters), `/__js` (the bindings for the setup of the checks), `/__jsgrow`, `/__blob`. Real bindings: D1, R2, 2 KV, 6 SQLite Durable Object classes, 4 queues (producer and consumer), 2 Workflows, a rate limiter, Assets, version metadata, 2 service bindings to itself, 3 cron triggers. Flags `enable_request_signal` and `global_fetch_strictly_public`. | `edge/build.sh`, `edge/deploy.sh` |
+| `rocplat-test-echo` | The local server of `conformance/run.mjs` as a Worker (`/hello`, `/ten`, `/slow`, `/echo`, `/status/<n>`, `/hang`) | `edge/echo.js` |
+| `rocplat-test-8g` | The 8g measure app (`bench/8g/`), D1 `rocplat-test-8g-d1` | `edge/deploy-8g.sh`, `edge/run-8g.mjs` |
+
+How the items ran: `edge/run-edge.mjs` runs the checks of `conformance/checks/*.mjs` against the edge URL (the binding setup goes through `/__js`, the log lines come from `wrangler tail`). The other items are `edge/probe-11c.mjs` (parts `cpu`, `mem`, `jsmem`, `after`, `writer`, `away`, `fetch8d`, `shacpu`), `edge/probe-misc.mjs`, `edge/cron-rows.sh`, and single `curl` calls (their output: `edge/results/manual.txt`). Raw outputs: `edge/results/`.
+
+Results of `edge/run-edge.mjs`: run 1 (empty bindings, no queues and workflows) 213 checks PASS, 69 FAIL; run 2 (with queues and workflows, the data of run 1 still there) 211 PASS, 71 FAIL. A FAIL has one of three causes: the check cannot run on the edge (a call of Miniflare, a second Miniflare, a local socket server, a binding that is not configured), the data of the run (KV eventual consistency, a row or an object of run 1), or a real difference. Each real difference is a row below; the checks that cannot run are in the list "Not run".
+
+Edge items (E1 to E53). "Same?" compares the edge with the local result:
+
+| # | Item (plan) | Local | Edge | Same? | Evidence |
+| --- | --- | --- | --- | --- | --- |
+| E1 | 5a: workerd registers the instance | signal 0, terminated 65535 | signal 0, terminated 65535 at the first request | Yes | `probe-cpu-1.txt` `before` |
+| E2 | 5d: a wasm loop past the CPU limit. Does the signal arrive? | 24 written by the test: 503 `cpu` | Yes. `/edge/spin?n=30000000`: 503 `trap cpu limit` after 0.9 s (run 1) and 2.0 s (run 2) of wall time. `stats.cpu` 1, live bytes 0 | Yes | `probe-cpu-1.txt`, `probe-cpu-2.txt` |
+| E3 | 5d: does the isolate survive? | Yes (instance kept) | Yes: the same isolate id served the next request, with allocations | Yes | `next` rows of `probe-cpu-*.txt` |
+| E4 | 5 open point: does the runtime clear the signal? | (no caller in open-source workerd) | Yes: the signal reads 0 at the next request of the same isolate | (new fact) | `after` rows |
+| E5 | The Free plan CPU limit | | `limits.cpu_ms` is refused: "CPU limits are not supported for the Free plan" (code 100328). Requests of about 1 s of CPU passed (`n=10000000`: 992 and 1,178 ms). After such a request the next request can come to a new isolate. When many heavy requests came (8g, about 300 ms each), the signal came in each of them | (new fact) | `probe-cpu-2.txt`, 8g run with `TARGET_MS=300` |
+| E6 | A JS busy loop with no wasm (8g `/__clock`) | | `error code: 1102`, and the next request of the next seconds got the 503 HTML page of 1102 too. The clock does not move in a busy loop (the loop of 2 times 5e7 reads did not end) | (new fact) | `edge/results/8g/edge-1.txt` (first lines) |
+| E7 | The 128 MB check: wasm memory | (local workerd has no limit) | With the M3 budget raised (var `ISOLATE_BYTES`=1 GiB): wasm memory 113 MB, the isolate stays. A grow above the 128 MiB of the allocator (`hostlib/alloc.zig:24`, `MAX_UNITS`) is a clean OOM 503 before `js_grow` is asked (`hostlib/alloc.zig:247-248`): budget `asked` does not change | (new fact) | `probe-mem-2.txt` |
+| E8 | The 128 MB check: over the limit, is only the isolate stopped, and do the requests in flight fail? | PLAN.md 4 "Facts": "all requests in flight fail" | 2 tries over the limit (160 MB of JS; and 113 MB of wasm plus 64 MB of JS): the request that went over finished (200), a request in flight on the same isolate finished (200), and the next request came to a new isolate. No request failed | No | `probe-mem-2.txt` (`jsmem`), the `curl` run of 12:09 UTC in this section |
+| E9 | API.md 10.2: `request.signal` when the client goes away after the body is complete | Does not abort | Does not abort: the task logged 29 more seconds. Then Workers cut it at 30 s: `waitUntil() tasks did not complete within the allowed time after invocation end and have been cancelled.` (wall time 30,000 ms). The shim task stays in the table until a later request runs the sweep (cancel reason `deadline`) | Yes | `probe-after-1.txt` |
+| E10 | API.md 10.2: a `Body.writer!` stream past 30 s | | 40 lines in 40.2 s, all read by the client, `edge writer done` `ok: true`, wall time 40,077 ms | Yes (as designed) | `probe-writer-1.txt` |
+| E11 | O1, O2 (8b): the client goes away from an open writer stream | workerd does not cancel the stream; only `request.signal` ends the task | Workers cancels the response stream: the shim logs `task cancelled (stream): task 3, Fetch, in a wait for 13 ms` 2.1 s after the start, the outcome is `canceled` | No (the edge does what API.md 10.2 expects) | `probe-away-1.txt` |
+| E12 | `request.signal` before the response (the client times out) | Aborts | `task cancelled (signal): task 2, Fetch, in a wait for 24380 ms` | Yes | `edge/results/manual.txt` |
+| E13 | AQ12: a failed cron run, with and without `no_retry!` (the 11c test: 2 crons for 1 hour, and a third cron that gives `Ok`) | (no local retry) | No retry. 61 min (11:53 to 12:54 UTC), 74 planned times: `*/2` (gives `Err`, no `no_retry!`) 31 times, `1-59/2` (`no_retry!`, then `Err`) 31 times, `*/5` (gives `Ok`, the revert row) 12 times. Each `time_ms` of each cron has exactly 1 run. `wrangler tail`: the `Err` runs have the outcome `exception` (`Error: scheduled: failed: CronFailed(...)`), the `Ok` runs `ok`. So production does not retry a failed cron run, and `no_retry!` changes nothing that shows | Yes (no retry anywhere) | `edge/results/cron-rows-final.txt`, `manual.txt` (tail) |
+| E14 | AQ12, more facts | | `scheduledTime` is not at the start of the minute: each cron has a fixed second in the minute (`*/2` at :39.437, `1-59/2` at :50.792, `*/5` at :39.472). The run starts 0.4 to 1.5 s after it | (new fact) | `edge/results/cron-rows-final.txt` |
+| E15 | Jurisdiction (MODULES.md 7) | `ObjectErr` "Jurisdiction restrictions are not implemented in workerd." | `jurisdiction(Eu).named("x").id!()` = `5d29e523...a6957b`, `named("x").id!()` = `e7d53d30...91f4d5`: they differ. The revert was not run | No (the edge has it) | `curl /objects/jurisdiction`, `/objects/id` |
+| E16 | `location_hint` | Any hint is taken | `named_with` and `from_id_with` with hints give the same id (check PASS). The region of the object was not read | Partly | conformance |
+| E17 | 8d: a closed port (`http://127.0.0.1:1/`) | `Network`: `Error: Network connection lost.` | `Ok` of a response: 403, body `error code: 1003` | No | conformance, `probe-fetch8d-1.txt` |
+| E18 | 8d: a host that does not exist | `Network`: `Error: internal error; reference = <id>` | `Ok` of a response: 530, body `error code: 1016` | No | same |
+| E19 | 8d: a host that does not answer | | `https://10.255.255.1/`: 403 `error code: 1003` at once. `http://1.1.1.1:1/`: 200, the page of 1.1.1.1 (the port is not used). A Worker that does not answer for 10 min (`/hang`): `fetch` waits, the shim cancels the task at 120 s: 503 `trap cancelled: deadline` at 120.06 s (the sweep of a later request). workers.dev did not end the request before (no 524 at 100 s) | (new fact) | `probe-fetch8d-1.txt` |
+| E20 | 8d: `"not a url"`, `timeout_ms` | `HttpErr TypeError`, `Network TimeoutError` | The same texts | Yes | conformance |
+| E21 | `fetch` of a Worker of the same account on workers.dev | | 404 `error code: 1042`, unless the flag `global_fetch_strictly_public` is set (it was set for the run) | (new fact) | first `curl` of `/http/get` |
+| E22 | `Request.Cf` | `colo=Ok("DFW") metro_code=Err(Missing)` | `colo=Ok("TBS") metro_code=Err(Missing) asn=Ok(35805)` | Yes (the place differs) | conformance |
+| E23 | `RateLimit` (limit 2 in 60 s) | the third call `RateLimited` | the third call `Ok` (in 2 runs). Cloudflare docs: the limit is per location and not exact | No | conformance |
+| E24 | Q3: `Ed25519`, `X25519`, P-521 | PASS | PASS | Yes | conformance |
+| E25 | R2: `R2.absent` on a key that exists; `list!` with `start_after`; `get_with!` with a failed condition; a `FixedLengthStream` put | PASS | PASS | Yes | conformance |
+| E26 | R2: a right `etag_matches` and `uploaded_before_ms` in the past | `Ok` | `Ok` (the plan expected `PreconditionFailed`) | Yes | conformance (`only_if with two fields`) |
+| E27 | R2: a put with no checksum; a read with no `range` | MD5 (and all five hashes); `range` `{ offset: 0, length: size }` | `checksums` has only `md5`; `range` is `{ offset: 0, length: 5 }` for a whole read | Yes for the module (it reads only MD5, and `range` only for a call with a `range`) | `/__js` `BUCKET.get("put1")` |
+| E28 | R2: the result of `complete!` of a multipart upload made with `http` and `custom` | `cc=max-age=30 custom=origin=mp` | `cc=none custom=` in the result of `complete!`; `head!` of the same key has `cc=max-age=30 custom=origin=mp`. `md5=none` for a multipart object | No | conformance, `curl /r2/head?key=mp6` |
+| E29 | 10a with a 50 MB object of a real bucket | wasm grows by 0 bytes | 0 bytes (7,864,320 before and after, the same isolate), the bytes are the same (`cmp`), 6.7 to 7.6 s | Yes | `curl` run, this section |
+| E30 | `Cache` on workers.dev | PASS | put, get, a 206, delete, `NotFound`, a named cache: PASS | Yes | conformance |
+| E31 | D1: the 7 constraint kinds, the trigger, `exec!` | the texts of `bench/README.md` "Error texts of D1" | the same texts | Yes | conformance |
+| E32 | D1: integers (2^53 + 1 as text, the 64-bit rowid) | PASS | PASS | Yes | conformance |
+| E33 | D1: `with_session!`, the bookmark | no throw | `00000000-0000005c-00005107-4bd62ed7b8424d74c4b6c3b8eddb33f9`; `After(bookmark)` PASS | Yes | conformance |
+| E34 | D1: the JS kind of a BLOB (coordinator item) | `Array` of numbers | `[object Array]` for `SELECT x'00ff10'` in `all()`, `raw()`, `first('b')`, `first()`, and for a `Uint8Array` parameter read back (`typeof(b)` is `blob` in SQLite) | Yes | `curl /__blob` |
+| E35 | `Memo` across requests | one isolate | `memo get!: a second request gets the value with no load!` PASS (the 2 requests came to one isolate). 40 requests one after the other from one client: 2 `load!` runs (39 requests saw one value, 1 another: 2 isolates) | Yes | conformance, `manual.txt` |
+| E36 | Objects: SQL texts, `blockConcurrencyWhile` with JSPI, alarm retries (3 runs, `retry_count` 0, 1, 2), the `Init` deadline (`initMs` 1 s: cancelled at 1,769 ms), RPC limit text, `respond!` in an object (the work after it runs) | PASS | PASS. The first `respond!` request to a new object took more than 250 ms (the object is made); the next one is fast. `init!` that gives `Err` (class `Flaky`): `ObjectErr` "Flaky.init: failed: InitFailed", and 70 s after the KV flag is deleted the next `fetch!` runs `init!` again (`ok <id>`); the conformance check, with no wait, saw the old flag (KV is eventually consistent) | Yes | conformance, `curl /objects/respond` |
+| E37 | A KV-backed class (`new_classes`) | PASS | Not available on this account: "In order to use Durable Objects with a free plan, you must create a namespace using a `new_sqlite_classes` migration." (code 10097) | Not run | `edge/kvonly.toml` deploy |
+| E38 | Queue: `send!`, `each!`, `attempts` 1 then 2 after an `Err`, `send_batch_with!` with a delay, a `v8` message to a JS consumer | PASS | PASS. The `v8` consumer got a `Uint8Array` and a `bigint` (it ran in another isolate than the producer: the log line, not `/__queue_seen`) | Yes | conformance, `probe-misc-1.txt` |
+| E39 | Queue: `send_batch!` of 101 messages | `Unknown Internal Error (15000)` | `batch message count of 101 exceeds limit of 100 (10206)` | No (text) | conformance |
+| E40 | Kv: `cache_ttl_ms` below 30 s, `ttl_ms` below 60 s, 2 MiB values, `list!` | the texts of `bench/README.md` | the same texts, PASS | Yes | conformance |
+| E41 | `Version` | random UUID, tag `""`, ISO time with ms | the version id, tag `""`, `2026-10-17T12:11:06.206979Z` (microseconds; `Date.parse` reads it) | Yes | conformance, `/__js` `V` |
+| E42 | `Workflows`: `NotFound`, `AlreadyExists`, status, pause, resume, terminate, send_event | PASS | PASS. The id of `create!` with no id is `cf_<64 hex>`, not a UUID. An id of 100 characters is good; 101 is `WorkflowsErr` `(instance.invalid_id) Instance has invalid id` | No (id form) | conformance, `curl` |
+| E43 | `Assets`: the content type | `text/plain; charset=utf-8` | `text/plain` (no charset); HEAD, `If-None-Match` 304, 404 PASS | No | conformance |
+| E44 | A WebSocket of a Worker open more than 30 s after its 101 | 36 s PASS | a message after 40 s of no traffic gets its echo; the close `1000 bye`; `receive!` gets `Closed` code 1000 | Yes | `probe-misc-1.txt` |
+| E45 | `WebSocket.connect!` to a public `wss://` server | (local `ws://` only) | `wss://echo.websocket.org`: `sent=Ok({}) got=Ok(Text("Request served by 4d896d95b55478"))`, also with `https://` | (new, works) | `probe-misc-1.txt` |
+| E46 | SO4: `Tcp.connect_with!` with `tls: On` | not tested | `imap.gmail.com:993`: `* OK Gimap ready ...`. Port 443 of an HTTP host (`example.com`, `1.1.1.1`): `SocketErr` "proxy request failed, cannot connect to the specified address. It looks like you might be trying to connect to a HTTP-based service" (then a dash and "consider using fetch instead"). A closed port: "proxy request failed, cannot connect to the specified address" (the local text) | (new) | `curl /edge/tls` |
+| E47 | SO4: `tls: StartTls` and `start_tls!` | not tested | To `smtp.gmail.com:587` and `smtp.office365.com:587`: the banner read works, then the next `write!` and `read!` wait with no end (25 to 90 s, the client gave up). With `tls: Off` the same steps work (banner, EHLO, `220 2.0.0 Ready to start TLS`), and `start_tls!` on that socket is `SocketErr` "The `secureTransport` socket option must be set to 'starttls' for startTls to be used." | No (a wait that does not end) | `edge/results/manual.txt` |
+| E48 | 8g on the edge | the tables of `bench/README.md` "Step 8g" | `bench/README.md` "Step 8g on the edge": a crossing about 2 times the local time, the size where `digest` wins about 4 KB, `digest` time is CPU time | (numbers) | `edge/results/8g/` |
+| E49 | Hibernation: the real eviction of an object with an open socket | PASS with `unsafeEvictDurableObject` | After 90 s with no message the object left memory: the next "info" gives `starts=2` (a new constructor and `init!`), `user=a` (the attachment reads back), `events=2` | Yes | `edge/probe-hib.mjs`, `probe-hib-1.txt` |
+| E50 | `set_auto_response!` answers with no wake | PASS | After 90 s (the object out of memory) "ping" gets "pong", and the next "info" shows `events=2` (the ping was no event) and `auto=True` (`auto_response_ms!` has a time) | Yes | same |
+| E51 | Queue: a send with a delay above 86,400 s (QC3: not checked in Roc) | (not tested locally) | `delay_ms` 86,400,000: `Ok`. 86,401,000: `QueueErr` "Invalid message delay: Expected a number between 0 and 86400, received 86401 (10210)" | (new fact) | `manual.txt` |
+| E52 | `delete_all!` with a compatibility date before 2026-02-24 (`edge/deploy-old.sh`: 2025-06-01) | `del=Ok({}) table=False cell=Err(NotFound) alarm=Err(NotFound)` | the same text, for `delete_all!` and its twin | Yes | `manual.txt` |
+| E53 | A socket wait of minutes in a `Fetch` task before `respond!` (no shim deadline) | PASS with `taskDeadlineMs` 1 s | `/edge/tcpwait`: `Tcp.connect_with!` to `imap.gmail.com:993` (`tls: On`), the greeting, then a second `read!` that waited 270 s until the server closed (`Closed`). The client got the 200 answer at 270.9 s: the edge did not end the request with no response | Yes | `manual.txt` |
+
+Differences and proposals (no platform code changed; the owners decide):
+
+| # | Difference | Proposal |
+| --- | --- | --- |
+| EP1 | E17, E18: on the edge a DNS failure and a blocked address are HTTP responses (530 `error code: 1016`, 403 `error code: 1003`), not a throw, so `Http.send!` gives `Ok(response)` and not `Network` | Keep the module (it maps throws only). Write the fact in MODULES.md 1 ("Named error tags", `Http` row, done) so an app checks the status. The conformance checks of 8d stay local: on the edge they expect `Network` and fail. Optional later: `Http.cf_error(response) : Try(U16, [NotCfError])` that reads `error code: <n>` of a 403, 530 or 52x body |
+| EP2 | E8: over 128 MB the edge did not fail the requests in flight; it changed the isolate after them | Change the row "Cloudflare limits the isolate to 128 MB" of section 4 "Facts" to the edge result (2 tries, so "did not fail in 2 tries"). Keep the M3 budget: it keeps wasm under the limit and makes a clean OOM. Add to the budget docs that the allocator cap (`MAX_UNITS`, 128 MiB) refuses a grow before `js_grow`, so `budget.asked` does not count it |
+| EP3 | E11: the edge cancels the response stream when the client goes away | API.md 10.2 already has the row; it now has the edge note (done). O1 and O2 of 8b are answered: production cancels the stream, so a `Body.writer!` task ends also with no `enable_request_signal` |
+| EP4 | E13: production does not retry a failed cron run, so `no_retry!` has no effect today | AQ12 is settled in API.md and MODULES.md 3 has the rule (done). Keep `no_retry!` (one `call!`; workerd keeps the flag, so a later production change can use it). A handler need not be safe for two runs of one `time_ms` for this reason |
+| EP5 | E28: the `R2.Meta` of `complete!` has no `http` and `custom` on the edge | MODULES.md 5.3 has the fact (done): an app reads them with `head!`. No code change |
+| EP6 | E47: a `StartTls` socket waits forever after its first read | A research probe (`research/`) with raw `cloudflare:sockets` (`connect(..., { secureTransport: "starttls" })`, a read, a write, a read) on the edge, to find if the shim (`tcpRead`, `tcpWrite` of `js/helpers.js`) or the runtime causes it. Until then MODULES.md 12.3 says that `StartTls` is not checked on the edge (done) |
+| EP7 | E23, E39, E42, E43: texts and forms that differ (rate limiter, queue batch limit, workflow id, assets content type) | Facts in `bench/README.md` and MODULES.md (done). The conformance checks of these rows compare a local form: when the checks run on the edge again, they need an edge form (a media type compare, an id that is a UUID or `cf_` and 64 hex) |
+| EP8 | E5: the Free plan has no `cpu_ms`; a heavy request can get the signal | The 8g edge numbers are from small requests (25 ms) and are noisy. A run on a paid plan with `cpu_ms = 30000` (the old `bench/8g/deploy-edge.sh`) gives better numbers |
+| EP10 | The R2 checks (`conformance/checks/r2.mjs`: `mp_create` and `mp_part_with` of the check "upload_part_with! length_bytes") leave incomplete multipart uploads. On a real bucket they keep the bucket from a delete, and the upload ids are not kept anywhere | The check calls `abort!` on each upload it does not complete (or the route gives the upload id in its answer and the check aborts it), so an edge run can delete its bucket at once |
+| EP9 | E21: a Worker that fetches another Worker of the same account on workers.dev needs `global_fetch_strictly_public` (or a service binding) | Put it in the README of the example app of 11c |
+
+Not run (with the reason):
+
+| Item | Reason |
+| --- | --- |
+| The jurisdiction revert | A new build with the revert: no time in the cap |
+| The region of an object with `location_hint` | No route reads `request.cf.colo` in the object |
+| Alarm backoff times | The check only counts runs |
+| The socket limits, `binaryType`, `web_socket_error!` | No time in the cap (each needs a new route) |
+| `Hyperdrive.connect!`, `Hyperdrive.config!` | No Postgres server |
+| Email (all rows), the `tail` and `email` consumer rows | Email Routing needs a zone (no custom domain in this run) |
+| Tail Worker (2 MiB of logs, fields) | Needs a second Worker as a tail consumer: no time |
+| Queue limits (a 128 KB message), retries to a dead letter queue, `ack()` of a kept message | No time (a 128 KB body does not fit in the URL of the route) |
+| Kv eventual consistency in another place | One client place |
+| `Ai` with a real model, `Vectorize` with a real index, `Analytics` with a dataset, `SecretsStore` | Not made: an Analytics dataset cannot be deleted with wrangler, a secrets store and an index were not in the time cap. The stub checks PASS on the edge |
+| 8g with `cpu_ms = 30000`; 3 runs of 8g | Free plan (E5); 2 runs only, to keep the request count small |
 
 ## 9. JS shim
 

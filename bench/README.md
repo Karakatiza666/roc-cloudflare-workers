@@ -413,6 +413,86 @@ In workerd `pick` follows the faster of the two at each size (the check of the l
 
 `resumeCheck: off` changes `digest` by 5 % to 10 % at 1 MB (workerd 560 to 536 us) and by 0.5 us for small sizes (`8g/results/*-off.md`). The builtin blocks the isolate while it runs, and `digest` is a wait: other tasks run during it. The edge numbers are on the 11c list (PLAN.md, "Status of step 8g").
 
+### Step 8g on the edge (PLAN.md 11c, edge, 2026-10-17)
+
+`edge/deploy-8g.sh` (the Worker `rocplat-test-8g`, a D1 database, no `cpu_ms`: the Free plan refuses it), then `CLOCK=0 ROUNDS=9 TARGET_MS=25 EDGE_URL=... node edge/run-8g.mjs` (`edge/run-8g.mjs` is `8g/run-edge.mjs` that skips `/__clock` and keeps going after a failed case). Run 1: `resumeCheck: always`, all sections. Run 2: `RESUME=off edge/deploy-8g.sh`, sections `cross` and `sha`. Raw: `edge/results/8g/`. Client in Tbilisi (colo `TBS`), D1 in `EEUR`.
+
+Limits of these numbers: on the Free plan a request of 300 ms of CPU got the CPU signal (`trap cpu limit`) after earlier heavy requests, so each timed request is only about 25 ms. The network jitter is then large against the work: a case with `N` 2 to 10 or a negative `min` is not usable (marked "-"). Take the rest as plus or minus 20 %.
+
+`/__clock`: a busy loop of 2 times 5e7 reads of the clock gives `error code: 1102` (the isolate is stopped for its CPU). So the clock does not move in a busy loop on the edge, and the client clock is the method.
+
+One crossing (us, median of 9 rounds):
+
+| Case | Edge, check at the resume | Edge, `resumeCheck: off` | workerd local |
+| --- | --- | --- | --- |
+| `call!` 1 op (k=1) | 3.0 | 3.2 | 1.35 |
+| `call!` 4 ops | 7.2 | 7.0 | 3.11 |
+| `call!` 16 ops | 24.2 | 21.5 | 9.66 |
+| `await!` 0 ops | 4.1 | 2.6 | 2.00 |
+| `await!` 1 op | 5.8 | 4.6 | 3.00 |
+| `await!` 4 ops | 9.1 | 9.0 | 4.88 |
+| `await!` 16 ops | 22.4 | 22.6 | 12.2 |
+
+D1 reads with the fake `DB` (us for one read):
+
+| Case | 20 rows | 200 rows | workerd local, 200 rows |
+| --- | --- | --- | --- |
+| `D1.all!` (typed) | 67.1 | 568 | 236.0 |
+| `D1.rows!` (`Js` tree) | 45.2 | - | 127.0 |
+| `all_arrays` (tuples, P1) | 41.5 | 257 | 103 |
+| `pack_only` | 40.2 | 276 | |
+
+Real D1 (`d1real`): one query takes 70 to 98 ms from the Worker in `TBS` to D1 in `EEUR` (20 rows 70 to 74 ms, 200 rows 85 to 98 ms, the same for each read form within the noise). The typed read (`all!` against `rows!`, about 0.3 ms for 200 rows) is under 1 % of a query.
+
+`Cbor.parse` (us): records 200 rows 257, tuples 200 rows 75.6 (3.4 times; local workerd 130 and 36.3).
+
+SHA-256 (us, run 1 and run 2):
+
+| Size | `wasm` | `digest` | `digest_js` | `copy_only` |
+| --- | --- | --- | --- | --- |
+| 256 B | 1.5, 1.5 | 14.8, 10.5 | 15.8, 10.7 | 6.3, 5.5 |
+| 1 KB | 4.6, 5.8 | 12.0, 12.7 | 12.3, 12.1 | 7.1, 6.4 |
+| 2 KB | 9.1, 9.1 | 16.4, 12.6 | -, - | -, 8.1 |
+| 4 KB | -, 19.5 | 19.6, 21.8 | 16.4, 13.8 | 12.1, 10.1 |
+| 8 KB | 37.1, 38.0 | 28.0, 28.3 | 18.3, 20.5 | 14.4, 14.1 |
+| 16 KB | 77.0, 77.5 | 50.7, - | 27.1, - | 22.2, - |
+| 64 KB | 299, 319 | 132, 122 | 64.2, 59.2 | 77.2, 74.4 |
+| 256 KB | 1,208, 1,250 | 406, 426 | 207, 179 | -, 255 |
+| 1 MB | -, 5,207 | -, 1,447 | 723, 649 | 976, 700 |
+
+CPU time from `wrangler tail` (`edge/probe-11c.mjs shacpu`, 3 requests each, whole ms): `sha/wasm?size=1048576&n=4` 19 to 21 ms, `sha/digest?...&n=4` 7 ms, `n=16` 22 to 31 ms, `n=0` 0 to 1 ms. So `digest` is CPU time of the request (cpuTime equals wallTime), and costs about 1.6 ms for 1 MB against 5 ms for the builtin.
+
+| Result | Edge | workerd local |
+| --- | --- | --- |
+| Size where `digest` is faster | about 4 KB (2 KB: the builtin 9.1 against 12.6 to 16.4; 4 KB: equal; 8 KB: `digest` 28 against 37) | 2.7 KB |
+| Builtin speed | about 210 MB/s (5.0 ms for 1 MB by `cpuTime`) | 400 MB/s |
+| `digest` at 1 MB | 1.4 to 1.8 ms (wall), 1.6 ms (`cpuTime`) | 0.56 ms |
+| A crossing, against local | about 2 times | |
+| The check at the resume | `await!` 0 and 1 op: 1.2 to 1.5 us more with the check; 4 and 16 ops: no difference in the noise | 0.5 us |
+
+## Edge texts and forms (PLAN.md 11c, edge, 2026-10-17)
+
+The texts that differ from the local tables above, or that local tests do not have. Source: `edge/results/` (the section "Status of the edge run" of PLAN.md).
+
+| Call | Edge | Local |
+| --- | --- | --- |
+| `fetch` of a closed port (`http://127.0.0.1:1/`) | a response: 403, body `error code: 1003` (so `Http` gives `Ok`) | `Error: Network connection lost.` (`Network`) |
+| `fetch` of a host that does not exist | a response: 530, body `error code: 1016` | `Error: internal error; reference = <id>` |
+| `fetch` of `https://10.255.255.1/` | a response: 403 `error code: 1003` | |
+| `fetch` of a Worker on workers.dev of the same account | 404 `error code: 1042`, unless the flag `global_fetch_strictly_public` | |
+| `Queue.send_batch!` of 101 messages | `batch message count of 101 exceeds limit of 100 (10206)` | `Unknown Internal Error (15000)` |
+| `Queue.send_with!` with `delay_ms` 86,401,000 | `Invalid message delay: Expected a number between 0 and 86400, received 86401 (10210)` | |
+| `Workflows` `create()` with no id | the id `cf_<64 hex>` | a UUID |
+| `Workflows` `create({ id })` of 101 characters | `(instance.invalid_id) Instance has invalid id` | |
+| `Assets` content type of a `.txt` | `text/plain` | `text/plain; charset=utf-8` |
+| `RateLimit` limit 2 in 60 s, 3 calls | `Ok`, `Ok`, `Ok` (not exact on the edge) | `Ok`, `Ok`, `RateLimited` |
+| `Tcp.connect_with!` to port 443 of an HTTP host | `proxy request failed, cannot connect to the specified address. It looks like you might be trying to connect to a HTTP-based service` (then a dash and `consider using fetch instead`) | |
+| `Tcp.start_tls!` on a socket with `tls: Off` | `TypeError`: ``The `secureTransport` socket option must be set to 'starttls' for startTls to be used.`` | |
+| A Durable Object class of `new_classes` on the Free plan (deploy) | `In order to use Durable Objects with a free plan, you must create a namespace using a new_sqlite_classes migration. [code: 10097]` | |
+| `limits.cpu_ms` on the Free plan (deploy) | `CPU limits are not supported for the Free plan. [code: 100328]` | |
+| `waitUntil` past 30 s after the response | log `waitUntil() tasks did not complete within the allowed time after invocation end and have been cancelled.` | |
+| The D1 constraint texts, the `Kv` texts, the RPC limit text, `TypeError: Invalid URL`, `TimeoutError` | the same as local | |
+
 ## Error texts of `WebCrypto` (PLAN.md 8c, local, 2026-10-16)
 
 | Call | JS `name` | JS `message` |
