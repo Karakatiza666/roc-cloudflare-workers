@@ -173,7 +173,7 @@ Cron rules (`scheduled!`):
 | --- | --- |
 | Payload | `cron` is `controller.cron`, the cron expression that started the run. `time_ms` is `controller.scheduledTime`, the planned time of the run, not the start time. |
 | Annotation | A `scheduled!` that calls `no_retry!` needs the annotation `Worker.Scheduled => Try({}, e)`: the type of the argument does not come from the later use in `Worker.{ ... }`, and `Try({}, _)` gives a closed `[]` that does not join the other handlers (15). |
-| Retry | The shim never calls `noRetry` by itself, also not for `Err` or a missing field. `Err(e)` is a failed run. To stop a retry, the app calls `no_retry!` on its `Worker.Scheduled`, then gives `Err`. What production does with the retry flag is not in the Cloudflare docs (`API.md` AQ12). Until AQ12 is settled, a handler must give the same result when it runs twice for one `time_ms`. |
+| Retry | The shim never calls `noRetry` by itself, also not for `Err` or a missing field. `Err(e)` is a failed run (outcome `exception`). Edge, 2026-10-17 (`PLAN.md` 11c, E13, settles `API.md` AQ12): production does not retry a failed cron run. In 1 hour, each planned time of a cron that gave `Err` had exactly 1 run, with and without `no_retry!`. So `no_retry!` has no effect today; it stays, because workerd keeps the flag. The next run of a cron is its next planned time. |
 | Time | A cron run can last 15 min (Cloudflare docs). The deadlines of the task: `API.md` 10.2. |
 | Local test | `wrangler dev` and Miniflare serve `GET /cdn-cgi/local/scheduled?cron=<cron>&time=<ms>&format=json` (Cloudflare docs, and the Miniflare source). It runs `scheduled` with that `cron` and `scheduledTime`, and answers `{ "outcome": ..., "noRetry": ... }`, status 200 for the outcome `ok` and 500 for the others. The conformance app and the registry handler tests use it (`API.md` 11). |
 
@@ -1140,7 +1140,7 @@ The code follows 12.1 to 12.3 with these differences and additions, each with it
 | `Tcp.close!` | `{}` | `socket.close()` with no wait, a rejection dropped | The type has no error and no wait |
 | `start_tls!`, `connect_with!` with `tls: On` | | Built, not tested locally | The local echo server has no TLS: `PLAN.md` 11c |
 
-Edge, 2026-10-17 (`PLAN.md` 11c, E44 to E50): a socket of a Worker stays open 40 s after its 101 with no traffic, and a message then gets its answer. An object with an open hibernatable socket leaves memory after 90 s with no message: the next message runs the constructor and `init!` again, and the attachment reads back. An auto response answers while the object is out of memory, with no event. `connect!` to `wss://` works. `tls: On` works; `tls: StartTls` does not (12.3).
+Edge, 2026-10-17 (`PLAN.md` 11c, E44 to E50): a socket of a Worker stays open 40 s after its 101 with no traffic, and a message then gets its answer. An object with an open hibernatable socket leaves memory after 90 s with no message: the next message runs the constructor and `init!` again, and the attachment reads back. An auto response answers while the object is out of memory, with no event. A `Tcp.read!` in a `Fetch` task before `respond!` waited 270 s (until the server closed), and the request then got its answer: the edge has no limit there that the shim must copy. `connect!` to `wss://` works. `tls: On` works; `tls: StartTls` does not (12.3).
 
 ## 13. Other bindings
 

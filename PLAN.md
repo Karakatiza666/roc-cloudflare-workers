@@ -2699,7 +2699,7 @@ Questions: none. Choices I made (the plan does not say):
 
 ### Status of the edge run (11c, 5d, 8g edge) (2026-10-17)
 
-Run on the real Cloudflare network, 2026-10-17, 11:40 to 13:00 UTC. Account: a Workers Free plan (wrangler 4.151.0). The client is in Tbilisi: the requests went to the colo `TBS`, and D1 is in `EEUR` (served by `MXP`). No platform code changed. All resources had the prefix `rocplat-test-`, and all are deleted: `edge/ledger.md`.
+Run on the real Cloudflare network, 2026-10-17, 11:40 to 13:05 UTC. Account: a Workers Free plan (wrangler 4.151.0). The client is in Tbilisi: the requests went to the colo `TBS`, and D1 is in `EEUR` (served by `MXP`). No platform code changed. All resources had the prefix `rocplat-test-`, and all are deleted (`edge/ledger.md`) but one: the R2 bucket `rocplat-test-r2` has no object, but incomplete multipart uploads of the checks keep it ("not empty", code 10008). A lifecycle rule aborts them after 1 day; then `wrangler r2 bucket delete rocplat-test-r2` (EP10).
 
 What was deployed:
 
@@ -2713,7 +2713,7 @@ How the items ran: `edge/run-edge.mjs` runs the checks of `conformance/checks/*.
 
 Results of `edge/run-edge.mjs`: run 1 (empty bindings, no queues and workflows) 213 checks PASS, 69 FAIL; run 2 (with queues and workflows, the data of run 1 still there) 211 PASS, 71 FAIL. A FAIL has one of three causes: the check cannot run on the edge (a call of Miniflare, a second Miniflare, a local socket server, a binding that is not configured), the data of the run (KV eventual consistency, a row or an object of run 1), or a real difference. Each real difference is a row below; the checks that cannot run are in the list "Not run".
 
-Edge items (E1 to E52). "Same?" compares the edge with the local result:
+Edge items (E1 to E53). "Same?" compares the edge with the local result:
 
 | # | Item (plan) | Local | Edge | Same? | Evidence |
 | --- | --- | --- | --- | --- | --- |
@@ -2729,8 +2729,8 @@ Edge items (E1 to E52). "Same?" compares the edge with the local result:
 | E10 | API.md 10.2: a `Body.writer!` stream past 30 s | | 40 lines in 40.2 s, all read by the client, `edge writer done` `ok: true`, wall time 40,077 ms | Yes (as designed) | `probe-writer-1.txt` |
 | E11 | O1, O2 (8b): the client goes away from an open writer stream | workerd does not cancel the stream; only `request.signal` ends the task | Workers cancels the response stream: the shim logs `task cancelled (stream): task 3, Fetch, in a wait for 13 ms` 2.1 s after the start, the outcome is `canceled` | No (the edge does what API.md 10.2 expects) | `probe-away-1.txt` |
 | E12 | `request.signal` before the response (the client times out) | Aborts | `task cancelled (signal): task 2, Fetch, in a wait for 24380 ms` | Yes | `edge/results/manual.txt` |
-| E13 | AQ12: a failed cron run, with and without `no_retry!` | (no local retry) | CRON_RESULT | CRON_SAME | `edge/results/cron-rows-final.txt` |
-| E14 | AQ12, more facts | | `scheduledTime` is not at the start of the minute: each cron has a fixed second in the minute (`*/2` at :39.437, `1-59/2` at :50.792, `*/5` at :39.472). The run starts 0.4 to 1.5 s after it | (new fact) | `cron-rows-final.txt` |
+| E13 | AQ12: a failed cron run, with and without `no_retry!` (the 11c test: 2 crons for 1 hour, and a third cron that gives `Ok`) | (no local retry) | No retry. 61 min (11:53 to 12:54 UTC), 74 planned times: `*/2` (gives `Err`, no `no_retry!`) 31 times, `1-59/2` (`no_retry!`, then `Err`) 31 times, `*/5` (gives `Ok`, the revert row) 12 times. Each `time_ms` of each cron has exactly 1 run. `wrangler tail`: the `Err` runs have the outcome `exception` (`Error: scheduled: failed: CronFailed(...)`), the `Ok` runs `ok`. So production does not retry a failed cron run, and `no_retry!` changes nothing that shows | Yes (no retry anywhere) | `edge/results/cron-rows-final.txt`, `manual.txt` (tail) |
+| E14 | AQ12, more facts | | `scheduledTime` is not at the start of the minute: each cron has a fixed second in the minute (`*/2` at :39.437, `1-59/2` at :50.792, `*/5` at :39.472). The run starts 0.4 to 1.5 s after it | (new fact) | `edge/results/cron-rows-final.txt` |
 | E15 | Jurisdiction (MODULES.md 7) | `ObjectErr` "Jurisdiction restrictions are not implemented in workerd." | `jurisdiction(Eu).named("x").id!()` = `5d29e523...a6957b`, `named("x").id!()` = `e7d53d30...91f4d5`: they differ. The revert was not run | No (the edge has it) | `curl /objects/jurisdiction`, `/objects/id` |
 | E16 | `location_hint` | Any hint is taken | `named_with` and `from_id_with` with hints give the same id (check PASS). The region of the object was not read | Partly | conformance |
 | E17 | 8d: a closed port (`http://127.0.0.1:1/`) | `Network`: `Error: Network connection lost.` | `Ok` of a response: 403, body `error code: 1003` | No | conformance, `probe-fetch8d-1.txt` |
@@ -2764,11 +2764,12 @@ Edge items (E1 to E52). "Same?" compares the edge with the local result:
 | E45 | `WebSocket.connect!` to a public `wss://` server | (local `ws://` only) | `wss://echo.websocket.org`: `sent=Ok({}) got=Ok(Text("Request served by 4d896d95b55478"))`, also with `https://` | (new, works) | `probe-misc-1.txt` |
 | E46 | SO4: `Tcp.connect_with!` with `tls: On` | not tested | `imap.gmail.com:993`: `* OK Gimap ready ...`. Port 443 of an HTTP host (`example.com`, `1.1.1.1`): `SocketErr` "proxy request failed, cannot connect to the specified address. It looks like you might be trying to connect to a HTTP-based service" (then a dash and "consider using fetch instead"). A closed port: "proxy request failed, cannot connect to the specified address" (the local text) | (new) | `curl /edge/tls` |
 | E47 | SO4: `tls: StartTls` and `start_tls!` | not tested | To `smtp.gmail.com:587` and `smtp.office365.com:587`: the banner read works, then the next `write!` and `read!` wait with no end (25 to 90 s, the client gave up). With `tls: Off` the same steps work (banner, EHLO, `220 2.0.0 Ready to start TLS`), and `start_tls!` on that socket is `SocketErr` "The `secureTransport` socket option must be set to 'starttls' for startTls to be used." | No (a wait that does not end) | `edge/results/manual.txt` |
+| E48 | 8g on the edge | the tables of `bench/README.md` "Step 8g" | `bench/README.md` "Step 8g on the edge": a crossing about 2 times the local time, the size where `digest` wins about 4 KB, `digest` time is CPU time | (numbers) | `edge/results/8g/` |
 | E49 | Hibernation: the real eviction of an object with an open socket | PASS with `unsafeEvictDurableObject` | After 90 s with no message the object left memory: the next "info" gives `starts=2` (a new constructor and `init!`), `user=a` (the attachment reads back), `events=2` | Yes | `edge/probe-hib.mjs`, `probe-hib-1.txt` |
 | E50 | `set_auto_response!` answers with no wake | PASS | After 90 s (the object out of memory) "ping" gets "pong", and the next "info" shows `events=2` (the ping was no event) and `auto=True` (`auto_response_ms!` has a time) | Yes | same |
 | E51 | Queue: a send with a delay above 86,400 s (QC3: not checked in Roc) | (not tested locally) | `delay_ms` 86,400,000: `Ok`. 86,401,000: `QueueErr` "Invalid message delay: Expected a number between 0 and 86400, received 86401 (10210)" | (new fact) | `manual.txt` |
 | E52 | `delete_all!` with a compatibility date before 2026-02-24 (`edge/deploy-old.sh`: 2025-06-01) | `del=Ok({}) table=False cell=Err(NotFound) alarm=Err(NotFound)` | the same text, for `delete_all!` and its twin | Yes | `manual.txt` |
-| E48 | 8g on the edge | the tables of `bench/README.md` "Step 8g" | `bench/README.md` "Step 8g on the edge": a crossing about 2 times the local time, the size where `digest` wins about 4 KB, `digest` time is CPU time | (numbers) | `edge/results/8g/` |
+| E53 | A socket wait of minutes in a `Fetch` task before `respond!` (no shim deadline) | PASS with `taskDeadlineMs` 1 s | `/edge/tcpwait`: `Tcp.connect_with!` to `imap.gmail.com:993` (`tls: On`), the greeting, then a second `read!` that waited 270 s until the server closed (`Closed`). The client got the 200 answer at 270.9 s: the edge did not end the request with no response | Yes | `manual.txt` |
 
 Differences and proposals (no platform code changed; the owners decide):
 
@@ -2777,11 +2778,12 @@ Differences and proposals (no platform code changed; the owners decide):
 | EP1 | E17, E18: on the edge a DNS failure and a blocked address are HTTP responses (530 `error code: 1016`, 403 `error code: 1003`), not a throw, so `Http.send!` gives `Ok(response)` and not `Network` | Keep the module (it maps throws only). Write the fact in MODULES.md 1 ("Named error tags", `Http` row, done) so an app checks the status. The conformance checks of 8d stay local: on the edge they expect `Network` and fail. Optional later: `Http.cf_error(response) : Try(U16, [NotCfError])` that reads `error code: <n>` of a 403, 530 or 52x body |
 | EP2 | E8: over 128 MB the edge did not fail the requests in flight; it changed the isolate after them | Change the row "Cloudflare limits the isolate to 128 MB" of section 4 "Facts" to the edge result (2 tries, so "did not fail in 2 tries"). Keep the M3 budget: it keeps wasm under the limit and makes a clean OOM. Add to the budget docs that the allocator cap (`MAX_UNITS`, 128 MiB) refuses a grow before `js_grow`, so `budget.asked` does not count it |
 | EP3 | E11: the edge cancels the response stream when the client goes away | API.md 10.2 already has the row; it now has the edge note (done). O1 and O2 of 8b are answered: production cancels the stream, so a `Body.writer!` task ends also with no `enable_request_signal` |
-| EP4 | E13: AQ12 | See E13. Write it in MODULES.md 3 (done) and settle AQ12 in API.md (done). Keep `no_retry!` (cheap, and a later production change can retry) |
+| EP4 | E13: production does not retry a failed cron run, so `no_retry!` has no effect today | AQ12 is settled in API.md and MODULES.md 3 has the rule (done). Keep `no_retry!` (one `call!`; workerd keeps the flag, so a later production change can use it). A handler need not be safe for two runs of one `time_ms` for this reason |
 | EP5 | E28: the `R2.Meta` of `complete!` has no `http` and `custom` on the edge | MODULES.md 5.3 has the fact (done): an app reads them with `head!`. No code change |
 | EP6 | E47: a `StartTls` socket waits forever after its first read | A research probe (`research/`) with raw `cloudflare:sockets` (`connect(..., { secureTransport: "starttls" })`, a read, a write, a read) on the edge, to find if the shim (`tcpRead`, `tcpWrite` of `js/helpers.js`) or the runtime causes it. Until then MODULES.md 12.3 says that `StartTls` is not checked on the edge (done) |
 | EP7 | E23, E39, E42, E43: texts and forms that differ (rate limiter, queue batch limit, workflow id, assets content type) | Facts in `bench/README.md` and MODULES.md (done). The conformance checks of these rows compare a local form: when the checks run on the edge again, they need an edge form (a media type compare, an id that is a UUID or `cf_` and 64 hex) |
 | EP8 | E5: the Free plan has no `cpu_ms`; a heavy request can get the signal | The 8g edge numbers are from small requests (25 ms) and are noisy. A run on a paid plan with `cpu_ms = 30000` (the old `bench/8g/deploy-edge.sh`) gives better numbers |
+| EP10 | The R2 checks (`conformance/checks/r2.mjs`: `mp_create` and `mp_part_with` of the check "upload_part_with! length_bytes") leave incomplete multipart uploads. On a real bucket they keep the bucket from a delete, and the upload ids are not kept anywhere | The check calls `abort!` on each upload it does not complete (or the route gives the upload id in its answer and the check aborts it), so an edge run can delete its bucket at once |
 | EP9 | E21: a Worker that fetches another Worker of the same account on workers.dev needs `global_fetch_strictly_public` (or a service binding) | Put it in the README of the example app of 11c |
 
 Not run (with the reason):
@@ -2791,7 +2793,7 @@ Not run (with the reason):
 | The jurisdiction revert | A new build with the revert: no time in the cap |
 | The region of an object with `location_hint` | No route reads `request.cf.colo` in the object |
 | Alarm backoff times | The check only counts runs |
-| The socket limits, `binaryType`, `web_socket_error!`, a socket wait of minutes before `respond!` | No time in the cap (each needs a new route) |
+| The socket limits, `binaryType`, `web_socket_error!` | No time in the cap (each needs a new route) |
 | `Hyperdrive.connect!`, `Hyperdrive.config!` | No Postgres server |
 | Email (all rows), the `tail` and `email` consumer rows | Email Routing needs a zone (no custom domain in this run) |
 | Tail Worker (2 MiB of logs, fields) | Needs a second Worker as a tail consumer: no time |

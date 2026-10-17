@@ -68,3 +68,12 @@ delay_ms=90000000 -> Err QueueErr({ message: "Invalid message delay: Expected a 
 ## 12:36 delete_all! with the compatibility date 2025-06-01 (edge/deploy-old.sh, Worker rocplat-test-old)
 /objects/counter/delete_all?name=old -> del=Ok({}) table=False cell=Err(NotFound) alarm=Err(NotFound)
 /objects/counter/delete_all?name=old2&twin=1 -> del=Ok({}) table=False cell=Err(NotFound) alarm=Err(NotFound)
+
+## 12:34 to 12:39 a socket wait before respond! (/edge/tcpwait?host=imap.gmail.com)
+greeting=* OK Gimap ready for requests from <the address of the Worker> ... second=Closed waited_ms=270076 [200 270.87 s]
+
+## 12:55 to 12:58 wrangler tail of 4 cron runs (event, outcome, cpu ms, wall ms, logs)
+{"event":{"cron":"*/5 * * * *","scheduledTime":1792241739472},"outcome":"ok","cpu":11,"wall":182,"logs":[]}
+{"event":{"cron":"1-59/2 * * * *","scheduledTime":1792241750792},"outcome":"exception","cpu":14,"wall":184,"logs":["scheduled: failed: CronFailed(\"1-59/2 * * * *\")"]}
+{"event":{"cron":"*/2 * * * *","scheduledTime":1792241799437},"outcome":"exception","cpu":16,"wall":272,"logs":["scheduled: failed: CronFailed(\"*/2 * * * *\")"]}
+{"event":{"cron":"1-59/2 * * * *","scheduledTime":1792241870792},"outcome":"exception","cpu":10,"wall":356,"logs":["scheduled: failed: CronFailed(\"1-59/2 * * * *\")"]}
