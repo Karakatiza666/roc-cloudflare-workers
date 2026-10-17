@@ -1,0 +1,295 @@
+PASS ai run!: typed input and output, one wait
+PASS ai run (Io twin)
+PASS ai run_with!, run_with (Io twin): the gateway with all its fields, cache_ttl_ms in whole seconds, rounded up
+PASS ai run_with!: a gateway with only its id sends only the id
+PASS ai run_with!: max_bytes only sends no options to the binding
+PASS ai run!: an output above 1 MiB is TooLarge, run_with! with max_bytes of 2 MiB gives it
+PASS ai run!: a throw of the binding is AiErr
+PASS ai run!: an output that does not fit its type is BadData
+PASS ai stream!, stream (Io twin): the stream of the model, with stream: true in the input
+PASS ai stream!: a throw is AiErr
+FAIL analytics write!: the local binding, and a binding that is not in the config: got 200 "AnalyticsErr TypeError", want 200 "Ok"
+PASS analytics write!: blobs, doubles and indexes reach the binding
+FAIL assets fetch!: a file, one wait (the body of the answer is read in a second one): got 200 "status=200 type=text/plain body=hello-asset\n", want 200 "status=200 type=text/plain; charset=utf-8 body=hello-asset\n"
+FAIL assets fetch (Io twin): got 200 "status=200 type=text/plain body=hello-asset\n", want 200 "status=200 type=text/plain; charset=utf-8 body=hello-asset\n"
+PASS assets fetch!: a file that does not exist is an answer, not an error
+FAIL assets fetch!: the url of the request: got 200 "status=200 type=text/html body=<h1>index</h1>\n", want 200 "status=200 type=text/html; charset=utf-8 body=<h1>index</h1>\n"
+PASS assets fetch!: the method of the request (a POST is 405)
+PASS assets fetch!: the headers of the request (If-None-Match is 304)
+FAIL assets fetch!: pass the response as it is (a stream), also the Io twin: pass content-type: got "text/plain", want "text/plain; charset=utf-8"
+PASS assets fetch!: a binding that is not in the config, and a url with no host, are AssetsErr
+PASS cache get! of a missing key is NotFound
+PASS cache put! and get!
+PASS cache put (Io twin) and get (Io twin)
+PASS cache put! of a 206 response is CacheErr
+PASS cache put! of a Stream body
+PASS cache delete!
+PASS cache delete! of a key that is not cached is NotFound
+PASS cache delete (Io twin)
+PASS cache named is a cache of its own
+PASS cbor bytes: a Cbor.Bytes field is a byte string and reads back
+PASS cbor generic: a function with Cbor.Encodable and Cbor.Parseable in its where clause
+PASS cbor custom: a parser_for of the app with Cbor.Format and Cbor.State
+PASS cbor options: parse_camel and parse_with read userId, parse does not
+PASS cbor path: path_at finds the field of an InvalidCbor position
+FAIL request cf: colo Ok, a field that is not set Err(Missing): got 200 "colo=Ok(\"TBS\") metro_code=Err(Missing) asn=Ok(35805) is_eu_country=False", want 200 "colo=Ok(\"DFW\") metro_code=Err(Missing) asn=Ok(395747) is_eu_country=False"
+PASS d1 setup (the tables, with the binding of Miniflare)
+PASS d1 all!
+PASS d1 all (Io twin), all_with! and twin
+PASS d1 first!: a row, and NotFound for no row
+PASS d1 run!, run (Io twin): the info of an insert; last_row_id Ok(5)
+PASS d1 run!: last_row_id of a 64-bit rowid is Err(Rounded)
+PASS d1 rows!, rows (Io twin), rows_with!: columns and Sql values
+PASS d1 exec!, exec (Io twin)
+PASS d1 an Int parameter outside ±(2^53 - 1) stores the exact value: pos, neg and 2^63 - 1 read back exact, and SQLite has an integer
+PASS d1 all! of CAST(id AS TEXT) into { id : I64 } gives the exact ids
+PASS d1 all! with no cast: BadData with the column, for a positive and a negative id
+PASS d1 D1.Result.first of a batch! with no cast: BadData with the column
+PASS d1 the text '01' and '9223372036854775808' into an I64 field give BadData
+PASS d1 a missing column gives BadData("column id: missing")
+PASS d1 an I64 column of 2^53 - 1 and an F64 column of 2^60 (no cast) read as numbers
+PASS d1 batch! of 2 inserts and a select: 3 results, first() of the third reads the count; one crossing: 1 js_await, 0 js_call
+PASS d1 batch (Io twin), batch_with! and twin
+PASS d1 all! of rows above 1 MiB is TooLarge, all_with! with max_bytes of 2 MiB gives the rows
+PASS d1 with_session!: bookmark! before and after a query, and After(bookmark): bookmark 00000000-0000005c-00005107-4bd62ed7b8424d74c4b6c3b8eddb33f9
+PASS d1 8d: a primary key gives Constraint PrimaryKey: Error: D1_ERROR: UNIQUE constraint failed: t.id: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)
+PASS d1 8d: a UNIQUE column gives Constraint Unique: Error: D1_ERROR: UNIQUE constraint failed: t.u: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_UNIQUE)
+PASS d1 8d: NOT NULL gives Constraint NotNull: Error: D1_ERROR: NOT NULL constraint failed: t.n: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_NOTNULL)
+PASS d1 8d: CHECK gives Constraint Check: Error: D1_ERROR: CHECK constraint failed: c >= 0: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_CHECK)
+PASS d1 8d: a foreign key gives Constraint ForeignKey: Error: D1_ERROR: FOREIGN KEY constraint failed: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_FOREIGNKEY)
+PASS d1 8d: a STRICT column gives Constraint Datatype: Error: D1_ERROR: cannot store TEXT value in INTEGER column s.v: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_DATATYPE)
+PASS d1 8d: a trigger RAISE(ABORT, 'UNIQUE constraint failed: x') gives Constraint Trigger: Error: D1_ERROR: UNIQUE constraint failed: x: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)
+PASS d1 8d: a trigger RAISE(ABORT, 'label-conflict') in a batch! gives Trigger, and the batch writes nothing: TypeError: Cannot read properties of null (reading 'statement')
+PASS d1 8d: exec! of a primary key failure gives PrimaryKey, with the line and the SQL in the message
+PASS d1 a syntax error is D1Err
+FAIL email forward!: the mail goes to the address: outcome: got undefined, want "ok"
+FAIL email forward_with!: an X-Test header: outcome: got undefined, want "ok"
+FAIL email header: the case does not matter, a missing header is Missing: outcome: got undefined, want "ok"
+FAIL email set_reject!: the mail is rejected with the reason: reason: got undefined, want "no thanks"
+FAIL email reply!: a reply to the sender: outcome {"status":404,"text":"<!DOCTYPE html>\n<!--[if lt IE 7]> <html class=\"no-js ie6 oldie\" lang=\"en-US\"> <![endif]-->\n<!--[if IE 7]>    <html class=\"no-js ie7 oldie\" lang=\"en-US\"> <![endif]-->\n<!--[if IE 8]>    <html class=\"no-js ie8 oldie\" lang=\"en-US\"> <![endif]-->\n<!--[if gt IE 8]><!--: got undefined, want "ok"
+FAIL email an Err of email! rejects the mail (a throw): outcome: got undefined, want "exception"
+FAIL email raw, raw_size_bytes, can_be_forwarded, from: outcome: got undefined, want "ok"
+FAIL email send!, send (Io twin) and send_raw!, send_raw (Io twin) give a message id: got 200 "Err EmailErr({ message: \"Cannot read properties of undefined (reading 'send')\", name: \"TypeError\" })", want 200 "Ok id"
+PASS env var!
+PASS env json!
+PASS env secret!
+PASS secret from_str, to_inspect, reveal
+PASS http send!
+PASS http send (Io twin)
+PASS http send! of a status 404 is Ok
+PASS http send! of a 204 (no body)
+PASS http send! with a body and a header
+PASS http send_with! max_bytes
+PASS http send_with (Io twin)
+PASS http send_with! timeout_ms: Network TimeoutError: The operation was aborted due to timeout
+PASS http open!
+PASS http open (Io twin)
+PASS http get!
+PASS http get (Io twin)
+PASS http get in Io.both! with Time.sleep
+FAIL http 8d: a closed port is Network: got 403 error code: 1003
+, want Network
+FAIL http 8d: a host that does not exist is Network: got 530 error code: 1016
+, want Network
+PASS http 8d: "not a url" is HttpErr with TypeError: HttpErr TypeError: Invalid URL: not a url
+FAIL hyperdrive config!: the six fields, the two secrets hidden, one call!: got 500 trap RuntimeError: unreachable
+PASS kv setup (a big value and keys, with the binding of Miniflare)
+PASS kv get!, get (Io twin), put!, delete!, and the twins: text
+PASS kv json: a record with a U64 of 2^60 is exact, and JS reads it as JSON
+PASS kv bytes: put! and get! keep each byte
+PASS kv get! of 2 MiB is TooLarge, get_with! with max_bytes gives it
+PASS kv get! of 2 MiB takes no wasm memory: 0 bytes
+PASS kv get_with! cache_ttl_ms: 30 s is Ok, less is KvErr: Err KvErr({ message: "KV GET failed: 400 Invalid cache_ttl of 5. Cache TTL must be at least 30.", name: "Error" })
+PASS kv put_with! metadata, and get_with_metadata!
+PASS kv put_with! ttl_ms rounds up to whole seconds, and expires_ms: expiration 1792237872; ttl of 10 s: Err KvErr({ message: "KV PUT failed: 400 Invalid expiration_ttl of 10. Expiration TTL must be at least 60.", name: "Erro
+PASS kv list!: names, expires_ms and typed metadata: Ok ["p/a:Never:none", "p/b:Never:Ok({ n: 2, tag: \"bee\" })"] More("AAAAACk0R_35HE0Qv_hizfpDEmmEefZk9U7wKd9zNRYHgCqUpKsd
+PASS kv Cell: set!, get!, delete! and the twins
+PASS kv Cell set_with!: ttl_ms
+FAIL log info!: no log line with info-luk3m1h28j8
+PASS log warn!: warn {"level":"warn","msg":"conformance warn-s3ikp50ipwp","n":8,"route":"warn"}
+PASS log error!: error {"level":"error","msg":"conformance error-yovbnv9bhno","n":9,"route":"error"}
+PASS memo get!: a second request gets the value with no load!: same id 919f9d46-0e5a-4f2e-882f-c9a44d148ed8, the second request: 1 call!, 0 waits
+PASS memo clear!: the next get! loads again
+PASS memo max_age_ms: a get! after the age loads again
+PASS objects ticker: set_alarm! for the retry check
+PASS objects sql setup (sql_run! of the tables)
+PASS objects sql_run! of an insert of 2 rows into a table with no index gives rows_written 2
+PASS objects SQL: a primary key gives Constraint PrimaryKey
+PASS objects SQL: an insert that breaks a UNIQUE index gives Constraint Unique
+PASS objects SQL: NOT NULL gives Constraint NotNull
+PASS objects SQL: CHECK gives Constraint Check
+PASS objects SQL: a foreign key gives Constraint ForeignKey
+PASS objects SQL: a STRICT column gives Constraint Datatype
+PASS objects SQL: a trigger RAISE(ABORT, 'label-conflict') gives Constraint Trigger
+PASS objects SQL: a syntax error is SqlErr
+PASS objects sql!: rows of the type of the call
+PASS objects sql!: the integer rules of D1 (an Int parameter as text, CAST(v AS TEXT) into an I64, BadData with no cast)
+PASS objects sql_rows!, sql_rows_with!: columns and Sql values
+PASS objects sql! of 2 MiB of rows is TooLarge, sql_with! with max_bytes of 4 MiB gives the rows
+PASS objects cells a1, a2, b1: list_with! with prefix "a" gives ["a1", "a2"]
+PASS objects Object.Cell get!, set!, delete!
+PASS objects get_alarm! after set_alarm!(t) gives t (and the Io twins)
+PASS objects delete_all!: the table, the cell and the alarm are gone (and the twin)
+FAIL objects delete_all! with a compatibility date before 2026-02-24: MF-ONLY: t.start (a second Miniflare)
+PASS objects id! of a named stub equals self.id in the object
+FAIL objects jurisdiction(Eu): id! gives ObjectErr in Miniflare: got 200 "Ok(\"5d29e523c196555b0d870a7925f27dc4e0b52bed5f735cc1e73b11da43a6957b\")", want 200 "Err(ObjectErr({ message: \"Jurisdiction restrictions are not implemented in workerd.\", name: \"Error\" }))"
+PASS objects named_with and from_id_with with location_hint, unique!
+PASS objects fetch (Io twin)
+PASS objects init! in blockConcurrencyWhile: two fetch! at the same time to a new object both read its table
+PASS objects a class with no alarm!: set_alarm! gives StorageErr
+PASS objects the manifest: alarm only on a class with alarm!, the RPC methods on the prototype: Counter: alarm boom constructor echo fetch hello increment ping; Store: constructor fetch
+FAIL objects init! that gives Err: ObjectErr, and the next fetch! runs init! again: second: Err ObjectErr({ message: "Flaky.init: failed: InitFailed", name: "Error" })
+PASS objects init! past the Init deadline is cancelled: ObjectErr with the name of the task: 1769 ms
+FAIL objects a KV-backed class: its first event names the class and new_sqlite_classes: got 200 "Err ObjectErr({ message: \"Cannot read properties of undefined (reading 'getByName')\", name: \"TypeError\" })", want a text with "Durable Object class KvOnly"
+FAIL objects respond! in the Fetch of an object: the response first, the cell after: got 200 "early fast=False", want 200 "early fast=True"
+PASS objects pass_through! in the Fetch of an object is InvalidState
+PASS objects rpc: call! and its twin with an Rpc constant on a stub
+PASS objects rpc: a callee that gives Err(Nope(3)): RpcErr with the message Nope(3)
+PASS objects rpc: an unknown method throws (RpcErr)
+PASS objects rpc: a U64 of 2^60 in an argument and a reply comes back exact
+FAIL objects load: a class in Roc with no export stops the load with its name: no export line to remove
+FAIL objects load: an export with no class in Roc stops the load with its name: no line to add to
+PASS objects alarm!: Err while retry_count < 2 runs 3 times, with retry_count and is_retry: 0 false, 1 true, 2 true
+PASS pin pin!, pinned!, unpin!: one call! each, no wait
+PASS pin pinned! of a name with no entry is NotPinned
+PASS pin max_age_ms: pinned! after the age is NotPinned
+PASS pin pin! to a full table is PinErr: pinned=998 PinErr RangeError: pin: the pin table is full (1000 entries, shim option pinLimit)
+FAIL queue send!, and each! reads the same type: got 200 "Err QueueErr({ message: \"Cannot read properties of undefined (reading 'send')\", name: \"TypeError\" })", want 200 "Ok"
+FAIL queue send (Io twin), send_with! and twin: got 200 "Err QueueErr({ message: \"Cannot read properties of undefined (reading 'send')\", name: \"TypeError\" })", want 200 "Ok"
+FAIL queue text and bytes: got 200 "Err QueueErr({ message: \"Cannot read properties of undefined (reading 'send')\", name: \"TypeError\" })", want 200 "Ok"
+FAIL queue each!: a body that is not an a is retried, not acked: MF-ONLY: getWorker (the queue handler of Miniflare)
+FAIL queue Message.ack! of the second message acks only it: MF-ONLY: getWorker (the queue handler of Miniflare)
+FAIL queue Message.retry_with! and the batch functions: delaySeconds rounds up: MF-ONLY: getWorker (the queue handler of Miniflare)
+FAIL queue queue!: an Err is a throw, so Workers retries the batch: MF-ONLY: getWorker (the queue handler of Miniflare)
+FAIL queue each!: msg.attempts is 1, then 2 after an Err: got 200 "Err QueueErr({ message: \"Cannot read properties of undefined (reading 'send')\", name: \"TypeError\" })", want 200 "Ok"
+FAIL queue send_batch! and send_batch_with! with delay_ms: got 200 "Err QueueErr({ message: \"Cannot read properties of undefined (reading 'sendBatch')\", name: \"TypeError\" })", want 200 "Ok"
+PASS queue send_batch! of 101 messages is QueueErr: Err QueueErr({ message: "Cannot read properties of undefined (reading 'sendBatch')", name: "TypeError" })
+FAIL queue v8: a Cbor.Bytes field reaches a JS consumer as Uint8Array: got 200 "Err QueueErr({ message: \"Cannot read properties of undefined (reading 'send')\", name: \"TypeError\" })", want 200 "Ok"
+PASS r2 put!
+PASS r2 put (Io twin)
+PASS r2 get!
+PASS r2 get (Io twin)
+PASS r2 get! of a missing key is NotFound
+PASS r2 head! of a missing key is NotFound
+PASS r2 head!
+PASS r2 head (Io twin)
+PASS r2 put_with! only_if: a wrong etag_matches is PreconditionFailed
+PASS r2 put_with (Io twin) only_if
+PASS r2 put_with! absent: a key that exists is PreconditionFailed
+PASS r2 put_with! only_if with two fields: etag and before in the past: Ok (Miniflare)
+PASS r2 get_with! only_if: a wrong etag_matches is PreconditionFailed
+PASS r2 get_with! range From
+PASS r2 get_with! range Suffix
+PASS r2 put_with! of a Body.writer! stream is R2Err with "known length"
+PASS r2 put_with! of a stream with length_bytes stores the bytes
+PASS r2 put_with! http: head! has it, list! has none, list! with include has it
+PASS r2 put_with! custom, list! include Custom
+PASS r2 list! start_after
+PASS r2 list! limit, cursor, delimiter
+PASS r2 put_with! checksum: a wrong Sha256 is R2Err, the right one is in meta.checksums
+PASS r2 put! with no checksum has an MD5
+PASS r2 delete!
+PASS r2 multipart: create, upload_part, complete in three requests: 5243904 bytes
+PASS r2 multipart (Io twins): create, upload_part, complete
+PASS r2 multipart: resume_multipart_upload needs no crossing and abort! stops the upload
+FAIL r2 multipart: upload_part_with! length_bytes, create_multipart_upload_with!: got Ok key=mp6 size=9 etag=82e34654a8c13cc90c3e82739db112a0-1 cc=none type=none custom= md5=none sha256=none
+FAIL r2 10a: a 50 MB object through get! to the response, wasm memory grows by less than 1 MB: Unexpected token '<', "<!DOCTYPE "... is not valid JSON
+FAIL ratelimit limit!: got 200 "Ok", want 200 "RateLimited"
+FAIL ratelimit limit (Io twin): got 200 "Ok", want 200 "RateLimited"
+PASS ratelimit: no binding is LimitErr
+PASS rpc a service binding RPC call to an rpc method of the default export gives the reply
+PASS rpc one Rpc constant calls an object method and a service method
+PASS rpc an unknown method of a service throws (RpcErr)
+PASS rpc Service.fetch! on a binding with entrypoint Admin reaches the fetch! of Admin
+PASS rpc a method of the named entry point Admin
+PASS rpc typed bytes (MC5): a Cbor.Bytes field reaches a JS callee as a Uint8Array, a List(U8) field as an Array
+PASS rpc a JS call with no argument of a method whose argument type is {} (FO6)
+PASS rpc the RPC limit: a reply above 32 MiB is RpcErr, a small one passes: Err RpcErr({ message: "Serialized RPC arguments or return values are limited to 32MiB, but the size of this value was: 33554440 bytes.", name: "Error" })
+FAIL secretsstore get!: a Secret that shows only by reveal, one wait: MF-ONLY: getSecretsStoreSecretAPI
+FAIL secretsstore get (Io twin): MF-ONLY: getSecretsStoreSecretAPI
+FAIL secretsstore get!: a secret that does not exist is SecretsStoreErr: MF-ONLY: getSecretsStoreSecretAPI
+PASS shim: ops with an object value
+FAIL tail worker: setup (two workers in one Miniflare): MF-ONLY: t.startMiniflare (a second Miniflare)
+FAIL tail the trace of a fetch that logs and throws: Cannot read properties of undefined (reading 'mf')
+FAIL tail the trace of a scheduled run: no event, and the cron log: Cannot read properties of undefined (reading 'mf')
+FAIL tail a log message that JSON cannot write (a BigInt, a cycle) is its text: Cannot read properties of undefined (reading 'mf')
+FAIL tail a trace with 2 MiB of logs: the handler gets fewer logs, one warning: Cannot read properties of undefined (reading 'mf')
+FAIL tail teardown: Cannot read properties of undefined (reading 'mf')
+FAIL tcp connect!, write!, read!, close!: got 200 "Err SocketErr({ message: \"proxy request failed, cannot connect to the specified address\", name: \"Error\" })", want 200 "write=Ok({}) read=Ok(\"hello\")"
+FAIL tcp connect (Io twin), write (Io twin), read (Io twin), connect_with! tls Off: got 200 "Err SocketErr({ message: \"proxy request failed, cannot connect to the specified address\", name: \"Error\" })", want 200 "write=Ok({}) read=Ok(\"twin\") with=Ok([0, 1, 255])"
+PASS tcp connect! to a port with no server is SocketErr: Err(SocketErr({ message: "proxy request failed, cannot connect to the specified address", name: "Error" }))
+FAIL tcp read! after the end of the peer is Closed, write! after close! is Closed: got 200 "Err SocketErr({ message: \"proxy request failed, cannot connect to the specified address\", name: \"Error\" })", want 200 "read=Err(Closed) write_after_close=Err(Closed)"
+FAIL tcp Io.race! of read and Time.sleep(50), the bytes at 100 ms: the sleep wins, the next read gets them: got 200 "Err SocketErr({ message: \"proxy request failed, cannot connect to the specified address\", name: \"Error\" })", want 200 "first=1 Ok(TimedOut) next=Ok(Got(\"late\"))"
+FAIL tcp OP8 in the same turn: a read that loses to a branch with no wait gives its bytes back, the next read gets them: got 200 "Err SocketErr({ message: \"proxy request failed, cannot connect to the specified address\", name: \"Error\" })", want 200 "first=1 second=0 next=Ok(Got(\"late\"))"
+FAIL hyperdrive connect!, connect (Io twin): a Tcp socket to the origin of the binding: got 200 "Err SocketErr({ message: \"Cannot read properties of undefined (reading 'connect')\", name: \"TypeError\" }) twin: Err SocketErr({ message: \"Cannot read properties of undefined (reading 'connect')\", name: \"TypeError\" })", want 200 "write=Ok({}) read=Ok(Got(\"hd\")) twin: write=Ok({}) read=Ok(Got(\"hd\"))"
+PASS time now_ms!: 1792237865789
+PASS time sleep!: 1 wait, 100 ms
+PASS time sleep (Io twin): 1 wait, 100 ms
+PASS time sleep in Io.race!: 1 wait, 50 ms
+PASS vectorize upsert!, upsert (Io twin): the vectors, with metadata and namespace only where the app gives them
+PASS vectorize insert!, insert (Io twin): the same vectors; an id that exists keeps its vector
+PASS vectorize query!, query (Io twin): the matches with ids and scores, no values and no metadata by default
+PASS vectorize query_with!, query_with (Io twin): all options, the typed metadata and the values come back
+PASS vectorize query_with!: an option that the app leaves out is not sent
+PASS vectorize query_with!: return_metadata Indexed and None
+PASS vectorize get!, get (Io twin): the vectors that exist, with typed metadata
+PASS vectorize delete!, delete (Io twin): the ids go to the binding, the vectors are gone
+PASS vectorize query_with!: metadata that does not fit the type of the index is BadData with the id
+PASS vectorize query_with!, get!: a result above 1 MiB is TooLarge, query_with! with max_bytes of 2 MB gives it
+PASS vectorize query!: a binding that is not in the config is VectorizeErr
+PASS version metadata!: the local binding: id e039406e-57c0-4d61-b2ef-f445fe04731e, 94786 ms old, 1 call!
+PASS version metadata!: id, tag and timestamp of a known object
+PASS webcrypto derive_bits! Ecdh(P256), both sides
+PASS webcrypto derive_bits! Ecdh(P384) and Ecdh(P521)
+PASS webcrypto derive_bits! X25519, both sides
+PASS webcrypto generate_key! Ed25519, sign! and verify!
+PASS webcrypto RsaOaep encrypt! and decrypt!
+PASS webcrypto AesGcm, AesCbc, AesCtr encrypt! and decrypt!
+PASS webcrypto export_key! of import_key! of Raw(b)
+PASS webcrypto generate_key! of Pbkdf2 is CryptoErr: CryptoErr NotSupportedError: Unrecognized key generation algorithm "PBKDF2" requested.
+PASS webcrypto Io twins
+PASS webcrypto timing_safe_equal!, random!, random_uuid! (call!, no wait): 0 waits, 0 js_await, 7 js_call, uuid c4ad7109-827b-4f0f-8af6-acbde896c219
+PASS webcrypto verify! RS256 of a JWT with a JWK (one crossing): verify! with a JWK: 1 crossing; import_key! then verify!: 2
+PASS webcrypto verify! with a JWK: a wrong signature, a wrong text
+PASS webcrypto sign! RS256 with a PKCS#8 key: 256 bytes, Node verifies
+PASS webcrypto import_key! of a private and a public JWK
+PASS webcrypto sign! and verify! HMAC-SHA256, hmac_sha256
+PASS webcrypto hmac_sha256 with a key of 100 bytes
+PASS webcrypto a pinned CryptoKey used by a later request
+PASS websocket a request with no Upgrade gets 426 from the Worker and NotUpgrade from accept!
+PASS websocket the Worker gives the upgrade to the object with fetch!, and the client gets the 101 of the object
+PASS websocket two clients in one room: a message of one reaches the other and not the sender
+PASS websocket web_socket_close!: the code and the reason of the close of the client: {"level":"info","msg":"room close","clean":true,"code":4001,"reason":"b leaves"}
+FAIL websocket hibernation: the object leaves memory, and the next message reads the attachment of its socket: MF-ONLY: unsafeEvictDurableObject
+PASS websocket an auto response answers ping with no event
+PASS websocket accept_with! of 11 tags is TooLarge
+FAIL websocket a Worker: accept!, respond!, receive! until the close: receive! after the close: undefined
+FAIL websocket connect! to a WebSocket echo server sends and receives one message: Cannot find module '/ws'
+Require stack:
+- /home/george/dev/Karakatiza666/talon/cloudflare-workers/.claude/worktrees/e-edge/conformance/checks/websocket.mjs
+FAIL websocket connect (Io twin), receive (Io twin): Cannot find module '/ws'
+Require stack:
+- /home/george/dev/Karakatiza666/talon/cloudflare-workers/.claude/worktrees/e-edge/conformance/checks/websocket.mjs
+FAIL websocket connect_with!: protocols and headers, send_json!, Message.json, a bytes frame: Cannot find module '/ws'
+Require stack:
+- /home/george/dev/Karakatiza666/talon/cloudflare-workers/.claude/worktrees/e-edge/conformance/checks/websocket.mjs
+PASS websocket connect! to a server that answers 200 gives NotUpgrade (OP7)
+FAIL websocket Io.race! of receive and Time.sleep(50), the message at 100 ms: the sleep wins, the next receive! gets it: Cannot find module '/ws'
+Require stack:
+- /home/george/dev/Karakatiza666/talon/cloudflare-workers/.claude/worktrees/e-edge/conformance/checks/websocket.mjs
+FAIL websocket OP8 in the same turn: a receive that loses to a branch with no wait gives its message back, the next receive gets it: Cannot find module '/ws'
+Require stack:
+- /home/george/dev/Karakatiza666/talon/cloudflare-workers/.claude/worktrees/e-edge/conformance/checks/websocket.mjs
+FAIL websocket a 101 response keeps the task: the socket answers after afterRespondMs, and a wait on a socket has no deadline: no makeHandler options to change
+FAIL workflows create!, create (Io twin): an instance with a new id, and its output has the parameters: create: got 200 WorkflowsErr TypeError: Cannot read properties of undefined (reading 'create')
+FAIL workflows create_with!, create_with (Io twin): the id of the app; the same id is AlreadyExists: got 200 "WorkflowsErr TypeError: Cannot read properties of undefined (reading 'create')", want 200 "Ok id=my-1"
+FAIL workflows get!, get (Io twin): the instance of an id, or NotFound: got 200 "WorkflowsErr TypeError: Cannot read properties of undefined (reading 'get')", want 200 "Ok id=my-1"
+FAIL workflows status!, status (Io twin): the state, no error, the output as JSON text and typed: got 200 "get: WorkflowsErr({ message: \"Cannot read properties of undefined (reading 'get')\", name: \"TypeError\" })", want 200 "state=Complete error=Err(NotSet) json=Ok(\"{\\\"payload\\\":{\\\"n\\\":4,\\\"name\\\":\\\"y\\\"},\\\"id\\\":\\\"my-1\\\"}\") done payload=y/4 id=my-1"
+FAIL workflows pause!, resume!, send_event!: a waiting instance, then its output has the event: got 200 "WorkflowsErr TypeError: Cannot read properties of undefined (reading 'create')", want 200 "Ok id=w1"
+FAIL workflows pause (Io twin), resume (Io twin), send_event (Io twin): got 200 "WorkflowsErr TypeError: Cannot read properties of undefined (reading 'create')", want 200 "Ok id=w2"
+FAIL workflows terminate!, terminate (Io twin): a waiting instance ends; a finished one is WorkflowsErr: got 200 "WorkflowsErr TypeError: Cannot read properties of undefined (reading 'create')", want 200 "Ok id=w3"
+PASS workflows create!: the parameters (JSON) and the id reach the binding; with no id, no id is sent
+PASS workflows send_event!: the type and the payload (JSON) reach the binding
+PASS workflows: an instance that is gone is NotFound for each function
+PASS workflows: the stub gets the call that the function names
+213 passed, 69 failed

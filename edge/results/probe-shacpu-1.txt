@@ -1,0 +1,27 @@
+{"part":"shacpu","tag":"shacpu-mvccyiky","start":"2026-10-17T12:13:42.418Z"}
+{"sha":"wasm","n":4,"path":"/sha/wasm?size=1048576&n=4&tag=shacpu-mvccyiky-0","status":200,"ms":395,"body":"sha 4 1048576 96ef2169495ded6d278f91988b88db468088bc6eba15fe904ff1619f8327593b","ray":"a4bf38066ad01f4f-TBS"}
+{"sha":"wasm","n":4,"path":"/sha/wasm?size=1048576&n=4&tag=shacpu-mvccyiky-1","status":200,"ms":34,"body":"sha 4 1048576 96ef2169495ded6d278f91988b88db468088bc6eba15fe904ff1619f8327593b","ray":"a4bf3806ab321f4f-TBS"}
+{"sha":"wasm","n":4,"path":"/sha/wasm?size=1048576&n=4&tag=shacpu-mvccyiky-2","status":200,"ms":34,"body":"sha 4 1048576 96ef2169495ded6d278f91988b88db468088bc6eba15fe904ff1619f8327593b","ray":"a4bf3806db6f1f4f-TBS"}
+{"sha":"digest","n":4,"path":"/sha/digest?size=1048576&n=4&tag=shacpu-mvccyiky-0","status":200,"ms":21,"body":"sha 4 1048576 96ef2169495ded6d278f91988b88db468088bc6eba15fe904ff1619f8327593b","ray":"a4bf38071bac1f4f-TBS"}
+{"sha":"digest","n":4,"path":"/sha/digest?size=1048576&n=4&tag=shacpu-mvccyiky-1","status":200,"ms":22,"body":"sha 4 1048576 96ef2169495ded6d278f91988b88db468088bc6eba15fe904ff1619f8327593b","ray":"a4bf38073be11f4f-TBS"}
+{"sha":"digest","n":4,"path":"/sha/digest?size=1048576&n=4&tag=shacpu-mvccyiky-2","status":200,"ms":19,"body":"sha 4 1048576 96ef2169495ded6d278f91988b88db468088bc6eba15fe904ff1619f8327593b","ray":"a4bf38075c081f4f-TBS"}
+{"sha":"digest","n":16,"path":"/sha/digest?size=1048576&n=16&tag=shacpu-mvccyiky-0","status":200,"ms":39,"body":"sha 16 1048576 795db1ed6f125ce3a309f781046e09514a8a827e22f2e8e79439ddc0e9d01eeb","ray":"a4bf38077c2a1f4f-TBS"}
+{"sha":"digest","n":16,"path":"/sha/digest?size=1048576&n=16&tag=shacpu-mvccyiky-1","status":200,"ms":45,"body":"sha 16 1048576 795db1ed6f125ce3a309f781046e09514a8a827e22f2e8e79439ddc0e9d01eeb","ray":"a4bf3807bc661f4f-TBS"}
+{"sha":"digest","n":16,"path":"/sha/digest?size=1048576&n=16&tag=shacpu-mvccyiky-2","status":200,"ms":37,"body":"sha 16 1048576 795db1ed6f125ce3a309f781046e09514a8a827e22f2e8e79439ddc0e9d01eeb","ray":"a4bf3807fcb31f4f-TBS"}
+{"sha":"wasm","n":0,"path":"/sha/wasm?size=1048576&n=0&tag=shacpu-mvccyiky-0","status":200,"ms":13,"body":"sha 0 1048576 ","ray":"a4bf38083cf91f4f-TBS"}
+{"sha":"wasm","n":0,"path":"/sha/wasm?size=1048576&n=0&tag=shacpu-mvccyiky-1","status":200,"ms":13,"body":"sha 0 1048576 ","ray":"a4bf38084d151f4f-TBS"}
+{"sha":"wasm","n":0,"path":"/sha/wasm?size=1048576&n=0&tag=shacpu-mvccyiky-2","status":200,"ms":12,"body":"sha 0 1048576 ","ray":"a4bf38086d361f4f-TBS"}
+{"sha":"digest","n":0,"path":"/sha/digest?size=1048576&n=0&tag=shacpu-mvccyiky-0","status":200,"ms":12,"body":"sha 0 1048576 ","ray":"a4bf38087d581f4f-TBS"}
+{"sha":"digest","n":0,"path":"/sha/digest?size=1048576&n=0&tag=shacpu-mvccyiky-1","status":200,"ms":14,"body":"sha 0 1048576 ","ray":"a4bf38088d781f4f-TBS"}
+{"sha":"digest","n":0,"path":"/sha/digest?size=1048576&n=0&tag=shacpu-mvccyiky-2","status":200,"ms":11,"body":"sha 0 1048576 ","ray":"a4bf38089d8b1f4f-TBS"}
+{"tail":{"url":"/sha/wasm?size=1048576&n=4&tag=shacpu-mvccyiky-2","outcome":"ok","cpuTime":20,"wallTime":20,"status":200,"logs":[],"exceptions":[]}}
+{"tail":{"url":"/sha/wasm?size=1048576&n=4&tag=shacpu-mvccyiky-1","outcome":"ok","cpuTime":19,"wallTime":19,"status":200,"logs":[],"exceptions":[]}}
+{"tail":{"url":"/sha/wasm?size=1048576&n=4&tag=shacpu-mvccyiky-0","outcome":"ok","cpuTime":21,"wallTime":21,"status":200,"logs":[],"exceptions":[]}}
+{"tail":{"url":"/sha/digest?size=1048576&n=4&tag=shacpu-mvccyiky-0","outcome":"ok","cpuTime":7,"wallTime":7,"status":200,"logs":[],"exceptions":[]}}
+{"tail":{"url":"/sha/digest?size=1048576&n=4&tag=shacpu-mvccyiky-1","outcome":"ok","cpuTime":7,"wallTime":8,"status":200,"logs":[],"exceptions":[]}}
+{"tail":{"url":"/sha/digest?size=1048576&n=4&tag=shacpu-mvccyiky-2","outcome":"ok","cpuTime":7,"wallTime":7,"status":200,"logs":[],"exceptions":[]}}
+{"tail":{"url":"/sha/digest?size=1048576&n=16&tag=shacpu-mvccyiky-0","outcome":"ok","cpuTime":25,"wallTime":25,"status":200,"logs":[],"exceptions":[]}}
+{"tail":{"url":"/sha/digest?size=1048576&n=16&tag=shacpu-mvccyiky-1","outcome":"ok","cpuTime":31,"wallTime":31,"status":200,"logs":[],"exceptions":[]}}
+{"tail":{"url":"/sha/digest?size=1048576&n=16&tag=shacpu-mvccyiky-2","outcome":"ok","cpuTime":22,"wallTime":22,"status":200,"logs":[],"exceptions":[]}}
+{"tail":{"url":"/sha/wasm?size=1048576&n=0&tag=shacpu-mvccyiky-0","outcome":"ok","cpuTime":1,"wallTime":1,"status":200,"logs":[],"exceptions":[]}}
+{"tail":{"url":"/sha/wasm?size=1048576&n=0&tag=shacpu-mvccyiky-1","outcome":"ok","cpuTime":0,"wallTime":0,"status":200,"logs":[],"exceptions":[]}}

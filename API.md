@@ -676,8 +676,8 @@ In each state, the task also ends (a cancel, `PLAN.md` 3c: at once for a task th
 
 | Signal | Note |
 | --- | --- |
-| `request.signal` aborts (the client went away) | Needs the compatibility flag `enable_request_signal` (`PLAN.md` 3.0). The docs do not say if it fires when the client goes away after the body is complete. `PLAN.md` 11c checks it on the edge. |
-| Workers cancels the response stream (the client stopped reading) | A stream of `Body.writer!` |
+| `request.signal` aborts (the client went away) | Needs the compatibility flag `enable_request_signal` (`PLAN.md` 3.0). Edge, 2026-10-17 (`PLAN.md` 11c, E9, E12): it fires when the client goes away before the response. It does not fire when the client goes away after the body is complete: the task goes on, and Workers cuts the `waitUntil` work at 30 s (log `waitUntil() tasks did not complete within the allowed time after invocation end and have been cancelled.`), the same time as the shim deadline of the row "After `respond!`". |
+| Workers cancels the response stream (the client stopped reading) | A stream of `Body.writer!`. Edge, 2026-10-17 (`PLAN.md` 11c, E11): when the client goes away from an open stream, Workers cancels it, and the shim cancels the task at once (log `task cancelled (stream)`, outcome `canceled`). Local workerd does not (`PLAN.md` 8b O1). A stream of 40 s (past the 30 s of `waitUntil`) reaches the client whole (E10). |
 
 The close of a socket does not cancel the task (decided 2026-10-17, `PLAN.md` 8f, part 3, SO1):
 

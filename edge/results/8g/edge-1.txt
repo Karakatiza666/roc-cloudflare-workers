@@ -1,0 +1,216 @@
+{"info":{"runtime":"Cloudflare edge","url":"https://rocplat-test-8g.bellup.workers.dev","cpu":"client AMD Ryzen AI 9 HX 370 w/ Radeon 890M","load":[4.16,3.28,2.56],"date":"2026-10-17T11:57:52.862Z","resumeCheck":"see deploy"}}
+{"sanity":"ok"}
+{"group":"cross","name":"call k=0","N":18156,"us":0.987,"min":0.303,"max":1.04}
+{"group":"cross","name":"call k=1","N":6867,"us":3.029,"min":1.954,"max":3.588}
+{"group":"cross","name":"call k=4","N":2219,"us":7.173,"min":5.739,"max":9.004}
+{"group":"cross","name":"call k=16","N":625,"us":24.249,"min":18.387,"max":41.595}
+{"group":"cross","name":"await k=0","N":6935,"us":4.077,"min":3.334,"max":4.977}
+{"group":"cross","name":"await k=1","N":4691,"us":5.812,"min":5.153,"max":7.856}
+{"group":"cross","name":"await k=4","N":2568,"us":9.142,"min":5.267,"max":10.147}
+{"group":"cross","name":"await k=16","N":1005,"us":22.373,"min":-90.138,"max":83.581}
+{"group":"cross","name":"build k=0","N":1647,"us":-0.405,"min":-143.946,"max":1.768}
+{"group":"cross","name":"build k=1","N":2,"us":-650.435,"min":-53325.768,"max":3054.129}
+{"group":"cross","name":"build k=4","N":24522,"us":0.834,"min":0.792,"max":0.928}
+{"group":"cross","name":"build k=16","N":7097,"us":3.093,"min":2.518,"max":3.734}
+{"group":"d1","name":"js_only rows=20 fake","N":2790,"us":9.268,"min":8.656,"max":10.261}
+{"group":"d1","name":"pack_only rows=20 fake","N":466,"us":40.218,"min":35.544,"max":52.507}
+{"group":"d1","name":"all rows=20 fake","N":281,"us":67.101,"min":50.98,"max":79.018}
+{"group":"d1","name":"all_arrays rows=20 fake","N":611,"us":41.546,"min":36.333,"max":63.165}
+{"group":"d1","name":"raw_js_only rows=20 fake","N":2460,"us":9.588,"min":8.522,"max":11.726}
+{"group":"d1","name":"raw_only rows=20 fake","N":498,"us":40.742,"min":33.484,"max":44.325}
+{"group":"d1","name":"obj_tree rows=20 fake","N":503,"us":51.688,"min":40.523,"max":77.464}
+{"group":"d1","name":"tree_typed rows=20 fake","N":577,"us":37.868,"min":31.06,"max":44.105}
+{"group":"d1","name":"rows rows=20 fake","N":498,"us":45.152,"min":39.689,"max":60.98}
+{"group":"d1","name":"js_only rows=200 fake","N":3213,"us":9.307,"min":8.293,"max":11.34}
+{"group":"d1","name":"pack_only rows=200 fake","N":67,"us":275.919,"min":218.974,"max":353.861}
+{"group":"d1","name":"all rows=200 fake","N":43,"us":567.976,"min":368.295,"max":665.491}
+{"group":"d1","name":"all_arrays rows=200 fake","N":106,"us":257.297,"min":228.277,"max":295.876}
+{"group":"d1","name":"raw_js_only rows=200 fake","N":2459,"us":11.54,"min":10.17,"max":13.787}
+{"group":"d1","name":"raw_only rows=200 fake","N":97,"us":313.953,"min":266.681,"max":390.891}
+{"group":"d1","name":"obj_tree rows=200 fake","N":55,"us":463.576,"min":390.052,"max":554.033}
+{"group":"d1","name":"tree_typed rows=200 fake","N":80,"us":308.64,"min":-1077.611,"max":1589.028}
+{"group":"d1","name":"rows rows=200 fake","N":2,"us":239.364,"min":-1839.68,"max":57190.994}
+{"group":"d1real","name":"js_only rows=20","N":2,"us":73581.812,"min":48183.02,"max":135997.833}
+{"group":"d1real","name":"pack_only rows=20","N":2,"us":70673.076,"min":68894.884,"max":78233.538}
+{"group":"d1real","name":"all rows=20","N":2,"us":71070.492,"min":65968.38,"max":76520.32}
+{"group":"d1real","name":"all_arrays rows=20","N":2,"us":72227.677,"min":69213.833,"max":76572.041}
+{"group":"d1real","name":"raw_js_only rows=20","N":2,"us":72402.485,"min":67988.424,"max":76224.309}
+{"group":"d1real","name":"raw_only rows=20","N":2,"us":72688.732,"min":69686.014,"max":80104.008}
+{"group":"d1real","name":"obj_tree rows=20","N":2,"us":95915.079,"min":71286.326,"max":105700.977}
+{"group":"d1real","name":"tree_typed rows=20","N":2,"us":70539.435,"min":66531.997,"max":82132.443}
+{"group":"d1real","name":"rows rows=20","N":2,"us":73609.364,"min":66361.823,"max":76169.622}
+{"group":"d1real","name":"js_only rows=200","N":2,"us":86965.56,"min":81420.909,"max":93645.245}
+{"group":"d1real","name":"pack_only rows=200","N":2,"us":89131.238,"min":81561.181,"max":92658.35}
+{"group":"d1real","name":"all rows=200","N":2,"us":88423.445,"min":84627.543,"max":94520.573}
+{"group":"d1real","name":"all_arrays rows=200","N":2,"us":97772.639,"min":85557.484,"max":101088.289}
+{"group":"d1real","name":"raw_js_only rows=200","N":2,"us":85258.763,"min":78265.509,"max":88478.629}
+{"group":"d1real","name":"raw_only rows=200","N":2,"us":89053.121,"min":82557.33,"max":104833.72}
+{"group":"d1real","name":"obj_tree rows=200","N":2,"us":87266.77,"min":83720.613,"max":93570.516}
+{"group":"d1real","name":"tree_typed rows=200","N":2,"us":91874.059,"min":80608.98,"max":94797.272}
+{"group":"d1real","name":"rows rows=200","N":2,"us":89104.021,"min":41127.665,"max":107079.754}
+{"group":"parse","name":"records rows=20","N":112,"us":3.154,"min":-751.962,"max":987.108}
+{"group":"parse","name":"tuples rows=20","N":499,"us":5.4,"min":-131.888,"max":41.029}
+{"group":"parse","name":"variant_field rows=20","N":232,"us":126.415,"min":100.513,"max":151.062}
+{"group":"parse","name":"variant_first rows=20","N":243,"us":112.494,"min":99.751,"max":126.885}
+{"group":"parse","name":"fold_only rows=20","N":242130,"us":0.106,"min":0.072,"max":0.125}
+{"group":"parse","name":"records rows=200","N":94,"us":257.207,"min":146.126,"max":309.694}
+{"group":"parse","name":"tuples rows=200","N":318,"us":75.644,"min":58.633,"max":87.461}
+{"group":"parse","name":"variant_field rows=200","N":23,"us":1147.265,"min":992.319,"max":1282.393}
+{"group":"parse","name":"variant_first rows=200","N":24,"us":1078.631,"min":914.82,"max":1227.341}
+{"group":"parse","name":"fold_only rows=200","N":29437,"us":0.954,"min":0.862,"max":1.11}
+{"group":"sha","name":"wasm size=256","N":16409,"us":1.47,"min":1.095,"max":1.562}
+{"group":"sha","name":"digest size=256","N":1322,"us":14.843,"min":8.876,"max":20.146}
+{"group":"sha","name":"digest_js size=256","N":1360,"us":15.781,"min":12.653,"max":33.13}
+{"group":"sha","name":"copy_only size=256","N":3667,"us":6.332,"min":5.265,"max":7.929}
+{"group":"sha","name":"wasm size=1024","N":5301,"us":4.584,"min":4.3,"max":5.444}
+{"group":"sha","name":"digest size=1024","N":2059,"us":12.037,"min":11.247,"max":13.916}
+{"group":"sha","name":"digest_js size=1024","N":1786,"us":12.298,"min":11.074,"max":15.97}
+{"group":"sha","name":"copy_only size=1024","N":2969,"us":7.137,"min":6.993,"max":8.511}
+{"group":"sha","name":"wasm size=2048","N":2162,"us":9.092,"min":8.663,"max":10.097}
+{"group":"sha","name":"digest size=2048","N":1147,"us":16.375,"min":12.377,"max":110.808}
+{"group":"sha","name":"digest_js size=2048","N":117,"us":12.727,"min":-980.417,"max":41.974}
+{"group":"sha","name":"copy_only size=2048","N":2,"us":136.401,"min":-1336.101,"max":60727.564}
+{"group":"sha","name":"wasm size=4096","N":8,"us":202.507,"min":-53.462,"max":14224.983}
+{"group":"sha","name":"digest size=4096","N":1188,"us":19.557,"min":16.187,"max":23.8}
+{"group":"sha","name":"digest_js size=4096","N":1888,"us":16.399,"min":14.094,"max":19.243}
+{"group":"sha","name":"copy_only size=4096","N":2119,"us":12.065,"min":9.467,"max":14.863}
+{"group":"sha","name":"wasm size=8192","N":627,"us":37.109,"min":35.728,"max":40.203}
+{"group":"sha","name":"digest size=8192","N":749,"us":28.046,"min":24.242,"max":40.443}
+{"group":"sha","name":"digest_js size=8192","N":1223,"us":18.292,"min":15.555,"max":22.318}
+{"group":"sha","name":"copy_only size=8192","N":1974,"us":14.35,"min":11.365,"max":20.552}
+{"group":"sha","name":"wasm size=16384","N":342,"us":76.986,"min":67.568,"max":84.862}
+{"group":"sha","name":"digest size=16384","N":486,"us":50.749,"min":35.399,"max":71.441}
+{"group":"sha","name":"digest_js size=16384","N":793,"us":27.136,"min":21.333,"max":33.578}
+{"group":"sha","name":"copy_only size=16384","N":997,"us":22.198,"min":20.261,"max":38.463}
+{"group":"sha","name":"wasm size=65536","N":77,"us":299.077,"min":257.754,"max":350.71}
+{"group":"sha","name":"digest size=65536","N":202,"us":131.834,"min":87.798,"max":185.02}
+{"group":"sha","name":"digest_js size=65536","N":417,"us":64.184,"min":56.273,"max":73.959}
+{"group":"sha","name":"copy_only size=65536","N":323,"us":77.209,"min":55.881,"max":123.568}
+{"group":"sha","name":"wasm size=262144","N":19,"us":1208.401,"min":996.141,"max":1489.499}
+{"group":"sha","name":"digest size=262144","N":53,"us":406.09,"min":373.373,"max":534.064}
+{"group":"sha","name":"digest_js size=262144","N":121,"us":206.795,"min":169.799,"max":265.279}
+{"group":"sha","name":"copy_only size=262144","N":90,"us":297.328,"min":-924.958,"max":1323.565}
+{"group":"sha","name":"wasm size=1048576","N":2,"us":4985.167,"min":-52797.262,"max":43418.938}
+{"group":"sha","name":"digest size=1048576","N":10,"us":1780.017,"min":-8020.837,"max":12324.609}
+{"group":"sha","name":"digest_js size=1048576","N":36,"us":723.473,"min":601.791,"max":1508.793}
+{"group":"sha","name":"copy_only size=1048576","N":27,"us":975.61,"min":570.851,"max":1035.802}
+{"load_after":[4.34,3.57,2.74]}
+
+cross (us per operation: median, min to max of the rounds)
+
+| case | N | us |
+| --- | --- | --- |
+| call k=0 | 18156 | 0.987 (0.303 to 1.04) |
+| call k=1 | 6867 | 3.029 (1.954 to 3.588) |
+| call k=4 | 2219 | 7.173 (5.739 to 9.004) |
+| call k=16 | 625 | 24.249 (18.387 to 41.595) |
+| await k=0 | 6935 | 4.077 (3.334 to 4.977) |
+| await k=1 | 4691 | 5.812 (5.153 to 7.856) |
+| await k=4 | 2568 | 9.142 (5.267 to 10.147) |
+| await k=16 | 1005 | 22.373 (-90.138 to 83.581) |
+| build k=0 | 1647 | -0.405 (-143.946 to 1.768) |
+| build k=1 | 2 | -650.435 (-53325.768 to 3054.129) |
+| build k=4 | 24522 | 0.834 (0.792 to 0.928) |
+| build k=16 | 7097 | 3.093 (2.518 to 3.734) |
+
+d1 (us per operation: median, min to max of the rounds)
+
+| case | N | us |
+| --- | --- | --- |
+| js_only rows=20 fake | 2790 | 9.268 (8.656 to 10.261) |
+| pack_only rows=20 fake | 466 | 40.218 (35.544 to 52.507) |
+| all rows=20 fake | 281 | 67.101 (50.98 to 79.018) |
+| all_arrays rows=20 fake | 611 | 41.546 (36.333 to 63.165) |
+| raw_js_only rows=20 fake | 2460 | 9.588 (8.522 to 11.726) |
+| raw_only rows=20 fake | 498 | 40.742 (33.484 to 44.325) |
+| obj_tree rows=20 fake | 503 | 51.688 (40.523 to 77.464) |
+| tree_typed rows=20 fake | 577 | 37.868 (31.06 to 44.105) |
+| rows rows=20 fake | 498 | 45.152 (39.689 to 60.98) |
+| js_only rows=200 fake | 3213 | 9.307 (8.293 to 11.34) |
+| pack_only rows=200 fake | 67 | 275.919 (218.974 to 353.861) |
+| all rows=200 fake | 43 | 567.976 (368.295 to 665.491) |
+| all_arrays rows=200 fake | 106 | 257.297 (228.277 to 295.876) |
+| raw_js_only rows=200 fake | 2459 | 11.54 (10.17 to 13.787) |
+| raw_only rows=200 fake | 97 | 313.953 (266.681 to 390.891) |
+| obj_tree rows=200 fake | 55 | 463.576 (390.052 to 554.033) |
+| tree_typed rows=200 fake | 80 | 308.64 (-1077.611 to 1589.028) |
+| rows rows=200 fake | 2 | 239.364 (-1839.68 to 57190.994) |
+
+d1real (us per operation: median, min to max of the rounds)
+
+| case | N | us |
+| --- | --- | --- |
+| js_only rows=20 | 2 | 73581.812 (48183.02 to 135997.833) |
+| pack_only rows=20 | 2 | 70673.076 (68894.884 to 78233.538) |
+| all rows=20 | 2 | 71070.492 (65968.38 to 76520.32) |
+| all_arrays rows=20 | 2 | 72227.677 (69213.833 to 76572.041) |
+| raw_js_only rows=20 | 2 | 72402.485 (67988.424 to 76224.309) |
+| raw_only rows=20 | 2 | 72688.732 (69686.014 to 80104.008) |
+| obj_tree rows=20 | 2 | 95915.079 (71286.326 to 105700.977) |
+| tree_typed rows=20 | 2 | 70539.435 (66531.997 to 82132.443) |
+| rows rows=20 | 2 | 73609.364 (66361.823 to 76169.622) |
+| js_only rows=200 | 2 | 86965.56 (81420.909 to 93645.245) |
+| pack_only rows=200 | 2 | 89131.238 (81561.181 to 92658.35) |
+| all rows=200 | 2 | 88423.445 (84627.543 to 94520.573) |
+| all_arrays rows=200 | 2 | 97772.639 (85557.484 to 101088.289) |
+| raw_js_only rows=200 | 2 | 85258.763 (78265.509 to 88478.629) |
+| raw_only rows=200 | 2 | 89053.121 (82557.33 to 104833.72) |
+| obj_tree rows=200 | 2 | 87266.77 (83720.613 to 93570.516) |
+| tree_typed rows=200 | 2 | 91874.059 (80608.98 to 94797.272) |
+| rows rows=200 | 2 | 89104.021 (41127.665 to 107079.754) |
+
+parse (us per operation: median, min to max of the rounds)
+
+| case | N | us |
+| --- | --- | --- |
+| records rows=20 | 112 | 3.154 (-751.962 to 987.108) |
+| tuples rows=20 | 499 | 5.4 (-131.888 to 41.029) |
+| variant_field rows=20 | 232 | 126.415 (100.513 to 151.062) |
+| variant_first rows=20 | 243 | 112.494 (99.751 to 126.885) |
+| fold_only rows=20 | 242130 | 0.106 (0.072 to 0.125) |
+| records rows=200 | 94 | 257.207 (146.126 to 309.694) |
+| tuples rows=200 | 318 | 75.644 (58.633 to 87.461) |
+| variant_field rows=200 | 23 | 1147.265 (992.319 to 1282.393) |
+| variant_first rows=200 | 24 | 1078.631 (914.82 to 1227.341) |
+| fold_only rows=200 | 29437 | 0.954 (0.862 to 1.11) |
+
+sha (us per operation: median, min to max of the rounds)
+
+| case | N | us |
+| --- | --- | --- |
+| wasm size=256 | 16409 | 1.47 (1.095 to 1.562) |
+| digest size=256 | 1322 | 14.843 (8.876 to 20.146) |
+| digest_js size=256 | 1360 | 15.781 (12.653 to 33.13) |
+| copy_only size=256 | 3667 | 6.332 (5.265 to 7.929) |
+| wasm size=1024 | 5301 | 4.584 (4.3 to 5.444) |
+| digest size=1024 | 2059 | 12.037 (11.247 to 13.916) |
+| digest_js size=1024 | 1786 | 12.298 (11.074 to 15.97) |
+| copy_only size=1024 | 2969 | 7.137 (6.993 to 8.511) |
+| wasm size=2048 | 2162 | 9.092 (8.663 to 10.097) |
+| digest size=2048 | 1147 | 16.375 (12.377 to 110.808) |
+| digest_js size=2048 | 117 | 12.727 (-980.417 to 41.974) |
+| copy_only size=2048 | 2 | 136.401 (-1336.101 to 60727.564) |
+| wasm size=4096 | 8 | 202.507 (-53.462 to 14224.983) |
+| digest size=4096 | 1188 | 19.557 (16.187 to 23.8) |
+| digest_js size=4096 | 1888 | 16.399 (14.094 to 19.243) |
+| copy_only size=4096 | 2119 | 12.065 (9.467 to 14.863) |
+| wasm size=8192 | 627 | 37.109 (35.728 to 40.203) |
+| digest size=8192 | 749 | 28.046 (24.242 to 40.443) |
+| digest_js size=8192 | 1223 | 18.292 (15.555 to 22.318) |
+| copy_only size=8192 | 1974 | 14.35 (11.365 to 20.552) |
+| wasm size=16384 | 342 | 76.986 (67.568 to 84.862) |
+| digest size=16384 | 486 | 50.749 (35.399 to 71.441) |
+| digest_js size=16384 | 793 | 27.136 (21.333 to 33.578) |
+| copy_only size=16384 | 997 | 22.198 (20.261 to 38.463) |
+| wasm size=65536 | 77 | 299.077 (257.754 to 350.71) |
+| digest size=65536 | 202 | 131.834 (87.798 to 185.02) |
+| digest_js size=65536 | 417 | 64.184 (56.273 to 73.959) |
+| copy_only size=65536 | 323 | 77.209 (55.881 to 123.568) |
+| wasm size=262144 | 19 | 1208.401 (996.141 to 1489.499) |
+| digest size=262144 | 53 | 406.09 (373.373 to 534.064) |
+| digest_js size=262144 | 121 | 206.795 (169.799 to 265.279) |
+| copy_only size=262144 | 90 | 297.328 (-924.958 to 1323.565) |
+| wasm size=1048576 | 2 | 4985.167 (-52797.262 to 43418.938) |
+| digest size=1048576 | 10 | 1780.017 (-8020.837 to 12324.609) |
+| digest_js size=1048576 | 36 | 723.473 (601.791 to 1508.793) |
+| copy_only size=1048576 | 27 | 975.61 (570.851 to 1035.802) |

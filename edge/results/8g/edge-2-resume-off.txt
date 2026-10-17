@@ -1,0 +1,109 @@
+{"info":{"runtime":"Cloudflare edge","url":"https://rocplat-test-8g.bellup.workers.dev","cpu":"client AMD Ryzen AI 9 HX 370 w/ Radeon 890M","load":[0.93,1.8,2.25],"date":"2026-10-17T12:14:37.271Z","resumeCheck":"off"}}
+{"sanity":"ok"}
+{"group":"cross","name":"call k=0","N":13856,"us":0.954,"min":0.635,"max":1.448}
+{"group":"cross","name":"call k=1","N":8552,"us":3.152,"min":2.815,"max":3.94}
+{"group":"cross","name":"call k=4","N":3587,"us":7.023,"min":4.971,"max":8.172}
+{"group":"cross","name":"call k=16","N":911,"us":21.522,"min":19.015,"max":23.72}
+{"group":"cross","name":"await k=0","N":9004,"us":2.646,"min":2.215,"max":4.351}
+{"group":"cross","name":"await k=1","N":5329,"us":4.566,"min":2.855,"max":6.139}
+{"group":"cross","name":"await k=4","N":3349,"us":8.964,"min":7.974,"max":9.843}
+{"group":"cross","name":"await k=16","N":1089,"us":22.57,"min":21.411,"max":26.897}
+{"group":"cross","name":"build k=0","N":339689,"us":0.066,"min":0.049,"max":0.347}
+{"group":"cross","name":"build k=1","N":27483,"us":0.268,"min":-4.164,"max":4.569}
+{"group":"cross","name":"build k=4","N":7707,"us":1.171,"min":0.579,"max":14.215}
+{"group":"cross","name":"build k=16","N":156,"us":1.689,"min":-13.239,"max":10.343}
+{"group":"sha","name":"wasm size=256","N":18151,"us":1.508,"min":1.409,"max":1.567}
+{"group":"sha","name":"digest size=256","N":1832,"us":10.453,"min":9.565,"max":13.935}
+{"group":"sha","name":"digest_js size=256","N":2322,"us":10.66,"min":10.062,"max":12.473}
+{"group":"sha","name":"copy_only size=256","N":4622,"us":5.5,"min":4.228,"max":6.367}
+{"group":"sha","name":"wasm size=1024","N":5166,"us":5.787,"min":4.664,"max":6.32}
+{"group":"sha","name":"digest size=1024","N":2381,"us":12.661,"min":10.691,"max":19.039}
+{"group":"sha","name":"digest_js size=1024","N":2173,"us":12.134,"min":11.197,"max":15.284}
+{"group":"sha","name":"copy_only size=1024","N":3630,"us":6.363,"min":5.799,"max":8.371}
+{"group":"sha","name":"wasm size=2048","N":2641,"us":9.116,"min":8.567,"max":10.73}
+{"group":"sha","name":"digest size=2048","N":2082,"us":12.589,"min":10.682,"max":15.311}
+{"group":"sha","name":"digest_js size=2048","N":2,"us":-454.538,"min":-954.816,"max":2307.824}
+{"group":"sha","name":"copy_only size=2048","N":3373,"us":8.067,"min":7.62,"max":10.331}
+{"group":"sha","name":"wasm size=4096","N":1243,"us":19.489,"min":17.532,"max":22.801}
+{"group":"sha","name":"digest size=4096","N":802,"us":21.827,"min":8.737,"max":124.933}
+{"group":"sha","name":"digest_js size=4096","N":1680,"us":13.832,"min":11.138,"max":17.42}
+{"group":"sha","name":"copy_only size=4096","N":2501,"us":10.141,"min":7.201,"max":12.057}
+{"group":"sha","name":"wasm size=8192","N":610,"us":38.021,"min":34.53,"max":42.515}
+{"group":"sha","name":"digest size=8192","N":939,"us":28.33,"min":17.618,"max":50.047}
+{"group":"sha","name":"digest_js size=8192","N":1173,"us":20.469,"min":15.711,"max":23.095}
+{"group":"sha","name":"copy_only size=8192","N":2259,"us":14.05,"min":9.926,"max":16.24}
+{"group":"sha","name":"wasm size=16384","N":355,"us":77.536,"min":-267.053,"max":336.533}
+{"group":"sha","name":"digest size=16384","N":7,"us":42.929,"min":-17760.522,"max":13155.121}
+{"group":"sha","name":"digest_js size=16384","N":107,"us":34.962,"min":-1049.542,"max":956.464}
+{"group":"sha","name":"copy_only size=16384","N":135,"us":18.656,"min":3.818,"max":114.65}
+{"group":"sha","name":"wasm size=65536","N":80,"us":318.613,"min":249.402,"max":441.199}
+{"group":"sha","name":"digest size=65536","N":194,"us":122.467,"min":85.663,"max":227.291}
+{"group":"sha","name":"digest_js size=65536","N":448,"us":59.221,"min":48.78,"max":102.295}
+{"group":"sha","name":"copy_only size=65536","N":366,"us":74.446,"min":-5.541,"max":97.711}
+{"group":"sha","name":"wasm size=262144","N":21,"us":1249.725,"min":991.584,"max":1303.615}
+{"group":"sha","name":"digest size=262144","N":66,"us":426.071,"min":261.474,"max":494.753}
+{"group":"sha","name":"digest_js size=262144","N":156,"us":179.425,"min":166.164,"max":220.594}
+{"group":"sha","name":"copy_only size=262144","N":102,"us":255.013,"min":148.779,"max":339.789}
+{"group":"sha","name":"wasm size=1048576","N":5,"us":5206.651,"min":4276.783,"max":6737.158}
+{"group":"sha","name":"digest size=1048576","N":17,"us":1446.651,"min":1137.504,"max":1980.652}
+{"group":"sha","name":"digest_js size=1048576","N":36,"us":648.592,"min":572.407,"max":784.706}
+{"group":"sha","name":"copy_only size=1048576","N":36,"us":700.115,"min":637.575,"max":835.178}
+{"load_after":[0.68,1.66,2.19]}
+
+cross (us per operation: median, min to max of the rounds)
+
+| case | N | us |
+| --- | --- | --- |
+| call k=0 | 13856 | 0.954 (0.635 to 1.448) |
+| call k=1 | 8552 | 3.152 (2.815 to 3.94) |
+| call k=4 | 3587 | 7.023 (4.971 to 8.172) |
+| call k=16 | 911 | 21.522 (19.015 to 23.72) |
+| await k=0 | 9004 | 2.646 (2.215 to 4.351) |
+| await k=1 | 5329 | 4.566 (2.855 to 6.139) |
+| await k=4 | 3349 | 8.964 (7.974 to 9.843) |
+| await k=16 | 1089 | 22.57 (21.411 to 26.897) |
+| build k=0 | 339689 | 0.066 (0.049 to 0.347) |
+| build k=1 | 27483 | 0.268 (-4.164 to 4.569) |
+| build k=4 | 7707 | 1.171 (0.579 to 14.215) |
+| build k=16 | 156 | 1.689 (-13.239 to 10.343) |
+
+sha (us per operation: median, min to max of the rounds)
+
+| case | N | us |
+| --- | --- | --- |
+| wasm size=256 | 18151 | 1.508 (1.409 to 1.567) |
+| digest size=256 | 1832 | 10.453 (9.565 to 13.935) |
+| digest_js size=256 | 2322 | 10.66 (10.062 to 12.473) |
+| copy_only size=256 | 4622 | 5.5 (4.228 to 6.367) |
+| wasm size=1024 | 5166 | 5.787 (4.664 to 6.32) |
+| digest size=1024 | 2381 | 12.661 (10.691 to 19.039) |
+| digest_js size=1024 | 2173 | 12.134 (11.197 to 15.284) |
+| copy_only size=1024 | 3630 | 6.363 (5.799 to 8.371) |
+| wasm size=2048 | 2641 | 9.116 (8.567 to 10.73) |
+| digest size=2048 | 2082 | 12.589 (10.682 to 15.311) |
+| digest_js size=2048 | 2 | -454.538 (-954.816 to 2307.824) |
+| copy_only size=2048 | 3373 | 8.067 (7.62 to 10.331) |
+| wasm size=4096 | 1243 | 19.489 (17.532 to 22.801) |
+| digest size=4096 | 802 | 21.827 (8.737 to 124.933) |
+| digest_js size=4096 | 1680 | 13.832 (11.138 to 17.42) |
+| copy_only size=4096 | 2501 | 10.141 (7.201 to 12.057) |
+| wasm size=8192 | 610 | 38.021 (34.53 to 42.515) |
+| digest size=8192 | 939 | 28.33 (17.618 to 50.047) |
+| digest_js size=8192 | 1173 | 20.469 (15.711 to 23.095) |
+| copy_only size=8192 | 2259 | 14.05 (9.926 to 16.24) |
+| wasm size=16384 | 355 | 77.536 (-267.053 to 336.533) |
+| digest size=16384 | 7 | 42.929 (-17760.522 to 13155.121) |
+| digest_js size=16384 | 107 | 34.962 (-1049.542 to 956.464) |
+| copy_only size=16384 | 135 | 18.656 (3.818 to 114.65) |
+| wasm size=65536 | 80 | 318.613 (249.402 to 441.199) |
+| digest size=65536 | 194 | 122.467 (85.663 to 227.291) |
+| digest_js size=65536 | 448 | 59.221 (48.78 to 102.295) |
+| copy_only size=65536 | 366 | 74.446 (-5.541 to 97.711) |
+| wasm size=262144 | 21 | 1249.725 (991.584 to 1303.615) |
+| digest size=262144 | 66 | 426.071 (261.474 to 494.753) |
+| digest_js size=262144 | 156 | 179.425 (166.164 to 220.594) |
+| copy_only size=262144 | 102 | 255.013 (148.779 to 339.789) |
+| wasm size=1048576 | 5 | 5206.651 (4276.783 to 6737.158) |
+| digest size=1048576 | 17 | 1446.651 (1137.504 to 1980.652) |
+| digest_js size=1048576 | 36 | 648.592 (572.407 to 784.706) |
+| copy_only size=1048576 | 36 | 700.115 (637.575 to 835.178) |
