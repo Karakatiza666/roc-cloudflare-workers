@@ -178,6 +178,27 @@ WebCrypto :: [].{
 		Crypto.SHA256.hash(k.map(|b| b.bitwise_xor(0x5c)).concat(inner)).to_bytes()
 	}
 
+	## SHA-256 of bytes in wasm memory: the builtin `Crypto.SHA256` below `sha256_crossover_bytes` (no crossing), else
+	## `crypto.subtle.digest` (one crossing, one wait, the isolate runs other tasks meanwhile). The result is the 32 bytes of
+	## the digest. For a body that is not in wasm memory yet, use `Body.sha256!`.
+	sha256! : List(U8) => Try(List(U8), [CryptoErr(Io.Thrown)])
+	sha256! = |bytes|
+		if use_builtin(bytes) {
+			Ok(Crypto.SHA256.hash(bytes).to_bytes())
+		} else {
+			Io.run!(digest_io(bytes))
+		}
+
+	## The twin of `sha256!` (MC3). Below the crossover its program has no op: a `Io.run!` of it is one `call!` of an
+	## empty program, and inside `Io.both!` it is a branch with no op.
+	sha256 : List(U8) -> Io(List(U8), [CryptoErr(Io.Thrown)])
+	sha256 = |bytes|
+		if use_builtin(bytes) {
+			Io.sync([], |_| Ok(Crypto.SHA256.hash(bytes).to_bytes()))
+		} else {
+			digest_io(bytes)
+		}
+
 	## `crypto.subtle.timingSafeEqual`: one `call!`, no wait. Texts of different lengths are not equal (no crossing).
 	timing_safe_equal! : List(U8), List(U8) => Bool
 	timing_safe_equal! = |a, b|
@@ -267,6 +288,22 @@ arg_of = |t| match t {
 
 bad_data : Str -> Io.Thrown
 bad_data = |message| { name: "BadData", message }
+
+## The size from which `crypto.subtle.digest` is faster than the builtin SHA-256 in workerd: 2.7 KB, measured with the
+## copy of the bytes out of wasm memory and the wait (PLAN.md 8g, bench/README.md "Step 8g"; Node: 6 KB). At 2.3 to
+## 4 KB the two cost about the same, so the measured point is used. The edge value is on the PLAN.md 11c list.
+sha256_crossover_bytes : U64
+sha256_crossover_bytes = 2_700
+
+use_builtin : List(U8) -> Bool
+use_builtin = |bytes| bytes.len() < sha256_crossover_bytes
+
+## `crypto.subtle.digest('SHA-256', bytes)`: the bytes cross once, the digest comes back as an `ArrayBuffer`.
+digest_io : List(U8) -> Io(List(U8), [CryptoErr(Io.Thrown)])
+digest_io = |bytes| Io.new(
+	[Get(Root("global"), "crypto"), Get(Slot(0), "subtle"), Call(Slot(1), "digest", [Lit(Text("SHA-256")), Lit(Bytes(bytes))])],
+	bytes_read,
+)
 
 ## The result of a function that gives bytes (an `ArrayBuffer` is `Bytes`, J rules).
 bytes_read : Try(Js, Io.Thrown) -> Try(List(U8), [CryptoErr(Io.Thrown)])
@@ -454,3 +491,9 @@ hex = |bytes| match Crypto.SHA256.Digest.from_bytes(bytes) {
 expect hex(WebCrypto.hmac_sha256(List.repeat(0x0b, 20), "Hi There".to_utf8())) == "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
 expect hex(WebCrypto.hmac_sha256("Jefe".to_utf8(), "what do ya want for nothing?".to_utf8())) == "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
 expect hex(WebCrypto.hmac_sha256(List.repeat(0xaa, 131), "Test Using Larger Than Block-Size Key - Hash Key First".to_utf8())) == "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
+
+# MODULES.md 10: the builtin below 2,700 bytes, `digest` from 2,700 bytes.
+expect use_builtin(List.repeat(0, 0))
+expect use_builtin(List.repeat(0, 2_699))
+expect !use_builtin(List.repeat(0, 2_700))
+expect !use_builtin(List.repeat(0, 1_048_576))

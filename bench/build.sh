@@ -4,7 +4,7 @@
 # app_stack.wasm, app_native.wasm, conformance.wasm (conformance/app.roc). The production host and platform (platform/main.roc) give bench/out/app_prod.wasm (PLAN.md 7a).
 # Env: ZIG (Zig 0.17).
 # Optional: ROC (default: the nightly in compat/last-stack-first-nightly, see bench/get-roc.sh),
-# ZIG_FLAGS (e.g. "-Downer_tag=false -Dtrack_live=false"), OUT (default bench/out).
+# ZIG_FLAGS (e.g. "-Dtrack_live=false"), OUT (default bench/out).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROC=${ROC:-$(bench/get-roc.sh)}

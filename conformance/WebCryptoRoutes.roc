@@ -26,6 +26,9 @@ WebCryptoRoutes :: [].{
 			["sync"] => reply(sync!({}))
 			# PLAN.md 8c, the measure: `n` hashes of `size` bytes in wasm (`bench/sha256-bench.mjs`).
 			["sha256"] => Response.from_text(200, sha256_loop(Q.num(req, "size"), Q.num(req, "n")))
+			# PLAN.md 8g P2: `WebCrypto.sha256!` of `size` bytes (the builtin below 2,700 bytes, `digest` above), and its twin.
+			["sha256_pick"] => reply(sha256_pick!(Q.num(req, "size")))
+			["sha256_pick_io"] => reply(sha256_pick_io!(Q.num(req, "size")))
 			# The registry cases (API.md RN6, RN9, RN18).
 			["rs256_verify"] => reply(rs256_verify!(Q.text(req, "jwk"), from_hex(Q.text(req, "sig")), data))
 			["rs256_verify_two"] => reply(rs256_verify_two!(Q.text(req, "jwk"), from_hex(Q.text(req, "sig")), data))
@@ -295,6 +298,18 @@ sha256_loop = |size, n| {
 	}
 	if n == 0 "" else $last.to_hex()
 }
+
+## The bytes of the test of `WebCrypto.sha256!`: byte `i` is `(i * 31 + 7) % 256` (`checks/webcrypto.mjs` makes the same).
+pick_bytes : U64 -> List(U8)
+pick_bytes = |size| List.repeat(0.U8, size).map_with_index(|_, i| (i * 31 + 7).to_u8_wrap())
+
+## `WebCrypto.sha256!` of `size` bytes: the hex of the digest.
+sha256_pick! : U64 => Try(Str, E)
+sha256_pick! = |size| Ok(to_hex(WebCrypto.sha256!(pick_bytes(size))?))
+
+## The same through the twin `WebCrypto.sha256` and `Io.run!`.
+sha256_pick_io! : U64 => Try(Str, E)
+sha256_pick_io! = |size| Ok(to_hex(Io.run!(WebCrypto.sha256(pick_bytes(size)))?))
 
 to_hex : List(U8) -> Str
 to_hex = |bytes| {

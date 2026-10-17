@@ -38,6 +38,15 @@ SqlRules :: [].{
 		Err(other) => Err(BadData(missing(Str.inspect(other))))
 	}
 
+	## Typed rows as arrays (`D1.all_tuples!`): the same integer rules as `typed`. A row is a CBOR array, so the column has
+	## no name: `BadData` gives its index from 0.
+	typed_tuples : List(U8) -> Try(a, [BadData(Str)]) where [a.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+	typed_tuples = |bytes| match Cbor.parse_with(bytes, { fields: Snake, int_from_text: Bool.True }) {
+		Ok(v) => Ok(v)
+		Err(InvalidCbor(pos)) => Err(BadData(bad_tuple_data(bytes, pos)))
+		Err(other) => Err(BadData(Str.inspect(other)))
+	}
+
 	## MODULES.md 5.1, "Constraint kinds": the message ends in `: SQLITE_CONSTRAINT`, or in
 	## `: SQLITE_CONSTRAINT (extended: <code>)`. The kind comes from the code, not from the text: a `RAISE` text can look like
 	## another failure. `message` is the SQLite text with no `D1_ERROR: ` (or `D1_EXEC_ERROR: `) and no code.
@@ -97,6 +106,19 @@ bad_data = |bytes, pos| {
 	}
 }
 
+## The text of `BadData` for the item at `pos` in rows as arrays: the path is `[Index(row), Index(column), ..]`.
+bad_tuple_data : List(U8), U64 -> Str
+bad_tuple_data = |bytes, pos| match Cbor.path_at(bytes, pos) {
+	Ok([Index(_), Index(c), ..]) =>
+		if rounded_at(bytes, pos) {
+			"column ${c.to_str()} (from 0): integer above 2^53, use CAST(... AS TEXT)"
+		} else {
+			"column ${c.to_str()} (from 0): the value does not fit the type"
+		}
+	Ok([Index(r)]) => "row ${r.to_str()}: the row does not fit the type"
+	_ => "the value at byte ${pos.to_str()} does not fit the type"
+}
+
 last_key : List(Cbor.Step) -> Try(Str, [NotFound])
 last_key = |steps| steps.fold(
 	Err(NotFound),
@@ -151,3 +173,22 @@ expect missing("Other") == "Other"
 # 5.1, "Integers in rows": [{"id": 2^53 as f64}] is the text with CAST, [{"id": 1.5}] is "does not fit".
 expect bad_data([0x81, 0xa1, 0x62, 0x69, 0x64, 0xfb, 0x43, 0x40, 0, 0, 0, 0, 0, 0], 5) == "column id: integer above 2^53, use CAST(id AS TEXT)"
 expect bad_data([0x81, 0xa1, 0x62, 0x69, 0x64, 0xfb, 0x3f, 0xf8, 0, 0, 0, 0, 0, 0], 5) == "column id: the value does not fit the type"
+
+# PLAN.md 8g P1: rows as arrays (`D1.all_tuples!`) with the integer rules of 5.1. Each row is a CBOR array of two items.
+tuples2 : List(U8) -> Try(List((I64, I64)), [BadData(Str)])
+tuples2 = |bytes| SqlRules.typed_tuples(bytes)
+
+expect tuples2([0x81, 0x82, 0x01, 0x02]) == Ok([(1, 2)])
+expect tuples2([0x80]) == Ok([])
+# CAST(x AS TEXT): canonical decimal text of 2^63 - 1 goes into the I64 item.
+expect tuples2([0x81, 0x82, 0x01, 0x73].concat("9223372036854775807".to_utf8())) == Ok([(1, 9_223_372_036_854_775_807)])
+# 2^53 as an f64 (D1 rounded an id): the column is named by its index, 1.
+expect tuples2([0x81, 0x82, 0x01, 0xfb, 0x43, 0x40, 0, 0, 0, 0, 0, 0]) == Err(BadData("column 1 (from 0): integer above 2^53, use CAST(... AS TEXT)"))
+expect tuples2([0x82, 0x82, 0x01, 0x02, 0x82, 0xfb, 0xc3, 0x40, 0, 0, 0, 0, 0, 0, 0x02]) == Err(BadData("column 0 (from 0): integer above 2^53, use CAST(... AS TEXT)"))
+# 1.5 and the text "01" do not fit.
+expect tuples2([0x81, 0x82, 0x01, 0xfb, 0x3f, 0xf8, 0, 0, 0, 0, 0, 0]) == Err(BadData("column 1 (from 0): the value does not fit the type"))
+expect tuples2([0x81, 0x82, 0x01, 0x62, 0x30, 0x31]) == Err(BadData("column 1 (from 0): the value does not fit the type"))
+# A row with one item for a tuple of two.
+expect tuples2([0x81, 0x81, 0x01]) == Err(BadData("row 0: the row does not fit the type"))
+# 2^53 - 1 as an f64 with no fraction is exact.
+expect tuples2([0x81, 0x82, 0x01, 0xfb, 0x43, 0x3f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]) == Ok([(1, 9_007_199_254_740_991)])

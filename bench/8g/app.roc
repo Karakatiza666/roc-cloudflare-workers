@@ -15,6 +15,7 @@ import pf.Response
 import pf.Js
 import pf.Io
 import pf.D1
+import pf.WebCrypto
 import pf.Cbor
 import cbor_f.Cbor as CborF
 import cbor_l.Cbor as CborL
@@ -42,6 +43,7 @@ fetch! = |req| {
 		["cross", "build"] => cross_build(n, k)
 		["d1", "all"] => d1_all!(n, rows)
 		["d1", "rows"] => d1_rows!(n, rows)
+		["d1", "all_tuples"] => d1_all_tuples!(n, rows)
 		["d1", "js_only"] => d1_ops!(n, rows, JsOnly)
 		["d1", "pack_only"] => d1_ops!(n, rows, PackOnly)
 		["d1", "raw_js_only"] => d1_ops!(n, rows, RawJsOnly)
@@ -55,6 +57,7 @@ fetch! = |req| {
 		["parse", "variant_field"] => parse!(n, rows, VariantField)
 		["parse", "variant_first"] => parse!(n, rows, VariantFirst)
 		["sha", "wasm"] => sha_wasm!(n, size)
+		["sha", "pick"] => sha_pick!(n, size)
 		["sha", "digest"] => sha_digest!(n, size, FromWasm)
 		["sha", "digest_js"] => sha_digest!(n, size, FromJs)
 		["sha", "copy_only"] => sha_digest!(n, size, CopyOnly)
@@ -178,6 +181,25 @@ d1_all! = |n, rows| {
 				$acc = $acc + list.len() + sum_rows(list)
 			}
 			Err(e) => crash "d1_all!: ${Str.inspect(e)}"
+		}
+		$i = $i + 1
+	}
+	"d1 ${n.to_str()} ${rows.to_str()} ${$acc.to_str()}"
+}
+
+## PLAN.md 8g P1: `D1.all_tuples!` of the platform into `List(RowT)`. The answer equals the one of `d1_all!` (the same sum).
+d1_all_tuples! : U64, U64 => Str
+d1_all_tuples! = |n, rows| {
+	var $acc = 0.U64
+	var $i = 0.U64
+	while $i < n {
+		got : Try(List(RowT), _)
+		got = db.all_tuples!(sql, [Int(rows.to_i64_wrap())])
+		match got {
+			Ok(list) => {
+				$acc = $acc + list.len() + sum_tuples(list)
+			}
+			Err(e) => crash "d1_all_tuples!: ${Str.inspect(e)}"
 		}
 		$i = $i + 1
 	}
@@ -391,6 +413,25 @@ sha_wasm! = |n, size| {
 		$i = $i + 1
 	}
 	"sha ${n.to_str()} ${size.to_str()} ${if n == 0 "" else $last.to_hex()}"
+}
+
+## PLAN.md 8g P2: `n` times `WebCrypto.sha256!` of a buffer of `size` bytes (the builtin below 2,700 bytes, `digest` above).
+sha_pick! : U64, U64 => Str
+sha_pick! = |n, size| {
+	var $data = List.repeat(7, size)
+	var $last = List.repeat(0.U8, 0)
+	var $i = 0.U64
+	while $i < n {
+		$data = $data.set(0, $i.to_u8_wrap()) ?? $data
+		match WebCrypto.sha256!($data) {
+			Ok(d) => {
+				$last = d
+			}
+			Err(e) => crash "sha_pick!: ${Str.inspect(e)}"
+		}
+		$i = $i + 1
+	}
+	"sha ${n.to_str()} ${size.to_str()} ${if n == 0 "" else to_hex($last)}"
 }
 
 ShaCase : [FromWasm, FromJs, CopyOnly]

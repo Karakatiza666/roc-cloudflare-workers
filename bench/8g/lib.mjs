@@ -59,7 +59,7 @@ export const crossCases = () => {
 };
 export const d1Cases = (fake = false) => {
   const out = [];
-  for (const rows of ROWS) for (const name of ['js_only', 'pack_only', 'all', 'all_arrays', 'raw_js_only', 'raw_only', 'obj_tree', 'tree_typed', 'rows']) out.push({ group: 'd1', name: `${name} rows=${rows}${fake ? ' fake' : ''}`, path: `/d1/${name}?rows=${rows}${fake ? '&fake=1' : ''}` });
+  for (const rows of ROWS) for (const name of ['js_only', 'pack_only', 'all', 'all_tuples', 'all_arrays', 'raw_js_only', 'raw_only', 'obj_tree', 'tree_typed', 'rows']) out.push({ group: 'd1', name: `${name} rows=${rows}${fake ? ' fake' : ''}`, path: `/d1/${name}?rows=${rows}${fake ? '&fake=1' : ''}` });
   return out;
 };
 export const parseCases = () => {
@@ -69,7 +69,7 @@ export const parseCases = () => {
 };
 export const shaCases = (sizes = SIZES) => {
   const out = [];
-  for (const size of sizes) for (const name of ['wasm', 'digest', 'digest_js', 'copy_only']) out.push({ group: 'sha', name: `${name} size=${size}`, path: `/sha/${name}?size=${size}` });
+  for (const size of sizes) for (const name of ['wasm', 'digest', 'digest_js', 'copy_only', 'pick']) out.push({ group: 'sha', name: `${name} size=${size}`, path: `/sha/${name}?size=${size}` });
   return out;
 };
 
@@ -82,10 +82,17 @@ export async function sanity({ run }) {
     for (const name of ['records', 'tuples', 'variant_field', 'variant_first']) sums.push((await run(`/parse/${name}?rows=${rows}&fake=1`, 5)).body.split(' ')[3]);
     if (new Set(sums).size !== 1 || !(Number(sums[0]) > 0)) fails.push(`parse rows=${rows}: the sums differ: ${sums.join(' ')}`);
   }
+  // `D1.all!` and `D1.all_tuples!` (the platform) read the same rows: the same sum.
+  for (const rows of ROWS) {
+    const a = (await run(`/d1/all?rows=${rows}&fake=1`, 3)).body;
+    const b = (await run(`/d1/all_tuples?rows=${rows}&fake=1`, 3)).body;
+    if (a !== b || !/ [1-9]\d*$/.test(a)) fails.push(`d1 rows=${rows}: all gives "${a}", all_tuples gives "${b}"`);
+  }
   for (const size of [1, 1024, 70000]) {
     const a = (await run(`/sha/wasm?size=${size}`, 3)).body.split(' ')[3];
     const b = (await run(`/sha/digest?size=${size}`, 3)).body.split(' ')[3];
-    if (a !== b || a.length !== 64) fails.push(`sha size=${size}: wasm ${a} and digest ${b} differ`);
+    const c = (await run(`/sha/pick?size=${size}`, 3)).body.split(' ')[3];
+    if (a !== b || a !== c || a.length !== 64) fails.push(`sha size=${size}: wasm ${a}, digest ${b} and pick ${c} differ`);
   }
   return fails;
 }

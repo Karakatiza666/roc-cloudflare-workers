@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # PLAN.md 8g: builds the measure app (`app.roc`, bench platform) with variants of the bench host.
 #   ZIG=<zig 0.17> bench/8g/build.sh [variant ...]        variants: default (the bench host as bench/build.sh makes it),
-#   tl_off (track_live=false), ot_off (track_live=false, owner_tag=false), fast (optimize mode fast), fast_tl_off
+#   tl_off (track_live=false), fast (optimize mode fast), fast_tl_off
 # Gives bench/8g/out/app-<variant>.wasm and out/host-<variant>.wasm. `default` is also out/app.wasm. The bench platform links
 # the host from bench/platform/targets/wasm32/host.wasm (ignored by git): this script puts each variant there for its build and
 # at the end the default host back, so the next `bench/build.sh` or test run sees the host of the tree.
@@ -10,13 +10,12 @@ cd "$(dirname "$0")/../.."
 ROC=${ROC:-$(bench/get-roc.sh)}
 export ROC_CACHE_DIR=$PWD/.cache/roc XDG_CACHE_HOME=$PWD/.cache ZIG_GLOBAL_CACHE_DIR=$PWD/.cache/zig
 variants=("$@")
-[ ${#variants[@]} -gt 0 ] || variants=(default tl_off ot_off fast fast_tl_off)
+[ ${#variants[@]} -gt 0 ] || variants=(default tl_off fast fast_tl_off)
 mkdir -p bench/8g/out
 flags() {
   case $1 in
     default) echo "" ;;
     tl_off) echo "-Dtrack_live=false" ;;
-    ot_off) echo "-Dtrack_live=false -Downer_tag=false" ;;
     fast) echo "-Dopt=fast" ;;
     fast_tl_off) echo "-Dopt=fast -Dtrack_live=false" ;;
     *) echo "unknown variant $1" >&2; exit 1 ;;

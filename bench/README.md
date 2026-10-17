@@ -38,13 +38,13 @@ Question: a Roc wasm32 app with a Zig host serves concurrent requests that wait 
 | `wait-test.mjs`, `trapclean-test.mjs`, `tasktable-test.mjs` | The wait import never rejects (2b), TRAP_CLEAN (2d), the task table (2c). Since 8a they use `makeBridge` of `../js/bridge.js`; tasktable part 2 aims `fail_alloc_at` with `alloc_count` |
 | `cbor-js-test.mjs`, `cbor-js-reverts.mjs`, `cbor-wasm-test.mjs`, `hd4-test.mjs`, `hd4/oracle.roc`, `jsgen.js`, `program-test.mjs` | The CBOR profile (API.md 5): the JS codec and its revert checks, the Zig codec in the wasm32 host (HD5 corpus, HD6, same bytes as JS), HD4 (the Zig decoder against the Roc oracle; the inputs go to `hd4/*.bin`, ignored), the seeded value generator, the program interpreter and the result block |
 | `sha256-bench.mjs` | PLAN.md 8c (the measure for 8g): `Crypto.SHA256.hash` in wasm (the route `/webcrypto/sha256` of `../conformance/WebCryptoRoutes.roc`, run by `makeHandler` in Node) against `crypto.subtle.digest`, for 1 KB to 1 MB. `node bench/sha256-bench.mjs bench/out/conformance.wasm` |
-| `8g/`, `8g-cbor-field/`, `8g-cbor-first/` | PLAN.md 8g, the measures of one crossing, D1 reads, `Cbor.parse` and SHA-256 in the platform. `8g/app.roc`: the measure app (bench platform): each route runs one operation `n` times in one request. `8g/run-node.mjs`, `8g/run-mf.mjs` (Miniflare, local D1), `8g/run-edge.mjs` (the deployed Worker, for 11c), `8g/run-variants.mjs` (host build variants), `8g/lib.mjs` (the method), `8g/parts.js` (the parts of a crossing, against the wasm exports), `8g/worker.js`, `8g/summarize.mjs`, `8g/build.sh` and `8g/host-build/` (the host with `-Dopt`, `-Dtrack_live`, `-Downer_tag`), `8g/deploy-edge.sh`, `8g/results/` (the tables of the runs below). `8g-cbor-field/` and `8g-cbor-first/`: copies of `roc-cbor` 0.1.0 whose `parse_record_field` gives `Field` (never edit or publish `roc-cbor`). Sections "Step 8g" below. |
+| `8g/`, `8g-cbor-field/`, `8g-cbor-first/` | PLAN.md 8g, the measures of one crossing, D1 reads, `Cbor.parse` and SHA-256 in the platform. `8g/app.roc`: the measure app (bench platform): each route runs one operation `n` times in one request. `8g/run-node.mjs`, `8g/run-mf.mjs` (Miniflare, local D1), `8g/run-edge.mjs` (the deployed Worker, for 11c), `8g/run-variants.mjs` (host build variants), `8g/lib.mjs` (the method), `8g/parts.js` (the parts of a crossing, against the wasm exports), `8g/worker.js`, `8g/summarize.mjs`, `8g/build.sh` and `8g/host-build/` (the host with `-Dopt` and `-Dtrack_live`), `8g/deploy-edge.sh`, `8g/results/` (the tables of the runs below). `8g-cbor-field/` and `8g-cbor-first/`: copies of `roc-cbor` 0.1.0 whose `parse_record_field` gives `Field` (never edit or publish `roc-cbor`). Sections "Step 8g" below. |
 | `test-all.sh` | Builds everything and runs all tests with `timeout 600`: one line for each, exit 1 when one fails. Env: `ZIG`, `WORKERD` |
 | `check-layout.mjs` | Reads a linked wasm: STACK-FIRST, DATA-FIRST or UNKNOWN (exit 0, 1, 2). `build.sh` runs it on its outputs and fails on a result that is not STACK-FIRST |
 | `get-roc.sh`, `ci-layout.sh`, `../compat/last-stack-first-nightly` | Nightly download, the CI check of one nightly (`../.github/workflows/nightly-layout.yml`), the pinned nightly. A nightly that is not stack-first fails the job: it cannot be used at all, the platform has no fallback |
 | `worker.js`, `echo.js`, `config-{b,j,m,s}.capnp` | workerd worker (it uses `makeHandler`, and gives the class a new request with the text of the URL as its body and the signal of the client request; its ops `fetch` and `db` get `env` and the request as arguments, the roots of the task), echo service binding, one config per variant (`b`: the platform, `j`: no wasm). The configs list the `../js/` modules as `js/*.js` |
 | `bench.mjs` | Load generator (Node fetch, concurrency pool) and driver: fresh workerd per variant (`b`, `j`) and rep |
-| `owner.mjs` | Cost of owner tags: alloc + free, heap walk per trap, whole request. Two builds, tags on and off |
+| `owner.mjs` | Cost of owner tags: alloc + free, heap walk per trap, whole request. Two builds, tags on and off (the option `owner_tag` is removed, 2026-10-17: it runs only on two wasm files of an older tree) |
 | `micro.mjs` | CPU cost in Node with a real clock: instantiate, copy work alone, per request by depth |
 | `summarize.mjs` | Markdown tables from the `bench.mjs` output |
 
@@ -65,11 +65,7 @@ WORKERD=<workerd> node bench/bench.mjs leak 10000 0.01 > .cache/results/leak.jso
 node bench/summarize.mjs .cache/results/bench.jsonl .cache/results/leak.jsonl
 node bench/micro.mjs bench/out/app.wasm bench/out/app_pad.wasm
 ITEMS=0 node bench/micro.mjs bench/out/app.wasm bench/out/app_pad.wasm   # no JSON work
-# Owner tags: two builds with track_live off, tags on and off
-ZIG_FLAGS="-Dtrack_live=false" OUT=bench/out-on bench/build.sh
-ZIG_FLAGS="-Dtrack_live=false -Downer_tag=false" OUT=bench/out-off bench/build.sh
-bench/build.sh                                                   # back to the default host
-node bench/owner.mjs bench/out-on/app.wasm bench/out-off/app.wasm
+# Owner tags (2026-10-13): `-Downer_tag=false` was removed 2026-10-17 (PLAN.md 8g P3), so `owner.mjs` has no second build to compare
 ```
 
 `build.sh` sets `ROC_CACHE_DIR`, `XDG_CACHE_HOME` and `ZIG_GLOBAL_CACHE_DIR` to `.cache/` (ignored). Request: `GET /h?id=&trap=0|1&depth=`. Depth to copy size: 1.8 KB + 480 B per level (0: 1.8 KB, 30: 16 KB, 130: 63 KB, 530: 250 KB).
@@ -164,6 +160,8 @@ A trap makes the request answer 500. B recovers with `task_abort` (stack pointer
 
 ### Owner tags (2026-10-13, Node, `owner.mjs`, `track_live=false`, 3 runs)
 
+Removed 2026-10-17 (PLAN.md 8g, P3): the build option `owner_tag` (`-Downer_tag=false`) is gone. No source of `hostlib/` or `host/` read it, so the hosts with and without it were the same file (the default `small` mode: `platform/targets/wasm32/host.wasm` and `bench/platform/targets/wasm32/host.wasm` are byte equal before and after the removal). The tags themselves stay in the allocator and cannot be switched off. This section is the measure of 2026-10-13, with the allocator of that day (`owner.mjs` needs two builds that differ in the tags, so it does not run on the tree today).
+
 Each live span keeps the id of the task that allocated it in the free-list word (`@4`, not used while the span is live). After a clean trap (Roc `crash`, canary, out of memory), `task_abort` walks the spans and frees those of the dead task. Any other trap returns -1: retire the instance.
 
 | Item | Tags off | Tags on |
@@ -256,7 +254,7 @@ ZIG=<zig 0.17> bench/8g/build.sh                  # app-<variant>.wasm for the h
 node bench/8g/run-node.mjs                        # env SECTIONS=cross,d1,parse,sha,parts  RESUME=always|off  ROUNDS=9  TARGET_MS=100
 node bench/8g/run-mf.mjs                          # env SECTIONS=cross,d1,d1real,parse,sha,parts,clock, a wasm as the argument
 RESUME=off SECTIONS=cross,sha node bench/8g/run-node.mjs
-node bench/8g/run-variants.mjs                    # track_live, owner_tag and the optimize mode, Node
+node bench/8g/run-variants.mjs                    # track_live and the optimize mode, Node
 node bench/8g/summarize.mjs run1.txt run2.txt run3.txt
 bench/8g/deploy-edge.sh && EDGE_URL=https://talon-bench-8g.<account>.workers.dev node bench/8g/run-edge.mjs   # 11c, not run yet
 ```
@@ -301,6 +299,18 @@ Fake D1, us for one call (one crossing with one wait), 9 rounds, 3 runs. The nam
 | `tree_typed`: `raw` tree, a hand-written match into `Row` | 17.1 | 111.3 | 19.0 | 121.2 |
 | `obj_tree`: `all()` rows as objects in a `Js` tree, no match | 21.8 | 160.1 | 24.9 | 184.0 |
 
+`D1.all_tuples!` in the platform (PLAN.md 8g, P1, built 2026-10-17: route `/d1/all_tuples`, `8g/results/node-p1-p2.md` and `mf-p1-p2.md`, 3 runs, the same fake D1). It is the public function that reads `raw()` and `pf.pack` into a `List` of tuples of 8 (`RowT`). The sanity of the harness checks that `all` and `all_tuples` give the same sum for 20 and 200 rows.
+
+| Case | Node 20 rows | Node 200 rows | workerd 20 rows | workerd 200 rows |
+|---|---|---|---|---|
+| `D1.all!` into records (`all`) | 26.3 | 196 | 30.2 | 231.7 |
+| `D1.all_tuples!` into tuples (`all_tuples`) | 14.7 | 91.4 | 16.4 | 102.3 |
+| `all` / `all_tuples` | 1.79 | 2.14 | 1.84 | 2.26 |
+| `D1.rows!` (`rows`, same runs) | 17.4 | 111.7 | 19.3 | 125.7 |
+| `all_arrays` (the 8g program of before, same runs) | 14.8 | 89.3 | 16.2 | 101.4 |
+
+The PLAN number (91 against 198 us in Node, 103 against 236 us in workerd, 2.2 and 2.3 times) is confirmed in the platform: 91.4 against 196 and 102.3 against 231.7. `all_tuples!` is equal to the hand-made program `all_arrays` (inside the spread), so the function adds nothing: the same ops, one `typed_tuples` call. It is also cheaper than `D1.rows!` (111.7 and 125.7 us), and it keeps the types.
+
 The steps of 200 rows (Node, workerd), us:
 
 | Step | `D1.all!` | `D1.rows!` |
@@ -340,9 +350,9 @@ Roc only, in wasm (`/parse/<name>?rows=`): the bytes come from one crossing, the
 
 The numbers here are lower than the native ones of API.md AQ5 (137 us records, 66 us tuples): the allocator of the host is cheaper than `malloc`.
 
-### Cost of `track_live`, `owner_tag` and the optimize mode in the Zig tree decode
+### Cost of `track_live`, `owner_tag` (removed) and the optimize mode in the Zig tree decode
 
-`8g/build.sh` builds the bench host in 5 variants (`8g/host-build/build.zig` is `build.zig` with `-Dopt`, `-Dtrack_live`, `-Downer_tag`; its `default` host equals the host of the tree byte for byte). Node, 5 reps in rotating order, median (spread), us:
+`8g/build.sh` built the bench host in 5 variants (`8g/host-build/build.zig` is `build.zig` with `-Dopt` and `-Dtrack_live`; its `default` host equals the host of the tree byte for byte). The variant `ot_off` (`-Downer_tag=false`) is removed with the option (2026-10-17, P3): the row below is the measure of 2026-10-17 before the removal. Node, 5 reps in rotating order, median (spread), us:
 
 | Variant | Zig decode, 200 rows | Zig decode, 20 rows | `D1.rows!` 200 rows | `D1.all!` 200 rows | `host.wasm` (bytes) |
 |---|---|---|---|---|---|
@@ -355,7 +365,7 @@ The numbers here are lower than the native ones of API.md AQ5 (137 us records, 6
 | Finding | Number |
 |---|---|
 | `track_live` | 1.2 us of 46.7 us (2.6 %) for 1,003 allocations and frees: about 1.2 ns each |
-| `owner_tag` | No effect. `host-ot_off.wasm` and `host-tl_off.wasm` are the same file (`cmp`). The option is in `build.zig:12` and no source of `hostlib/` or `host/` reads it: the owner is the page table of the allocator (`hostlib/alloc.zig`, `taskOf`) and cannot be switched off. Only `research/traps/alloc_v0_walk.zig` read it |
+| `owner_tag` | No effect. `host-ot_off.wasm` and `host-tl_off.wasm` are the same file (`cmp`). The option was in `build.zig:12` (removed 2026-10-17, P3) and no source of `hostlib/` or `host/` read it: the owner is the page table of the allocator (`hostlib/alloc.zig`, `taskOf`) and cannot be switched off. Only `research/traps/alloc_v0_walk.zig` read it |
 | Optimize mode `fast` | The decode takes 19 % less (46.7 to 37.9 us), `D1.rows!` 8 % less, `D1.all!` no change (its time is in Roc). The host is 72 % larger |
 | Native Zig (`research/api-probe/bench/decode.zig`, ReleaseFast, 3 runs on this machine) | 24 to 25 us for 200 rows (another decoder, one pass). The wasm decode in mode `small` is 1.9 times that, in mode `fast` 1.5 times |
 | workerd (2 reps, steps of 2 us) | decode of 200 rows: `default` 54.7 and 54.7, `tl_off` 52.7 and 54.7, `fast` 44.9 and 46.9, `fast_tl_off` 44.9 and 46.9 |
@@ -386,6 +396,20 @@ The routes `/sha/<name>?size=`. `wasm`: the builtin on a `List(U8)` of wasm memo
 | Fixed cost of `digest` (256 B, with the copy) | 13 us (Node uses a thread pool) | 5.6 us |
 | Slope: builtin, `digest` | 2.1 and 0.6 us per KB | 2.5 and 0.5 us per KB |
 | Share of the copy and the wait in `digest` at 1 MB | 35 % | 24 % |
+
+`WebCrypto.sha256!` in the platform (PLAN.md 8g, P2, built 2026-10-17: route `/sha/pick`, `sha256_crossover_bytes = 2_700`, 3 runs, us):
+
+| Size | workerd `wasm` | workerd `digest` | workerd `pick` | Node `wasm` | Node `digest` | Node `pick` |
+|---|---|---|---|---|---|---|
+| 256 B | 0.864 | 5.74 | 0.838 | 0.713 | 10.1 | 0.722 |
+| 1 KB | 2.77 | 6.07 | 2.79 | 2.38 | 10.2 | 2.35 |
+| 2 KB | 5.34 | 6.69 | 5.28 | 4.50 | 9.94 | 4.49 |
+| 4 KB | 10.3 | 7.85 | 7.58 | 8.81 | 11.2 | 11.5 |
+| 8 KB | 20.4 | 9.97 | 9.87 | 17.5 | 14.2 | 13.8 |
+| 64 KB | 162.4 | 39.8 | 39.6 | 137.7 | 48.9 | 51.4 |
+| 1 MB | 2,587 | 557 | 559 | 2,206 | 677 | 734 |
+
+In workerd `pick` follows the faster of the two at each size (the check of the length costs nothing that shows): 1 MB 559 against 2,587 us (4.6 times), 64 KB 39.6 against 162.4 us. In Node the crossover is 6 KB, so between 2.7 and 6 KB `pick` takes `digest` where the builtin is faster (4 KB: 11.5 against 8.81 us). Node is for the tests only, so one constant for workerd is used. The constant is one line in `platform/WebCrypto.roc` (`sha256_crossover_bytes`), and the edge run of 11c can change it.
 
 `resumeCheck: off` changes `digest` by 5 % to 10 % at 1 MB (workerd 560 to 536 us) and by 0.5 us for small sizes (`8g/results/*-off.md`). The builtin blocks the isolate while it runs, and `digest` is a wait: other tasks run during it. The edge numbers are on the 11c list (PLAN.md, "Status of step 8g").
 

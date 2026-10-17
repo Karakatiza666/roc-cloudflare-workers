@@ -1,5 +1,5 @@
 //! PLAN.md 8g: the bench host of `../../../build.zig` with the three options of the measure: `-Dopt=` (the optimize mode,
-//! small in the platform), `-Dtrack_live=`, `-Downer_tag=`, and `-Dout=` (the file to write, in this directory).
+//! small in the platform), `-Dtrack_live=`, and `-Dout=` (the file to write, in this directory).
 //! The sources are the ones of the platform (`host` and `hostlib` here are symbolic links to them). Run `../build.sh`.
 const std = @import("std");
 
@@ -10,7 +10,6 @@ pub fn build(b: *std.Build) void {
     options.addOption(bool, "small_buffers", false);
     options.addOption(bool, "bench", true);
     options.addOption(bool, "track_live", b.option(bool, "track_live", "Count live bytes (leak checks)") orelse true);
-    options.addOption(bool, "owner_tag", b.option(bool, "owner_tag", "Tag spans with the task, free them after a trap") orelse true);
     options.addOption(bool, "ask_js", true);
     const wasm = b.resolveTargetQuery(.{
         .cpu_arch = .wasm32,

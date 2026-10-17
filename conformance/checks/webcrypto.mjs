@@ -1,11 +1,12 @@
 // `WebCrypto` (MODULES.md 10, PLAN.md 8c): routes of conformance/WebCryptoRoutes.roc. Node `crypto` makes the keys and
 // checks the signatures of the registry cases (RN6, RN9, RN18). `r.waits` is the number of waits of the task.
-import { generateKeyPairSync, createHmac, createVerify, sign as nodeSign } from 'node:crypto';
+import { generateKeyPairSync, createHash, createHmac, createVerify, sign as nodeSign } from 'node:crypto';
 import { answer, ok, eq } from '../assert.mjs';
 
 export const options = {};
 
 const q = (s) => encodeURIComponent(s);
+const pickBytes = (size) => Uint8Array.from({ length: size }, (_, i) => (i * 31 + 7) % 256);
 const b64u = (b) => Buffer.from(b).toString('base64url');
 // One RSA key pair of Node for the registry cases, and a JWT signing input made with it.
 const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -108,6 +109,36 @@ export const checks = [
     const key = 'k'.repeat(100), body = 'body';
     const want = createHmac('sha256', key).update(body).digest('hex');
     answer(await t.get(`/webcrypto/hmac?key=${q(key)}&data=${q(body)}`), `sign=${want} roc=${want} same=True verify=Ok changed=BadSignature`);
+  }],
+  // PLAN.md 8g P2: `sha256!` is the builtin below 2,700 bytes (no crossing) and `crypto.subtle.digest` from 2,700 bytes (one
+  // crossing with a wait). The digest equals the one of Node on both sides. The bytes are `(i * 31 + 7) % 256`, as in the route.
+  ['webcrypto sha256!: the digest of Node, 0 crossings below 2,700 bytes and 1 above', async (t) => {
+    const out = [];
+    for (const size of [0, 1, 1024, 2699, 2700, 2701, 65536, 1048576]) {
+      const r = await t.get(`/webcrypto/sha256_pick?size=${size}`);
+      answer(r, createHash('sha256').update(Buffer.from(pickBytes(size))).digest('hex'));
+      const above = size >= 2700;
+      eq(r.awaits, above ? 1 : 0, `js_await at ${size} bytes`);
+      eq(r.calls, 0, `js_call at ${size} bytes`);
+      eq(r.waits, above ? 1 : 0, `waits at ${size} bytes`);
+      out.push(`${size}:${r.awaits + r.calls}`);
+    }
+    return `crossings by size: ${out.join(' ')}`;
+  }],
+  // The twin gives the same digests. Above the crossover it is one `js_await`. Below it the program has no op: `Io.run!` makes
+  // one `js_call` of an empty program.
+  ['webcrypto sha256 (Io twin): the digest of Node, a wait above 2,700 bytes only', async (t) => {
+    const out = [];
+    for (const size of [0, 2699, 2700, 1048576]) {
+      const r = await t.get(`/webcrypto/sha256_pick_io?size=${size}`);
+      answer(r, createHash('sha256').update(Buffer.from(pickBytes(size))).digest('hex'));
+      const above = size >= 2700;
+      eq(r.awaits, above ? 1 : 0, `js_await at ${size} bytes`);
+      eq(r.calls, above ? 0 : 1, `js_call at ${size} bytes`);
+      eq(r.waits, above ? 1 : 0, `waits at ${size} bytes`);
+      out.push(`${size}:${r.awaits}w+${r.calls}c`);
+    }
+    return out.join(' ');
   }],
   // RS2: a CryptoKey that one request pins is used by a later request.
   ['webcrypto a pinned CryptoKey used by a later request', async (t) => {

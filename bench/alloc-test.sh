@@ -7,11 +7,11 @@ cd "$(dirname "$0")/.."
 W=.cache/alloc-driver
 mkdir -p "$W" bench/out
 export ZIG_GLOBAL_CACHE_DIR=$PWD/.cache/zig ZIG_LOCAL_CACHE_DIR=$PWD/$W/.zig-cache
-printf 'pub const small_buffers = false;\npub const bench = true;\npub const track_live = true;\npub const owner_tag = true;\npub const ask_js = false;\n' > "$W/build_options.zig"
+printf 'pub const small_buffers = false;\npub const bench = true;\npub const track_live = true;\npub const ask_js = false;\n' > "$W/build_options.zig"
 "$ZIG" build-exe -target wasm32-freestanding -mcpu=generic+simd128 -O ReleaseSmall -fno-entry -rdynamic --stack 1048576 \
   --dep hostlib -Mroot=bench/alloc_driver.zig --dep build_options -Mhostlib=hostlib/root.zig -Mbuild_options="$W/build_options.zig" \
   -femit-bin=bench/out/alloc_driver.wasm
-printf 'pub const small_buffers = false;\npub const bench = true;\npub const track_live = true;\npub const owner_tag = true;\npub const ask_js = true;\n' > "$W/build_options_grow.zig"
+printf 'pub const small_buffers = false;\npub const bench = true;\npub const track_live = true;\npub const ask_js = true;\n' > "$W/build_options_grow.zig"
 "$ZIG" build-exe -target wasm32-freestanding -mcpu=generic+simd128 -O ReleaseSmall -fno-entry -rdynamic --stack 1048576 \
   --dep hostlib -Mroot=bench/alloc_driver.zig --dep build_options -Mhostlib=hostlib/root.zig -Mbuild_options="$W/build_options_grow.zig" \
   -femit-bin=bench/out/alloc_driver_grow.wasm
