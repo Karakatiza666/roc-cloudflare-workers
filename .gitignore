@@ -13,3 +13,4 @@ bench/out09/
 bench/platform/targets/
 bench/app_prod.roc
 bench/hd4/*.bin
+bench/8g/out/

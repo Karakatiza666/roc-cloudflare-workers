@@ -38,6 +38,7 @@ Question: a Roc wasm32 app with a Zig host serves concurrent requests that wait 
 | `wait-test.mjs`, `trapclean-test.mjs`, `tasktable-test.mjs` | The wait import never rejects (2b), TRAP_CLEAN (2d), the task table (2c). Since 8a they use `makeBridge` of `../js/bridge.js`; tasktable part 2 aims `fail_alloc_at` with `alloc_count` |
 | `cbor-js-test.mjs`, `cbor-js-reverts.mjs`, `cbor-wasm-test.mjs`, `hd4-test.mjs`, `hd4/oracle.roc`, `jsgen.js`, `program-test.mjs` | The CBOR profile (API.md 5): the JS codec and its revert checks, the Zig codec in the wasm32 host (HD5 corpus, HD6, same bytes as JS), HD4 (the Zig decoder against the Roc oracle; the inputs go to `hd4/*.bin`, ignored), the seeded value generator, the program interpreter and the result block |
 | `sha256-bench.mjs` | PLAN.md 8c (the measure for 8g): `Crypto.SHA256.hash` in wasm (the route `/webcrypto/sha256` of `../conformance/WebCryptoRoutes.roc`, run by `makeHandler` in Node) against `crypto.subtle.digest`, for 1 KB to 1 MB. `node bench/sha256-bench.mjs bench/out/conformance.wasm` |
+| `8g/`, `8g-cbor-field/`, `8g-cbor-first/` | PLAN.md 8g, the measures of one crossing, D1 reads, `Cbor.parse` and SHA-256 in the platform. `8g/app.roc`: the measure app (bench platform): each route runs one operation `n` times in one request. `8g/run-node.mjs`, `8g/run-mf.mjs` (Miniflare, local D1), `8g/run-edge.mjs` (the deployed Worker, for 11c), `8g/run-variants.mjs` (host build variants), `8g/lib.mjs` (the method), `8g/parts.js` (the parts of a crossing, against the wasm exports), `8g/worker.js`, `8g/summarize.mjs`, `8g/build.sh` and `8g/host-build/` (the host with `-Dopt`, `-Dtrack_live`, `-Downer_tag`), `8g/deploy-edge.sh`, `8g/results/` (the tables of the runs below). `8g-cbor-field/` and `8g-cbor-first/`: copies of `roc-cbor` 0.1.0 whose `parse_record_field` gives `Field` (never edit or publish `roc-cbor`). Sections "Step 8g" below. |
 | `test-all.sh` | Builds everything and runs all tests with `timeout 600`: one line for each, exit 1 when one fails. Env: `ZIG`, `WORKERD` |
 | `check-layout.mjs` | Reads a linked wasm: STACK-FIRST, DATA-FIRST or UNKNOWN (exit 0, 1, 2). `build.sh` runs it on its outputs and fails on a result that is not STACK-FIRST |
 | `get-roc.sh`, `ci-layout.sh`, `../compat/last-stack-first-nightly` | Nightly download, the CI check of one nightly (`../.github/workflows/nightly-layout.yml`), the pinned nightly. A nightly that is not stack-first fails the job: it cannot be used at all, the platform has no fallback |
@@ -233,6 +234,160 @@ The docs do not give the JS `name` and `message` of a failed `fetch`. These are 
 | 1 MB | 2,329 to 2,808 | 507 to 793 |
 
 `digest` here has no copy from wasm memory, no bridge crossing and no JSPI wait. In the platform it has all three, so the size where it wins is higher (8g).
+
+## Step 8g: crossing, D1 reads, `Cbor.parse`, SHA-256 in the platform (PLAN.md 8g, local, 2026-10-17)
+
+Setup of all tables of this section:
+
+| Item | Value |
+|---|---|
+| Machine | AMD Ryzen AI 9 HX 370, 24 threads, 91 GB, governor `powersave`. Load average 2 to 3 (other jobs ran) |
+| Node | v26.7.0 (V8 14.6): `makeHandler` of `js/` with `bench/cf-node.mjs`, the wasm of the platform (bench host) |
+| workerd | 2026-10-12 in Miniflare 5.20261012.0-beta, local D1. The clock of workerd moves in steps of 1 ms: the harness times the whole request from Node |
+| Roc, Zig | nightly 2026-10-12 (`--opt=speed`, wasm32), Zig 0.17 (host: optimize mode `small`) |
+| Shim options | the defaults, with `heapCheckEvery: 0` and `heapCheckWhenIdle: false` (no global check inside a timed request). `resumeCheck` is `always` (the default) except where a table says `off` |
+| Method (`8g/lib.mjs`) | A route runs one operation `n` times in one request, with an input that changes (so the compiler cannot hoist it). The cost of one operation is (time of a request with n = N less time of a request with n = 0) / N, where N makes the request take about 100 ms. 9 rounds for each run, 3 runs (2 for the `off` tables): each cell is the median over the runs of the median of each run. The spread in a cell is the min and max over the runs |
+| Fake D1 | In Node and for the `fake` rows in workerd the binding `DB` is a JS object (`prepare().bind().all()` and `raw()`) that gives the same 200 rows each time. So a case measures the platform (shim, host, Roc), not SQLite. The 200 rows have 8 columns (`grp`, `version`, `hash`, `url`, `published_at`, `log_index`, `yanked`, `provenance`), 44 KB as a CBOR tree and 56 KB as typed CBOR, the same rows as `research/api-probe/cbor/` |
+
+Commands (the numbers are in `8g/results/*.md`, made by `8g/summarize.mjs` from the raw lines of 3 runs):
+
+```sh
+ZIG=<zig 0.17> bench/8g/build.sh                  # app-<variant>.wasm for the host variants; app.wasm is the default host
+node bench/8g/run-node.mjs                        # env SECTIONS=cross,d1,parse,sha,parts  RESUME=always|off  ROUNDS=9  TARGET_MS=100
+node bench/8g/run-mf.mjs                          # env SECTIONS=cross,d1,d1real,parse,sha,parts,clock, a wasm as the argument
+RESUME=off SECTIONS=cross,sha node bench/8g/run-node.mjs
+node bench/8g/run-variants.mjs                    # track_live, owner_tag and the optimize mode, Node
+node bench/8g/summarize.mjs run1.txt run2.txt run3.txt
+bench/8g/deploy-edge.sh && EDGE_URL=https://talon-bench-8g.<account>.workers.dev node bench/8g/run-edge.mjs   # 11c, not run yet
+```
+
+### One crossing (`/cross/<call|await>?k=`)
+
+A program of `k` ops is `k` times `isFinite(i)` on the root `global`, one `Io.call!` or `Io.await!` for each crossing. `call` has no wait. `await` has one JSPI wait.
+
+| Program | Node `call!` (us) | Node `await!` (us) | workerd `call!` (us) | workerd `await!` (us) |
+|---|---|---|---|---|
+| 0 ops | 0.36 | 1.81 | 0.50 | 2.00 |
+| 1 op | 1.20 | 2.57 | 1.35 | 3.00 |
+| 4 ops | 2.80 | 4.25 | 3.11 | 4.88 |
+| 16 ops | 8.98 | 10.5 | 9.66 | 12.2 |
+
+The 3 runs differ by less than 5 % in each cell, except `await!` in workerd (up to 16 % from the lowest to the highest run). Each op after the first costs 0.52 us (Node) and 0.55 us (workerd) in `call!`, and 0.53 and 0.61 us in `await!`. The wait costs 1.44 us (Node) and 1.50 us (workerd): `await!` less `call!` of the empty program. With `resumeCheck: "off"` the empty `await!` costs 1.28 us (Node) and 1.51 us (workerd), so the check at the resume costs 0.5 us for a task with a small memory (`bench/8g/results/*-off.md`).
+
+The parts of one `call!` (Node, us; "other" is the rest: the size pass of `encodedSize`, the free of the tree, the loop, 0.36 us with no op):
+
+| Part | 1 op | 4 ops | 16 ops | Where |
+|---|---|---|---|---|
+| Roc: `Js.program` makes the tree, then it is freed (`/cross/build`) | 0.17 | 0.48 | 1.71 | `platform/Js.roc` |
+| Zig: encode the program (`cbor_echo` less `cbor_check`) | 0.18 | 0.49 | 1.88 | `host/host.zig:376` |
+| JS: `fromJs` of the program | 0.20 | 0.67 | 2.43 | `js/bridge.js:85` |
+| JS: run the ops (`runCall`) | 0.09 | 0.29 | 1.03 | `js/program.js` |
+| JS: encode the result (`writeResult`) | 0.21 | 0.20 | 0.20 | `js/bridge.js` |
+| Other, by difference | 0.36 | 0.68 | 1.73 | |
+| Whole `call!` | 1.20 | 2.80 | 8.98 | |
+
+workerd has the same parts within 20 % (`8g/results/mf-always.md`): 16 ops `call!` 9.66 us, of which Roc 1.80, Zig encode 2.08, JS decode 2.32, run 1.19, result 0.25.
+
+### D1 reads: `D1.all!` (typed, `Packed` CBOR) against `D1.rows!` (`Js` tree, no types)
+
+Fake D1, us for one call (one crossing with one wait), 9 rounds, 3 runs. The names are the routes `/d1/<name>`: `all` is `D1.all!` into `List(Row)`, `rows` is `D1.rows!`. The other routes are the same programs cut after one step (`8g/app.roc`: `d1_ops!`), so the cost of a step is a difference.
+
+| Case | Node 20 rows | Node 200 rows | workerd 20 rows | workerd 200 rows |
+|---|---|---|---|---|
+| `D1.all!` (`all`) | 25.9 | 197.8 | 30.6 | 236.0 |
+| `D1.rows!` (`rows`) | 17.8 | 115.1 | 19.7 | 127.0 |
+| `all` / `rows` | 1.46 | 1.72 | 1.55 | 1.86 |
+| `all_arrays`: `raw()`, `pf.pack`, `Cbor.parse` into tuples | 14.7 | 91.4 | 16.2 | 102.6 |
+| `tree_typed`: `raw` tree, a hand-written match into `Row` | 17.1 | 111.3 | 19.0 | 121.2 |
+| `obj_tree`: `all()` rows as objects in a `Js` tree, no match | 21.8 | 160.1 | 24.9 | 184.0 |
+
+The steps of 200 rows (Node, workerd), us:
+
+| Step | `D1.all!` | `D1.rows!` |
+|---|---|---|
+| D1 call, result dropped (`js_only`, `raw_js_only`) | 4.4, 4.5 | 5.3, 5.2 |
+| JS encode, copy back, Zig decode (`pack_only` less `js_only`, `raw_only` less `raw_js_only`) | 81.9, 97.4 | 99.6, 111.7 |
+| Roc: `Cbor.parse` into records (`all` less `pack_only`), the match into `Sql.Rows` (`rows` less `raw_only`) | 111.5, 134.1 | 10.2, 10.1 |
+| Whole call | 197.8, 236.0 | 115.1, 127.0 |
+
+The decode of 200 rows, each part alone against the wasm exports (`8g/parts.js`, us for one call, Node, workerd; the clock of workerd has steps of 1 ms, so a part of workerd is read to about 2 us):
+
+| Part | 20 rows | 200 rows |
+|---|---|---|
+| JS encode of the tree of arrays (`pf.limit`, `D1.rows!`), 44 KB | 6.4, 7.6 | 48.0, 60.6 |
+| JS encode of the rows as typed CBOR (`pf.pack`, `D1.all!`), 56 KB | 9.4, 11.2 | 77.9, 97.7 |
+| Zig decode of the tree into Roc values (`cbor_check`, 1,003 allocations for 200 rows) | 5.5, 5.9 | 51.3, 54.7 |
+| Zig decode of `Packed` (one byte string: a copy into a `List(U8)`) | 0.11, 0.12 | 0.65, 0.67 |
+| Roc `Cbor.parse` of the rows as records (`/parse/records`) | 11.0, 13.4 | 107.9, 130.2 |
+
+Real D1 in Miniflare (`d1real` in `8g/results/mf-always.md`): one query takes 2.1 ms for 20 rows and 2.4 to 3.8 ms for 200 rows, and it moves by more than 20 % from one round to the next. That is 11 times (200 rows) to 70 times (20 rows) the whole shim part of the read, so the differences between the cases cannot be read there (for example `all` 2,681 us and `raw_only` 2,478 us for 200 rows). The fake D1 is the measure for 8g. With the local D1 the typed read of 200 rows (0.24 ms in workerd) is about 9 % of the 2.7 ms of the query.
+
+### `Cbor.parse` of records against tuples, and the `Field` variant of `roc-cbor`
+
+Roc only, in wasm (`/parse/<name>?rows=`): the bytes come from one crossing, then `n` parses of the same bytes (one byte of the first text changes before each parse, so it cannot be hoisted) and a sum that reads every field. `fold_only` is that sum alone, on a list that was parsed once. All routes use `parse_with(bytes, { fields: Snake, int_from_text: Bool.True })`, as `D1.all!` does (`platform/SqlRules.roc:35`).
+
+| Case | Node 20 rows (us) | Node 200 rows (us) | workerd 20 rows | workerd 200 rows |
+|---|---|---|---|---|
+| Records `{ grp, version, ... }` (`records`) | 11.0 | 107.9 | 13.4 | 130.2 |
+| Tuples of 8 (`tuples`) | 3.73 | 36.1 | 3.76 | 36.3 |
+| Record matching (records less tuples) | 7.3 | 71.8 | 9.6 | 93.9 |
+| Share of the record parse that is matching | 66 % | 67 % | 72 % | 72 % |
+| `Field` variant, exact compare of the key bytes (`variant_field`) | 48.6 | 482 | 72.7 | 725 |
+| `Field` variant, length and first byte only (`variant_first`, not correct, a bound) | 46.8 | 466 | 72.2 | 726 |
+| The sum alone (`fold_only`) | 0.05 | 0.47 | 0.06 | 0.55 |
+
+`8g-cbor-field/Cbor.roc` is `roc-cbor` 0.1.0 with `parse_record_field` that reads the head of the key, finds the field with `names.for_size(len)` and `FieldName.name`, and gives `Field({ field, rest })`. It makes no key `Str`. It passes the 78 `expect`s of the package (`roc test bench/8g-cbor-field/Cbor.roc`). `8g-cbor-first/Cbor.roc` compares only the length and the first byte: it also passes the 78 `expect`s, so it is a bound for the cost of the lookup, not a parser to use. Both are 4.3 to 5.6 times slower than the `TryField` path. The cause is not shown by the measure: the only way to get a `FieldName` is to walk the `Iter` of `FieldNames` (`for_size`, `iter`), and the walk costs more than the key `Str` and the name match of the derived parser that it replaces. The nightly has no lookup by bytes in `FieldNames`. The tuple parse is 3 times faster than the record parse in wasm, and it has no key at all.
+
+The numbers here are lower than the native ones of API.md AQ5 (137 us records, 66 us tuples): the allocator of the host is cheaper than `malloc`.
+
+### Cost of `track_live`, `owner_tag` and the optimize mode in the Zig tree decode
+
+`8g/build.sh` builds the bench host in 5 variants (`8g/host-build/build.zig` is `build.zig` with `-Dopt`, `-Dtrack_live`, `-Downer_tag`; its `default` host equals the host of the tree byte for byte). Node, 5 reps in rotating order, median (spread), us:
+
+| Variant | Zig decode, 200 rows | Zig decode, 20 rows | `D1.rows!` 200 rows | `D1.all!` 200 rows | `host.wasm` (bytes) |
+|---|---|---|---|---|---|
+| `default` (small, `track_live` on) | 46.7 (46.5 to 46.8) | 5.01 | 108.4 | 196.2 | 1,286,847 |
+| `tl_off` (`track_live=false`) | 45.5 (45.0 to 45.8) | 4.89 | 106.3 | 194.2 | 1,284,225 |
+| `ot_off` (`track_live=false`, `owner_tag=false`) | 45.3 (45.1 to 45.9) | 4.87 | 105.6 | 194.2 | 1,284,225 |
+| `fast` (optimize mode fast) | 37.9 (37.4 to 37.9) | 4.12 | 99.6 | 195.5 | 2,218,337 |
+| `fast_tl_off` | 37.0 (36.9 to 37.2) | 4.05 | 98.3 | 196.3 | 2,209,661 |
+
+| Finding | Number |
+|---|---|
+| `track_live` | 1.2 us of 46.7 us (2.6 %) for 1,003 allocations and frees: about 1.2 ns each |
+| `owner_tag` | No effect. `host-ot_off.wasm` and `host-tl_off.wasm` are the same file (`cmp`). The option is in `build.zig:12` and no source of `hostlib/` or `host/` reads it: the owner is the page table of the allocator (`hostlib/alloc.zig`, `taskOf`) and cannot be switched off. Only `research/traps/alloc_v0_walk.zig` read it |
+| Optimize mode `fast` | The decode takes 19 % less (46.7 to 37.9 us), `D1.rows!` 8 % less, `D1.all!` no change (its time is in Roc). The host is 72 % larger |
+| Native Zig (`research/api-probe/bench/decode.zig`, ReleaseFast, 3 runs on this machine) | 24 to 25 us for 200 rows (another decoder, one pass). The wasm decode in mode `small` is 1.9 times that, in mode `fast` 1.5 times |
+| workerd (2 reps, steps of 2 us) | decode of 200 rows: `default` 54.7 and 54.7, `tl_off` 52.7 and 54.7, `fast` 44.9 and 46.9, `fast_tl_off` 44.9 and 46.9 |
+
+The decode takes about 46 ns for each allocation, and the allocator is 3 ns of a pair (`alloc_bench`), so the time is in the check pass and the build pass over 44 KB, not in `track_live` or the owner.
+
+### SHA-256: `Crypto.SHA256.hash` (builtin, in wasm) against `crypto.subtle.digest`, in the platform
+
+The routes `/sha/<name>?size=`. `wasm`: the builtin on a `List(U8)` of wasm memory (the first byte changes each time). `digest`: `Io.await!` of `crypto.subtle.digest('SHA-256', Lit(Bytes(buffer)))` with the buffer from wasm memory (the whole path: encode in Zig, copy to a `Uint8Array`, one wait, digest). `digest_js`: the same with the buffer already in JS (`ops.lib.buf(size)`, a cached array): the digest and the wait. `copy_only`: `Lit(Bytes)` to `ops.lib.len`, one wait, no digest: the copy and the wait. The answer of `wasm` and of `digest` is checked to be the same hex. us for one hash, `resumeCheck: always`:
+
+| Size | Node `wasm` | Node `digest` | Node `copy_only` | workerd `wasm` | workerd `digest` | workerd `digest_js` | workerd `copy_only` |
+|---|---|---|---|---|---|---|---|
+| 256 B | 0.72 | 13.0 | 3.26 | 0.85 | 5.59 | 6.04 | 3.34 |
+| 1 KB | 2.34 | 10.0 | 3.46 | 2.72 | 6.11 | 6.48 | 3.65 |
+| 2 KB | 4.47 | 9.59 | 3.54 | 5.35 | 6.70 | 6.91 | 3.80 |
+| 4 KB | 8.75 | 12.2 | 3.85 | 10.3 | 7.90 | 7.68 | 4.01 |
+| 8 KB | 17.3 | 14.0 | 4.41 | 20.5 | 10.1 | 9.42 | 4.63 |
+| 16 KB | 34.3 | 18.9 | 6.05 | 40.8 | 14.5 | 12.9 | 5.74 |
+| 64 KB | 137.6 | 48.6 | 12.4 | 161.3 | 39.8 | 34.3 | 11.5 |
+| 256 KB | 546 | 160 | 52.1 | 645 | 142 | 121 | 34.3 |
+| 1 MB | 2,181 | 638 | 224 | 2,607 | 560 | 461 | 137 |
+
+| Result | Node | workerd |
+|---|---|---|
+| Size where `digest` is faster (the difference, linear between the two sizes that bracket it) | 6.0 KB (4 KB: `digest` 3.5 us slower, 8 KB: 3.3 us faster) | 2.7 KB (2 KB: 1.4 us slower, 4 KB: 2.4 us faster). With `resumeCheck: off`: 2.3 KB |
+| Builtin speed | 480 MB/s | 400 MB/s |
+| `digest` speed at 1 MB, with the copy and the wait | 1.6 GB/s | 1.9 GB/s |
+| Fixed cost of `digest` (256 B, with the copy) | 13 us (Node uses a thread pool) | 5.6 us |
+| Slope: builtin, `digest` | 2.1 and 0.6 us per KB | 2.5 and 0.5 us per KB |
+| Share of the copy and the wait in `digest` at 1 MB | 35 % | 24 % |
+
+`resumeCheck: off` changes `digest` by 5 % to 10 % at 1 MB (workerd 560 to 536 us) and by 0.5 us for small sizes (`8g/results/*-off.md`). The builtin blocks the isolate while it runs, and `digest` is a wait: other tasks run during it. The edge numbers are on the 11c list (PLAN.md, "Status of step 8g").
 
 ## Error texts of `WebCrypto` (PLAN.md 8c, local, 2026-10-16)
 

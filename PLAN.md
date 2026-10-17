@@ -34,7 +34,7 @@ Problem 12 (2026-10-14) is the goal of problem 4: one wasm instance per isolate.
 | 7 | 7a to 7c | none. Before 8, because 8 changes the exports. |
 | 8 | 9a and 9b, then 8a, 8b with 9c, 8c with 10a and 10b, 8d, 8e (`API.md` phase A). 10c is part of the test of 8a. | the split ABI (7a), the header settings (7b), the task table (2c), cancel (3c). 8a needs the per-task roots and ref table of 9b, and 8b and 8c need `makeHandler` of 9a. |
 | 9 | 8f (`API.md` phase B). Done 2026-10-17: parts 1 to 4 (the status sections of 8f); the edge parts are on the 11c lists. | 8a to 8e |
-| 10 | 8g, local. The edge part runs after 11. | 8a to 8e |
+| 10 | 8g, local. Done 2026-10-17 (the section "Status of step 8g"). The edge part runs after 11: the list "Edge parts for 11c" of that section. | 8a to 8e |
 | 11 | 11a to 11c, then 5d on the edge | 7 to 10 |
 | 12 | Update DESIGN.md §6.1, Q12 and Q14, DESIGN-REGISTRY.md §8 and `bench/README.md` (API.md RF10) | all |
 | 13 | 12g: measure with talon | talon runs on the platform |
@@ -1746,7 +1746,7 @@ Measure (no test): `node bench/sha256-bench.mjs bench/out/conformance.wasm`. The
 | 64 KB | 143.6 to 151.9 | 35.9 to 43 | 3.3 to 4.1 |
 | 1 MB | 2,329 to 2,808 | 507 to 793 | 3.5 to 5.5 |
 
-The builtin hashes about 400 MB/s in wasm. `digest` is faster from about 4 KB. In this measure `digest` has no bridge crossing and no JSPI wait, and the bytes are in JS already. In the platform it adds a `Lit(Bytes)` copy from wasm memory, one crossing and one wait, so the size where `digest` wins is higher there: 8g measures it in the platform.
+The builtin hashes about 400 MB/s in wasm. `digest` is faster from about 4 KB. In this measure `digest` has no bridge crossing and no JSPI wait, and the bytes are in JS already. In the platform it adds a `Lit(Bytes)` copy from wasm memory, one crossing and one wait, so the size where `digest` wins is higher there: 8g measures it in the platform. Measured in 8g (2026-10-17, `bench/README.md` "Step 8g"): `digest` wins from about 3 KB in workerd (2.7 KB) and 6 KB in Node. The edge value is on the 11c list.
 
 Choices I made (the plan does not say):
 
@@ -1997,7 +1997,7 @@ Open points:
 | DO2 | The type of `Io.pin!` (`Try({}, [PinErr(Io.Thrown)])`) and the names in `Io` (not `Js`) are not in the design (DC12). |
 | DO3 | `D1.Result.first` and `MissingRequiredField` work around two compiler limits (DC5, DC6). A newer compiler can remove both. |
 | DO4 | `Object.Self` SQL (8f) uses `constraint_of` and the integer rules of `D1.roc`, and its tests also check `ForeignKey` and `Datatype` (O5). |
-| DO5 | 8g: `D1.all!` (CBOR, typed) against `D1.rows!` (`pf.limit`, `Js` tree) for 20 and 200 rows. |
+| DO5 | 8g: `D1.all!` (CBOR, typed) against `D1.rows!` (`pf.limit`, `Js` tree) for 20 and 200 rows. Answered 2026-10-17 ("Status of step 8g"): `rows!` is 1.5 to 1.9 times cheaper (17.8 against 25.9 us for 20 rows, 115 against 198 us for 200 rows in Node; workerd 19.7 against 30.6 and 127 against 236). The local D1 takes 2.1 ms or more for a query, so the types cost 9 % at most. `all!` stays the default. |
 
 ### Status of step 8f, part 1: Objects, RPC, Manifest (2026-10-16)
 
@@ -2637,6 +2637,66 @@ Open points:
 | SO3 | Done 2026-10-17: the give-back of OP8 (`onLoss` in `js/program.js`, the row "Follow-up SO3" above), for `tcpRead` and also for `wsReceive`: its step that put a message back never ran (`give` took the abort listener off first), and a message that `wsReceive` took from the queue at once had no step. Tests and reverts: the rows SO3 above. The point was: a race edge of OP8 for `Tcp`: when the read of a lost branch settles in the same turn as the end of the race, the bytes go to the lost branch. `wsReceive` puts such a message back at the front of the queue, `tcpRead` has no such step. |
 | SO4 | `start_tls!`, `connect_with!` with `tls: On` and `web_socket_error!` have no local test (11c). |
 
+### Status of step 8g (2026-10-17)
+
+Done: all the local measures of the 8g row. No platform code changed. The tables, the setup and the commands are in `bench/README.md` ("Step 8g"). The edge part is the list "Edge parts for 11c" below.
+
+| Item of the 8g row | Result (Node, workerd; us; fake D1) | Where |
+|---|---|---|
+| One crossing, 1, 4 and 16 ops | `call!` 1.20, 2.80, 8.98 and 1.35, 3.11, 9.66. `await!` 2.57, 4.25, 10.5 and 3.00, 4.88, 12.2. An empty program: 0.36 and 0.50 (`call!`), 1.81 and 2.00 (`await!`). One op costs 0.5 to 0.6 us. The wait costs 1.4 to 1.5 us, and 0.5 us of it is the check at the resume | `bench/8g/run-node.mjs`, `run-mf.mjs`, section `cross` |
+| Parts of a crossing (16 ops, Node) | Roc builds the tree 1.7, Zig encodes 1.9, JS decodes 2.4, JS runs 1.0, JS encodes the result 0.2, the rest 1.7 | `bench/8g/parts.js`, `/cross/build` |
+| The decode of 200 D1 rows | The Zig tree decode takes 51.3 and 54.7. The Roc `Cbor.parse` into records takes 107.9 and 130.2. The Zig decode of `Packed` takes 0.65 | `bench/8g/parts.js`, `/parse/records` |
+| `D1.all!` against `D1.rows!`, 20 rows | 25.9 against 17.8, and 30.6 against 19.7 (1.46 and 1.55 times) | section `d1` |
+| `D1.all!` against `D1.rows!`, 200 rows | 197.8 against 115.1, and 236.0 against 127.0 (1.72 and 1.86 times) | section `d1` |
+| `Crypto.SHA256.hash` against `crypto.subtle.digest` | `digest` is faster from 6.0 KB (Node) and 2.7 KB (workerd). At 1 MB: builtin 2,181 and 2,607, `digest` 638 and 560 | section `sha` |
+| `Cbor.parse` into records against tuples | Records 107.9 and 130.2. Tuples 36.1 and 36.3. Record matching is 67 % (Node) and 72 % (workerd) of the record parse | section `parse` |
+| `roc-cbor` variant with `Field` (no key `Str`) | 4.3 to 5.6 times slower (482 and 725 us for 200 rows). Also a variant that compares only the length and the first byte (not correct, a bound): 466 and 726 us | `bench/8g-cbor-field/`, `bench/8g-cbor-first/` |
+| `track_live` and `owner_tag` in the Zig tree decode | `track_live`: 1.2 us of 46.7 us (2.6 %). `owner_tag`: no effect at all, the option is dead (the host files are equal) | `bench/8g/run-variants.mjs` |
+| Edge | Not run (no deploy here). Scripts are ready: the list below | `bench/8g/deploy-edge.sh`, `run-edge.mjs` |
+
+Conclusions:
+
+| Question | Answer |
+|---|---|
+| AQ4: the cost of one crossing | Small. A `call!` of 1 op takes 1.2 us and an `await!` of 1 op takes 2.6 us locally. A program of 16 ops takes 9 to 12 us, about 0.5 us for each op. A D1 query is 5 or 6 ops, so the crossing is under 5 us, and the local SQLite takes 2.1 to 3.8 ms. No change needed. The edge number stays for 11c |
+| AQ5: is `Cbor.parse` in wasm expensive? | Yes, for many rows. 200 rows take 108 us (Node) and 130 us (workerd) to parse, and that is 55 % of `D1.all!` (198 and 236 us). 67 to 72 % of the parse is the matching of record keys: tuples of the same rows take 36 us. The AQ5 text of the earlier check compared the Zig tree plus a Roc match (about 102 us) with `Packed` plus `Cbor.parse` (about 85 us). Measured now: the tree of arrays plus a hand-written match takes 111 us against 198 us, but the match is per type. A match that does not know the type needs the keys, so the tree of objects is the input, and it takes 160 us before any match (`obj_tree`). So a host tree is not a way to a cheaper typed read of records. A host decoder into the types is still blocked (AQ5 text). What can be built: tuples (below) |
+| DO5: `D1.all!` against `D1.rows!` | `D1.rows!` is 1.5 to 1.9 times cheaper: 17.8 against 25.9 us for 20 rows, 115 against 198 us for 200 rows (Node). Both are small against a query: the local D1 takes 2.1 ms for 20 rows. The types cost 0.24 ms for 200 rows, about 9 % of that query. Keep `all!` as the default read |
+| SHA-256 (MODULES.md 10): the size where `digest` wins in the platform | About 3 KB in workerd (2.7 KB with the default check at the resume, 2.3 KB with `resumeCheck: off`) and 6 KB in Node. Below 2 KB the builtin is faster, above 4 KB `digest` is faster. At 64 KB `digest` is 4 times faster (40 against 161 us), at 1 MB 4.7 times (560 against 2,607 us). The copy from wasm memory and the wait cost 3.3 to 4 us up to 4 KB, 137 us at 1 MB (24 % of `digest`). The builtin holds the isolate while it runs, and `digest` is a wait. The edge value is on the 11c list |
+| Cost of `track_live` and `owner_tag` | `track_live` costs 1.2 ns for each allocation (2.6 % of the decode): keep it. `owner_tag` is a dead build option. The decode is 46 ns for each allocation, so its time is in the two passes over the bytes, not in the allocator. wasm32 is 1.9 times the native Zig decode in mode `small` (46.7 against 25 us) and 1.5 times in mode `fast`, not 3 times |
+| Optimize mode of the host | Mode `fast` takes 19 % less for the tree decode (Node 46.7 to 37.9 us, workerd 54.7 to 44.9 us) and 8 % less for `D1.rows!`. It does not change `D1.all!`. The host grows 72 % (1.29 to 2.22 MB). Not a clear win: no proposal |
+
+The clock of workerd moves in steps of 1 ms (`/__clock`), so the harness times a request of about 100 ms from Node and divides by `n`. The local D1 takes 2.1 to 3.8 ms for a query and moves by 20 % between rounds, so the cases that use it (`d1real`) show only that the shim is 1 to 9 % of the time of a read; the cases with the fake D1 are the measure.
+
+Proposals (measured, not built):
+
+| # | Proposal | Numbers | Cost of the change |
+|---|---|---|---|
+| P1 | Tuple form of the typed read: `D1.all_tuples!` (and `first`, `Session`) that reads `raw()` as arrays and `Cbor.parse`s into a tuple type. The caller keeps the column order in the SQL | 200 rows: 91 against 198 us (Node), 103 against 236 us (workerd): 2.2 and 2.3 times. 20 rows: 14.7 against 25.9 us. It is also cheaper than `D1.rows!` (115 us) | A new function and its twin for each of `all`, `first` (the `Io` twin rule MC3), `Packed` of arrays in `pf.pack` (no change in JS), tests and docs. The record form stays the default |
+| P2 | `WebCrypto.sha256!(bytes)`: the builtin below 3 KB and `digest` above, one `if` on the length | 1 MB: 2,607 to 560 us. 64 KB: 161 to 40 us. Below 2 KB no change. A caller cannot be expected to know the size | One function, a test for each side, a doc row in MODULES.md 10 |
+| P3 | Remove the dead build option `owner_tag` (`build.zig:12`, its rows in `bench/README.md`) | No effect on the host: the files of `-Downer_tag=false` and the default equal byte for byte | A cleanup of 1 line and the README rows. `research/traps/` keeps its own copy |
+| P4 | Ask upstream (roc-lang/roc) for a lookup of a `FieldName` by bytes in `Encoding.FieldName.FieldNames` | With `for_size` and `name` the `Field` form is 4.3 to 5.6 times slower than the `TryField` form. A lookup by bytes or by a hash may make the key `Str` and the name match go away: 67 to 72 % of the record parse | An issue in the Roc repository, no code here |
+
+Edge parts for 11c (AQ4, AQ5, the SHA-256 size; the scripts are tested against `wrangler dev --local` and `wrangler deploy --dry-run`, not on the edge):
+
+| What to run | Command | What to record |
+|---|---|---|
+| Deploy | `ZIG=<zig 0.17> bench/8g/build.sh default && bench/8g/deploy-edge.sh` (needs `wrangler login` and a plan with a CPU limit above 10 ms: the config sets `cpu_ms = 30000`), then `curl -s https://talon-bench-8g.<account>.workers.dev/__setup?rows=200` must print 200 | The URL |
+| The clock | `curl -s https://talon-bench-8g.<account>.workers.dev/__clock` | Does the clock move in a busy loop? (API.md: it moves only at I/O. If so, the Worker cannot time itself and the client clock is the method) |
+| AQ4, AQ5, the SHA-256 size | `EDGE_URL=https://talon-bench-8g.<account>.workers.dev node bench/8g/run-edge.mjs > .cache/results/8g/edge-1.txt`, three times, then `node bench/8g/summarize.mjs .cache/results/8g/edge-{1,2,3}.txt` (about 15 min each: a request of about 1 s for each case, 7 rounds) | The `cross`, `d1`, `parse` and `sha` tables (the same cases as the local tables). Compare with `bench/README.md` "Step 8g". The size where `digest` wins is the first size where `digest` is below `wasm` |
+| Real D1 on the edge | The same run has the section `d1real`: `all`, `rows`, `all_arrays` against a real D1 | Is the typed read still 9 % or less of a query? |
+| The check at the resume | `RESUME=off bench/8g/deploy-edge.sh`, then `SECTIONS=cross,sha EDGE_URL=... node bench/8g/run-edge.mjs` | The cost of `resumeCheck: always` on the edge: locally 0.5 us for each wait |
+| CPU time | In a second shell, `wrangler tail talon-bench-8g --format json` while `run-edge.mjs` runs. Each event has `cpuTime` and `wallTime` (whole ms) of one request. The requests with `?n=<N>` are the long ones | `cpuTime` of a request of `n = N` for `sha/wasm` and `sha/digest` at 1 MB: is the native `digest` counted as CPU time? The builtin costs about 2.6 s of CPU for N = 1,000 |
+| Delete | `bench/8g/deploy-edge.sh delete` | |
+
+Questions: none. Choices I made (the plan does not say):
+
+| # | Choice |
+|---|---|
+| GC1 | The bench code is in `bench/8g/`, not `research/8g/`: `roc` refuses a platform path that goes up two directories (`PathOutsideWorkspace`), and the app must be one level below `bench/platform/`. The two copies of `roc-cbor` are `bench/8g-cbor-field/` and `bench/8g-cbor-first/`: a package folder inside the app folder makes the same error. |
+| GC2 | A D1 case uses a fake `DB` object in JS, not the local D1: the local query takes 2.1 ms and moves by 20 %, which hides the 0.1 to 0.2 ms of the shim. The real D1 has its own section (`d1real`). |
+| GC3 | The 8g `Field` variant is run in two forms: the exact compare (correct, 78 of 78 `expect`s) and a compare of the length and the first byte (also 78 of 78, but not correct in general), to bound what a faster lookup could save. |
+| GC4 | `owner_tag` is read as "the cost of the owner in the allocation": the flag does nothing, so its cost is 0, and the owner work that stays (`taskOf` by page) is inside the 46 ns of each allocation. It cannot be switched off without changing the allocator, and no allocator code was changed. |
+
 ## 9. JS shim
 
 | Gap | Now |
@@ -2729,7 +2789,7 @@ Removed 2026-10-16: stack-first is guaranteed by the compiler. Observation (not 
 |---|---|---|
 | 11a | A release workflow: build the production host (7a) with the pinned nightly (`compat/last-stack-first-nightly`), bundle the platform with `roc bundle`, and attach the bundle and the `js/` package to a GitHub Release. The platform header has two packages by release URL (8c): `http` (roc-lang/http 2.0.0) and `cbor` (`roc-cbor` 0.1.0). The bundle keeps them as URLs (no copy, never a path). A platform cannot re-export a module of a package, so the platform has its own module `Cbor` that wraps the package (DC1, DO1): the release notes say that an app needs no `cbor` entry, and that an app may still add the same URL (the types are the same, MODULES.md 15). Roc downloads the packages to `$XDG_CACHE_HOME/roc/packages/` (the tests set `XDG_CACHE_HOME=.cache`). | Run on a test tag. A new app builds with the release URL. An app with no `cbor` entry builds, and a `D1.all!` into its record type with `Cbor.Bytes` works. An app that also has its own `cbor` entry of the same URL builds. |
 | 11b | Publish `js/` (npm, or a file in the release that the app copies) | A new Worker project uses it with wrangler |
-| 11c | An example Worker app with a wrangler config (with the compatibility flag `enable_request_signal`, for 3b), deployed by CI. 5d (CPU limit on the edge) runs on it. Also check what the edge does at 128 MB: is only the isolate stopped, and do the requests in flight fail? Also check the facts of API.md 10.2 on the edge: does `request.signal` fire when the client goes away after the response body is complete, and does a `Body.writer!` stream keep the request past 30 s while the task writes? The cron edge test of API.md AQ12: two cron triggers (`*/2 * * * *` and `1-59/2 * * * *`). The `scheduled!` handler writes a row (`cron`, `time_ms`, the time of the run) to D1 for each run, then gives `Err`. For the second cron it calls `no_retry!` first. It runs for 1 hour. The jurisdiction of MODULES.md 7 on the edge (local workerd does not have it). (The item "the fallback under load on the edge" is removed 2026-10-16: stack-first is guaranteed by the compiler.) | The deployed example answers. 5d and the 128 MB check give their results. The two facts of API.md 10.2 give their results, and API.md 10.2 is changed if they differ. AQ12: the rows show for each `time_ms` how many runs each cron got. More than one run for a `time_ms` of the first cron, and one for the second, shows that production retries and that `noRetry` stops it. Write the answer in MODULES.md 3 and settle AQ12. Revert (the handler gives `Ok`): one run for each `time_ms` of both crons. `counters.jurisdiction(Eu).named("x").id!()` differs from `counters.named("x").id!()`. Revert (the jurisdiction is not sent): they are equal. |
+| 11c | An example Worker app with a wrangler config (with the compatibility flag `enable_request_signal`, for 3b), deployed by CI. 5d (CPU limit on the edge) runs on it. Also check what the edge does at 128 MB: is only the isolate stopped, and do the requests in flight fail? Also check the facts of API.md 10.2 on the edge: does `request.signal` fire when the client goes away after the response body is complete, and does a `Body.writer!` stream keep the request past 30 s while the task writes? The cron edge test of API.md AQ12: two cron triggers (`*/2 * * * *` and `1-59/2 * * * *`). The `scheduled!` handler writes a row (`cron`, `time_ms`, the time of the run) to D1 for each run, then gives `Err`. For the second cron it calls `no_retry!` first. It runs for 1 hour. The jurisdiction of MODULES.md 7 on the edge (local workerd does not have it). (The item "the fallback under load on the edge" is removed 2026-10-16: stack-first is guaranteed by the compiler.) | The deployed example answers. 5d and the 128 MB check give their results. The two facts of API.md 10.2 give their results, and API.md 10.2 is changed if they differ. AQ12: the rows show for each `time_ms` how many runs each cron got. More than one run for a `time_ms` of the first cron, and one for the second, shows that production retries and that `noRetry` stops it. Write the answer in MODULES.md 3 and settle AQ12. Revert (the handler gives `Ok`): one run for each `time_ms` of both crons. `counters.jurisdiction(Eu).named("x").id!()` differs from `counters.named("x").id!()`. Revert (the jurisdiction is not sent): they are equal. The 8g edge run (the list "Edge parts for 11c" in "Status of step 8g": `bench/8g/deploy-edge.sh` and `run-edge.mjs`): the edge numbers of AQ4, AQ5 and the size where `crypto.subtle.digest` is faster than the builtin SHA-256, to put in `bench/README.md` and MODULES.md 10. |
 
 ## 12. One instance per isolate: check memory at resume
 
