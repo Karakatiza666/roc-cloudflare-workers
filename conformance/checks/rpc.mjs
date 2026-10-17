@@ -23,6 +23,11 @@ export const checks = [
   ['rpc a method of the named entry point Admin', async (t) => answer(await t.get('/rpc/admin_call'), 'Ok("purged v1/")')],
   ['rpc typed bytes (MC5): a Cbor.Bytes field reaches a JS callee as a Uint8Array, a List(U8) field as an Array', async (t) =>
     answer(await t.get('/rpc/inspect'), 'Ok({ data: "Uint8Array", list: "Array" })')],
+  // FO6 (PLAN.md 8f): `stub.hello()` with no argument reaches a method whose argument type is `{}`.
+  ['rpc a JS call with no argument of a method whose argument type is {} (FO6)', async (t) => {
+    const r = await t.get('/__noarg');
+    answer(r, '{"default":"default hello","object":"object hello"}');
+  }],
   ['rpc the RPC limit: a reply above 32 MiB is RpcErr, a small one passes', async (t) => {
     const r = await t.get('/rpc/big');
     if (!r.body.startsWith('Err RpcErr(')) throw new Error(`got ${r.status} ${r.body.slice(0, 300)}`);

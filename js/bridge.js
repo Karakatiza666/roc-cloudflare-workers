@@ -96,8 +96,10 @@ export function makeBridge(cell, tasks, shim) {
         const prog = read(x, ap, al, c);
         const running = runAwait(prog, c).then((v) => [OK, v], (e) => [statusOf(e), errorOf(e)]);
         if (t) {
-          // A cancel wins the race, so the suspended stack always ends (PLAN.md 3.0: it is never freed).
-          const cancelled = tasks.waitStart(t);
+          // A cancel wins the race, so the suspended stack always ends (PLAN.md 3.0: it is never freed). A wait on a
+          // socket (`pf.wsReceive`, `pf.tcpRead` set `c.socketWait` when the program starts) has no deadline (API.md 10.2).
+          const cancelled = tasks.waitStart(t, c.socketWait === true);
+          c.socketWait = false;
           try {
             res = await Promise.race([running, cancelled]);
           } finally {

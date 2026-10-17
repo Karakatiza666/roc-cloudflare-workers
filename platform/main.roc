@@ -1,6 +1,6 @@
 platform ""
 	requires { event! : Worker.Event => Worker.Outcome }
-	exposes [Js, Io, Native, Worker, Request, Response, Body, Ctx, Queue, Email, Object, WebSocket, Http, Env, Secret, Time, Log, RateLimit, WebCrypto, R2, Cache, Sql, D1, Memo, Kv, Ai, Vectorize, Analytics, Hyperdrive, Workflows, Assets, Version, SecretsStore, Rpc, Service]
+	exposes [Cbor, Js, Io, Native, Worker, Request, Response, Body, Ctx, Queue, Email, Object, WebSocket, Tcp, Http, Env, Secret, Time, Log, RateLimit, WebCrypto, R2, Cache, Sql, D1, Memo, Kv, Ai, Vectorize, Analytics, Hyperdrive, Workflows, Assets, Version, SecretsStore, Rpc, Service]
 	packages {
 		http: "https://github.com/roc-lang/http/releases/download/2.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
 		cbor: "https://github.com/Karakatiza666/roc-cbor/releases/download/0.1.0/9QL2dCyq7bcmvAEZfDFwi8kBvWLCZpEMS4WQYnZisezw.tar.zst",
@@ -20,6 +20,7 @@ platform ""
 		},
 	}
 
+import Cbor
 import Js
 import Io
 import Native
@@ -33,6 +34,7 @@ import Queue
 import Email
 import Object
 import WebSocket
+import Tcp
 import Http
 import Env
 import Secret

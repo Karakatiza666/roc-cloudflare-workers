@@ -96,6 +96,12 @@ export const checks = [
     for (const m of ['increment', 'ping', 'boom', 'echo', 'fetch', 'alarm']) ok(counterP.includes(m), `Counter has no ${m}: ${counterP}`);
     ok(admin.includes('purge') && admin.includes('fetch'), `Admin: ${admin}`);
     ok(dflt.includes('ping') && !dflt.includes('purge'), `default: ${dflt}`);
+    // QO5: the app has queue!, email! and tail!, so the default export has the three methods (bench/entry-test.mjs 1b: without).
+    for (const m of ['queue', 'email', 'tail']) ok(dflt.includes(m), `default has no ${m}: ${dflt}`);
+    // PLAN.md 8f part 3: the socket handlers only on a class with them (Room of conformance/WebSocketRoutes.roc).
+    const roomP = await names('Room');
+    for (const m of ['webSocketMessage', 'webSocketClose', 'webSocketError', 'fetch']) ok(roomP.includes(m), `Room has no ${m}: ${roomP}`);
+    for (const m of ['webSocketMessage', 'webSocketClose', 'webSocketError']) ok(!counterP.includes(m), `Counter has ${m}: ${counterP}`);
     return `Counter: ${counterP.join(' ')}; Store: ${store.join(' ')}`;
   }],
   ['objects init! that gives Err: ObjectErr, and the next fetch! runs init! again', async (t) => {

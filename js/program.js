@@ -173,17 +173,40 @@ export async function runAwait(ops, ctx) {
   return f.last();
 }
 
+// OP8: what a branch took from a socket goes back when the branch loses. A helper that takes a value (`pf.wsReceive`,
+// `pf.tcpRead`) calls `onLoss(signal, back)`. `back` runs when the branch of `signal` loses its race, or at once when the
+// signal is aborted. A winner gives its list to the branch around its race. With no such branch (the signal of the
+// task), the take is final. `n` orders the give-backs: the last take goes back first.
+const losses = new WeakMap();
+let takes = 0;
+export function onLoss(signal, back) {
+  if (!signal) return;
+  if (signal.aborted) back();
+  else losses.get(signal)?.push({ n: takes++, back });
+}
+
 // OP8: the first branch to settle wins: [index, [status, value]]. Each branch has its own AbortSignal (the root
-// `signal`), and the others are aborted. They go on in JS until they see it; their results are dropped.
+// `signal`), and the others are aborted. They go on in JS until they see it; their results are dropped, and what they
+// took goes back (`onLoss`).
 async function race(branches, ctx) {
   if (branches.length === 0) bad('a race with no branch never settles');
   const ctls = branches.map(() => new AbortController());
+  const signals = ctls.map((c) => (ctx.signal ? AbortSignal.any([ctx.signal, c.signal]) : c.signal));
+  for (const s of signals) losses.set(s, []);
   const runs = branches.map((b, i) => {
-    const signal = ctx.signal ? AbortSignal.any([ctx.signal, ctls[i].signal]) : ctls[i].signal;
+    const signal = signals[i];
     return branch(b, { ...ctx, signal, roots: { ...ctx.roots, signal } }).then((r) => [i, r], (e) => [i, e]);
   });
   const [i, r] = await Promise.race(runs);
+  const lost = [];
+  signals.forEach((s, j) => {
+    const list = losses.get(s);
+    losses.delete(s);
+    if (j === i && !ctx.signal?.aborted) losses.get(ctx.signal)?.push(...list);
+    else lost.push(...list);
+  });
   ctls.forEach((c, j) => { if (j !== i) c.abort(new DOMException('the branch lost the race', 'AbortError')); });
+  for (const { back } of lost.sort((a, b) => b.n - a.n)) back();
   if (r instanceof BadProgram) throw r;
   return [i, r];
 }

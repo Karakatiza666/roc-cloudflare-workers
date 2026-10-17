@@ -16,7 +16,9 @@ export const Slow = objectClass('Slow');
 export const Ticker = objectClass('Ticker');
 export const KvOnly = objectClass('KvOnly');
 export const Admin = entrypointClass('Admin');
-const exported = { Counter, Store, Flaky, Slow, Ticker, KvOnly, Admin };
+// PLAN.md 8f part 3: the class of the hibernation API (conformance/WebSocketRoutes.roc).
+export const Room = objectClass('Room');
+const exported = { Counter, Store, Flaky, Slow, Ticker, KvOnly, Admin, Room };
 const kind = (v) => (v === null ? 'null' : Array.isArray(v) ? 'Array' : typeof v === 'object' ? Object.getPrototypeOf(v)?.constructor?.name ?? 'null-proto' : typeof v);
 
 // The root `ops` (API.md 6.4). `lib` is an object of functions, not a function (the option check, PLAN.md 8a O4).
@@ -56,6 +58,19 @@ export default class extends Handler {
       return Response.json({ live: r.x.live_bytes(), tasks: r.tasks.size, refsLive: s.refsLive, contextsLive: s.contextsLive, alarms: r.stats.alarms });
     }
     if (path === '/__mem') return new Response(String(r.x.memory.buffer.byteLength));
+    // FO6 (PLAN.md 8f): a JS call with no argument of the RPC method `hello` (argument type `{}`): the default export
+    // (`SELF`) and an object of `Counter`.
+    if (path === '/__noarg') {
+      const out = {};
+      for (const [k, stub] of [['default', () => this.env.SELF], ['object', () => this.env.COUNTERS.getByName('noarg')]]) {
+        try {
+          out[k] = await stub().hello();
+        } catch (e) {
+          out[k] = `${e.name}: ${e.message}`;
+        }
+      }
+      return Response.json(out);
+    }
     // 8f: the own names of the prototype of an exported class (`?class=`), or of the default export.
     if (path === '/__proto') {
       const C = exported[new URL(request.url).searchParams.get('class')] ?? Handler;

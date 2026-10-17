@@ -1,7 +1,6 @@
 app [event!] {
 	pf: platform "../bench/platform/main.roc",
 	http: "https://github.com/roc-lang/http/releases/download/2.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
-	cbor: "https://github.com/Karakatiza666/roc-cbor/releases/download/0.1.0/9QL2dCyq7bcmvAEZfDFwi8kBvWLCZpEMS4WQYnZisezw.tar.zst",
 }
 
 ## The conformance app (PLAN.md 8c): one route for each function of a module and for its `Io` twin. `run.mjs` runs it
@@ -37,6 +36,9 @@ import VersionRoutes
 import SecretsStoreRoutes
 import ObjectRoutes
 import RpcRoutes
+import CborRoutes
+import WebSocketRoutes
+import TcpRoutes
 
 fetch! : Request => Try(Response, _)
 fetch! = |req| {
@@ -67,6 +69,9 @@ fetch! = |req| {
 		["secretsstore", .. as rest] => SecretsStoreRoutes.route!(req, rest)
 		["objects", .. as rest] => ObjectRoutes.route!(req, rest)
 		["rpc", .. as rest] => RpcRoutes.route!(req, rest)
+		["cbor", .. as rest] => CborRoutes.route!(req, rest)
+		["websocket", .. as rest] => WebSocketRoutes.route!(req, rest)
+		["tcp", .. as rest] => TcpRoutes.route!(req, rest)
 		_ => Response.from_text(404, "no route")
 	}
 	Ok(res)
@@ -78,6 +83,6 @@ email! = |mail| EmailRoutes.handle!(mail)
 
 tail! = |items| TailRoutes.handle!(items)
 
-worker = Worker.{ fetch!, queue!, email!, tail!, rpc: RpcRoutes.rpc, entrypoints: RpcRoutes.entrypoints, objects: ObjectRoutes.classes }
+worker = Worker.{ fetch!, queue!, email!, tail!, rpc: RpcRoutes.rpc, entrypoints: RpcRoutes.entrypoints, objects: ObjectRoutes.classes.concat(WebSocketRoutes.classes) }
 
 event! = |e| worker.event!(e)

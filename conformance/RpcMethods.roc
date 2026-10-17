@@ -1,7 +1,7 @@
 ## The `Rpc` constants of the conformance app (MODULES.md 8): each names a method and its types for the caller and the
 ## callee. `ping` has two callees, the class `Counter` and the default export (`Worker.rpc`).
 import pf.Rpc
-import cbor.Cbor
+import pf.Cbor
 
 RpcMethods :: [].{
 	increment : Rpc({ by : I64 }, I64)
@@ -29,6 +29,10 @@ RpcMethods :: [].{
 	## A JS method of `conformance/worker.js` that gives a text of `n` bytes (the RPC limit).
 	big : Rpc({ n : U64 }, Str)
 	big = Rpc.method("big")
+
+	## FO6 (PLAN.md 8f): a method whose argument type is `{}` takes a JS call with no argument (`stub.hello()`).
+	hello : Rpc({}, Str)
+	hello = Rpc.method("hello")
 
 	## No callee has it.
 	nothere : Rpc({ n : I64 }, I64)

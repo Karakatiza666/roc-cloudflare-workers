@@ -6,7 +6,7 @@ import pf.Response
 import pf.Rpc
 import pf.Service
 import pf.Io
-import cbor.Cbor
+import pf.Cbor
 import RpcMethods
 
 self_service = Service.binding("SELF")
@@ -16,7 +16,7 @@ RpcRoutes :: [].{
 
 	## The RPC methods of the default export.
 	rpc : List(Rpc.Handler({}))
-	rpc = [RpcMethods.ping.on(default_ping!)]
+	rpc = [RpcMethods.ping.on(default_ping!), RpcMethods.hello.on(default_hello!)]
 
 	## The named entry points.
 	entrypoints : List(Rpc.Entrypoint)
@@ -39,7 +39,7 @@ RpcRoutes :: [].{
 		}
 		["admin_call"] => show(admin_service.call!(RpcMethods.purge, { prefix: "v1/" }))
 		# MC5: a `Cbor.Bytes` field reaches a JS callee as a `Uint8Array`, a `List(U8)` field as an `Array`.
-		["inspect"] => show(self_service.call!(RpcMethods.inspect, { data: Cbor.Bytes.([1, 2, 3]), list: [1, 2, 3] }))
+		["inspect"] => show(self_service.call!(RpcMethods.inspect, { data: Cbor.bytes([1, 2, 3]), list: [1, 2, 3] }))
 		# The RPC limit: a reply above 32 MiB is `RpcErr`.
 		["big"] => match self_service.call!(RpcMethods.big, { n: 33_554_433 }) {
 			Ok(s) => Response.from_text(200, "Ok ${s.count_utf8_bytes().to_str()}")
@@ -57,6 +57,9 @@ show = |r| Response.from_text(200, Str.inspect(r))
 
 default_ping! : {}, { n : I64 } => Try(Str, [])
 default_ping! = |{}, { n }| Ok("default ping ${n.to_str()}")
+
+default_hello! : {}, {} => Try(Str, [])
+default_hello! = |{}, {}| Ok("default hello")
 
 admin_fetch! : Request => Try(Response, [])
 admin_fetch! = |req| Ok(Response.from_text(200, "admin fetch ${req.url}"))

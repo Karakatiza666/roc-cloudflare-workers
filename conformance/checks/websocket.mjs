@@ -1,0 +1,186 @@
+// WebSockets (MODULES.md 12.1, 12.2, PLAN.md 8f part 3): routes of conformance/WebSocketRoutes.roc. The class `Room` on
+// a local SQLite-backed Durable Object (the hibernation API), a Worker that answers each message, and clients of a local
+// WebSocket echo server (the `ws` package of Miniflare). The clients of the checks are WebSockets of Node (`WebSocket`).
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
+import { answer, eq, ok } from '../assert.mjs';
+
+export const options = { durableObjects: { ROOMS: { className: 'Room', useSQLite: true } } };
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let echo = null;
+// The echo server: a text "info" gives the protocol and the header `x-test` of the upgrade, "give json" gives
+// `{"n":5}`, "delay <ms> <text>" gives "echo <text>" after <ms>, each other text "echo <text>", bytes come back.
+function echoServer(t) {
+  if (echo) return echo;
+  const { WebSocketServer } = createRequire(import.meta.url)(join(dirname(t.mfDir), 'ws'));
+  const wss = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+  wss.on('connection', (ws, req) => ws.on('message', (m, binary) => {
+    if (binary) return ws.send(m);
+    const text = m.toString();
+    const d = /^delay (\d+) (.*)$/.exec(text);
+    if (text === 'info') ws.send(`proto=${ws.protocol} x-test=${req.headers['x-test']}`);
+    else if (text === 'give json') ws.send('{"n":5}');
+    else if (d) setTimeout(() => ws.send(`echo ${d[2]}`), Number(d[1]));
+    else ws.send(`echo ${text}`);
+  }));
+  echo = new Promise((r) => wss.once('listening', () => r(`ws://127.0.0.1:${wss.address().port}`)));
+  return echo;
+}
+
+// A client of Node: `next()` gives the next message (text, or the bytes as an array), or throws after `ms`.
+export function client(url) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(url);
+    ws.binaryType = 'arraybuffer';
+    const got = [];
+    const waiters = [];
+    const closed = new Promise((r) => ws.addEventListener('close', (e) => r({ code: e.code, reason: e.reason })));
+    ws.addEventListener('message', (e) => {
+      const v = typeof e.data === 'string' ? e.data : [...new Uint8Array(e.data)];
+      const w = waiters.shift();
+      if (w) w(v);
+      else got.push(v);
+    });
+    ws.addEventListener('open', () => resolve({
+      ws,
+      closed,
+      send: (v) => ws.send(v),
+      next: (ms = 3000) => (got.length ? Promise.resolve(got.shift()) : new Promise((r, j) => {
+        const timer = setTimeout(() => {
+          waiters.splice(waiters.indexOf(f), 1);
+          j(new Error(`no message in ${ms} ms`));
+        }, ms);
+        const f = (v) => (clearTimeout(timer), r(v));
+        waiters.push(f);
+      })),
+      // The messages that came and that no `next` took.
+      pending: () => got.slice(),
+      close: (code, reason) => (ws.close(code, reason), closed),
+    }));
+    ws.addEventListener('error', () => reject(new Error(`the WebSocket to ${url} failed`)));
+  });
+}
+const wsUrl = (base, path) => base.replace(/^http/, 'ws') + path;
+const room = (t, name, user) => client(wsUrl(t.url, `/websocket/room/${name}?user=${user}`));
+const logOf = (t, msg) => t.logs.filter((l) => String(l.message).includes(`"msg":"${msg}"`)).map((l) => JSON.parse(String(l.message).slice(String(l.message).indexOf('{'))));
+
+export const checks = [
+  ['websocket a request with no Upgrade gets 426 from the Worker and NotUpgrade from accept!', async (t) => {
+    const r = await t.get('/websocket/room/r0?user=a');
+    eq(r.status, 426, 'the status of the Worker');
+    answer(await t.get('/websocket/plain'), 'Err(NotUpgrade)');
+    answer(await t.get('/websocket/room_admin/r0?op=plain'), 'Err(NotUpgrade)');
+  }],
+  ['websocket the Worker gives the upgrade to the object with fetch!, and the client gets the 101 of the object', async (t) => {
+    const a = await room(t, 'r1', 'a');
+    a.send('info');
+    eq(await a.next(), 'user=a starts=1 events=1 tags=room,a auto=False peers=1 tagged=1', 'info');
+    await a.close(1000, 'done');
+  }],
+  ['websocket two clients in one room: a message of one reaches the other and not the sender', async (t) => {
+    const a = await room(t, 'r2', 'a');
+    const b = await room(t, 'r2', 'b');
+    a.send('hello');
+    eq(await b.next(), 'a: hello', 'b got');
+    a.send('info');
+    eq(await a.next(), 'user=a starts=1 events=2 tags=room,a auto=False peers=2 tagged=1', 'the first message of a (not its own hello)');
+    b.send(new Uint8Array([1, 2, 3]));
+    eq(JSON.stringify(await b.next()), '[3,2,1]', 'bytes');
+    b.send('json');
+    eq(await b.next(), '{"n":4,"user":"b"}', 'send_json!');
+    await a.close(1000, 'a leaves');
+    await b.close(4001, 'b leaves');
+  }],
+  ['websocket web_socket_close!: the code and the reason of the close of the client', async (t) => {
+    for (let i = 0; i < 50 && !logOf(t, 'room close').some((l) => l.code === 4001); i++) await sleep(50);
+    const l = logOf(t, 'room close').find((x) => x.code === 4001);
+    ok(l && l.reason === 'b leaves' && l.clean === true, `the log: ${JSON.stringify(logOf(t, 'room close'))}`);
+    return JSON.stringify(l);
+  }],
+  ['websocket hibernation: the object leaves memory, and the next message reads the attachment of its socket', async (t) => {
+    const a = await room(t, 'r3', 'a');
+    a.send('info');
+    eq(await a.next(), 'user=a starts=1 events=1 tags=room,a auto=False peers=1 tagged=1', 'before');
+    await t.mf.unsafeEvictDurableObject('', 'Room', { name: 'r3', webSockets: 'hibernate' });
+    a.send('info');
+    eq(await a.next(), 'user=a starts=2 events=2 tags=room,a auto=False peers=1 tagged=1', 'after the eviction (a new constructor: starts=2)');
+    await a.close(1000, 'done');
+  }],
+  ['websocket an auto response answers ping with no event', async (t) => {
+    const a = await room(t, 'r4', 'a');
+    answer(await t.get('/websocket/room_admin/r4?op=auto'), 'Ok({})');
+    a.send('ping');
+    eq(await a.next(), 'pong', 'the auto response');
+    a.send('info');
+    eq(await a.next(), 'user=a starts=1 events=1 tags=room,a auto=True peers=1 tagged=1', 'no event for ping, and auto_response_ms!');
+    answer(await t.get('/websocket/room_admin/r4?op=noauto'), 'cleared');
+    a.send('ping');
+    a.send('info');
+    eq(await a.next(), 'user=a starts=1 events=3 tags=room,a auto=True peers=1 tagged=1', 'after clear_auto_response!: ping is an event');
+    await a.close(1000, 'done');
+  }],
+  ['websocket accept_with! of 11 tags is TooLarge', async (t) => answer(await t.get('/websocket/room_admin/r5?op=tags'), 'Err(TooLarge)')],
+  ['websocket a Worker: accept!, respond!, receive! until the close', async (t) => {
+    const c = await client(wsUrl(t.url, '/websocket/echo'));
+    c.send('a');
+    eq(await c.next(), 'echo a', 'text');
+    c.send(new Uint8Array([0, 255]));
+    eq(JSON.stringify(await c.next()), '[0,255]', 'bytes');
+    c.send('close');
+    const closed = await c.closed;
+    eq(`${closed.code} ${closed.reason}`, '1000 bye', 'the close of the Worker');
+    for (let i = 0; i < 50 && !logOf(t, 'echo closed').length; i++) await sleep(50);
+    const l = logOf(t, 'echo closed')[0];
+    ok(l && l.code === 1000, `receive! after the close: ${JSON.stringify(l)}`);
+    return JSON.stringify(l);
+  }],
+  ['websocket connect! to a WebSocket echo server sends and receives one message', async (t) => {
+    const url = await echoServer(t);
+    answer(await t.get(`/websocket/client?url=${encodeURIComponent(url)}`), 'sent=Ok({}) got=Ok(Text("echo hi"))');
+    answer(await t.get(`/websocket/client?url=${encodeURIComponent(url.replace('ws:', 'http:'))}`), 'sent=Ok({}) got=Ok(Text("echo hi"))');
+  }],
+  ['websocket connect (Io twin), receive (Io twin)', async (t) =>
+    answer(await t.get(`/websocket/client_io?url=${encodeURIComponent(await echoServer(t))}`), 'got=Ok(Text("echo twin"))')],
+  ['websocket connect_with!: protocols and headers, send_json!, Message.json, a bytes frame', async (t) =>
+    answer(await t.get(`/websocket/client_with?url=${encodeURIComponent(await echoServer(t))}`), 'info=Ok(Text("proto=chat x-test=yes")) json=Ok(Text("echo {\\"n\\":5}")) parsed=Ok({ n: 5 }) bytes=Ok(Bytes([0, 1, 255]))')],
+  ['websocket connect! to a server that answers 200 gives NotUpgrade (OP7)', async (t) =>
+    answer(await t.get(`/websocket/client?url=${encodeURIComponent(`${t.server}/hello`)}`), 'Err NotUpgrade')],
+  ['websocket Io.race! of receive and Time.sleep(50), the message at 100 ms: the sleep wins, the next receive! gets it', async (t) =>
+    answer(await t.get(`/websocket/race?url=${encodeURIComponent(await echoServer(t))}`), 'first=1 Ok(TimedOut) next=Ok(Got(Text("echo m")))')],
+  ['websocket OP8 in the same turn: a receive that loses to a branch with no wait gives its message back, the next receive gets it', async (t) =>
+    answer(await t.get(`/websocket/race_ready?url=${encodeURIComponent(await echoServer(t))}`), 'first=1 second=0 next=Ok(Got(Text("echo m")))')],
+  // API.md 10.2 with smaller deadlines (a second Miniflare): `afterRespondMs` 1.5 s, `taskDeadlineMs` 1 s. A request
+  // starts the sweep of the task table (PLAN.md 3b).
+  ['websocket a 101 response keeps the task: the socket answers after afterRespondMs, and a wait on a socket has no deadline', async (t) => {
+    const entry = t.entry.replace('initMs: 1000 }', 'initMs: 1000, afterRespondMs: 1500, taskDeadlineMs: 1000 }');
+    ok(entry !== t.entry, 'no makeHandler options to change');
+    const mf = t.start({ durableObjects: options.durableObjects, handleStructuredLogs: () => {} }, entry);
+    try {
+      const base = (await mf.ready).href.replace(/\/$/, '');
+      const c = await client(wsUrl(base, '/websocket/echo'));
+      c.send('a');
+      eq(await c.next(), 'echo a', 'first');
+      // A wait that is not on the socket (`Time.sleep!` of 3 s), with a sweep at 2 s: the 101 response is open while
+      // its socket is open, so the task has no deadline.
+      c.send('sleep 3000');
+      await sleep(2000);
+      await (await mf.dispatchFetch(`${base}/time/now`)).text();
+      eq(await c.next(3000), 'slept', 'a sleep of 3 s after respond!, a sweep at 2 s');
+      // A wait on the socket of 2 s, and a sweep.
+      await sleep(2000);
+      await (await mf.dispatchFetch(`${base}/time/now`)).text();
+      c.send('late');
+      eq(await c.next(2000), 'echo late', 'after 2 s and a sweep');
+      await c.close(1000, 'done');
+      const url = await echoServer(t);
+      const [slow] = await Promise.all([
+        mf.dispatchFetch(`${base}/websocket/slow?url=${encodeURIComponent(url)}`).then(async (r) => `${r.status} ${await r.text()}`),
+        sleep(1500).then(() => mf.dispatchFetch(`${base}/time/now`)).then((r) => r.text()),
+      ]);
+      eq(slow, '200 Ok(Text("echo s"))', 'a receive! of 2 s, deadline of a wait 1 s');
+    } finally {
+      await mf.dispose();
+    }
+  }],
+];

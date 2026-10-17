@@ -1,8 +1,9 @@
 ## The Hyperdrive binding (MODULES.md 13): the properties of `env[name]`. `config!` reads them in one `call!`, no wait.
-## `connect!` (the `connect` of the binding, a `Tcp`) comes with `Tcp` (MODULES.md 12.3).
+## `connect!` is the `connect()` of the binding: a `Tcp` socket to the database (MODULES.md 12.3), for a database client.
 import Io
 import Js
 import Secret
+import Tcp
 
 Hyperdrive :: { name : Str }.{
 	binding : Str -> Hyperdrive
@@ -25,6 +26,21 @@ Hyperdrive :: { name : Str }.{
 		}
 		Err(t) => crash "Hyperdrive.config!: ${h.name}: ${t.name}: ${t.message}"
 	}
+
+	## `env[name].connect()`, then a wait for `opened` (`pf.tcpOpen`): one wait. The socket goes to the database of the
+	## binding through Hyperdrive. A throw (no binding, the origin does not answer) is `SocketErr`.
+	connect : Hyperdrive -> Io(Tcp, [SocketErr(Io.Thrown)])
+	connect = |h| Io.new(
+		[Get(Root("env"), h.name), Call(Slot(0), "connect", []), Call(Root("pf"), "tcpOpen", [Slot(1)])],
+		|r| match r {
+			Ok(Ref(s)) => Ok(Tcp.{ ref: s })
+			Ok(other) => crash "Hyperdrive.connect: the socket is ${Str.inspect(other)}"
+			Err(t) => Err(SocketErr(t))
+		},
+	)
+
+	connect! : Hyperdrive => Try(Tcp, [SocketErr(Io.Thrown)])
+	connect! = |h| Io.run!(connect(h))
 }
 
 config_of : Js -> Try(Hyperdrive.Config, Str)

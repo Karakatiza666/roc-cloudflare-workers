@@ -7,7 +7,7 @@ import pf.Response
 import pf.Queue
 import pf.Io
 import pf.Log
-import cbor.Cbor
+import pf.Cbor
 import Q
 
 Job : { n : U64, label : Str }
@@ -44,7 +44,7 @@ QueueRoutes :: [].{
 			["batch_with_io"] => out(Io.run!(jobs.send_batch_with(many, { delay_ms: delay })))
 			["text"] => out(texts.send!(Q.text(req, "s")))
 			["bytes"] => out(bin.send!([1, 2, 255]))
-			["v8"] => out(v8q.send!({ n: 5, big: 1_152_921_504_606_846_976, data: Cbor.Bytes.([1, 2, 3]) }))
+			["v8"] => out(v8q.send!({ n: 5, big: 1_152_921_504_606_846_976, data: Cbor.bytes([1, 2, 3]) }))
 			_ => Response.from_text(404, "no route")
 		}
 	}

@@ -1,10 +1,10 @@
 // node conformance/reverts.mjs [name-filter]   (env: ROC; MINIFLARE as run.mjs)
-// Revert checks of PLAN.md 8c (wave 1, WebCrypto, R2 and Cache, D1, Sql and Memo), 8d, and 8f (part 1: Objects, RPC, Manifest; part 2: Queue, Kv, Email, Tail; part 4: other bindings). Each revert is a real edit of a source file, a build of the conformance app
+// Revert checks of PLAN.md 8c (wave 1, WebCrypto, R2 and Cache, D1, Sql and Memo), 8d, and 8f (part 1: Objects, RPC, Manifest; part 2: Queue, Kv, Email, Tail; part 3: WebSocket, Tcp; part 4: other bindings). Each revert is a real edit of a source file, a build of the conformance app
 // into .cache/conformance-reverts/ when a .roc file changed, a run of the test that must catch it, and a restore of the
 // file. A change that finds no text to replace is an error (the code moved: update this list).
 // The conformance app is on the bench platform, so a Roc edit is in bench/platform/ (the copy of platform/). The MC10
 // revert edits platform/Time.roc, which `roc test platform/main.roc` reads. Exit 1 when a revert is not caught.
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -13,6 +13,21 @@ const ROC = process.env.ROC;
 if (!ROC) throw new Error('set ROC');
 const out = `${root}.cache/conformance-reverts`;
 const env = { ...process.env, ROC_CACHE_DIR: `${root}.cache/roc`, XDG_CACHE_HOME: `${root}.cache` };
+// The temp dirs of conformance runs that are not alive (`run.mjs` makes `.cache/tmp/run-<pid>`; a run killed with SIGKILL
+// leaves its dir).
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === 'EPERM';
+  }
+};
+mkdirSync(`${root}.cache/tmp`, { recursive: true });
+for (const d of readdirSync(`${root}.cache/tmp`)) {
+  const m = /^run-(\d+)$/.exec(d);
+  if (m && !alive(Number(m[1]))) rmSync(`${root}.cache/tmp/${d}`, { recursive: true, force: true });
+}
 const BP = 'bench/platform/';
 const IX = 'js/index.js';
 // The roc-cbor 0.1.0 package in the cache of the build (XDG_CACHE_HOME=.cache): a revert of `Cbor.Bytes` edits it.
@@ -24,6 +39,8 @@ const TESTS = {
   'must-not-compile': () => ['bash', ['conformance/must-not-compile.sh']],
   'handler-test': () => [process.execPath, ['bench/handler-test.mjs', 'bench/out/app.wasm', 'bench/out/app_prod.wasm']],
   'layout-test': () => [process.execPath, ['bench/layout-test.mjs', 'bench/out/app.wasm']],
+  'entry-test': () => [process.execPath, ['bench/entry-test.mjs', 'bench/out/app_events.wasm']],
+  'program-test': () => [process.execPath, ['bench/program-test.mjs']],
 };
 // name, the test, the checks that must fail (conformance only), edits: [file, from, to].
 const R = (name, test, checks, ...edits) => ({ name, test, checks, edits });
@@ -201,6 +218,11 @@ const reverts = [
   R('TraceItem: event is read for each kind, not only for a fetch (8f2)', 'conformance', ['tail the trace of a scheduled run: no event, and the cron log'], ['js/events.js', "const fetched = info && typeof info === 'object' && info.request && typeof info.request === 'object';", 'const fetched = true;']),
   R('Tail: no limit on the batch (8f2)', 'conformance', ['tail a trace with 2 MiB of logs: the handler gets fewer logs, one warning'], ['js/index.js', 'tailEvent(events, tailMaxBytes, log)', 'tailEvent(events, Infinity, log)']),
   R('Tail: a Try field in the tag form (8f2)', 'conformance', ['tail the trace of a fetch that logs and throws'], ['js/events.js', 'event_timestamp_ms: u64(e.eventTimestamp),', 'event_timestamp_ms: { Ok: u64(e.eventTimestamp) },']),
+  // QO5 (after the merge of part 1): `queue`, `email` and `tail` only for an app whose manifest has the handler.
+  R('QO5: queue, email and tail on each default export (8f2)', 'entry-test', [], [IX, 'if (got && !manifest.handlers.includes(h)) delete', 'if (false) delete']),
+  R('QO5: the manifest has no handlers of the default export (8f2)', 'conformance', ['objects the manifest: alarm only on a class with alarm!, the RPC methods on the prototype'],
+    [BP + 'Worker.roc', '("default", class_of(handlers, ', '("default", class_of([], ']),
+  R('QO5 (roc test): the manifest has no handlers of the default export (8f2)', 'roc test', [], ['platform/Worker.roc', '("default", class_of(handlers, ', '("default", class_of([], ']),
   // PLAN.md 8f, part 4: other bindings (Ai, Vectorize, Analytics, Version, SecretsStore, Hyperdrive, Assets, Workflows). A wrong JS method
   // name in one function, a field or an option that is not sent, a limit that is not applied, a map that is not made.
   R("Ai.run: run is called \"runx\"", "conformance", ["ai run!: typed input and output, one wait", "ai run (Io twin)", "ai run_with!, run_with (Io twin): the gateway with all its fields, cache_ttl_ms in whole seconds, rounded up", "ai run_with!: a gateway with only its id sends only the id", "ai run_with!: max_bytes only sends no options to the binding"], [BP + "Ai.roc", "Call(Slot(0), \"run\", args)", "Call(Slot(0), \"runx\", args)"]),
@@ -263,12 +285,11 @@ const reverts = [
   R("Hyperdrive.config!: password is not read", "conformance", ["hyperdrive config!: the six fields, the two secrets hidden, one call!"], [BP + "Hyperdrive.roc", "\"user\", \"password\", \"database\"]", "\"user\", \"passwordx\", \"database\"]"]),
   R("Hyperdrive.config!: await! in place of call!", "conformance", ["hyperdrive config!: the six fields, the two secrets hidden, one call!"], [BP + "Hyperdrive.roc", "config! = |h| match Io.call!(", "config! = |h| match Io.await!("]),
   R("Hyperdrive.config (roc test): a port above 65535 is U16 wrap", "roc test", [], ["platform/Hyperdrive.roc", "(Text(cs), Text(host), Int(port), Text(user), Text(password), Text(database)) => match port.to_u16_try() {", "(Text(cs), Text(host), Int(port), Text(user), Text(password), Text(database)) => match Ok(port.to_u16_wrap()) {"]),
-  R("Assets.fetch: fetch is called \"fetchx\"", "conformance", ["assets fetch!: a file, one wait (the body of the answer is read in a second one)", "assets fetch (Io twin)", "assets fetch!: a file that does not exist is an answer, not an error", "assets fetch!: the url of the request", "assets fetch!: pass the response as it is (a stream), also the Io twin"], [BP + "Assets.roc", "Call(Slot(0), \"fetch\", [Lit(Text(req.url)), Slot(1)])", "Call(Slot(0), \"fetchx\", [Lit(Text(req.url)), Slot(1)])"]),
-  R("Assets.fetch: the method is not sent", "conformance", ["assets fetch!: the method of the request (a POST is 405)"], [BP + "Assets.roc", "(\"method\", Lit(Text(req.method.to_str())))", "(\"methodx\", Lit(Text(req.method.to_str())))"]),
-  R("Assets.fetch: the headers are not sent", "conformance", ["assets fetch!: the headers of the request (If-None-Match is 304)"], [BP + "Assets.roc", "(\"headers\", Lit(Arr(", "(\"headersx\", Lit(Arr("]),
-  R("Assets.fetch: the url is always /hello.txt", "conformance", ["assets fetch!: a file that does not exist is an answer, not an error", "assets fetch!: the url of the request"], [BP + "Assets.roc", "Lit(Text(req.url)), Slot(1)])", "Lit(Text(\"http://assets.local/hello.txt\")), Slot(1)])"]),
-  R("Assets.fetch: the body is not read", "conformance", ["assets fetch!: a file, one wait (the body of the answer is read in a second one)", "assets fetch (Io twin)", "assets fetch!: pass the response as it is (a stream), also the Io twin"], [BP + "Assets.roc", "Fields(Slot(2), [\"status\", \"headers\", \"body\"])", "Fields(Slot(2), [\"status\", \"headers\"])"]),
-  R("Assets.fetch (roc test): a text body is not sent", "roc test", [], ["platform/Assets.roc", "Text(s) => base.append((\"body\", Lit(Text(s))))", "Text(_) => base"]),
+  R("Assets.fetch: the method is not sent (OO3: Remote.roc)", "conformance", ["assets fetch!: the method of the request (a POST is 405)"], [BP + "Remote.roc", "(\"method\", Lit(Text(req.method.to_str())))", "(\"methodx\", Lit(Text(req.method.to_str())))"]),
+  R("Assets.fetch: the headers are not sent (OO3: Remote.roc)", "conformance", ["assets fetch!: the headers of the request (If-None-Match is 304)"], [BP + "Remote.roc", "(\"headers\", Lit(Arr(", "(\"headersx\", Lit(Arr("]),
+  R("Assets.fetch: the url is always /hello.txt (OO3: Remote.roc)", "conformance", ["assets fetch!: a file that does not exist is an answer, not an error", "assets fetch!: the url of the request"], [BP + "Remote.roc", "Lit(Text(req.url)), Slot(n)])", "Lit(Text(\"http://assets.local/hello.txt\")), Slot(n)])"]),
+  R("Assets.fetch: the body is not read (OO3: Remote.roc)", "conformance", ["assets fetch!: a file, one wait (the body of the answer is read in a second one)", "assets fetch (Io twin)", "assets fetch!: pass the response as it is (a stream), also the Io twin"], [BP + "Remote.roc", "[\"status\", \"headers\", \"body\", \"webSocket\"]", "[\"status\", \"headers\", \"webSocket\"]"]),
+  R("Assets.fetch (roc test): a text body is not sent (OO3: Remote.roc)", "roc test", [], ["platform/Remote.roc", "Text(s) => base.append((\"body\", Lit(Text(s))))", "Text(_) => base"]),
   R("Workflows.create: create is called \"createx\"", "conformance", ["workflows create!, create (Io twin): an instance with a new id, and its output has the parameters", "workflows create_with!, create_with (Io twin): the id of the app; the same id is AlreadyExists"], [BP + "Workflows.roc", "Call(Slot(2), \"create\", [Slot(3)])", "Call(Slot(2), \"createx\", [Slot(3)])"]),
   R("Workflows.get: get is called \"getx\"", "conformance", ["workflows get!, get (Io twin): the instance of an id, or NotFound"], [BP + "Workflows.roc", "Call(Slot(0), \"get\", [Lit(Text(id))]), Get(Slot(1), \"id\")", "Call(Slot(0), \"getx\", [Lit(Text(id))]), Get(Slot(1), \"id\")"]),
   R("Workflows.Instance: get is called \"getx\" (each function of an instance)", "conformance", ["workflows status!, status (Io twin): the state, no error, the output as JSON text and typed", "workflows pause!, resume!, send_event!: a waiting instance, then its output has the event", "workflows pause (Io twin), resume (Io twin), send_event (Io twin)", "workflows terminate!, terminate (Io twin): a waiting instance ends; a finished one is WorkflowsErr", "workflows: the stub gets the call that the function names"], [BP + "Workflows.roc", "[Get(Root(\"env\"), i.name), Call(Slot(0), \"get\", [Lit(Text(i.id))])]", "[Get(Root(\"env\"), i.name), Call(Slot(0), \"getx\", [Lit(Text(i.id))])]"]),
@@ -290,7 +311,7 @@ const reverts = [
   R("Workflows.Status (roc test): the state \"waitingForPause\" is Unknown", "roc test", [], ["platform/Workflows.roc", "Text(\"waitingForPause\") => WaitingForPause", "Text(\"waitingForPause\") => Unknown"]),
   R("Ai.run: a throw is TooLarge", "conformance", ["ai run!: a throw of the binding is AiErr"], [BP + "Ai.roc", "Err(t) => if t.name == \"TooLarge\" Err(TooLarge) else Err(AiErr(t))", "Err(_) => Err(TooLarge)"]),
   R("Ai.stream: a throw is a crash", "conformance", ["ai stream!: a throw is AiErr"], [BP + "Ai.roc", "Ok(other) => crash \"Ai.stream: run gave ${Str.inspect(other)}\"\n\t\t\tErr(t) => Err(AiErr(t))", "Ok(other) => crash \"Ai.stream: run gave ${Str.inspect(other)}\"\n\t\t\tErr(_) => crash \"a throw\""]),
-  R("Assets.fetch: a throw is a crash", "conformance", ["assets fetch!: a binding that is not in the config, and a url with no host, are AssetsErr"], [BP + "Assets.roc", "Err(t) => Err(AssetsErr(t))", "Err(_) => crash \"a throw\""]),
+  R("Assets.fetch: a throw is a crash", "conformance", ["assets fetch!: a binding that is not in the config, and a url with no host, are AssetsErr"], [BP + "Assets.roc", "|t| AssetsErr(t))", "|_t| crash \"a throw\")"]),
   R("Vectorize.query: a throw is TooLarge", "conformance", ["vectorize query!: a binding that is not in the config is VectorizeErr"], [BP + "Vectorize.roc", "Ok(js) => matches_of(read, js).map_err(|why| BadData(why))\n\t\t\tErr(t) => Err(read_error(t))", "Ok(js) => matches_of(read, js).map_err(|why| BadData(why))\n\t\t\tErr(_) => Err(TooLarge)"]),
   // PLAN.md 8f, part 1: Objects, RPC, Manifest. The shim (js/index.js, js/events.js, js/tasks.js) and the Roc modules.
   R('8f manifest: no check of a class in Roc with no export', 'conformance', ['objects load: a class in Roc with no export stops the load with its name'],
@@ -352,13 +373,66 @@ const reverts = [
   R('8f Object.named: getByName is called "getByNamex"', 'conformance', ['objects rpc: call! and its twin with an Rpc constant on a stub', 'objects fetch (Io twin)'], [BP + 'Object.roc', '"getByName"', '"getByNamex"']),
   R('8f Object.from_id: idFromString is called "idFromStringx"', 'conformance', ['objects named_with and from_id_with with location_hint, unique!'], [BP + 'Object.roc', '"idFromString"', '"idFromStringx"']),
   R('8f Object.unique!: newUniqueId is called "newUniqueIdx"', 'conformance', ['objects named_with and from_id_with with location_hint, unique!'], [BP + 'Object.roc', '"newUniqueId"', '"newUniqueIdx"']),
-  R('8f Object.fetch, Service.fetch: fetch is called "fetchx"', 'conformance', ['objects fetch (Io twin)', 'rpc Service.fetch! on a binding with entrypoint Admin reaches the fetch! of Admin'], [BP + 'Remote.roc', 'Call(Slot(target), "fetch",', 'Call(Slot(target), "fetchx",']),
+  // OO3: one shared fetch program (Remote.fetch) for Assets, Object and Service: the rename fails the checks of all three.
+  R('8f OO3 Remote.fetch (Assets, Object, Service): fetch is called "fetchx"', 'conformance', ["objects fetch (Io twin)", "rpc Service.fetch! on a binding with entrypoint Admin reaches the fetch! of Admin", "assets fetch!: a file, one wait (the body of the answer is read in a second one)", "assets fetch (Io twin)", "assets fetch!: a file that does not exist is an answer, not an error", "assets fetch!: the url of the request", "assets fetch!: pass the response as it is (a stream), also the Io twin"], [BP + 'Remote.roc', 'Call(Slot(target), "fetch",', 'Call(Slot(target), "fetchx",']),
   R('8f Rpc: the reply is not read with pf.pack', 'conformance', ['objects rpc: call! and its twin with an Rpc constant on a stub', 'rpc a service binding RPC call to an rpc method of the default export gives the reply'], [BP + 'Remote.roc', 'Call(Root("pf"), "pack", [Slot(n), Lit(Int(', 'Call(Root("pf"), "packx", [Slot(n), Lit(Int(']),
   R('8f manifest: the manifest instance runs a module that is not stack-first', 'layout-test', [],
     ['js/runner.js', '  if (!x.stack_first()) return undefined;\n', '']),
   // MC5: `Cbor.Bytes` of roc-cbor (the package in the cache of the build) with the derived `encoder_for`.
   R('8f MC5: Cbor.Bytes with the derived encoder_for', 'conformance', ['rpc typed bytes (MC5): a Cbor.Bytes field reaches a JS callee as a Uint8Array, a List(U8) field as an Array'],
     [CBOR, '\t\tencoder_for : encoding -> (Cbor.Bytes, state -> Try(state, err))\n\t\t\twhere [\n\t\t\t\tencoding.encode_bytes : List(U8), state -> Try(state, err),\n\t\t\t]\n\t\tencoder_for = |_| {\n\t\t\tEncoding : encoding\n\n\t\t\t|Cbor.Bytes.(bytes), state| Encoding.encode_bytes(bytes, state)\n\t\t}\n', '\t\tencoder_for : _\n']),
+  // PLAN.md 8f part 3: WebSocket, Tcp, Hyperdrive.connect!, FO6, a raw event!.
+  R('8f3 Object.Socket: no == on sockets (is_eq is always false)', 'conformance', ['websocket two clients in one room: a message of one reaches the other and not the sender'],
+    [BP + 'Object.roc', 'is_eq = |a, b| a.ref == b.ref', 'is_eq = |_a, _b| Bool.False']),
+  R('8f3 Object.Socket.attach!: the attachment in JS memory, not serializeAttachment', 'conformance', ['websocket hibernation: the object leaves memory, and the next message reads the attachment of its socket'],
+    [BP + 'Object.roc', 'Call(Ref(sock.ref), "serializeAttachment", [Lit(Bytes(Cbor.encode(value)))])', 'Set(Ref(sock.ref), "rocAttachment", Lit(Bytes(Cbor.encode(value))))'],
+    [BP + 'Object.roc', 'Call(Ref(sock.ref), "deserializeAttachment", [])', 'Get(Ref(sock.ref), "rocAttachment")']),
+  R('8f3 Object.Self.set_auto_response!: the pair is not sent', 'conformance', ['websocket an auto response answers ping with no event'],
+    [BP + 'Object.roc', 'Call(Root("ctx"), "setWebSocketAutoResponse", [Slot(0)])', 'Call(Root("ctx"), "setWebSocketAutoResponse", [])']),
+  R('8f3 Object.Self.accept_with!: the tags are not sent', 'conformance', ['websocket the Worker gives the upgrade to the object with fetch!, and the client gets the 101 of the object', 'websocket accept_with! of 11 tags is TooLarge'],
+    [BP + 'Object.roc', 'Lit(Arr(tags.map(|t| Text(t))))', 'Lit(Arr([]))']),
+  R('8f3 Remote.fetch: the webSocket of the response is not read', 'conformance', ['websocket the Worker gives the upgrade to the object with fetch!, and the client gets the 101 of the object'],
+    [BP + 'Remote.roc', '["status", "headers", "body", "webSocket"]', '["status", "headers", "body"]']),
+  R('8f3 the shim defines no webSocketMessage on an object class', 'conformance', ['websocket the Worker gives the upgrade to the object with fetch!, and the client gets the 101 of the object', 'websocket two clients in one room: a message of one reaches the other and not the sender'],
+    [IX, "        socketEvent('webSocketMessage', objectSocketMessage);\n", '']),
+  R('8f3 WebSocket.connect: fetch is called "fetchx"', 'conformance', ['websocket connect! to a WebSocket echo server sends and receives one message', 'websocket connect (Io twin), receive (Io twin)'],
+    [BP + 'WebSocket.roc', 'Call(Root("global"), "fetch",', 'Call(Root("global"), "fetchx",']),
+  R('8f3 pf.wsAccept: no branch for a response with no socket (OP7)', 'conformance', ['websocket connect! to a server that answers 200 gives NotUpgrade (OP7)'],
+    ['js/helpers.js', '      if (ws === null || ws === undefined) return undefined;\n      acceptSocket(ws);', '      acceptSocket(ws);']),
+  R('8f3 pf.wsReceive: the lost branch takes the message', 'conformance', ['websocket Io.race! of receive and Time.sleep(50), the message at 100 ms: the sleep wins, the next receive! gets it'],
+    ['js/helpers.js', '          if (i >= 0) st.waiters.splice(i, 1);\n', ''], ['js/helpers.js', 'resolve(v === st.closed ? v : taken(v));', 'resolve(v);']),
+  R('8f3 pf: the default binaryType (a bytes frame is a Blob)', 'conformance', ['websocket a Worker: accept!, respond!, receive! until the close', 'websocket connect_with!: protocols and headers, send_json!, Message.json, a bytes frame'],
+    ['js/helpers.js', "    ws.binaryType = 'arraybuffer';", '    void 0;']),
+  R('8f3 respond!: a 101 response is complete at once (afterRespondMs runs)', 'conformance', ['websocket a 101 response keeps the task: the socket answers after afterRespondMs, and a wait on a socket has no deadline'],
+    ['js/helpers.js', 'tasks.respond(t, Boolean((s && !s.closed) || (ws && !ws.closed)));', 'tasks.respond(t, Boolean(s && !s.closed));']),
+  R('8f3 pf.wsReceive: a wait on a socket has the deadline of a wait', 'conformance', ['websocket a 101 response keeps the task: the socket answers after afterRespondMs, and a wait on a socket has no deadline'],
+    ['js/helpers.js', '      if (st.closed) return st.closed;\n      c.socketWait = true;\n', '      if (st.closed) return st.closed;\n']),
+  R('8f3 Tcp.write: pf.tcpWrite is called "tcpWritex"', 'conformance', ['tcp connect!, write!, read!, close!', 'tcp connect (Io twin), write (Io twin), read (Io twin), connect_with! tls Off'],
+    [BP + 'Tcp.roc', '"tcpWrite"', '"tcpWritex"']),
+  R('8f3 pf.tcpRead: the lost branch takes the bytes', 'conformance', ['tcp Io.race! of read and Time.sleep(50), the bytes at 100 ms: the sleep wins, the next read gets them'],
+    ['js/helpers.js', 'if (!signal?.aborted && st.pending === read) st.pending = null;', 'if (st.pending === read) st.pending = null;']),
+  R('8f3 Tcp.read: the end of the stream is SocketErr', 'conformance', ['tcp read! after the end of the peer is Closed, write! after close! is Closed'],
+    [BP + 'Tcp.roc', 'Ok(Undefined) | Ok(Null) => Err(Closed)', 'Ok(Undefined) | Ok(Null) => Err(SocketErr({ name: "End", message: "" }))']),
+  R('8f3 pf.tcpWrite: a closed socket is a throw', 'conformance', ['tcp read! after the end of the peer is Closed, write! after close! is Closed'],
+    ['js/helpers.js', "      if (st.closed) return 'closed';\n      st.writer ??=", '      st.writer ??='],
+    ['js/helpers.js', "        if (st.closed) return 'closed';\n        throw e;", '        throw e;']),
+  R('8f3 Hyperdrive.connect: connect is called "connectx"', 'conformance', ['hyperdrive connect!, connect (Io twin): a Tcp socket to the origin of the binding'],
+    [BP + 'Hyperdrive.roc', 'Call(Slot(0), "connect", [])', 'Call(Slot(0), "connectx", [])']),
+  R('8f3 FO6: a JS call with no argument sends undefined', 'conformance', ['rpc a JS call with no argument of a method whose argument type is {} (FO6)'],
+    ['js/events.js', 'const argOf = (arg) => new Packed(arg === undefined ? {} : arg);', 'const argOf = (arg) => new Packed(arg);']),
+  // SO3 (PLAN.md 8f, part 3): what a lost branch took in the same turn as the end of the race goes back.
+  R('8f3 SO3 pf.tcpRead: bytes that a lost branch took do not go back', 'conformance', ['tcp OP8 in the same turn: a read that loses to a branch with no wait gives its bytes back, the next read gets them'],
+    ['js/helpers.js', '        onLoss(signal, () => (st.rest = st.rest ? join(v, st.rest) : v));', '        void join;']),
+  R('8f3 SO3 pf.wsReceive: a message that a lost branch took does not go back', 'conformance', ['websocket OP8 in the same turn: a receive that loses to a branch with no wait gives its message back, the next receive gets it'],
+    ['js/helpers.js', '        onLoss(signal, () => st.queue.unshift(m));', '        void m;']),
+  R('8f3 SO3 race: the give-backs of a lost branch do not run', 'conformance', ['tcp OP8 in the same turn: a read that loses to a branch with no wait gives its bytes back, the next read gets them', 'websocket OP8 in the same turn: a receive that loses to a branch with no wait gives its message back, the next receive gets it'],
+    ['js/program.js', '  for (const { back } of lost.sort((a, b) => b.n - a.n)) back();', '  void lost;']),
+  R('8f3 SO3 race: the winner of an inner race does not give its takes to the branch around it', 'program-test', [],
+    ['js/program.js', '    if (j === i && !ctx.signal?.aborted) losses.get(ctx.signal)?.push(...list);', '    if (j === i) void 0;']),
+  R('8f3 SO3 race: the give-backs run first take first', 'program-test', [],
+    ['js/program.js', 'lost.sort((a, b) => b.n - a.n)', 'lost.sort((a, b) => a.n - b.n)']),
+  R('8f3 a raw event! (manifest Unhandled) loses queue, email and tail', 'entry-test', [],
+    [IX, "if (got && !manifest.handlers.includes(h))", "if (got !== undefined && !manifest.handlers.includes(h))"]),
 ];
 
 // The filter: texts of names, joined by `|` (a revert runs when its name has one of them).
@@ -375,6 +449,28 @@ const test = (name) => {
   const text = r.stdout + r.stderr;
   return { pass: r.status === 0, lines: text.split('\n').filter((l) => l.startsWith('FAIL ')), text };
 };
+
+// Before the long run: each edit of each revert that runs must find its text (a stale entry stops the run here, not
+// hours later).
+const stale = [];
+for (const rv of reverts) {
+  if (filter && !filter.some((f) => rv.name.includes(f))) continue;
+  const texts = new Map();
+  for (const [f, from, to] of rv.edits) {
+    let s;
+    try {
+      s = texts.get(f) ?? readFileSync(root + f, 'utf8');
+    } catch {
+      continue; // A file of the build cache (CBOR) is there only after the clean build.
+    }
+    if (!s.includes(from)) stale.push(`${rv.name}: no text to replace in ${f}: ${from.slice(0, 60)}`);
+    else texts.set(f, s.replace(from, to));
+  }
+}
+if (stale.length) {
+  console.log(`stale reverts (update this list):\n${stale.join('\n')}`);
+  process.exit(1);
+}
 
 let bad = false;
 const cleanBuild = build();
@@ -418,6 +514,10 @@ for (const rv of reverts) {
     const line = t.text.split('\n').find((l) => l.startsWith('FAIL') || l.includes('✗') || l.includes('FAIL'));
     if (line) console.log(`  first: ${line.slice(0, 240)}`);
     if (!caught) bad = true;
+  } catch (e) {
+    // A stale edit (a file of the build cache) is a FAIL of this revert, and the run goes on.
+    console.log(`${rv.name}: failed: ${e.message}`);
+    bad = true;
   } finally {
     for (const [f, text] of saved) writeFileSync(root + f, text);
   }

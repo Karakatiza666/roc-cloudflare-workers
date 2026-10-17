@@ -1,0 +1,3 @@
+sweep request: 200
+after 36 s: ["echo first","echo after 35 s"]
+cancel lines: 0

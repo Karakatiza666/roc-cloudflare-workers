@@ -1,7 +1,7 @@
 // node bench/program-test.mjs: the program interpreter (js/program.js), the result block (js/bridge.js `writeResult`)
 // and the platform helpers (js/helpers.js), against fakes, with no wasm (API.md 6.2, 6.4, 11). Statuses 0 to 3.
 import assert from 'node:assert/strict';
-import { runAwait, runCall, statusOf, errorOf, BadProgram, PromiseInCall } from '../js/program.js';
+import { runAwait, runCall, statusOf, errorOf, BadProgram, PromiseInCall, onLoss } from '../js/program.js';
 import { writeResult } from '../js/bridge.js';
 import { makeHelpers, makePins } from '../js/helpers.js';
 import { Refs, fromJs, Kept } from '../js/values.js';
@@ -130,6 +130,29 @@ await test('OP8: race gives [index, [status, value]] of the first to settle; the
   // A branch that throws first wins with status 1.
   const [, v2] = await run([['race', [[['call', root('ops'), 'sleep', [lit(50)]]], [['call', root('ops'), 'reject', []]]]]]);
   assert.equal(v2[0], 1); assert.equal(v2[1][0], 1);
+});
+await test('OP8: what a lost branch took goes back (onLoss), last take first; a winner gives its takes to the branch around it; a take of the winner of the top race is final', async () => {
+  const back = [];
+  // `take`: a value that a helper takes at once, with its give-back.
+  const take = (name, signal) => { onLoss(signal, () => back.push(name)); return name; };
+  const c = ctxOf({ ops: { take, sleep } });
+  const takeOp = (name) => [['keep', root('signal')], ['call', root('ops'), 'take', [lit(name), slot(0)]]];
+  const later = (ms) => ['call', root('ops'), 'sleep', [lit(ms)]];
+  // The top race: branch 0 takes a, then b, then waits 200 ms; branch 1 wins at 20 ms. a and b go back, b first.
+  const [, v1] = await run([['race', [[...takeOp('a'), ['call', root('ops'), 'take', [lit('b'), slot(0)]], later(200)], [later(20)]]]], 'await', c);
+  assert.equal(v1[0], 1);
+  assert.deepEqual(back, ['b', 'a']);
+  // Branch 0: an inner race that `take` wins (c), then 200 ms; branch 1 wins at 20 ms: c goes back.
+  back.length = 0;
+  const [, v2] = await run([['race', [[['race', [takeOp('c'), [later(500)]]], later(200)], [later(20)]]]], 'await', c);
+  assert.equal(v2[0], 1);
+  assert.deepEqual(back, ['c']);
+  // The winner of the top race: its take is final.
+  back.length = 0;
+  const [, v3] = await run([['race', [takeOp('d'), [later(50)]]]], 'await', c);
+  assert.deepEqual(v3, [0, [0, 'd']]);
+  await sleep(80);
+  assert.deepEqual(back, []);
 });
 await test('writeResult: Kept is a Ref, a value that breaks J1 is status 1, the block grows in memory that moves, js_alloc 0 is status 4', async () => {
   // A fake instance: js_alloc grows the memory (a new buffer, the old views detach), res_free records the frees.

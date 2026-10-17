@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Must-not-compile checks (MODULES.md 10, PLAN.md 8c): a `Secret` in the fields of a `Log` line, and in a CBOR encode.
 # Each `*_bad.roc` must fail `roc check` with an error that names `Secret`, and its `*_ok.roc` (the same file with
-# `s.reveal()`) must pass, so the error is the secret and not another fault. The CBOR files import `Cbor` of the package
-# `roc-cbor` (the release of the platform, MC5). Env: ROC (default: bench/get-roc.sh). Exit 1 on a failure.
+# `s.reveal()`) must pass, so the error is the secret and not another fault. The CBOR files import `pf.Cbor` (the platform module that
+# wraps `roc-cbor`, MC5) and have no `cbor` entry. Env: ROC (default: bench/get-roc.sh). Exit 1 on a failure.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 ROC=${ROC:-$(bench/get-roc.sh)}

@@ -1,5 +1,5 @@
-## The programs that `Object` and `Service` share (MODULES.md 7, 8): a `fetch` on a stub or a binding, and an RPC call
-## with the argument and the reply as CBOR (MC5). Not in `exposes`: only platform modules use it.
+## The programs that `Object`, `Service`, `Assets` and `WebSocket` share (MODULES.md 7, 8, 12, 13): a `fetch` on a stub or a
+## binding, an RPC call with the argument and the reply as CBOR (MC5), and `send` and `close` of a socket. Not in `exposes`: only platform modules use it.
 import Io
 import Js
 import Request
@@ -41,6 +41,21 @@ Remote :: [].{
 				Err(t) => Err(RpcErr(t))
 			},
 		)
+	}
+
+	## `ws.send(data)` on a socket of `WebSocket` or `Object.Socket` (MODULES.md 12, "One API"), one `call!`. A throw (the
+	## socket is closed) is `Closed`.
+	socket_send! : Js.Ref, Js => Try({}, [Closed])
+	socket_send! = |ref, data| match Io.call!([Call(Ref(ref), "send", [Lit(data)])]) {
+		Ok(_) => Ok({})
+		Err(_) => Err(Closed)
+	}
+
+	## `ws.close(code, reason)`, one `call!`. A throw (a code that the app cannot send, a closed socket) is dropped.
+	socket_close! : Js.Ref, U16, Str => {}
+	socket_close! = |ref, code, reason| {
+		_ = Io.call!([Call(Ref(ref), "close", [Lit(Int(code.to_i64())), Lit(Text(reason))])])
+		{}
 	}
 
 	## The limit of one RPC call of Workers (32 MiB, Cloudflare docs): the limit of a reply that crosses into wasm.
@@ -98,3 +113,8 @@ field = |fields, name| match fields.find_first(|(k, _)| k == name) {
 	Ok((_, v)) => v
 	Err(_) => Undefined
 }
+
+expect init(Request.get("https://x.dev/a.txt")).len() == 2
+# A body goes into the init as it is (text, bytes or a stream).
+expect init(Request.post("https://x.dev/a", Text("abc"))).len() == 3
+expect response_of(Obj([("status", Int(404)), ("headers", Arr([])), ("body", Null)])).status == 404

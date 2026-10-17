@@ -160,8 +160,10 @@ const requestOf = (request) => ({ method: request.method, url: request.url, head
 
 // The event `Rpc` (API.md 10.1): a method of the default export (`entrypoint` "default") or of a named entry point. The
 // argument is the JS value of the caller as one `Packed` value (API.md 5.2): Roc parses it into the type of the method.
+// A call with no argument (`stub.method()`) sends `{}`, so a method whose argument type is `{}` takes it (PLAN.md 8f, FO6).
+const argOf = (arg) => new Packed(arg === undefined ? {} : arg);
 export function rpcEvent(entrypoint, method, arg) {
-  return { kind: 'rpc', entrypoint, method, arg: new Packed(arg) };
+  return { kind: 'rpc', entrypoint, method, arg: argOf(arg) };
 }
 
 // The event `EntrypointFetch`: the `fetch` of a named entry point (a service binding with `entrypoint`, MODULES.md 8).
@@ -170,14 +172,19 @@ export function entrypointFetchEvent(entrypoint, request) {
 }
 
 // The event `Object` of a Durable Object (API.md 10.1): its class, its id (`ctx.id.toString()`), and the event of the
-// object: `init` (the constructor), `fetch`, `alarm` (`alarmInfo` of Workers, 0 and false when it gives none), `rpc`.
+// object: `init` (the constructor), `fetch`, `alarm` (`alarmInfo` of Workers, 0 and false when it gives none), `rpc`, and
+// the socket events of the hibernation API (MODULES.md 12.1): the socket is a ref of the task, the message text or bytes
+// (an `ArrayBuffer`, J2), the error an `Error` (J6).
 export function objectEvent(cls, id, event) {
   return { kind: 'object', class: cls, id, event };
 }
 export const objectInit = () => ({ kind: 'init' });
 export const objectFetch = (request) => ({ kind: 'fetch', request: requestOf(request) });
 export const objectAlarm = (info) => ({ kind: 'alarm', retry_count: Number(info?.retryCount ?? 0), is_retry: Boolean(info?.isRetry ?? false) });
-export const objectRpc = (method, arg) => ({ kind: 'rpc', method, arg: new Packed(arg) });
+export const objectRpc = (method, arg) => ({ kind: 'rpc', method, arg: argOf(arg) });
+export const objectSocketMessage = (ws, message) => ({ kind: 'socketMessage', socket: ws, message });
+export const objectSocketClose = (ws, code, reason, wasClean) => ({ kind: 'socketClose', socket: ws, code: Number(code), reason: String(reason ?? ''), clean: Boolean(wasClean) });
+export const objectSocketError = (ws, error) => ({ kind: 'socketError', socket: ws, error: error instanceof Error ? error : new Error(String(error)) });
 
 // The event `Manifest` (API.md 10.1, AQ10): once, at load.
 export function manifestEvent() {

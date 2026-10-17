@@ -74,6 +74,7 @@ step "native-test.mjs (8e: Native in app_native.wasm: decode, limit, hashes, str
 # Phase A modules (PLAN.md 8c, 8d): the conformance app in Miniflare, and the must-not-compile checks of `Secret`
 step "conformance/run.mjs (8c, 8d: a route for each function and Io twin in Miniflare)" node conformance/run.mjs bench/out/conformance.wasm
 step "conformance/must-not-compile.sh (8c: a Secret in Log fields and in a CBOR encode does not compile)" conformance/must-not-compile.sh
+step "conformance/tmpdir-test.sh (8f: run.mjs leaves no temp dir: a normal run, FAIL start, SIGTERM)" conformance/tmpdir-test.sh bench/out/conformance.wasm
 rm -f ".cache/test-all-$$.log"
 [ "$rc" -eq 0 ] && echo "ALL PASS" || echo "FAIL"
 exit "$rc"

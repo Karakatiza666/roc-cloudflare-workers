@@ -6,7 +6,7 @@ import pf.Response
 import pf.D1
 import pf.Sql
 import pf.Io
-import cbor.Cbor
+import pf.Cbor
 import Q
 
 db = D1.binding("DB")

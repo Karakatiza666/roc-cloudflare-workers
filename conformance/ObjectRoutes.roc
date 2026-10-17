@@ -36,7 +36,7 @@ ObjectRoutes :: [].{
 	## The classes of the app: the manifest names them, and `conformance/worker.js` exports each one.
 	classes : List(Object.Class)
 	classes = [
-		Object.class("Counter", { fetch!: counter_fetch!, alarm!: counter_alarm!, rpc: [RpcMethods.increment.on(increment!), RpcMethods.ping.on(object_ping!), RpcMethods.boom.on(boom!), RpcMethods.echo.on(echo!)] }),
+		Object.class("Counter", { fetch!: counter_fetch!, alarm!: counter_alarm!, rpc: [RpcMethods.increment.on(increment!), RpcMethods.ping.on(object_ping!), RpcMethods.boom.on(boom!), RpcMethods.echo.on(echo!), RpcMethods.hello.on(object_hello!)] }),
 		Object.class("Store", { init!: store_init!, fetch!: store_fetch! }),
 		Object.class("Flaky", { init!: flaky_init!, fetch!: plain_fetch! }),
 		Object.class("Slow", { init!: slow_init!, fetch!: plain_fetch! }),
@@ -263,6 +263,9 @@ increment! = |self, { by }| {
 
 object_ping! : Object.Self, { n : I64 } => Try(Str, [])
 object_ping! = |_self, { n }| Ok("object ping ${n.to_str()}")
+
+object_hello! : Object.Self, {} => Try(Str, [])
+object_hello! = |_self, {}| Ok("object hello")
 
 boom! : Object.Self, { n : I64 } => Try(I64, [Nope(I64)])
 boom! = |_self, { n }| Err(Nope(n))

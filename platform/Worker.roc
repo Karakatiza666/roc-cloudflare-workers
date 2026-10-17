@@ -182,15 +182,26 @@ expect {
 	}
 }
 
-## The names of classes and methods (API.md AQ10): `{ default: [methods], objects: { Name: { handlers, methods } },
-## entrypoints: { Name: { handlers, methods } } }`. The shim defines a JS method only for a name in it (MODULES.md 3).
+## The names of classes and methods (API.md AQ10): `{ default: { handlers, methods }, objects: { Name: { handlers,
+## methods } }, entrypoints: { Name: { handlers, methods } } }`. The shim defines a JS method only for a name in it
+## (MODULES.md 3). The handlers of the default export: the fields that the app gives (QO5 of PLAN.md 8f, part 2).
 manifest : Worker(e) -> Js
 manifest = |w| {
 	texts = |names| Arr(names.map(|n| Text(n)))
 	class_of = |handlers, methods| Obj([("handlers", texts(handlers)), ("methods", texts(methods))])
+	given = [("fetch", w.?fetch!.is_ok()), ("scheduled", w.?scheduled!.is_ok()), ("queue", w.?queue!.is_ok()), ("email", w.?email!.is_ok()), ("tail", w.?tail!.is_ok())]
+	handlers = given.keep_oks(|(name, on)| if on Ok(name) else Err(NotGiven))
 	Obj([
-		("default", texts((w.?rpc ?? []).map(|h| h.name))),
+		("default", class_of(handlers, (w.?rpc ?? []).map(|h| h.name))),
 		("objects", Obj((w.?objects ?? []).map(|c| (c.name, class_of(c.handlers, c.methods))))),
 		("entrypoints", Obj((w.?entrypoints ?? []).map(|ep| (ep.name, class_of(ep.handlers, ep.rpc.map(|h| h.name)))))),
 	])
+}
+
+## QO5: the handlers of the default export are the fields that the app gives, so the shim defines `queue` only here.
+expect {
+	consume! = |_batch| Ok({})
+	w : Worker([])
+	w = Worker.{ queue!: consume! }
+	manifest(w) == Obj([("default", Obj([("handlers", Arr([Text("queue")])), ("methods", Arr([]))])), ("objects", Obj([])), ("entrypoints", Obj([]))])
 }

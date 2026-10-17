@@ -33,7 +33,7 @@ Problem 12 (2026-10-14) is the goal of problem 4: one wasm instance per isolate.
 | 6 | 5a to 5c. 5d (edge) waits for a deployed worker in 11. | none |
 | 7 | 7a to 7c | none. Before 8, because 8 changes the exports. |
 | 8 | 9a and 9b, then 8a, 8b with 9c, 8c with 10a and 10b, 8d, 8e (`API.md` phase A). 10c is part of the test of 8a. | the split ABI (7a), the header settings (7b), the task table (2c), cancel (3c). 8a needs the per-task roots and ref table of 9b, and 8b and 8c need `makeHandler` of 9a. |
-| 9 | 8f (`API.md` phase B) | 8a to 8e |
+| 9 | 8f (`API.md` phase B). Done 2026-10-17: parts 1 to 4 (the status sections of 8f); the edge parts are on the 11c lists. | 8a to 8e |
 | 10 | 8g, local. The edge part runs after 11. | 8a to 8e |
 | 11 | 11a to 11c, then 5d on the edge | 7 to 10 |
 | 12 | Update DESIGN.md §6.1, Q12 and Q14, DESIGN-REGISTRY.md §8 and `bench/README.md` (API.md RF10) | all |
@@ -1976,7 +1976,7 @@ Choices I made (the plan does not say):
 
 | # | Choice |
 | --- | --- |
-| DC1 | `Cbor` is a package of the platform (`packages`), not a module in `exposes`: a platform cannot re-export a module of a package ("package module is private", `research/cbor-in-platform/reexport.roc`). An app that names `Cbor` (its own codec, `Cbor.Bytes`, a `where` clause) adds the same URL to its header and imports `cbor.Cbor`. The same URL gives the same types (`own_dep.roc`). The conformance app does this for the `where` clauses of `D1Routes.roc`. See DO1. |
+| DC1 | `Cbor` is a package of the platform (`packages`), and a platform cannot re-export a module of a package (["package module is private"](research/cbor-in-platform/reexport.roc)). Decided 2026-10-16 (DO1): the platform has its own module `Cbor` (`platform/Cbor.roc`, copy `bench/platform/Cbor.roc`) that wraps the package with aliases (`Bytes`, `Options`, `Step`, `Format`, `State`, `Parseable`, `Encodable`) and thin functions (`parse`, `parse_camel`, `parse_with`, `path_at`, `encode`, `bytes`). An app writes `import pf.Cbor` and has no `cbor` entry. The types are the same as the package types (`research/cbor-in-platform/app_pf_and_pkg.roc`). The conformance app has no `cbor` entry: `D1Routes.roc` and `CborRoutes.roc` use `pf.Cbor`. |
 | DC2 | `first!` uses D1 `first()`, then `pf.pack`: a `null` (CBOR `f6`) is `NotFound`. One row goes to wasm, not all rows. |
 | DC3 | `rows!` reads `raw({ columnNames: true })` as a `Js` tree with the new helper `pf.limit` (MC11), not `pf.pack`: it has no types (MODULES.md 15). A number of size 2^53 or more is `Real`. |
 | DC4 | `batch!` calls `pf.packEach` twice (`results`, then `meta`). The limit is for the rows of all statements together (a shared budget in `Packed`). |
@@ -1993,7 +1993,7 @@ Open points:
 
 | # | Point |
 | --- | --- |
-| DO1 | An app that names `Cbor` must add the `roc-cbor` URL to its own header (DC1), and it must be the URL of the platform release. 11a writes this in the release notes. Question for the API owner: is this acceptable, or should the platform give its own wrappers (for example `D1.Bytes`) so that an app needs no `cbor` entry? |
+| DO1 | Decided 2026-10-16: the platform module `Cbor` wraps the package, so an app needs no `cbor` entry (DC1). An app may still add the same URL and import `cbor.Cbor`: the types are the same. |
 | DO2 | The type of `Io.pin!` (`Try({}, [PinErr(Io.Thrown)])`) and the names in `Io` (not `Js`) are not in the design (DC12). |
 | DO3 | `D1.Result.first` and `MissingRequiredField` work around two compiler limits (DC5, DC6). A newer compiler can remove both. |
 | DO4 | `Object.Self` SQL (8f) uses `constraint_of` and the integer rules of `D1.roc`, and its tests also check `ForeignKey` and `Datatype` (O5). |
@@ -2115,7 +2115,7 @@ Choices I made (the plan does not say):
 | FC8 | `Object.Self` is opaque (`{ class, id }`), and `Object.Class.run!` takes the id: only `Object` makes a `Self`. |
 | FC9 | `Rpc.name` is public (the method name), because `Object` and `Service` build the call in the internal module `Remote`. |
 | FC10 | `SqlRules` and `Remote` are internal modules (not in `exposes`). |
-| FC11 | The socket events of an object give `Unhandled`, and `Object.class` has no socket fields yet (they come with `WebSocket`). |
+| FC11 | The socket events of an object give `Unhandled`, and `Object.class` has no socket fields yet (they come with `WebSocket`). Done in part 3: the fields `web_socket_message!`, `web_socket_close!`, `web_socket_error!` and their events. |
 | FC12 | Twins: `fetch`, `call`, `set_alarm`, `get_alarm`, `delete_alarm`, `delete_all`. SQL, cells, `list!` and `id!` do not wait (sync storage of an object), so they have no twin (MC3). |
 | FC13 | `list!` gives the keys only, with the limit `Body.default_max` (`pf.keys`). |
 | FC14 | `sql_run!` runs the cursor to its end (`toArray`), then reads `rowsRead` and `rowsWritten`. |
@@ -2130,11 +2130,11 @@ Open points:
 | # | Point |
 | --- | --- |
 | FO1 | `location_hint` has no local test (11c). |
-| FO2 | The `pf.pack` limit of an RPC reply cannot fire locally: Workers stops the value first (FC5). Keep it as a second guard, or remove it? |
-| FO3 | The rule "the export lines come before `makeHandler`" (FC2) is not in the design. A missing export line after `makeHandler` is found only for a class of the manifest. |
+| FO2 | The `pf.pack` limit of an RPC reply cannot fire locally: Workers stops the value first (FC5). Keep it as a second guard, or remove it? Decided 2026-10-17: keep the `pf.pack` limit as a second guard (cheap, and a later Workers limit can be larger). |
+| FO3 | The rule "the export lines come before `makeHandler`" (FC2) is not in the design. A missing export line after `makeHandler` is found only for a class of the manifest. Decided 2026-10-17: the rule goes in API.md 10.1 (part 3 writes it). Done (part 3): API.md 10.1, the paragraph "Rule (`PLAN.md` 8f, FO3 ...)". |
 | FO4 | The manifest instance costs one more instance (its linear memory) at load, for each isolate, until V8 collects it. |
 | FO5 | The error types of `Object.Cell` (FC7) and the public `Rpc.name` (FC9) are not in the design. |
-| FO6 | An RPC call from JS with no argument (`stub.method()`) puts `undefined` in `Packed`. Not tested: it is likely `bad argument` for each type. Should a method with the argument type `{}` take no argument? |
+| FO6 | An RPC call from JS with no argument (`stub.method()`) puts `undefined` in `Packed`. Not tested: it is likely `bad argument` for each type. Should a method with the argument type `{}` take no argument? Decided 2026-10-17: yes. A method whose argument type is `{}` takes a JS call with no argument as `{}` (part 3 builds it, with a test). Done (part 3): `js/events.js` (`argOf`), check `rpc a JS call with no argument of a method whose argument type is {} (FO6)`, revert caught. |
 
 ### Status of step 8f, part 2: Queue, Kv, Email, Tail (2026-10-16)
 
@@ -2252,7 +2252,7 @@ Choices I made (the plan does not say):
 | QC13 | The derived CBOR parser reads a `Try(a, [Missing])` field as the value, or `Err(Missing)` for an absent key (`research/f2-queue/try_shape.roc`): the "tag form" of MODULES.md 3 and 15 is wrong for `roc-cbor` 0.1.0. The shim writes no key for a missing value. MODULES.md 3 is changed. `Request.Cf` inside a trace uses the same rule (`cfPlain`). |
 | QC14 | An item that does not parse is a crash in `Entry.event` (a platform bug, as the other shape faults of `Entry`), with the text of the parse error. The plan says `BadData` for a scheduled trace with `event` read as a fetch: the handler has typed input, so `BadData` has no place to go; the test sees the trap and the missing trace line. |
 | QC15 | The shim option `tailMaxBytes` (default 1 MiB, MC11) is new: local workerd cuts a trace to about 250 kB before the shim, so the limit cannot be reached with 2 MiB of logs. The conformance worker sets 100 kB. Past the limit the shim keeps the log lines in order (item by item) until one does not fit, and drops the rest of all items. The size of a line is its own CBOR size, so the batch can be a few bytes above the limit. |
-| QC16 | `makeHandler` defines `queue`, `email` and `tail` for every app. An app with no `queue!`, `email!` or `tail!` gets `Unhandled`: a throw for `queue` and `email` (log line `queue: unhandled`), a log line for `tail`. The manifest of part 1 (the `handlers` of the default entry) can restrict them later. |
+| QC16 | `makeHandler` defines `queue`, `email` and `tail` for every app. An app with no `queue!`, `email!` or `tail!` gets `Unhandled`: a throw for `queue` and `email` (log line `queue: unhandled`), a log line for `tail`. The manifest of part 1 (the `handlers` of the default entry) can restrict them later. Changed by QO5: only for a handler in the manifest. |
 | QC17 | `Email.send_raw!` and `reply!` make the `EmailMessage` with `pf.emailMessage`, a dynamic `import("cloudflare:email")`: no static import in `js/`, so Node tests of the shim need no stand-in module. |
 | QC18 | The conformance check of a consumer calls `worker.queue(name, messages)` of Miniflare for exact acks and retries (the answer has `explicitAcks`, `retryMessages`). The checks of `attempts` and of the delays use real local queues (batch timeout 0.1 s). |
 | QC19 | A multi-worker Miniflare needs `modulesRoot`, `compatibilityDate` and flags in each worker, or the app worker fails at its first event (`FinalizationRegistry is not defined`, no weak refs at an old date). |
@@ -2265,7 +2265,7 @@ Open points:
 | QO2 | MODULES.md 3 and 15 say that a `Try` field is read in the tag form (QC13). The roc-cbor derived parser reads the plain value or an absent key. Question for the owner of `roc-cbor`: is this the final rule? |
 | QO3 | `Email.Mail.can_be_forwarded` is not in the Workers API (QC10). The edge run (11c) says if the field exists. |
 | QO4 | `Worker.TraceItem` has no `entrypoint`, `scriptVersion`, `cpuTime` or `wallTime` (MODULES.md 3, "Not typed"). A field added later is a major release. |
-| QO5 | `queue`, `email` and `tail` exist for every app (QC16). Should the manifest hide them? |
+| QO5 | `queue`, `email` and `tail` exist for every app (QC16). Should the manifest hide them? Decided 2026-10-16: when part 1 (the manifest) is merged, the shim defines `queue`, `email` and `tail` only for an app whose manifest has the handler. Done 2026-10-17 (merge of part 1): `Worker` gives `default: { handlers, methods }` in the manifest (`platform/Worker.roc`, `manifest`), and `makeHandler` removes `queue`, `email` and `tail` from the prototype when the manifest has no such handler (`js/index.js`). A module that is not stack-first keeps the three (each event throws the layout error). An app with no `Worker` wrapper answers `Unhandled` to `Manifest`, so it has none (changed in part 3: it keeps all three, so its `event!` can get these events). Tests: `bench/entry-test.mjs` 1b (`app_events` with `queue!` only has `queue`; `app_stream` has none), the `expect` of `manifest` in `Worker.roc`, the conformance check "objects the manifest" (the app has all three). Reverts "QO5" (3): caught. |
 | QO6 | A body that CBOR cannot write is retried as an empty body (QC5). Should the batch instead give the handler the raw message? |
 
 ### Status of step 8f, part 4: other bindings (2026-10-16)
@@ -2473,7 +2473,7 @@ Choices I made (the design does not say):
 | OC4 | `Vectorize` has the `_with` forms of MC4: `query!(values)`, `query_with!(values, opts)`. The design table puts the options in `query!`. `query_with!` has also `namespace`, `return_values` and `max_bytes` (MC11), `filter` is a `Js` object. |
 | OC5 | `Ai.run_with!` has `max_bytes` (MC11) next to `gateway`. `stream!` sets `stream: true` on the decoded input (`Set` op), so the input must be a record. `cache_ttl_ms` goes as `cacheTtl` in whole seconds, rounded up (MC10, `Time.seconds_up`). |
 | OC6 | `Version.metadata!` and `Hyperdrive.config!` give the record of the design. A binding that is not in the config (or a bad shape) is a crash with the name of the binding: the program gives `undefined` fields (OP7). They have no `Io` twin (no wait, MC3). `timestamp_ms` is `Date.parse` of the ISO text, in the same program. |
-| OC7 | `Assets.fetch!` keeps the body a stream (`Fields` of the response, as `Http.open!`): the usual use is `Assets.fetch!(req)` as the response, so no byte goes into wasm. `res.text!()` reads it to 1 MiB. The code that builds the `fetch` program and reads the `Response` is a private copy of `Http.roc` (about 40 lines). |
+| OC7 | `Assets.fetch!` keeps the body a stream (`Fields` of the response, as `Http.open!`): the usual use is `Assets.fetch!(req)` as the response, so no byte goes into wasm. `res.text!()` reads it to 1 MiB. The code that builds the `fetch` program and reads the `Response` is a private copy of `Http.roc` (about 40 lines). Since OO3: `Remote.fetch`, no copy. |
 | OC8 | The error codes of `Workflows` are read from the message of the throw (`contains("instance.not_found")`, `instance.already_exists`): `NotFound` and `AlreadyExists`. The edge text is on the 11c list. Each other throw is `WorkflowsErr`. |
 | OC9 | `Workflows.Status` is `{ state, error, output_json }`. `state` is a tag union of the nine texts of Workflows (a new text is `Unknown`). `output()` reads `output_json` into the type of the call (MC7). |
 | OC10 | `SecretsStore.get!` has `SecretsStoreErr(Thrown)` for each throw: the Cloudflare docs give no text for a secret that does not exist, so there is no `NotFound` tag. |
@@ -2484,13 +2484,158 @@ Open points:
 
 | # | Point |
 | --- | --- |
-| OO1 | `Version.metadata!` and `Hyperdrive.config!` crash on a binding that is not in the config (OC6). A `Try` result (`[BadData(Str)]` or `[MissingBinding]`) is a change of the API: question for the API owner. |
-| OO2 | `Vectorize`: the extra options of `query_with!`, the `_with` form for `query` (the table has none), the type of `filter` (`Js`), the type `Vector(Meta)` with optional `namespace` and `metadata`, the three result types `Match`, `Stored` and `Mutation`. None is in the design. |
-| OO3 | `Assets.roc` has a copy of the request and response code of `Http.roc` (OC7). A function in `Http` that takes the object (`env[name]` or a service binding) removes the copy, and `Service.fetch!` of the Rpc part needs the same. |
+| OO1 | `Version.metadata!` and `Hyperdrive.config!` crash on a binding that is not in the config (OC6). A `Try` result (`[BadData(Str)]` or `[MissingBinding]`) is a change of the API: question for the API owner. Decided 2026-10-16: keep the crash. A binding that is not in the config is a deploy error, and the crash names it. |
+| OO2 | `Vectorize`: the extra options of `query_with!`, the `_with` form for `query` (the table has none), the type of `filter` (`Js`), the type `Vector(Meta)` with optional `namespace` and `metadata`, the three result types `Match`, `Stored` and `Mutation`. None is in the design. Decided 2026-10-16: keep the extra options. They follow MC4 (`_with` forms) and MC11 (`max_bytes`). |
+| OO3 | `Assets.roc` has a copy of the request and response code of `Http.roc` (OC7). A function in `Http` that takes the object (`env[name]` or a service binding) removes the copy, and `Service.fetch!` of the Rpc part needs the same. Decided 2026-10-16: remove the copy when part 1 (`Service.fetch!`) is merged: one function in `Http` that takes the fetch object, used by `Assets` and `Service`. Done 2026-10-17 (merge of part 1): the internal module `Remote` of part 1 has the one function, `Remote.fetch` (`target.fetch(url, init)`, a stream body). `Assets.fetch`, `Service.fetch` and `Object` fetch use it, and `Assets.roc` has no copy now. The `expect`s of the copy moved to `Remote.roc`. The Assets reverts now edit `Remote.roc` (names with "OO3"), and the revert "8f OO3 Remote.fetch (Assets, Object, Service)" (the call `fetchx`) fails the Assets, Object and Service checks: caught, 37 checks FAIL. |
 | OO4 | `Workflows`: `restart`, `createBatch`, `delete` and `subscribe` of an instance are not in the design and not built. `create_with!` has only `id`. |
 | OO5 | `Ai.run!` reads the output as typed data with `pf.pack`: a model that gives bytes (an image) or a `returnRawResponse` needs `Js`. `stream!` gives the raw server-sent events: no parser of events. |
 | OO6 | `Ai` and `Vectorize` have only stub tests. The shapes of the real results are the Cloudflare docs and the 11c list. |
 | OO7 | `SecretsStore`, `Workflows` and `Hyperdrive` texts and shapes are local (Miniflare 5.20261012.0-beta): the 11c list. |
+
+### After the merge of 8f parts 1, 2 and 4 (2026-10-17)
+
+| Item | Done |
+| --- | --- |
+| Merge | `f1-objects` into `main` (with parts 2 and 4): the three status sections above stay as they were. |
+| `pf.Cbor` | The routes of part 1 (`conformance/RpcRoutes.roc`, `RpcMethods.roc`) import `pf.Cbor` and make bytes with `Cbor.bytes(list)` (DO1). |
+| QO5, OO3 | Done: the notes in the rows of QO5 and OO3. |
+| `bench/test-all.sh` | ALL PASS, with the new step `conformance/tmpdir-test.sh` |
+| `node conformance/run.mjs bench/out/conformance.wasm` | 259 passed, 0 failed (with `end`) |
+| `roc test platform/main.roc` | 100 `expect`s, PASS |
+| `ROC=... node conformance/reverts.mjs '8f\|8f2\|D1\|Queue\|Assets\|layout'` (after the merge, before QO5 and OO3) | 97 of 97 caught |
+| `ROC=... node conformance/reverts.mjs 'QO5\|OO3\|Assets.fetch'` | 10 of 10 caught (3 new for QO5; the Assets reverts now on `Remote.roc`) |
+| `ROC=... node conformance/reverts.mjs` (all) | 254 of 254 caught, about 3 hours (a second revert run used the CPU for the first 80 minutes). `/tmp` got no new `miniflare-*` dir. |
+| Temp dirs of `conformance/run.mjs` | A run left `miniflare-*` dirs in the TMPDIR of the caller (an exit at `FAIL start` with no dispose, a throw before `dispose`, a killed run). Now the run has its own TMPDIR, `.cache/tmp/run-<pid>`, disposes each Miniflare in `finally` (and on SIGTERM and SIGINT), and removes the dir at exit. `reverts.mjs` removes the dirs of runs that are not alive at its start. Test: `conformance/tmpdir-test.sh` (a normal run, `FAIL start`, SIGTERM), a step of `bench/test-all.sh`. Reverts (by hand): no own TMPDIR fails the normal and the `FAIL start` run; no remove at exit fails all three. The signal handler and the dispose in `finally` are not caught: the exit hook of Miniflare also exits on SIGTERM, and a run that exits disposes its workerd processes. Also by hand: `reverts.mjs` with its cleanup off keeps a dir of a dead pid. With TMPDIR unset, the three runs add no dir to `/tmp`. |
+
+### Status of step 8f, part 3: WebSocket, Tcp (2026-10-17)
+
+Done: the module `WebSocket` (MODULES.md 12.2: `is_upgrade`, `accept!`, `connect!`, `connect_with!`, `send!`, `send_json!`, `receive!`, `close!`, `Message.json`, the twins `connect`, `connect_with`, `receive`, the race rule OP8), the hibernation API of a Durable Object (MODULES.md 12.1: `Object.Self.accept!`, `accept_with!`, `sockets!`, `sockets_with!`, `set_auto_response!`, `clear_auto_response!`; `Object.Socket` with `==`, `send!`, `send_json!`, `close!`, `tags!`, `attach!`, `attachment!`, `auto_response_ms!`; the fields `web_socket_message!`, `web_socket_close!`, `web_socket_error!` of `Object.class` and their events, and the manifest gives those JS methods only to a class that has them), a Worker that gives an upgrade to an object (`Object.fetch!` keeps the `webSocket` of the 101), the module `Tcp` (MODULES.md 12.3, with twins) and `Hyperdrive.connect!` (MODULES.md 13, with its twin). The three small items: FO6 (a JS call with no argument is `{}`), FO3 (the rule in API.md 10.1), and an app with a raw `event!` keeps `queue`, `email` and `tail`. With this part, all of step 8f is done: parts 1 to 4 are built and tested locally. The edge parts of each part are on the 11c lists.
+
+| Run | Result |
+| --- | --- |
+| `bench/test-all.sh` | ALL PASS, 50 step lines (the same steps) |
+| `node conformance/run.mjs bench/out/conformance.wasm` | 282 passed, 0 failed, and `end` PASS (23 new: 15 `websocket`, 6 `tcp`, 1 `hyperdrive`, 1 `rpc`; 2 of them are the SO3 follow-up), about 26 s |
+| `roc test platform/main.roc` | 106 `expect`s, PASS (6 new in `WebSocket.roc`) |
+| `ROC=... node conformance/reverts.mjs 8f3` | 19 of 19 caught (24 of 24 with the SO3 follow-up). The first run: 17 caught; two were not, and the tests changed (table "Tests that changed in this part"). The second run of those two (and two more on the same checks): caught. |
+| `ROC=... node conformance/reverts.mjs` (all) | 278 of 278 caught, `PASS` (2026-10-17, 08:50 to 13:58, after the SO3 follow-up). Log: `.cache/logs/reverts-all-so.log`. The first full run stopped at 07:57 at a stale entry (the QO5 entry still had the text from before the raw-event fix); each revert that it ran was caught. `reverts.mjs` now checks each entry before the run. |
+
+```mermaid
+sequenceDiagram
+    participant C as Client (Node WebSocket)
+    participant W as Worker fetch! (WebSocketRoutes.roc)
+    participant O as Room (Object.class)
+    participant J as js/ (index.js, helpers.js)
+    C->>W: GET /websocket/room/r1 (Upgrade: websocket)
+    W->>O: rooms.named("r1").fetch!(req) (Remote.fetch keeps webSocket)
+    O->>J: accept_with!: WebSocketPair, ctx.acceptWebSocket(server, tags)
+    O-->>C: 101 with the client end (through the Worker)
+    C->>J: message
+    J->>O: webSocketMessage(ws, msg): the event SocketMessage(socket, msg), ws is a ref of the task
+    O->>J: self.sockets!() (getWebSockets: the same JS objects, the same refs), peer != socket
+    J->>C: peer.send!
+```
+
+| Part | What | Main files |
+| --- | --- | --- |
+| `WebSocket` | `WebSocket :: { ref }`. `accept!` is one `call!` of `pf.wsPair`. `connect!` is one program: `fetch` with `Upgrade: websocket`, `Get` of `webSocket`, `pf.wsAccept` (undefined for a `null` socket: `NotUpgrade`). `receive` is `Keep(Root("signal"))` and `pf.wsReceive`. `send!` and `close!` are `Remote.socket_send!` and `socket_close!` (internal), shared with `Object.Socket`. | `platform/WebSocket.roc`, `platform/Remote.roc` |
+| Hibernation API | `Object.Socket := { ref }` with `is_eq` on the refs, the `Self` and `Socket` calls above (each one `call!`), the three class fields, `Entry` reads the events `socketMessage`, `socketClose`, `socketError` | `platform/Object.roc`, `platform/Entry.roc` |
+| `Tcp` | `Tcp := { ref }`, `Tcp.Tls`, `connect!`, `connect_with!`, `read!`, `write!`, `start_tls!`, `close!` and the twins, over the helpers `tcpConnect`, `tcpOpen`, `tcpRead`, `tcpWrite`, `tcpStartTls`, `tcpClose` | `platform/Tcp.roc` |
+| `Hyperdrive.connect!` | `env[name].connect()`, then `pf.tcpOpen` (a wait for `opened`): a `Tcp` | `platform/Hyperdrive.roc` |
+| Shim | `objectClass`: `webSocketMessage`, `webSocketClose`, `webSocketError` only for a handler of the manifest; an `Err`, `Unhandled` or a trap is a log line. Helpers: the message queue of a socket (`binaryType` `arraybuffer`), the waiters of `wsReceive` and their abort (OP8), the pending read of `tcpRead` (OP8), `respond` keeps a 101 response open until its socket closes. The bridge: a wait that a socket helper marks (`c.socketWait`) has no deadline (API.md 10.2). FO6: `argOf` in `js/events.js`. A raw `event!`: `got` null keeps the three methods. | `js/index.js`, `js/helpers.js`, `js/bridge.js`, `js/events.js` |
+| Headers | `Tcp` in `exposes` and imported in both headers. The copies in `bench/platform/` are equal. | `platform/main.roc`, `bench/platform/` |
+| Conformance | `WebSocketRoutes.roc` (class `Room`, the Worker echo, the clients), `TcpRoutes.roc`, a route `connect` in `HyperdriveRoutes.roc`, the method `hello` (FO6) in `RpcMethods.roc`, `RpcRoutes.roc`, `ObjectRoutes.roc`. `checks/websocket.mjs` (a WebSocket echo server with the `ws` package of Miniflare, the clients are WebSockets of Node), `checks/tcp.mjs` (a TCP echo server, the Hyperdrive binding `PGECHO` to it), a check in `rpc.mjs` and in `objects.mjs` (the socket methods on the prototype). `worker.js`: `export const Room`, the route `/__noarg`. `run.mjs`: `t.url` (the URL of the worker) and `t.mfDir`. | `conformance/` |
+| Probes | The facts of local workerd: identity of the sockets of `getWebSockets` (also after a hibernation), the limits of tags and attachments and their texts, `unsafeEvictDurableObject` with `webSockets: "hibernate"`, the auto response timestamp, a `ws://` URL in `fetch`, a 200 answer to an upgrade, `connect` to a local TCP server, `connect` of a local Hyperdrive. A WebSocket of a Worker 36 s after its 101 with the default deadlines. | `research/sockets-probe/out.txt`, `research/sockets-probe/long.txt` |
+| Bench | `bench/entry-test.mjs` 1b: `app.wasm` (a raw `event!`) has `queue`, `email` and `tail` | `bench/entry-test.mjs` |
+| Follow-up SO3 (2026-10-17) | The give-back of OP8: `onLoss(signal, back)` in `js/program.js`. `pf.wsReceive` and `pf.tcpRead` give one for each value that they take. A lost branch runs its give-backs (the last take first), a winner gives them to the branch around its race. The routes `race_ready` and a test in `bench/program-test.mjs` | `js/program.js`, `js/helpers.js`, `conformance/TcpRoutes.roc`, `conformance/WebSocketRoutes.roc`, `bench/program-test.mjs` |
+| `reverts.mjs` (2026-10-17) | Before the clean build, a check that each edit of each revert that runs finds its text: a stale entry stops the run at once with a list. A stale edit in the loop is a `failed:` line of that revert, and the run goes on (it was a crash). The kind `program-test`. The QO5 entry has the text of the raw-event fix, and the 8f3 entry "the lost branch takes the message" edits the new `wsReceive`. | `conformance/reverts.mjs` |
+
+Tests (names are the check names of `run.mjs`). Each revert is a real edit, a build, a run and a restore (`ROC=... node conformance/reverts.mjs 8f3`).
+
+| Test | Result | Revert | Revert result |
+| --- | --- | --- | --- |
+| `websocket a request with no Upgrade gets 426 from the Worker and NotUpgrade from accept!` (also `Object.Self.accept!`) | PASS | | |
+| `websocket the Worker gives the upgrade to the object with fetch!, and the client gets the 101 of the object` | PASS | `Remote.fetch` does not read `webSocket` | FAIL: 5 checks, "the WebSocket to ws://.../websocket/room/r1?user=a failed" |
+| (same) | | The shim defines no `webSocketMessage` on an object class | FAIL: 6 checks |
+| (same), `websocket accept_with! of 11 tags is TooLarge` | PASS | `accept_with!` sends no tags | FAIL: 6 checks |
+| `websocket two clients in one room: a message of one reaches the other and not the sender` (also bytes and `send_json!`) | PASS | No `==` on sockets (`is_eq` of `Object.Socket` always false) | FAIL: 3 checks, a gets its own `a: hello` |
+| `websocket web_socket_close!: the code and the reason of the close of the client` | PASS: `code 4001, reason "b leaves", clean true` | | |
+| `websocket hibernation: the object leaves memory, and the next message reads the attachment of its socket` (`starts=2`) | PASS | The attachment in JS memory, not `serializeAttachment` | FAIL: `user=NotFound starts=2` after the eviction |
+| `websocket an auto response answers ping with no event` (`events=1`, `auto=True`; after `clear_auto_response!` ping is an event) | PASS | The pair is not sent to `setWebSocketAutoResponse` | FAIL: no `pong` |
+| `websocket a Worker: accept!, respond!, receive! until the close` (text, bytes, the close of the Worker, `Closed` at the end) | PASS | The default `binaryType` (a bytes frame is a `Blob`) | FAIL: 3 checks, bytes `[]` |
+| `websocket connect! to a WebSocket echo server sends and receives one message` (`ws://` and `http://`) | PASS | `fetch` is called `fetchx` in `WebSocket.connect` | FAIL: 6 checks |
+| `websocket connect (Io twin), receive (Io twin)` | PASS | (`fetchx`) | FAIL |
+| `websocket connect_with!: protocols and headers, send_json!, Message.json, a bytes frame` | PASS | (`binaryType`) | FAIL |
+| `websocket connect! to a server that answers 200 gives NotUpgrade (OP7)` | PASS | `pf.wsAccept` has no branch for a `null` socket | FAIL: `SocketErr` |
+| `websocket Io.race! of receive and Time.sleep(50), the message at 100 ms: the sleep wins, the next receive! gets it` | PASS: `first=1 Ok(TimedOut) next=Ok(Got(Text("echo m")))` | The lost branch takes the message (the waiter stays) | FAIL: `next=Ok(TimedOut)` |
+| `websocket a 101 response keeps the task: the socket answers after afterRespondMs, and a wait on a socket has no deadline` (second Miniflare, `afterRespondMs` 1.5 s, `taskDeadlineMs` 1 s) | PASS | A 101 response is complete at once | FAIL: no `slept` in 3 s (the `Time.sleep!` of 3 s is cancelled at the sweep) |
+| (same) | | `wsReceive` does not mark a socket wait | FAIL: `503 trap cancelled: deadline` |
+| `tcp connect!, write!, read!, close!`; `tcp connect (Io twin), write (Io twin), read (Io twin), connect_with! tls Off` | PASS | `pf.tcpWrite` is called `tcpWritex` | FAIL: 5 checks, `write=Err(SocketErr(...)) read=Err(TimedOut)` |
+| `tcp connect! to a port with no server is SocketErr` | PASS: "proxy request failed, cannot connect to the specified address" | | |
+| `tcp read! after the end of the peer is Closed, write! after close! is Closed` | PASS | The end of the stream is `SocketErr` | FAIL |
+| (same) | | `pf.tcpWrite`: a closed socket is a throw | FAIL |
+| `tcp Io.race! of read and Time.sleep(50), the bytes at 100 ms: the sleep wins, the next read gets them` | PASS | The lost branch takes the bytes (the pending read is dropped) | FAIL: `next=Ok(TimedOut)` |
+| `tcp OP8 in the same turn: a read that loses to a branch with no wait gives its bytes back, the next read gets them` (SO3) | PASS: `first=1 second=0 next=Ok(Got("late"))` | `pf.tcpRead` gives no give-back | FAIL: `next=Ok(TimedOut)` |
+| `websocket OP8 in the same turn: a receive that loses to a branch with no wait gives its message back, the next receive gets it` (SO3) | PASS: `first=1 second=0 next=Ok(Got(Text("echo m")))` | `pf.wsReceive` gives no give-back | FAIL: `next=Ok(TimedOut)` |
+| (both) | | `race` does not run the give-backs of a lost branch | FAIL: 2 checks |
+| `bench/program-test.mjs`: `OP8: what a lost branch took goes back (onLoss), last take first; a winner gives its takes to the branch around it; a take of the winner of the top race is final` | PASS | The winner of an inner race keeps its takes | FAIL (`program-test`) |
+| (same) | | The give-backs run first take first | FAIL (`program-test`) |
+| `hyperdrive connect!, connect (Io twin): a Tcp socket to the origin of the binding` | PASS | `connect` is called `connectx` | FAIL |
+| `rpc a JS call with no argument of a method whose argument type is {} (FO6)` (default export and object) | PASS | A call with no argument sends `undefined` | FAIL: `bad argument` |
+| `objects the manifest`: `webSocketMessage`, `webSocketClose`, `webSocketError` on `Room`, none on `Counter` | PASS | (no `webSocketMessage`) | FAIL |
+| `bench/entry-test.mjs` 1b: `app.wasm` (a raw `event!`) has `queue`, `email`, `tail` | PASS | The old rule (`got !== undefined`): a manifest of `Unhandled` removes the three | FAIL (`entry-test`) |
+| `roc test`: `WebSocket.is_upgrade`, the URL rule, the close record (6 `expect`s) | PASS | | |
+| `end`: no task, ref, context, alarm or live byte | PASS | | |
+
+Tests that changed in this part:
+
+| Test | Change |
+| --- | --- |
+| `websocket a 101 response keeps the task ...` | The first form sent a message after 2 s and a sweep: the revert "a 101 response is complete at once" was not caught, because a wait on a socket has no deadline in any state. The test now has a `Time.sleep!` of 3 s after `respond!` (a wait that is not on the socket): caught. |
+| `tcp ...`, `hyperdrive connect! ...` | A read of a route waited for ever when the write failed (the revert `tcpWritex`: the run stopped at the timeout of `reverts.mjs`, 0 checks FAIL). The routes read in a race with `Time.sleep(2_000)` (the twin `read`), and `/tcp/end` reads only after a good write: caught. |
+| `bench/entry-test.mjs` 1b | New case: `app.wasm` with a raw `event!` |
+
+Edge parts for 11c (local workerd differs from the edge, or the plan says "on the edge"):
+
+| Part | What to run on the edge | Local result |
+| --- | --- | --- |
+| 30 s after the 101 | A WebSocket of a Worker open for more than 30 s after its 101 response (the `waitUntil` limit of Workers, and the CPU limit over a long connection, MODULES.md 12.2) | 36 s with the default deadlines (`research/sockets-probe/long.txt`). The conformance check uses `afterRespondMs` 1.5 s. |
+| Hibernation | The real eviction of an object with open sockets (no `unsafeEvictDurableObject`), the constructor and `init!` at the wake, the attachment, `getWebSockets()` gives the same JS object as the event after a wake | PASS with `unsafeEvictDurableObject(..., { webSockets: "hibernate" })` |
+| Auto response | `set_auto_response!` answers with no wake on the edge, and `auto_response_ms!` | PASS locally |
+| Limits | 10 tags, 256 characters, 2,048 characters of an auto response, 16,384 bytes of an attachment, 32,768 sockets: the texts of the edge | Local texts in MODULES.md 12.4 |
+| `binaryType` | The default `binaryType` of a socket of a Worker and of a client on the edge (local: `Blob`), and of a hibernated socket (local: `ArrayBuffer`) | The shim sets `arraybuffer` |
+| Client | `connect!` to a public `wss://` server (TLS), 6 connections at the same time, `connect!` from a Durable Object (no hibernation) | PASS to a local `ws://` server, given as `http://` |
+| `webSocketError` | An event that calls `web_socket_error!` | Not seen locally (no test makes a socket error) |
+| `Tcp` | `connect_with!` with `tls: On` and `StartTls` with `start_tls!` to a real TLS server, a public host, the texts of a failed connect | PASS to a local echo server. A closed port: "proxy request failed, cannot connect to the specified address" |
+| `Hyperdrive.connect!` | A real Postgres through Hyperdrive (a startup message, TLS of the origin) | Local Hyperdrive passes the socket to the origin of the connection string (`<hash>.hyperdrive.local:5432` as the remote address) |
+| Socket waits | A `receive!` or `read!` that waits minutes in a `Fetch` task before `respond!` (no shim deadline): what the edge does | PASS locally with `taskDeadlineMs` 1 s |
+
+Choices I made (the plan does not say):
+
+| # | Choice |
+| --- | --- |
+| SC1 | `WebSocket.connect!` is one program with one wait (`fetch`, `Get` of `webSocket`, `pf.wsAccept`), not two programs as API.md OP7 said: so it has the twin `connect` (MC3). API.md OP7 has an "As built" note. |
+| SC2 | A `ws://` or `wss://` URL is sent as `http://` or `https://`: the `fetch` of Workers refuses them (probe). |
+| SC3 | `Object.Socket := { ref }` (as MODULES.md 7 has it: `Entry` makes one from the socket of an event, so the backing must be visible) and `Tcp := { ref }` (MODULES.md 12.3 has `::`): `Hyperdrive.connect!` makes a `Tcp`. `WebSocket` stays `::`. |
+| SC4 | Each throw of `send` is `Closed` (the type has one tag). A throw of `acceptWebSocket` with tags, of `setWebSocketAutoResponse` and of `serializeAttachment` is `TooLarge`: Workers checks the limits, so Roc does not (the limit of an attachment is the size of its structured clone, not of its CBOR). `accept!` with no tags crashes on a throw. A throw of `deserializeAttachment` is `BadData` with the text. |
+| SC5 | The socket events of an object: an `Err`, `Unhandled` and a trap are a log line `<class>.<handler>: ...`, with no throw (MODULES.md 12.1, "Errors"). The task kind is `Socket`: the deadline of a wait (120 s). |
+| SC6 | A 101 response of `WebSocket.accept!` after `respond!` is open while its socket is open, and complete at the close (then `afterRespondMs`). The close does not cancel the task: a cancel would win against the `Closed` that a waiting `receive!` gets (decided 2026-10-17, SO1; API.md 10.2). |
+| SC7 | `pf.wsPair` and `wsAccept` set `binaryType` to `arraybuffer`: with the compatibility date of the conformance app, a bytes frame of a Worker socket came as a `Blob`, and Roc got 0 bytes (found by the check, revert caught). |
+| SC8 | A socket wait: `pf.wsReceive` and `pf.tcpRead` set `socketWait` on the program context when they wait, and the bridge gives it to `tasks.waitStart` (the field `socketWait` of the task table was there since 3b). |
+| SC9 | `Tcp.read!` reads at most `Body.default_max` (1 MiB, MC11; the rest comes next). `pf.tcpWrite` gives the text `closed` for a closed socket (`Closed`), each other throw is `SocketErr`. `close!` does not wait. `connect_with!` sends `secureTransport` "off", "on" or "starttls", and `allowHalfOpen: false`. |
+| SC10 | `send!` and `close!` of `WebSocket` and `Object.Socket` are the internal `Remote.socket_send!` and `socket_close!`: `WebSocket` cannot be imported by `Remote` (a cycle), so the shared code takes a ref and a `Js` frame. |
+| SC11 | The hibernation check makes the object leave memory with `unsafeEvictDurableObject("", "Room", { name, webSockets: "hibernate" })` of Miniflare. `init!` of `Room` counts the constructor runs in a cell: `starts=2` after the eviction. |
+| SC12 | The check "a 101 response keeps the task" runs in a second Miniflare with `afterRespondMs` 1.5 s and `taskDeadlineMs` 1 s, and sends a plain request to start the sweep (3b has no timer). The real 30 s is the research run `research/sockets-probe/long.mjs` (36 s, PASS). |
+| SC13 | FO6 is in JS (`argOf` of `js/events.js`): each RPC call with no argument sends `{}`, for the default export, a named entry point and an object. A method with another argument type gives `bad argument` as before. |
+| SC14 | `WebSocket.Message.json` of a bytes frame is `BadData("a bytes frame, not a text frame")`. |
+
+Open points:
+
+| # | Point |
+| --- | --- |
+| SO1 | Decided 2026-10-17: keep the built behavior. The close of a socket makes a 101 response complete, and the task ends when its handler returns. API.md 10.2 has the rule and the reason (a close that cut the handler short would lose its cleanup work). The question was: API.md 10.2 said that the close of the socket of a 101 response, of `connect!` and of `Tcp.connect!` ends the task. As built, the close of the socket of a 101 response only makes the response complete (SC6), and the close of a client socket or of a `Tcp` does nothing to the task. Is that the rule, or must a close cancel the task (with the race problem of SC6)? |
+| SO2 | Decided 2026-10-17: `Tcp` stays `:=`. With `::`, `roc check platform/main.roc` fails: "cannot use opaque nominal type" at `platform/Hyperdrive.roc:36` (`Tcp.{ ref: s }`). Only a function of the module `Tcp` can make an opaque `Tcp`, and `Tcp` cannot import `Hyperdrive` (a cycle). So `::` needs a new public function of `Tcp` (for example, one that opens the socket of a binding by its name), which the design does not have. The point was: `Tcp` is `:=`, not `::` as in MODULES.md 12.3 (SC3): an app can make one from a `Js.Ref` of a raw program (as it can an `Object.Socket`, which the design has as `:=`). A public constructor with `::` is the other choice. Both are public API. |
+| SO3 | Done 2026-10-17: the give-back of OP8 (`onLoss` in `js/program.js`, the row "Follow-up SO3" above), for `tcpRead` and also for `wsReceive`: its step that put a message back never ran (`give` took the abort listener off first), and a message that `wsReceive` took from the queue at once had no step. Tests and reverts: the rows SO3 above. The point was: a race edge of OP8 for `Tcp`: when the read of a lost branch settles in the same turn as the end of the race, the bytes go to the lost branch. `wsReceive` puts such a message back at the front of the queue, `tcpRead` has no such step. |
+| SO4 | `start_tls!`, `connect_with!` with `tls: On` and `web_socket_error!` have no local test (11c). |
 
 ## 9. JS shim
 
@@ -2582,7 +2727,7 @@ Removed 2026-10-16: stack-first is guaranteed by the compiler. Observation (not 
 
 | Step | Change | Test |
 |---|---|---|
-| 11a | A release workflow: build the production host (7a) with the pinned nightly (`compat/last-stack-first-nightly`), bundle the platform with `roc bundle`, and attach the bundle and the `js/` package to a GitHub Release. The platform header has two packages by release URL (8c): `http` (roc-lang/http 2.0.0) and `cbor` (`roc-cbor` 0.1.0). The bundle keeps them as URLs (no copy, never a path). A platform cannot re-export a module of a package, so the release notes tell an app that names `Cbor` to add the same `roc-cbor` URL to its own header (MODULES.md 15). Roc downloads the packages to `$XDG_CACHE_HOME/roc/packages/` (the tests set `XDG_CACHE_HOME=.cache`). | Run on a test tag. A new app builds with the release URL. An app with its own `cbor` entry of the same URL builds, and a `D1.all!` into its record type works. |
+| 11a | A release workflow: build the production host (7a) with the pinned nightly (`compat/last-stack-first-nightly`), bundle the platform with `roc bundle`, and attach the bundle and the `js/` package to a GitHub Release. The platform header has two packages by release URL (8c): `http` (roc-lang/http 2.0.0) and `cbor` (`roc-cbor` 0.1.0). The bundle keeps them as URLs (no copy, never a path). A platform cannot re-export a module of a package, so the platform has its own module `Cbor` that wraps the package (DC1, DO1): the release notes say that an app needs no `cbor` entry, and that an app may still add the same URL (the types are the same, MODULES.md 15). Roc downloads the packages to `$XDG_CACHE_HOME/roc/packages/` (the tests set `XDG_CACHE_HOME=.cache`). | Run on a test tag. A new app builds with the release URL. An app with no `cbor` entry builds, and a `D1.all!` into its record type with `Cbor.Bytes` works. An app that also has its own `cbor` entry of the same URL builds. |
 | 11b | Publish `js/` (npm, or a file in the release that the app copies) | A new Worker project uses it with wrangler |
 | 11c | An example Worker app with a wrangler config (with the compatibility flag `enable_request_signal`, for 3b), deployed by CI. 5d (CPU limit on the edge) runs on it. Also check what the edge does at 128 MB: is only the isolate stopped, and do the requests in flight fail? Also check the facts of API.md 10.2 on the edge: does `request.signal` fire when the client goes away after the response body is complete, and does a `Body.writer!` stream keep the request past 30 s while the task writes? The cron edge test of API.md AQ12: two cron triggers (`*/2 * * * *` and `1-59/2 * * * *`). The `scheduled!` handler writes a row (`cron`, `time_ms`, the time of the run) to D1 for each run, then gives `Err`. For the second cron it calls `no_retry!` first. It runs for 1 hour. The jurisdiction of MODULES.md 7 on the edge (local workerd does not have it). (The item "the fallback under load on the edge" is removed 2026-10-16: stack-first is guaranteed by the compiler.) | The deployed example answers. 5d and the 128 MB check give their results. The two facts of API.md 10.2 give their results, and API.md 10.2 is changed if they differ. AQ12: the rows show for each `time_ms` how many runs each cron got. More than one run for a `time_ms` of the first cron, and one for the second, shows that production retries and that `noRetry` stops it. Write the answer in MODULES.md 3 and settle AQ12. Revert (the handler gives `Ok`): one run for each `time_ms` of both crons. `counters.jurisdiction(Eu).named("x").id!()` differs from `counters.named("x").id!()`. Revert (the jurisdiction is not sent): they are equal. |
 

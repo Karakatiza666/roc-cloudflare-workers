@@ -1,7 +1,7 @@
 // The platform helpers: the root `pf` of a program (API.md 6.4). Each one is a loop or a branch that a program
 // cannot have (OP4). One `pf` object for each task: `spawn`, `writer`, `respond` and `passThrough` use its task.
 import { Packed, Limited, TooLarge } from './values.js';
-import { runAwait, errorOf } from './program.js';
+import { runAwait, errorOf, onLoss } from './program.js';
 import { responseOf } from './events.js';
 
 // The read state of each stream that `readUpTo`, `chunk` or `sha256` read (a stream is a ref of one task, RS1): its
@@ -16,6 +16,18 @@ function readerOf(stream, what) {
   return r;
 }
 const bytesOf = (v) => (v instanceof Uint8Array ? v : ArrayBuffer.isView(v) ? new Uint8Array(v.buffer, v.byteOffset, v.byteLength) : new Uint8Array(v));
+// At most `max` bytes of `v`: the rest waits in `st.rest` for the next read.
+function join(a, b) {
+  const out = new Uint8Array(a.byteLength + b.byteLength);
+  out.set(a);
+  out.set(b, a.byteLength);
+  return out;
+}
+function cut(st, v, max) {
+  if (v.byteLength <= max) return v;
+  st.rest = v.subarray(max);
+  return v.subarray(0, max);
+}
 function concat(chunks, n) {
   if (chunks.length === 1) return chunks[0];
   const out = new Uint8Array(n);
@@ -38,6 +50,64 @@ function r2pair(o) {
 // The writers of `pf.writer` by their readable side and by their writer (`close`, `respond`).
 const writerOfStream = new WeakMap();
 const writerOf = new WeakMap();
+
+// WebSockets of `WebSocket.accept!` and `connect!` (MODULES.md 12.2): the state of each socket that `wsAccept` accepted.
+// `queue`: the messages that came before a `receive` (text, or bytes as a `Uint8Array`). `waiters`: the `receive` calls
+// that wait. `closed`: `{ code, reason, clean }` after the close. `onClose`: hooks (the end of a 101 response).
+const sockets = new WeakMap();
+// The server end of a `wsPair`, by its client end (the `webSocket` of a 101 response of `respond`).
+const serverOf = new WeakMap();
+function acceptSocket(ws) {
+  const st = { queue: [], waiters: [], closed: null, onClose: [] };
+  sockets.set(ws, st);
+  ws.accept();
+  // Bytes as an `ArrayBuffer`: with the compatibility flag of the standard `binaryType` the default is `blob`, which a
+  // sync read cannot take.
+  try {
+    ws.binaryType = 'arraybuffer';
+  } catch {}
+  const close = (closed) => {
+    if (st.closed) return;
+    st.closed = closed;
+    for (const w of st.waiters.splice(0)) w.give(closed);
+    for (const f of st.onClose.splice(0)) f();
+  };
+  ws.addEventListener('message', (e) => {
+    const v = typeof e.data === 'string' ? e.data : new Uint8Array(e.data);
+    const w = st.waiters.shift();
+    if (w) w.give(v);
+    else st.queue.push(v);
+  });
+  ws.addEventListener('close', (e) => close({ code: e.code, reason: e.reason ?? '', clean: Boolean(e.wasClean) }));
+  ws.addEventListener('error', (e) => close({ code: 1006, reason: String(e?.message ?? e?.error?.message ?? 'error'), clean: false }));
+  return st;
+}
+
+// TCP sockets of `Tcp` (MODULES.md 12.3): the reader, the writer, a read that a lost race branch left (`pending`), the
+// rest of a chunk that `max` cut, and the close.
+const tcps = new WeakMap();
+function tcpOf(s) {
+  let st = tcps.get(s);
+  if (st) return st;
+  if (!s || typeof s.readable?.getReader !== 'function') throw new TypeError('tcp: not a socket of Tcp.connect! or Hyperdrive.connect!');
+  st = { reader: null, writer: null, pending: null, rest: null, closed: false };
+  s.closed?.then(() => (st.closed = true), () => (st.closed = true));
+  tcps.set(s, st);
+  return st;
+}
+// `p`, or a rejection when `signal` aborts first (a lost branch of `Io.race!`, OP8, or the end of the task).
+function untilAbort(p, signal) {
+  if (!signal) return p;
+  if (signal.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const on = () => reject(signal.reason);
+    signal.addEventListener('abort', on, { once: true });
+    p.then(
+      (v) => (signal.removeEventListener('abort', on), resolve(v)),
+      (e) => (signal.removeEventListener('abort', on), reject(e)),
+    );
+  });
+}
 
 // The pin table of an isolate (API.md RS2): values for later tasks, by name. `limit`: the shim option `pinLimit`.
 // `now`: a clock. Each pin and unpin is counted (M11).
@@ -137,6 +207,117 @@ export function makeHelpers(t, c, shim, tasks) {
     kvList(res) {
       const keys = res.keys.map((k) => ({ name: k.name, expiration: k.expiration, metadata: k.metadata === null || k.metadata === undefined ? undefined : new Packed(k.metadata) }));
       return { keys, cursor: res.list_complete ? undefined : res.cursor };
+    },
+    // `WebSocket.accept!` (MODULES.md 12.2): `new WebSocketPair()`, `accept()` of the server end with its message queue.
+    // Gives `[client, server]`.
+    wsPair() {
+      const [client, server] = Object.values(new WebSocketPair());
+      acceptSocket(server);
+      serverOf.set(client, server);
+      return [client, server];
+    },
+    // `WebSocket.connect!`: `accept()` of the `webSocket` of a response, with its message queue. No socket (the server did
+    // not answer 101): undefined (`NotUpgrade`).
+    wsAccept(ws) {
+      if (ws === null || ws === undefined) return undefined;
+      acceptSocket(ws);
+      return ws;
+    },
+    // `WebSocket.receive!`: the next message (text, or bytes), or `{ code, reason, clean }` after the close. A wait on a
+    // socket has no deadline (API.md 10.2). When `signal` aborts (a lost branch of `Io.race!`), the call stops and the
+    // message stays for the next call (OP8). A message that a lost branch took goes back to the front of the queue
+    // (`onLoss`), also when the branch took it in the same turn as the end of the race.
+    wsReceive(ws, signal) {
+      const st = sockets.get(ws);
+      if (!st) throw new TypeError('wsReceive: not a socket of WebSocket.accept! or connect!');
+      const taken = (m) => {
+        onLoss(signal, () => st.queue.unshift(m));
+        return m;
+      };
+      if (st.queue.length) return taken(st.queue.shift());
+      if (st.closed) return st.closed;
+      c.socketWait = true;
+      return new Promise((resolve, reject) => {
+        const w = {
+          give(v) {
+            signal?.removeEventListener('abort', onAbort);
+            resolve(v === st.closed ? v : taken(v));
+          },
+        };
+        const onAbort = () => {
+          const i = st.waiters.indexOf(w);
+          if (i >= 0) st.waiters.splice(i, 1);
+          reject(signal.reason);
+        };
+        if (signal?.aborted) return reject(signal.reason);
+        signal?.addEventListener('abort', onAbort, { once: true });
+        st.waiters.push(w);
+      });
+    },
+    // `Tcp.connect!` (MODULES.md 12.3): `connect({ hostname, port }, { secureTransport })` of `cloudflare:sockets` (a
+    // dynamic import, so a Node test of the shim loads with no stand-in), then a wait for `opened`. Gives the socket.
+    async tcpConnect(hostname, port, secureTransport) {
+      const { connect } = await import('cloudflare:sockets');
+      return this.tcpOpen(connect({ hostname, port }, { secureTransport, allowHalfOpen: false }));
+    },
+    // A wait for `opened` of a socket (`Hyperdrive.connect!`: the `connect()` of the binding). Gives the socket.
+    async tcpOpen(socket) {
+      await socket.opened;
+      tcpOf(socket);
+      return socket;
+    },
+    // `Tcp.read!`: the next bytes, at most `max` (the rest comes next), or undefined at the end. A wait on a socket has
+    // no deadline (API.md 10.2). When `signal` aborts (a lost branch of `Io.race!`), the call stops, and the read that
+    // it started stays for the next call (OP8). Bytes that a lost branch took go back to the front (`onLoss`), also
+    // when the branch took them in the same turn as the end of the race: no byte is lost.
+    async tcpRead(socket, max, signal) {
+      const st = tcpOf(socket);
+      const taken = (v) => {
+        onLoss(signal, () => (st.rest = st.rest ? join(v, st.rest) : v));
+        return v;
+      };
+      if (st.rest) {
+        const v = st.rest;
+        st.rest = null;
+        return taken(cut(st, v, max));
+      }
+      st.reader ??= socket.readable.getReader();
+      const read = (st.pending ??= st.reader.read());
+      c.socketWait = true;
+      let got;
+      try {
+        got = await untilAbort(read, signal);
+      } catch (e) {
+        // An abort keeps the read for the next call. A read that failed goes.
+        if (!signal?.aborted && st.pending === read) st.pending = null;
+        throw e;
+      }
+      if (st.pending === read) st.pending = null;
+      return got.done ? undefined : taken(cut(st, bytesOf(got.value), max));
+    },
+    // `Tcp.write!`: `writer.write(bytes)`. A socket that is closed gives the text "closed" (`Closed` in Roc).
+    async tcpWrite(socket, bytes) {
+      const st = tcpOf(socket);
+      if (st.closed) return 'closed';
+      st.writer ??= socket.writable.getWriter();
+      try {
+        await st.writer.write(bytes);
+      } catch (e) {
+        if (st.closed) return 'closed';
+        throw e;
+      }
+      return undefined;
+    },
+    // `Tcp.start_tls!`: `socket.startTls()`, then a wait for `opened` of the new socket.
+    async tcpStartTls(socket) {
+      return this.tcpOpen(socket.startTls());
+    },
+    // `Tcp.close!`: `socket.close()` with no wait; a rejection is dropped.
+    tcpClose(socket) {
+      const st = tcps.get(socket);
+      if (st) st.closed = true;
+      socket.close().catch(() => {});
+      return undefined;
     },
     // `Email.send_raw!` and `reply!`: `new EmailMessage(from, to, raw)` of `cloudflare:email`. It is a dynamic import, so
     // a Node test of the shim loads with no stand-in for that module.
@@ -266,7 +447,12 @@ export function makeHelpers(t, c, shim, tasks) {
       // A stream of an open writer: the body is complete at its `close` (3b). Else it is complete now.
       const s = o.body instanceof ReadableStream ? writerOfStream.get(o.body) : undefined;
       t.responseWriter = s;
-      tasks.respond(t, Boolean(s && !s.closed));
+      // A 101 response of `WebSocket.accept!` is complete when its socket closes (API.md 10.2): the task stays.
+      const ws = o.webSocket ? sockets.get(serverOf.get(o.webSocket)) : undefined;
+      tasks.respond(t, Boolean((s && !s.closed) || (ws && !ws.closed)));
+      if (ws && !ws.closed) ws.onClose.push(() => {
+        if (t.response === 'open') tasks.bodyComplete(t);
+      });
       h.respond(res);
     },
     // `Ctx.pass_through!`: `ctx.passThroughOnException()`. Only in the `fetch` of a Worker, else InvalidStateError.

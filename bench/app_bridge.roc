@@ -1,14 +1,13 @@
 app [event!] {
 	pf: platform "platform/main.roc",
-	cbor: "https://github.com/Karakatiza666/roc-cbor/releases/download/0.1.0/9QL2dCyq7bcmvAEZfDFwi8kBvWLCZpEMS4WQYnZisezw.tar.zst",
 }
 
 import pf.Worker
 import pf.Response
 import pf.Js
 import pf.Io
-# The `roc-cbor` package, the same release as the platform (API.md 5.2).
-import cbor.Cbor
+# The platform module `Cbor`, a wrapper of the package `roc-cbor` (API.md 5.2). The app has no `cbor` entry.
+import pf.Cbor
 
 ## The PLAN.md 8a tests of the bridge (`bench/bridge-test.mjs`). Request: "<case> <args>". Body: the result as text.
 

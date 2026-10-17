@@ -5,6 +5,7 @@
 // `cloudflare:workers` is the stand-in of bench/cf-workers-stub.mjs (bench/cf-node.mjs). workerd: bench/entry-workerd.mjs.
 // Exit 1 on a failure.
 import { readFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import { makeHandler, WorkerEntrypoint } from './cf-node.mjs';
 
 const module = new WebAssembly.Module(readFileSync(process.argv[2]));
@@ -28,11 +29,26 @@ const logOf = async (f) => {
 // 1. The class of the default export is a subclass of `WorkerEntrypoint`, and its methods are on its prototype.
 {
   const sub = Handler.prototype instanceof WorkerEntrypoint;
-  const own = ['fetch', 'scheduled', 'queue', 'email', 'tail', 'ping'].every((m) => Object.hasOwn(Handler.prototype, m));
+  const own = ['fetch', 'scheduled', 'queue', 'ping'].every((m) => Object.hasOwn(Handler.prototype, m));
   const inst = h();
   console.log('1 subclass:', { sub, own, env: inst.env === env, ctx: inst.ctx === ctx });
   if (!sub) fail('1: makeHandler does not give a subclass of WorkerEntrypoint');
   if (!own || inst.env !== env || inst.ctx !== ctx) fail('1: the methods are not on the prototype, or env and ctx are not kept');
+}
+
+// 1b. QO5 (PLAN.md 8f, part 2): `queue`, `email` and `tail` only for an app whose manifest has the handler. app_events
+// has `queue!` and no `email!` or `tail!`. app_stream (in the same directory) has no `queue!`.
+{
+  const names = (C) => ['queue', 'email', 'tail'].filter((m) => m in C.prototype);
+  const events = names(Handler);
+  const stream = names(makeHandler(new WebAssembly.Module(readFileSync(new URL('app_stream.wasm', pathToFileURL(process.argv[2])))), { log: () => {} }));
+  // PLAN.md 8f, part 3: app.wasm has a raw `event!` (no `Worker` wrapper): it answers `Unhandled` to `Manifest`, and keeps
+  // all three methods, so its `event!` gets these events.
+  const raw = names(makeHandler(new WebAssembly.Module(readFileSync(new URL('app.wasm', pathToFileURL(process.argv[2])))), { log: () => {} }));
+  console.log('1b QO5:', { app_events: events, app_stream: stream, app: raw });
+  if (events.join() !== 'queue') fail(`1b: app_events (queue! only) has ${JSON.stringify(events)}, want ["queue"]`);
+  if (stream.length !== 0) fail(`1b: app_stream (no queue!, email!, tail!) has ${JSON.stringify(stream)}, want []`);
+  if (raw.join() !== 'queue,email,tail') fail(`1b: app (a raw event!, the manifest is Unhandled) has ${JSON.stringify(raw)}, want ["queue","email","tail"]`);
 }
 
 // 2. A binary body (0x00 to 0xFF) comes back with the same bytes. With the body as a `Str`, the bytes above 0x7F change.

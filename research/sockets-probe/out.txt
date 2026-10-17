@@ -1,0 +1,17 @@
+message (identity, attachment, tags): {"same":true,"n":2,"byTag":true,"att":"Uint8Array 1,2,3","starts":1,"tags":["t1","a"],"autoTs":"null null","msgKind":"string","msg":"one"}
+101 headers of the object (11 tags, attachment of 20000 bytes): {"status":101,"tooMany":"Error: a Hibernatable WebSocket cannot have more than 10 tags","bigAtt":"Error: A WebSocket 'attachment' cannot be larger than 16384 bytes.'attachment' was 20013 bytes."}
+evict: ok
+message after eviction (starts 2?): {"same":true,"n":3,"byTag":true,"att":"Uint8Array 1,2,3","starts":2,"tags":["t1","a"],"autoTs":"null null","msgKind":"ArrayBuffer","msg":[9,8]}
+auto: auto set
+auto response: pong
+message after the auto response (autoTs): {"same":true,"n":3,"byTag":true,"att":"Uint8Array 1,2,3","starts":2,"tags":["t1","a"],"autoTs":"Date Sat Oct 17 2026 00:49:48 GMT+0000 (Coordinated Universal Time)","msgKind":"string","msg":"after ping"}
+close 1000 b leaves true
+sockets after a close: 2
+close 1005  true
+pair echo: echo x
+pair close 4000 done true
+client http://: {"status":101,"ws":"WebSocket","got":"echo hi","sendAfterClose":"TypeError: Can't call WebSocket send() after close()."}
+client ws://: fetch threw TypeError: Fetch API cannot load: ws://127.0.0.1:34287/
+client 200: {"status":200,"ws":"null"}
+tcp: {"socket":"Socket","keys":["readable","writable","closed","opened","upgraded","secureTransport","close","startTls","constructor"],"opened":{"remoteAddress":"127.0.0.1:40559"},"read":"hello","afterClose":"done","closedPort":"Error: proxy request failed, cannot connect to the specified address"}
+hyperdrive: {"keys":["connect","constructor"],"cs":"postgres://u:p@a91d42fa374dc54894d3695e5435c7a3.hyperdrive.local:5432/db?sslmode=disable","host":"a91d42fa374dc54894d3695e5435c7a3.hyperdrive.local","port":5432,"socket":"Socket","opened":{"remoteAddress":"a91d42fa374dc54894d3695e5435c7a3.hyperdrive.local:5432"},"read":"hd hello"}

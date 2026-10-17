@@ -3,14 +3,40 @@
 // prints one line for each check, `PASS <name>: <detail>` or `FAIL <name>: <why>`, and exits 1 on a failure.
 //   node conformance/run.mjs [app.wasm] [name-filter]      (default: bench/out/conformance.wasm)
 // Env: MINIFLARE, the directory of the miniflare package (default: the one that the global wrangler of this node has).
+// Temp files: the run has its own TMPDIR, `.cache/tmp/run-<pid>`, so the temp dirs of Miniflare (`miniflare-*`) do not
+// go to /tmp. The run removes it at its end, also after a FAIL, a throw, SIGTERM or SIGINT. `reverts.mjs` removes the
+// dirs of runs that are not alive (a run killed with SIGKILL).
 import { createRequire } from 'node:module';
-import { readFileSync, readdirSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
+const runDir = join(root, '.cache/tmp', `run-${process.pid}`);
+mkdirSync(runDir, { recursive: true });
+process.env.TMPDIR = runDir;
+// Each Miniflare of the run (the app, and the ones that checks start), so a signal can dispose them all.
+const live = new Set();
+const track = (m) => {
+  live.add(m);
+  const dispose = m.dispose.bind(m);
+  m.dispose = () => {
+    live.delete(m);
+    return dispose();
+  };
+  return m;
+};
+const disposeAll = () => Promise.all([...live].map((m) => m.dispose().catch(() => {})));
+process.on('exit', () => rmSync(runDir, { recursive: true, force: true }));
+for (const [sig, code] of [['SIGTERM', 143], ['SIGINT', 130]]) {
+  process.once(sig, async () => {
+    console.log(`FAIL ${sig}: the run stops`);
+    await disposeAll();
+    process.exit(code);
+  });
+}
 const wasm = process.argv[2] ?? join(root, 'bench/out/conformance.wasm');
 const filter = process.argv[3];
 const mfDir = process.env.MINIFLARE ?? join(dirname(dirname(process.execPath)), 'lib/node_modules/wrangler/node_modules/miniflare');
@@ -75,7 +101,7 @@ const modules = [
 ];
 const logs = [];
 // A worker that does not start (a throw at load, for example a bad shim option) is the failure `start`.
-const mf = new Miniflare(convertV4MiniflareOptions({
+const mf = track(new Miniflare(convertV4MiniflareOptions({
   modules,
   modulesRoot: here,
   compatibilityDate: '2026-10-01',
@@ -86,60 +112,71 @@ const mf = new Miniflare(convertV4MiniflareOptions({
   unsafeTriggerHandlers: true,
   handleStructuredLogs: (l) => logs.push(l),
   ...merged,
-}));
+})));
+// The rest runs in `try`: each path to the end (a FAIL at the start, a throw) disposes Miniflare in `finally`.
+let failed = 0, passed = 0, started = false, url = null;
 try {
-  await mf.ready;
-} catch (e) {
-  console.log(`FAIL start: ${String(e.message).split('\n').find((l) => l.includes('Uncaught')) ?? e.message}`.slice(0, 400));
+  try {
+    url = await mf.ready;
+    started = true;
+  } catch (e) {
+    console.log(`FAIL start: ${String(e.message).split('\n').find((l) => l.includes('Uncaught')) ?? e.message}`.slice(0, 400));
+    failed = 1;
+  }
+  if (started) await runChecks();
+} finally {
+  await disposeAll();
   server.close();
-  process.exit(1);
 }
+if (started) console.log(`${passed} passed, ${failed} failed`);
+process.exit(failed ? 1 : 0);
 
-// What a check gets: `get(path)` gives { status, body, waits, awaits, calls, ms } (`awaits`, `calls`: the crossings), `logs` (the structured log lines of workerd since
-// the start), `server` (the URL of the local server), `mf` (the Miniflare instance).
-const t = {
-  server: serverUrl,
-  mf,
-  logs,
-  // For a check that needs more workers (a Tail Worker, 8f): a new Miniflare with these V4 options, with the same `compatibilityDate`,
-  // `cf` and flags, and the modules of the worker of the app (`modules`, with `app.wasm`).
-  modules,
-  startMiniflare: (o) => new Miniflare(convertV4MiniflareOptions({ modulesRoot: here, compatibilityDate: '2026-10-01', compatibilityFlags: ['enable_request_signal'], port: 0, cf, ...o })),
-  async get(path, init) {
-    const res = await mf.dispatchFetch(`http://localhost${path}`, init);
-    const n = (h) => Number(res.headers.get(h));
-    return { status: res.status, body: await res.text(), waits: n('x-waits'), awaits: n('x-awaits'), calls: n('x-calls'), ms: n('x-ms') };
-  },
-  // PLAN.md 8f: another Miniflare with the same modules and `opts` (no options of the check files): `entry`, when given,
-  // is the text of worker.js (`t.entry` is the real one). The check awaits `ready` and calls `dispose`.
-  entry: readFileSync(join(here, 'worker.js'), 'utf8'),
-  start(opts = {}, entry = undefined) {
-    const mods = entry === undefined ? modules : [{ ...modules[0], contents: entry }, ...modules.slice(1)];
-    return new Miniflare(convertV4MiniflareOptions({ modules: mods, modulesRoot: here, compatibilityDate: '2026-10-01', compatibilityFlags: ['enable_request_signal'], port: 0, cf, ...opts }));
-  },
-};
+async function runChecks() {
+  // What a check gets: `get(path)` gives { status, body, waits, awaits, calls, ms } (`awaits`, `calls`: the crossings), `logs` (the structured log lines of workerd since
+  // the start), `server` (the URL of the local server), `mf` (the Miniflare instance).
+  const t = {
+    server: serverUrl,
+    // The URL of the app worker (a WebSocket client of Node connects to it, PLAN.md 8f part 3), and the miniflare package
+    // (its `ws` package: the WebSocket echo server of checks/websocket.mjs).
+    url: url.href.replace(/\/$/, ''),
+    mfDir,
+    mf,
+    logs,
+    // For a check that needs more workers (a Tail Worker, 8f): a new Miniflare with these V4 options, with the same `compatibilityDate`,
+    // `cf` and flags, and the modules of the worker of the app (`modules`, with `app.wasm`).
+    modules,
+    startMiniflare: (o) => track(new Miniflare(convertV4MiniflareOptions({ modulesRoot: here, compatibilityDate: '2026-10-01', compatibilityFlags: ['enable_request_signal'], port: 0, cf, ...o }))),
+    async get(path, init) {
+      const res = await mf.dispatchFetch(`http://localhost${path}`, init);
+      const n = (h) => Number(res.headers.get(h));
+      return { status: res.status, body: await res.text(), waits: n('x-waits'), awaits: n('x-awaits'), calls: n('x-calls'), ms: n('x-ms') };
+    },
+    // PLAN.md 8f: another Miniflare with the same modules and `opts` (no options of the check files): `entry`, when given,
+    // is the text of worker.js (`t.entry` is the real one). The check awaits `ready` and calls `dispose`.
+    entry: readFileSync(join(here, 'worker.js'), 'utf8'),
+    start(opts = {}, entry = undefined) {
+      const mods = entry === undefined ? modules : [{ ...modules[0], contents: entry }, ...modules.slice(1)];
+      return track(new Miniflare(convertV4MiniflareOptions({ modules: mods, modulesRoot: here, compatibilityDate: '2026-10-01', compatibilityFlags: ['enable_request_signal'], port: 0, cf, ...opts })));
+    },
+  };
 
-let failed = 0, passed = 0;
-for (const s of suites) {
-  for (const [name, check] of s.checks ?? []) {
-    if (filter && !name.includes(filter)) continue;
-    try {
-      const detail = await check(t);
-      passed++;
-      console.log(`PASS ${name}${detail ? `: ${detail}` : ''}`);
-    } catch (e) {
-      failed++;
-      console.log(`FAIL ${name}: ${e.message}`);
+  for (const s of suites) {
+    for (const [name, check] of s.checks ?? []) {
+      if (filter && !name.includes(filter)) continue;
+      try {
+        const detail = await check(t);
+        passed++;
+        console.log(`PASS ${name}${detail ? `: ${detail}` : ''}`);
+      } catch (e) {
+        failed++;
+        console.log(`FAIL ${name}: ${e.message}`);
+      }
     }
   }
-}
 
-// The end: no task, no ref, no context, no alarm, no live byte of a task (RS1, PLAN.md 10c).
-const st = JSON.parse(await (await mf.dispatchFetch('http://localhost/__stats')).text());
-const endOk = st.tasks === 0 && st.refsLive === 0 && st.contextsLive === 0 && st.alarms === 0 && st.live === 0;
-console.log(`${endOk ? 'PASS' : 'FAIL'} end: ${JSON.stringify(st)}`);
-if (!endOk) failed++;
-await mf.dispose();
-server.close();
-console.log(`${passed} passed, ${failed} failed`);
-process.exit(failed ? 1 : 0);
+  // The end: no task, no ref, no context, no alarm, no live byte of a task (RS1, PLAN.md 10c).
+  const st = JSON.parse(await (await mf.dispatchFetch('http://localhost/__stats')).text());
+  const endOk = st.tasks === 0 && st.refsLive === 0 && st.contextsLive === 0 && st.alarms === 0 && st.live === 0;
+  console.log(`${endOk ? 'PASS' : 'FAIL'} end: ${JSON.stringify(st)}`);
+  if (!endOk) failed++;
+}

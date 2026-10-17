@@ -13,17 +13,18 @@ flowchart LR
 
 | File | What |
 | --- | --- |
-| `app.roc` | The dispatcher: `/<module>/...` goes to `<Module>Routes.route!` (one `import` line and one `match` line for each module). Its header has the package `cbor` (`roc-cbor`, the same URL as the platform), for the `where` clauses of `D1Routes.roc`. |
+| `app.roc` | The dispatcher: `/<module>/...` goes to `<Module>Routes.route!` (one `import` line and one `match` line for each module). Its header has no `cbor` entry: `D1Routes.roc` and `CborRoutes.roc` use `import pf.Cbor` (the platform module that wraps `roc-cbor`). |
 | `<Module>Routes.roc` | The routes of one module: `route! : Request, List(Str) => Response`. Each route gives a text that the check compares. |
 | `Q.roc` | Query parameters: `Q.text(req, name)`, `Q.num(req, name)` |
 | `worker.js` | `makeHandler` of the app, the option `ops`, and the headers `x-waits` (waits of the task), `x-awaits` and `x-calls` (the crossings: calls of `js_await` and `js_call`, from `stats.crossings` of the runner) and `x-ms` on each response. `GET /__stats`: the task table. |
-| `run.mjs` | Starts a local HTTP server and Miniflare, runs each check of `checks/*.mjs` (in name order), then the check `end` (no task, ref, context, alarm or live byte). One line for each check: `PASS <name>` or `FAIL <name>: <why>`. Exit 1 on a failure. |
+| `run.mjs` | Starts a local HTTP server and Miniflare, runs each check of `checks/*.mjs` (in name order), then the check `end` (no task, ref, context, alarm or live byte). One line for each check: `PASS <name>` or `FAIL <name>: <why>`. Exit 1 on a failure. Its TMPDIR is `.cache/tmp/run-<pid>` (the temp dirs of Miniflare), removed at the end, also after `FAIL start`, a throw and SIGTERM. |
 | `checks/<module>.mjs` | `options`: the Miniflare options of the module (its bindings). `checks`: a list of `[name, async (t) => detail]`. |
 | `bindings.js` | The JS stubs for the bindings that Miniflare has no local form of (Workers AI, Vectorize) or whose data a test must see (Analytics Engine, version metadata, a workflow binding): plain objects that record each call. `withStubs(env)` puts them in the env of each request (`worker.js`). `GET /__stub_calls`: the record. `POST /__stub_reset`: clear it. It also has the two workflow classes (`Flow`, `Waiter`) of the local Workflows binding. |
 | `canon.mjs`, `assets/` | `canon(value)`: JSON text with the keys in order (Roc writes the fields of a record in name order). `assets/`: the files of the local `Assets` binding. |
 | `assert.mjs` | `eq`, `ok`, `answer(r, text)` (a 200 with that body) |
 | `reverts.mjs` | The revert checks: a real edit, a build, a run, a restore (`PLAN.md` 8c, "Status of step 8c, wave 1") |
-| `must-not-compile.sh`, `must-not-compile/` | A `Secret` in `Log` fields and in a CBOR encode (`Cbor` of the package `roc-cbor`) does not compile; the controls with `s.reveal()` do |
+| `must-not-compile.sh`, `must-not-compile/` | A `Secret` in `Log` fields and in a CBOR encode (`pf.Cbor`) does not compile; the controls with `s.reveal()` do |
+| `tmpdir-test.sh` | `run.mjs` leaves no temp dir: a normal run, a `FAIL start` run and a run killed with SIGTERM |
 
 Run:
 
@@ -31,8 +32,9 @@ Run:
 | --- | --- |
 | `bench/build.sh` | Builds `bench/out/conformance.wasm` with the other apps |
 | `node conformance/run.mjs [wasm] [filter]` | All checks, or the checks whose name has the filter. Env `MINIFLARE`: the miniflare package (default: the one of the global wrangler of this node). |
-| `ROC=... node conformance/reverts.mjs [filter]` | The revert checks. The filter is a text of a name, or texts joined by a vertical bar. |
+| `ROC=... node conformance/reverts.mjs [filter]` | The revert checks. The filter is a text of a name, or texts joined by a vertical bar. At its start it removes the `.cache/tmp/run-<pid>` dirs of runs that are not alive. |
 | `ROC=... conformance/must-not-compile.sh` | The must-not-compile checks |
+| `conformance/tmpdir-test.sh [wasm]` | The temp dir check of `run.mjs` |
 
 What a check gets (`t`):
 
@@ -43,6 +45,7 @@ What a check gets (`t`):
 | `t.logs` | The structured log lines of workerd (`{ level, message }`) since the start |
 | `t.mf` | The Miniflare instance (`getD1Database`, `getR2Bucket`, ... to set up or read data) |
 | `t.entry` | The text of `worker.js` (8f: a check edits it to test the load) |
+| `t.url`, `t.mfDir` | The URL of the worker (a WebSocket of Node connects to it, 8f part 3), and the miniflare package (its `ws` package: the WebSocket echo server of `checks/websocket.mjs`) |
 | `t.start(opts, entry)` | A second Miniflare with the same modules, only the options `opts` (no options of the check files), and `entry` (default `t.entry`) as the entry file. The check calls `ready` and `dispose` (8f: an old compatibility date, a load that must fail). |
 | `t.modules`, `t.startMiniflare(options)` | For a check that needs more workers (the Tail Worker, 8f): the module list of the app worker, and a new Miniflare with the same date, flags and `cf`. Each worker of a `workers` list needs its own `modulesRoot`, `compatibilityDate` and flags (without them the app worker fails at its first event: no `FinalizationRegistry`). |
 

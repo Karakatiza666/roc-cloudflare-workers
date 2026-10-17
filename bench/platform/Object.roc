@@ -3,7 +3,8 @@
 ## record of handlers (`class`), and `Object.Self` reaches the storage of the object that runs (the root `ctx`, a
 ## `DurableObjectState`). SQL, cells and `list!` are sync (`call!`, no wait, AQ3); the alarm calls and `delete_all!`
 ## wait once. SQLite-backed classes only (`new_sqlite_classes`): the shim checks it in the constructor.
-## The sockets of the hibernation API (12.1) are not here yet: their events give `Unhandled`.
+## The sockets of the hibernation API (MODULES.md 12.1): `accept!` and the other socket calls of `Self` and `Socket` are
+## sync (`call!`, no wait); the events `SocketMessage`, `SocketClose` and `SocketError` go to the handlers of the class.
 import Io
 import Js
 import Body
@@ -114,8 +115,60 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 		SocketError(Object.Socket, Io.Thrown),
 	]
 
-	## A WebSocket that the object accepted with the hibernation API (MODULES.md 12.1). It holds a ref (MC13).
-	Socket :: { ref : Js.Ref }
+	## A WebSocket that the object accepted with the hibernation API (MODULES.md 12.1). It holds a ref (MC13): good for
+	## one event. `:=`, not `::`: `Entry` makes it from the socket of an event. Each call is one `call!` (no wait).
+	Socket := { ref : Js.Ref }.{
+		## The same JS socket has the same ref in a task (API.md RS1), so `peer == socket` finds the sender in
+		## `self.sockets!()`.
+		is_eq : Object.Socket, Object.Socket -> Bool
+		is_eq = |a, b| a.ref == b.ref
+
+		send! : Object.Socket, WebSocket.Message => Try({}, [Closed])
+		send! = |sock, msg| Remote.socket_send!(sock.ref, frame(msg))
+
+		send_json! : Object.Socket, a => Try({}, [Closed]) where [a.Json.Encodable([])]
+		send_json! = |sock, value| Remote.socket_send!(sock.ref, Text(Json.to_str(value)))
+
+		close! : Object.Socket, U16, Str => {}
+		close! = |sock, code, reason| Remote.socket_close!(sock.ref, code, reason)
+
+		## `ctx.getTags(ws)`: the tags of `accept_with!`.
+		tags! : Object.Socket => List(Str)
+		tags! = |sock| match Io.call!([Call(Root("ctx"), "getTags", [Lit(Ref(sock.ref))])]) {
+			Ok(Arr(items)) => items.map(|t| match t {
+				Text(x) => x
+				other => crash "Object.Socket.tags!: a tag is ${Str.inspect(other)}"
+			})
+			Ok(other) => crash "Object.Socket.tags!: getTags gave ${Str.inspect(other)}"
+			Err(t) => crash "Object.Socket.tags!: ${t.name}: ${t.message}"
+		}
+
+		## `ws.serializeAttachment(bytes)`: the value as CBOR bytes (MC5). It stays while the object sleeps. Workers
+		## refuses more than 16,384 bytes: `TooLarge`.
+		attach! : Object.Socket, a => Try({}, [TooLarge]) where [a.Cbor.Encodable([])]
+		attach! = |sock, value| match Io.call!([Call(Ref(sock.ref), "serializeAttachment", [Lit(Bytes(Cbor.encode(value)))])]) {
+			Ok(_) => Ok({})
+			Err(_) => Err(TooLarge)
+		}
+
+		## `ws.deserializeAttachment()` into the type of the call. `NotFound` when there is none.
+		attachment! : Object.Socket => Try(a, [NotFound, BadData(Str)]) where [a.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+		attachment! = |sock| match Io.call!([Call(Ref(sock.ref), "deserializeAttachment", [])]) {
+			Ok(Bytes(bytes)) => Cbor.parse(bytes).map_err(|e| BadData(Str.inspect(e)))
+			Ok(Null) | Ok(Undefined) => Err(NotFound)
+			Ok(other) => Err(BadData("the attachment is ${Str.inspect(other)}, not CBOR bytes"))
+			Err(t) => Err(BadData("${t.name}: ${t.message}"))
+		}
+
+		## `ctx.getWebSocketAutoResponseTimestamp(ws)`: the time of the last auto response, or `NotFound`.
+		auto_response_ms! : Object.Socket => Try(U64, [NotFound])
+		auto_response_ms! = |sock| match Io.call!([Call(Root("ctx"), "getWebSocketAutoResponseTimestamp", [Lit(Ref(sock.ref))])]) {
+			Ok(Int(t)) => Ok(t.to_u64_try() ?? 0)
+			Ok(Num(f)) => Ok(f.to_u64_try() ?? 0)
+			Ok(_) => Err(NotFound)
+			Err(t) => crash "Object.Socket.auto_response_ms!: ${t.name}: ${t.message}"
+		}
+	}
 
 	## The object that runs: its class and its id. Each storage function reaches `ctx.storage` of the task.
 	Self :: { class : Str, id : Str }.{
@@ -235,6 +288,44 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 				Err(t) => if t.name == "TooLarge" Err(TooLarge) else Err(StorageErr(t))
 			}
 		}
+
+		## The hibernation API (MODULES.md 12.1): `new WebSocketPair()`, `ctx.acceptWebSocket(server)` and a 101 response
+		## with the client end, in one `call!`. The object can leave memory while the socket is open: its messages come
+		## as events. `NotUpgrade` when the request has no `Upgrade: websocket`.
+		accept! : Object.Self, Request => Try({ socket : Object.Socket, response : Response }, [NotUpgrade])
+		accept! = |self, req| match accept_tags!(self, req, []) {
+			Ok(r) => Ok(r)
+			Err(NotUpgrade) => Err(NotUpgrade)
+			Err(TooLarge) => crash "Object.Self.accept!: acceptWebSocket threw with no tags"
+		}
+
+		## `tags`: 10 or less, 256 characters or less each (Workers), else `TooLarge`. `sockets_with!` finds them.
+		accept_with! : Object.Self, Request, { tags ?: List(Str) } => Try({ socket : Object.Socket, response : Response }, [NotUpgrade, TooLarge])
+		accept_with! = |self, req, opts| accept_tags!(self, req, opts.?tags ?? [])
+
+		## `ctx.getWebSockets()`: the open sockets of the object.
+		sockets! : Object.Self => List(Object.Socket)
+		sockets! = |_self| sockets_of!([])
+
+		## `ctx.getWebSockets(tag)`: the open sockets with the tag.
+		sockets_with! : Object.Self, { tag : Str } => List(Object.Socket)
+		sockets_with! = |_self, opts| sockets_of!([Lit(Text(opts.tag))])
+
+		## `ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(request, response))`: Workers answers the text
+		## `request` with `response` and sends no event, so the object can stay asleep. 2,048 characters or less each
+		## (Workers), else `TooLarge`.
+		set_auto_response! : Object.Self, { request : Str, response : Str } => Try({}, [TooLarge])
+		set_auto_response! = |_self, pair| match Io.call!([New(Root("global"), "WebSocketRequestResponsePair", [Lit(Text(pair.request)), Lit(Text(pair.response))]), Call(Root("ctx"), "setWebSocketAutoResponse", [Slot(0)])]) {
+			Ok(_) => Ok({})
+			Err(_) => Err(TooLarge)
+		}
+
+		## `ctx.setWebSocketAutoResponse()`: no auto response.
+		clear_auto_response! : Object.Self => {}
+		clear_auto_response! = |_self| match Io.call!([Call(Root("ctx"), "setWebSocketAutoResponse", [])]) {
+			Ok(_) => {}
+			Err(t) => crash "Object.Self.clear_auto_response!: ${t.name}: ${t.message}"
+		}
 	}
 
 	## What a SQL cursor of a Durable Object gives (rowsRead, rowsWritten). D1 also gives changes and last_row_id (Sql.Info).
@@ -248,10 +339,20 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 		fetch! ?: Object.Self, Request => Try(Response, e),
 		rpc ?: List(Rpc.Handler(Object.Self)),
 		alarm! ?: Object.Self, { retry_count : U32, is_retry : Bool } => Try({}, e),
+		web_socket_message! ?: Object.Self, Object.Socket, WebSocket.Message => Try({}, e),
+		web_socket_close! ?: Object.Self, Object.Socket, WebSocket.Closed => Try({}, e),
+		web_socket_error! ?: Object.Self, Object.Socket, Io.Thrown => Try({}, e),
 	} -> Object.Class
 	class = |name, h| {
 		name,
-		handlers: [("init", h.?init!.is_ok()), ("fetch", h.?fetch!.is_ok()), ("alarm", h.?alarm!.is_ok())].keep_if(|(_, present)| present).map(|(n, _)| n),
+		handlers: [
+			("init", h.?init!.is_ok()),
+			("fetch", h.?fetch!.is_ok()),
+			("alarm", h.?alarm!.is_ok()),
+			("webSocketMessage", h.?web_socket_message!.is_ok()),
+			("webSocketClose", h.?web_socket_close!.is_ok()),
+			("webSocketError", h.?web_socket_error!.is_ok()),
+		].keep_if(|(_, present)| present).map(|(n, _)| n),
 		methods: (h.?rpc ?? []).map(|m| m.name),
 		run!: |id, ev| {
 			self = Object.Self.{ class: name, id }
@@ -281,15 +382,25 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 					}
 					Err(_) => Unhandled
 				}
-				# The hibernation API (MODULES.md 12.1) comes with `WebSocket`.
-				SocketMessage(_, _) => Unhandled
-				SocketClose(_, _) => Unhandled
-				SocketError(_, _) => Unhandled
+				# The hibernation API (MODULES.md 12.1).
+				SocketMessage(sock, msg) => match h.?web_socket_message! {
+					Ok(f!) => done(f!(self, sock, msg))
+					Err(MissingField) => Unhandled
+				}
+				SocketClose(sock, closed) => match h.?web_socket_close! {
+					Ok(f!) => done(f!(self, sock, closed))
+					Err(MissingField) => Unhandled
+				}
+				SocketError(sock, thrown) => match h.?web_socket_error! {
+					Ok(f!) => done(f!(self, sock, thrown))
+					Err(MissingField) => Unhandled
+				}
 			}
 		},
 	}
 
-	## A class with its types erased: the handlers that its JS class has (`init`, `fetch`, `alarm`) and its RPC methods
+	## A class with its types erased: the handlers that its JS class has (`init`, `fetch`, `alarm`, `webSocketMessage`,
+	## `webSocketClose`, `webSocketError`) and its RPC methods
 	## (the manifest, API.md AQ10), and the function that runs an event for the object of an id.
 	Class : { name : Str, handlers : List(Str), methods : List(Str), run! : Str, Object.Event => [Respond(Response), Reply(Js), Done, Failed(Str), Unhandled] }
 
@@ -464,4 +575,42 @@ field : List((Str, Js)), Str -> Js
 field = |fields, name| match fields.find_first(|(k, _)| k == name) {
 	Ok((_, v)) => v
 	Err(_) => Undefined
+}
+
+## A frame as the value of `ws.send(data)`.
+frame : WebSocket.Message -> Js
+frame = |msg| match msg {
+	Text(t) => Text(t)
+	Bytes(b) => Bytes(b)
+}
+
+## `accept!` with tags: a throw of `acceptWebSocket` (more than 10 tags, a tag too long) is `TooLarge`.
+accept_tags! : Object.Self, Request, List(Str) => Try({ socket : Object.Socket, response : Response }, [NotUpgrade, TooLarge])
+accept_tags! = |_self, req, tags|
+	if !WebSocket.is_upgrade(req) {
+		Err(NotUpgrade)
+	} else {
+		ops = [
+			New(Root("global"), "WebSocketPair", []),
+			Get(Slot(0), "0"),
+			Get(Slot(0), "1"),
+			Call(Root("ctx"), "acceptWebSocket", [Slot(2), Lit(Arr(tags.map(|t| Text(t))))]),
+			Array([Slot(1), Slot(2)]),
+		]
+		match Io.call!(ops) {
+			Ok(Arr([Ref(client), Ref(server)])) => Ok({ socket: Object.Socket.{ ref: server }, response: Response.{ status: 101, web_socket: client } })
+			Ok(other) => crash "Object.Self.accept!: the pair is ${Str.inspect(other)}"
+			Err(_) => Err(TooLarge)
+		}
+	}
+
+## `ctx.getWebSockets(...args)` as sockets.
+sockets_of! : List(Js.Arg) => List(Object.Socket)
+sockets_of! = |args| match Io.call!([Call(Root("ctx"), "getWebSockets", args)]) {
+	Ok(Arr(items)) => items.map(|v| match v {
+		Ref(r) => Object.Socket.{ ref: r }
+		other => crash "Object.Self.sockets!: a socket is ${Str.inspect(other)}"
+	})
+	Ok(other) => crash "Object.Self.sockets!: getWebSockets gave ${Str.inspect(other)}"
+	Err(t) => crash "Object.Self.sockets!: ${t.name}: ${t.message}"
 }

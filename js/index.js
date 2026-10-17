@@ -17,7 +17,7 @@
 import { WorkerEntrypoint, DurableObject } from 'cloudflare:workers';
 import { checkOptions } from './options.js';
 import { makeRunner, manifestOf, NOT_STACK_FIRST } from './runner.js';
-import { fetchEvent, scheduledEvent, queueEvent, emailEvent, tailEvent, otherEvent, responseOf, rpcEvent, entrypointFetchEvent, objectEvent, objectInit, objectFetch, objectAlarm, objectRpc, manifestEvent } from './events.js';
+import { fetchEvent, scheduledEvent, queueEvent, emailEvent, tailEvent, otherEvent, responseOf, rpcEvent, entrypointFetchEvent, objectEvent, objectInit, objectFetch, objectAlarm, objectRpc, objectSocketMessage, objectSocketClose, objectSocketError, manifestEvent } from './events.js';
 import { isBenchHost } from './host.js';
 import { DEADLINES } from './tasks.js';
 
@@ -182,7 +182,7 @@ export function makeHandler(module, opts = {}) {
   // export, or an export with no class in Roc, stops the load with its name (`wrangler deploy` fails).
   // `undefined`: the module is not stack-first, so it is not run; each event of it throws (PLAN.md 1b).
   const got = manifestOf(module, manifestEvent());
-  const manifest = checkManifest(got ?? { default: [], objects: {}, entrypoints: {} });
+  const manifest = checkManifest(got ?? { objects: {}, entrypoints: {} });
   const initMs = runnerOpts.initMs ?? DEADLINES.initMs;
   // A JS method on the prototype, where Workers finds a handler and an RPC method (an own property gives "The RPC
   // receiver does not implement the method").
@@ -254,6 +254,18 @@ export function makeHandler(module, opts = {}) {
           const r = await run(`${name}.${m}`, objectEvent(name, this.ctx.id.toString(), objectRpc(m, arg)), { kind: 'Rpc', env: this.env, ctx: this.ctx, event: arg, hooks: hooksOf('Rpc', this) });
           return reply(`${name}.${m}`, r);
         });
+        // The hibernation API (MODULES.md 12.1): a method only for a handler of the class. An `Err`, `Unhandled` and a
+        // trap are a log line, not a throw (MODULES.md 12.1, "Errors").
+        const socketEvent = (handler, make) => {
+          if (C.handlers.has(handler)) method(C, handler, async function (ws, ...rest) {
+            const tag = `${name}.${handler}`;
+            const r = await run(tag, objectEvent(name, this.ctx.id.toString(), make(ws, ...rest)), { kind: 'Socket', env: this.env, ctx: this.ctx, event: ws, hooks: hooksOf('Socket', this) });
+            if (!r.trap && r.outcome.outcome !== 'done') log(`${tag}: ${reason(r.outcome)}`);
+          });
+        };
+        socketEvent('webSocketMessage', objectSocketMessage);
+        socketEvent('webSocketClose', objectSocketClose);
+        socketEvent('webSocketError', objectSocketError);
       } else {
         if (C.handlers.has('fetch')) method(C, 'fetch', function (request) {
           return fetchLike(`${name}.fetch`, 'EntrypointFetch', entrypointFetchEvent(name, request), request, this, true);
@@ -270,6 +282,11 @@ export function makeHandler(module, opts = {}) {
       return reply(tag, r);
     };
   }
+  // QO5 (PLAN.md 8f, part 2): `queue`, `email` and `tail` only for an app whose manifest has the handler, as `alarm` of
+  // an object class. A module that is not stack-first keeps all three: each event throws the layout error (PLAN.md 1b).
+  // An app with no `Worker` wrapper (a raw `event!`) answers `Unhandled` to `Manifest` (`got` is null): it keeps all
+  // three too, so its `event!` gets these events (PLAN.md 8f, part 3).
+  for (const h of ['queue', 'email', 'tail']) if (got && !manifest.handlers.includes(h)) delete Handler.prototype[h];
   for (const m of manifest.default) {
     if (RESERVED.has(m) || other.includes(m)) throw new Error(`makeHandler: the RPC method ${m} of the default export has the name of a handler`);
     method(Handler, m, rpcMethod('default', m));
@@ -291,8 +308,9 @@ export function makeHandler(module, opts = {}) {
 // Names that an RPC method cannot take: the handlers of the classes (`fetch`, `alarm`, ...) and `constructor`.
 const RESERVED = new Set(['fetch', 'scheduled', 'queue', 'email', 'tail', 'alarm', 'constructor', 'webSocketMessage', 'webSocketClose', 'webSocketError', 'then']);
 
-// The manifest must be `{ default: [names], objects: { Name: { handlers, methods } }, entrypoints: { ... } }`, with JS
-// names, no method twice in a class and no reserved name (a platform bug or an app with such a method name: a throw).
+// The manifest must be `{ default: { handlers, methods }, objects: { Name: { handlers, methods } }, entrypoints: { ... } }`,
+// with JS names, no method twice in a class and no reserved name (a platform bug or an app with such a method name: a
+// throw). The result has the default methods as `default` and the handlers of the default export as `handlers`.
 function checkManifest(m) {
   const isName = (n) => typeof n === 'string' && /^[A-Za-z_$][\w$]*$/.test(n);
   const names = (list, what) => {
@@ -300,7 +318,8 @@ function checkManifest(m) {
     for (const n of list) if (RESERVED.has(n)) throw new Error(`makeHandler: the RPC method ${n} (${what}) has the name of a handler`);
     return list;
   };
-  const out = { default: names(m.default ?? [], 'default methods'), objects: {}, entrypoints: {} };
+  const d = m.default ?? {};
+  const out = { default: names(d.methods ?? [], 'default methods'), handlers: d.handlers ?? [], objects: {}, entrypoints: {} };
   for (const kind of ['objects', 'entrypoints']) {
     for (const [name, c] of Object.entries(m[kind] ?? {})) {
       if (!isName(name)) throw new Error(`makeHandler: the class name ${JSON.stringify(name)} is not a JS name`);

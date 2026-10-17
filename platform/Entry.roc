@@ -11,7 +11,7 @@
 ## | Other | `{ kind: "other", name, payload }` |
 ## | Rpc | `{ kind: "rpc", entrypoint, method, arg }`: `entrypoint` is "default" for the default export, `arg` is `Packed` |
 ## | EntrypointFetch | `{ kind: "entrypointFetch", entrypoint, request }` |
-## | Object | `{ kind: "object", class, id, event }`, `event`: `{ kind: "init" }`, `{ kind: "fetch", request }`, `{ kind: "alarm", retry_count, is_retry }`, `{ kind: "rpc", method, arg }` |
+## | Object | `{ kind: "object", class, id, event }`, `event`: `{ kind: "init" }`, `{ kind: "fetch", request }`, `{ kind: "alarm", retry_count, is_retry }`, `{ kind: "rpc", method, arg }`, `{ kind: "socketMessage", socket, message }`, `{ kind: "socketClose", socket, code, reason, clean }`, `{ kind: "socketError", socket, error }`: `socket` a ref, `message` text or bytes, `error` an Error |
 ## | Manifest | `{ kind: "manifest" }` |
 ## | body | `undefined` (Empty), bytes, text, or a ref (a stream) |
 ## | cf | `undefined`, or an object with each field of `Request.Cf` as `{ Ok: v }` or `{ Err: "Missing" }` |
@@ -24,6 +24,7 @@ import Worker
 import Queue
 import Email
 import Object
+import WebSocket
 import cbor.Cbor
 import http.Header
 import http.Method
@@ -70,7 +71,7 @@ Entry :: [].{
 	}
 }
 
-## The event of an object (API.md 10.1). The socket events come with `WebSocket`.
+## The event of an object (API.md 10.1), with the socket events of the hibernation API (MODULES.md 12.1).
 object_event : Js -> Object.Event
 object_event = |js| {
 	f = obj(js, "object event")
@@ -79,8 +80,32 @@ object_event = |js| {
 		Text("fetch") => Fetch(request(get(f, "request")))
 		Text("alarm") => Alarm({ retry_count: u32(get(f, "retry_count"), "retry_count"), is_retry: get(f, "is_retry") == Bool(Bool.True) })
 		Text("rpc") => Rpc({ method: text(get(f, "method"), "method"), arg: packed(get(f, "arg"), "arg") })
+		Text("socketMessage") => {
+			msg : WebSocket.Message
+			msg = match get(f, "message") {
+				Text(t) => Text(t)
+				Bytes(b) => Bytes(b)
+				other => crash "Entry: a socket message is ${Str.inspect(other)}"
+			}
+			SocketMessage(socket(get(f, "socket")), msg)
+		}
+		Text("socketClose") => SocketClose(socket(get(f, "socket")), { code: u16(get(f, "code"), "code"), reason: text(get(f, "reason"), "reason"), clean: get(f, "clean") == Bool(Bool.True) })
+		Text("socketError") => SocketError(
+			socket(get(f, "socket")),
+			match get(f, "error") {
+				Error(name, message) => { name, message }
+				other => crash "Entry: a socket error is ${Str.inspect(other)}"
+			},
+		)
 		other => crash "Entry: unknown object event ${Str.inspect(other)}"
 	}
+}
+
+## The socket of an object event: a ref of the task.
+socket : Js -> Object.Socket
+socket = |js| match js {
+	Ref(r) => Object.Socket.{ ref: r }
+	other => crash "Entry: a socket is ${Str.inspect(other)}"
 }
 
 ## Typed data as one `Packed` value (API.md 5.2): its CBOR bytes.
@@ -255,6 +280,12 @@ text = |js, what| match js {
 u64 : Js, Str -> U64
 u64 = |js, what| match js {
 	Int(i) => i.to_u64_try() ?? crash "Entry: ${what} is negative"
+	other => crash "Entry: ${what} is ${Str.inspect(other)}"
+}
+
+u16 : Js, Str -> U16
+u16 = |js, what| match js {
+	Int(i) => i.to_u16_try() ?? crash "Entry: ${what} is out of range"
 	other => crash "Entry: ${what} is ${Str.inspect(other)}"
 }
 
