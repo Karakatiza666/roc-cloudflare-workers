@@ -116,6 +116,61 @@ export const checks = [
     answer(await route(t, 'first', 'SELECT i AS id FROM nums WHERE k = 1', '', '&type=id'), 'Ok { id: 9007199254740991 }');
     answer(await route(t, 'first', 'SELECT x FROM nums WHERE k = 1', '', '&type=real'), 'Ok { x_as_integer: Ok(1152921504606846976) }');
   }],
+  // PLAN.md 8g P1: `all_tuples!` reads `raw()` into tuples. The tuple has one item for each column, in the order of the SELECT.
+  ['d1 all_tuples!: rows as tuples, one crossing with a wait; no rows is Ok []', async (t) => {
+    const r = await route(t, 'all_tuples', 'SELECT id, name FROM people ORDER BY id');
+    answer(r, 'Ok [(1, "ann"), (2, "bob"), (3, "cy")]');
+    eq(r.awaits, 1, 'crossings with a wait (js_await)');
+    eq(r.calls, 0, 'crossings with no wait (js_call)');
+    answer(await route(t, 'all_tuples', 'SELECT id, name FROM people WHERE id = ?', 'i:9'), 'Ok []');
+    answer(await route(t, 'all_tuples', 'SELECT name, id FROM people WHERE id = 1'), 'Err BadData("column 0 (from 0): the value does not fit the type")');
+  }],
+  ['d1 all_tuples (Io twin), all_tuples_with! and twin', async (t) => {
+    const want = 'Ok [(1, "ann"), (2, "bob"), (3, "cy")]';
+    answer(await route(t, 'all_tuples_io', 'SELECT id, name FROM people ORDER BY id'), want);
+    answer(await route(t, 'all_tuples_with', 'SELECT id, name FROM people ORDER BY id', '', '&max=1000'), want);
+    answer(await route(t, 'all_tuples_with_io', 'SELECT id, name FROM people ORDER BY id', '', '&max=1000'), want);
+  }],
+  ['d1 all_tuples! on a D1.Session: all four forms', async (t) => {
+    const want = 'Ok [(1, "ann"), (2, "bob")]';
+    for (const how of ['', '_io', '_with', '_with_io']) answer(await route(t, 'session_tuples', 'SELECT id, name FROM people WHERE id < 3 ORDER BY id', '', `&how=${how}&max=1000`), want);
+  }],
+  ['d1 all_tuples! on a D1.Session: rows above 1 MiB are TooLarge, all_tuples_with! with 2 MiB gives the rows', async (t) => {
+    const sql = 'SELECT 1, x FROM blobs';
+    answer(await route(t, 'session_tuples', sql, '', '&type=big&how='), 'Err TooLarge');
+    answer(await route(t, 'session_tuples', sql, '', '&type=big&how=_io'), 'Err TooLarge');
+    answer(await route(t, 'session_tuples', sql, '', `&type=big&how=_with&max=${2 * 1024 * 1024}`), 'Ok rows=12');
+    answer(await route(t, 'session_tuples', sql, '', `&type=big&how=_with_io&max=${2 * 1024 * 1024}`), 'Ok rows=12');
+  }],
+  // MODULES.md 5.1, "Integers in rows", for tuples: the column is named by its index, from 0.
+  ['d1 all_tuples! of CAST(id AS TEXT) into an I64 item gives the exact ids', async (t) => {
+    answer(await route(t, 'all_tuples', 'SELECT k, CAST(id AS TEXT) FROM bigids ORDER BY k', '', '&type=ids'),
+      'Ok [(0, 9223372036854775807), (1, -9223372036854775807), (2, -2687166099708853831)]');
+  }],
+  ['d1 all_tuples! with no cast: BadData with the column index, for a positive and a negative id', async (t) => {
+    const bad = (c) => `Err BadData("column ${c} (from 0): integer above 2^53, use CAST(... AS TEXT)")`;
+    answer(await route(t, 'all_tuples', 'SELECT k, id FROM bigids WHERE k = 0', '', '&type=ids'), bad(1));
+    answer(await route(t, 'all_tuples', 'SELECT k, id FROM bigids WHERE k = 2', '', '&type=ids'), bad(1));
+    answer(await route(t, 'all_tuples', 'SELECT id, k FROM bigids WHERE k = 1', '', '&type=ids'), bad(0));
+  }],
+  ["d1 all_tuples! the text '01' and '9223372036854775808' into an I64 item give BadData", async (t) => {
+    const bad = 'Err BadData("column 1 (from 0): the value does not fit the type")';
+    answer(await route(t, 'all_tuples', "SELECT 1, '01'", '', '&type=ids'), bad);
+    answer(await route(t, 'all_tuples', "SELECT 1, '9223372036854775808'", '', '&type=ids'), bad);
+  }],
+  ['d1 all_tuples! an I64 item of 2^53 - 1 and an F64 item of 2^60 (no cast) read as numbers', async (t) => {
+    answer(await route(t, 'all_tuples', 'SELECT k, i FROM nums WHERE k = 1', '', '&type=ids'), 'Ok [(1, 9007199254740991)]');
+    answer(await route(t, 'all_tuples', 'SELECT k, x FROM nums WHERE k = 1', '', '&type=reals'), 'Ok [(1, Ok(1152921504606846976))]');
+  }],
+  ['d1 all_tuples! into a record type is BadData (a row is an array)', async (t) => {
+    const r = await route(t, 'all_tuples', 'SELECT id, name FROM people ORDER BY id', '', '&type=record');
+    ok(r.status === 200 && r.body.startsWith('Err BadData('), `got ${r.status} ${r.body}`);
+    return r.body;
+  }],
+  ['d1 all_tuples! of rows above 1 MiB is TooLarge, all_tuples_with! with max_bytes of 2 MiB gives the rows', async (t) => {
+    answer(await route(t, 'all_tuples', 'SELECT 1, x FROM blobs', '', '&type=big'), 'Err TooLarge');
+    answer(await route(t, 'all_tuples_with', 'SELECT 1, x FROM blobs', '', `&type=big&max=${2 * 1024 * 1024}`), 'Ok rows=12');
+  }],
   // PLAN.md 8c: 2 inserts and a select in one batch: 3 results, and `first()` of the third reads the count. One crossing.
   ['d1 batch! of 2 inserts and a select: 3 results, first() of the third reads the count; one crossing', async (t) => {
     const r = await t.get('/d1/batch_count?grp=g1');

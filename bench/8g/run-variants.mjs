@@ -1,9 +1,9 @@
 // PLAN.md step 8g in Node: the cost of `track_live` and of the optimize mode of the host in the Zig tree decode.
-//   node bench/8g/run-variants.mjs [variant ...]    (default: default tl_off ot_off fast fast_tl_off; build them with `bench/8g/build.sh`)
+//   node bench/8g/run-variants.mjs [variant ...]    (default: default tl_off fast fast_tl_off; build them with `bench/8g/build.sh`)
 // Each variant is one wasm (`out/app-<variant>.wasm`) with its own host. For 5 reps in rotating order, each variant gives:
 //   decode200 / decode20   `cbor_check` of the tree bytes of 200 / 20 rows (Zig decode and free, no task): us
 //   rows200, all200        whole requests of `D1.rows!` and `D1.all!` (fake D1, Node): us per call
-// The median over the reps and the spread. `ot_off` differs from `tl_off` by no byte (`cmp`), so it is the same host.
+// The variant `ot_off` (the removed option `owner_tag`) is gone: its host was the same file as `tl_off` (results/variants.md keeps its row).
 import { readFileSync } from 'node:fs';
 import os from 'node:os';
 import { makeHandler } from '../cf-node.mjs';
@@ -13,7 +13,7 @@ import * as program from '../../js/program.js';
 import { makeMeasure, median, round } from './lib.mjs';
 import { makeParts, rowArrays, rowObjects, COLUMNS } from './parts.js';
 
-const variants = process.argv.slice(2).length ? process.argv.slice(2) : ['default', 'tl_off', 'ot_off', 'fast', 'fast_tl_off'];
+const variants = process.argv.slice(2).length ? process.argv.slice(2) : ['default', 'tl_off', 'fast', 'fast_tl_off'];
 const reps = Number(process.env.REPS ?? 5);
 const arrays = rowArrays(200);
 const objects = rowObjects(200);

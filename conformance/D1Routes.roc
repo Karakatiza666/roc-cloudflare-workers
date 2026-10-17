@@ -19,6 +19,11 @@ Count : { n : U64 }
 TextRow : { t : Str }
 Big : { x : Str }
 
+## The tuple types of `all_tuples!` (the same columns, in the order of the SELECT).
+PersonT : (I64, Str)
+IdsT : (I64, I64)
+RealsT : (I64, F64)
+
 D1Routes :: [].{
 	route! : Request, List(Str) => Response
 	route! = |req, path| {
@@ -41,6 +46,12 @@ D1Routes :: [].{
 			["all_io"] => all!(ty, sql, p, how("_io"))
 			["all_with"] => all!(ty, sql, p, how("_with"))
 			["all_with_io"] => all!(ty, sql, p, how("_with_io"))
+			# PLAN.md 8g P1: the rows as tuples (`raw()`), typed by `?type=` (`person`, `ids`, `reals`, `big`).
+			["all_tuples"] => all_tuples!(ty, sql, p, how(""))
+			["all_tuples_io"] => all_tuples!(ty, sql, p, how("_io"))
+			["all_tuples_with"] => all_tuples!(ty, sql, p, how("_with"))
+			["all_tuples_with_io"] => all_tuples!(ty, sql, p, how("_with_io"))
+			["session_tuples"] => session_tuples!(ty, sql, p, how(Q.text(req, "how")))
 			["first"] => first!(ty, sql, p, how(""))
 			["first_io"] => first!(ty, sql, p, how("_io"))
 			["first_with"] => first!(ty, sql, p, how("_with"))
@@ -133,6 +144,77 @@ all! = |ty, sql, p, how| match ty {
 		r = all_by!(sql, p, how)
 		out(r)
 	}
+}
+
+## `all_tuples!` into the tuple type `ty` (`person`: `(I64, Str)`, `ids`: `(I64, I64)`, `reals`: `(I64, F64)`, `big`: the count of rows).
+all_tuples! : Str, Str, List(Sql), How => Response
+all_tuples! = |ty, sql, p, how| match ty {
+	"ids" => {
+		r : Try(List(IdsT), _)
+		r = all_tuples_by!(sql, p, how)
+		out(r)
+	}
+	"reals" => {
+		r : Try(List(RealsT), _)
+		r = all_tuples_by!(sql, p, how)
+		out(r.map_ok(|rows| rows.map(|(k, x)| (k, x.to_i128_try()))))
+	}
+	"big" => {
+		r : Try(List(PersonT), _)
+		r = all_tuples_by!(sql, p, how)
+		Response.from_text(
+			200,
+			match r {
+				Ok(rows) => "Ok rows=${rows.len().to_str()}"
+				Err(e) => "Err ${Str.inspect(e)}"
+			},
+		)
+	}
+	# A tuple of the wrong shape for the rows (a record type reads no array).
+	"record" => {
+		r : Try(List(Person), _)
+		r = all_tuples_by!(sql, p, how)
+		out(r)
+	}
+	_ => {
+		r : Try(List(PersonT), _)
+		r = all_tuples_by!(sql, p, how)
+		out(r)
+	}
+}
+
+all_tuples_by! : Str, List(Sql), How => Try(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+all_tuples_by! = |sql, p, how| match how {
+	Direct => db.all_tuples!(sql, p)
+	Twin => Io.run!(db.all_tuples(sql, p))
+	With(m) => db.all_tuples_with!(sql, p, { max_bytes: m })
+	WithTwin(m) => Io.run!(db.all_tuples_with(sql, p, { max_bytes: m }))
+}
+
+## The four forms on a `D1.Session` (`how`: `""`, `_io`, `_with`, `_with_io`). `big`: the count of rows.
+session_tuples! : Str, Str, List(Sql), How => Response
+session_tuples! = |ty, sql, p, how| match db.with_session!(Primary) {
+	Ok(s) => {
+		r : Try(List(PersonT), _)
+		r = match how {
+			Direct => s.all_tuples!(sql, p)
+			Twin => Io.run!(s.all_tuples(sql, p))
+			With(m) => s.all_tuples_with!(sql, p, { max_bytes: m })
+			WithTwin(m) => Io.run!(s.all_tuples_with(sql, p, { max_bytes: m }))
+		}
+		if ty == "big" {
+			Response.from_text(
+				200,
+				match r {
+					Ok(rows) => "Ok rows=${rows.len().to_str()}"
+					Err(e) => "Err ${Str.inspect(e)}"
+				},
+			)
+		} else {
+			out(r)
+		}
+	}
+	Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
 }
 
 first! : Str, Str, List(Sql), How => Response

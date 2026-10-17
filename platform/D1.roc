@@ -26,6 +26,21 @@ D1 :: { name : Str }.{
 	all_with! : D1, Str, List(Sql), { max_bytes : U64 } => Try(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
 	all_with! = |db, sql, params, opts| Io.run!(all_with(db, sql, params, opts))
 
+	## `all` with the rows as tuples (D1 `raw()`): `rows : List((Str, I64))`. The tuple has one item for each column of the SELECT, in
+	## its order, so the caller keeps the order in the SQL. About twice as fast as `all` for 200 rows (PLAN.md 8g). The same
+	## limit and integer rules as `all`; `BadData` names the column by its index (from 0), not by name.
+	all_tuples : D1, Str, List(Sql) -> Io(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+	all_tuples = |db, sql, params| all_tuples_io(start(db), sql, params, Body.default_max)
+
+	all_tuples! : D1, Str, List(Sql) => Try(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+	all_tuples! = |db, sql, params| Io.run!(all_tuples(db, sql, params))
+
+	all_tuples_with : D1, Str, List(Sql), { max_bytes : U64 } -> Io(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+	all_tuples_with = |db, sql, params, opts| all_tuples_io(start(db), sql, params, opts.max_bytes)
+
+	all_tuples_with! : D1, Str, List(Sql), { max_bytes : U64 } => Try(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+	all_tuples_with! = |db, sql, params, opts| Io.run!(all_tuples_with(db, sql, params, opts))
+
 	## The first row (D1 `first()`), or `NotFound`.
 	first : D1, Str, List(Sql) -> Io(row, [NotFound, D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [row.Cbor.Parseable([InvalidCbor(U64), ..errs])]
 	first = |db, sql, params| first_io(start(db), sql, params, Body.default_max)
@@ -116,6 +131,21 @@ D1 :: { name : Str }.{
 
 		all_with! : D1.Session, Str, List(Sql), { max_bytes : U64 } => Try(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
 		all_with! = |s, sql, params, opts| Io.run!(all_with(s, sql, params, opts))
+
+		## `all` with the rows as tuples (D1 `raw()`): `rows : List((Str, I64))`. The tuple has one item for each column of the SELECT, in
+		## its order, so the caller keeps the order in the SQL. About twice as fast as `all` for 200 rows (PLAN.md 8g). The same
+		## limit and integer rules as `all`; `BadData` names the column by its index (from 0), not by name.
+		all_tuples : D1.Session, Str, List(Sql) -> Io(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+		all_tuples = |s, sql, params| all_tuples_io(session_start(s), sql, params, Body.default_max)
+
+		all_tuples! : D1.Session, Str, List(Sql) => Try(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+		all_tuples! = |s, sql, params| Io.run!(all_tuples(s, sql, params))
+
+		all_tuples_with : D1.Session, Str, List(Sql), { max_bytes : U64 } -> Io(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+		all_tuples_with = |s, sql, params, opts| all_tuples_io(session_start(s), sql, params, opts.max_bytes)
+
+		all_tuples_with! : D1.Session, Str, List(Sql), { max_bytes : U64 } => Try(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+		all_tuples_with! = |s, sql, params, opts| Io.run!(all_tuples_with(s, sql, params, opts))
 
 		first : D1.Session, Str, List(Sql) -> Io(row, [NotFound, D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [row.Cbor.Parseable([InvalidCbor(U64), ..errs])]
 		first = |s, sql, params| first_io(session_start(s), sql, params, Body.default_max)
@@ -268,6 +298,25 @@ rows_io = |at, sql, params, max| {
 				_ => crash "D1.rows: raw gave no column names"
 			}
 			Ok(other) => crash "D1.rows: raw gave ${Str.inspect(other)}"
+			Err(t) => Err(read_error(t))
+		},
+	)
+}
+
+## `raw()` with no column names, then `pf.pack`: the rows as CBOR arrays, read as tuples. `raw()` does not send the keys, so
+## the host writes less and the parser has no key to match (PLAN.md 8g, P1).
+all_tuples_io : At, Str, List(Sql), U64 -> Io(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+all_tuples_io = |at, sql, params, max| {
+	b = bound(at, sql, params)
+	s = b.stmt
+	Io.new(
+		b.ops.concat([Call(Slot(s), "raw", []), Call(Root("pf"), "pack", [Slot(s + 1), Lit(Int(limit(max)))])]),
+		|r| match r {
+			Ok(Packed(bytes)) => match SqlRules.typed_tuples(bytes) {
+				Ok(v) => Ok(v)
+				Err(BadData(text)) => Err(BadData(text))
+			}
+			Ok(other) => crash "D1.all_tuples: pf.pack gave ${Str.inspect(other)}"
 			Err(t) => Err(read_error(t))
 		},
 	)
