@@ -137,12 +137,14 @@ counter_fetch! = |self, req| match req.segments() {
 			"CREATE TABLE IF NOT EXISTS s (id INTEGER PRIMARY KEY, v INTEGER) STRICT",
 			"CREATE TABLE IF NOT EXISTS noidx (a TEXT, b TEXT)",
 			"CREATE TABLE IF NOT EXISTS wide (k TEXT PRIMARY KEY, v INTEGER)",
+			"CREATE TABLE IF NOT EXISTS pt (k TEXT, a, b INTEGER, c, d)",
+			"CREATE TABLE IF NOT EXISTS pi (k TEXT PRIMARY KEY, v INTEGER)",
 			"CREATE TRIGGER IF NOT EXISTS g BEFORE INSERT ON t WHEN NEW.id = 99 BEGIN SELECT RAISE(ABORT, 'label-conflict'); END",
 			"INSERT OR IGNORE INTO t (id, u, n, c, b) VALUES (1, 'a', 1, 1, x'010203')",
 		]
 		var $failed = []
 		for sql in made {
-			match self.sql_run!(sql, []) {
+			match self.sql_run!(sql, Sql.none) {
 				Ok(_) => {}
 				Err(e) => {
 					$failed = $failed.append(e)
@@ -163,45 +165,52 @@ counter_fetch! = |self, req| match req.segments() {
 			"trigger" => "INSERT INTO t (id, u, n) VALUES (99, 'w', 1)"
 			_ => "SELEC 1"
 		}
-		answer(Str.inspect(self.sql_run!(sql, [])))
+		answer(Str.inspect(self.sql_run!(sql, Sql.none)))
 	}
-	["sql_run"] => answer(Str.inspect(self.sql_run!("INSERT INTO noidx (a, b) VALUES (?, ?), (?, ?)", [Text("x"), Text("y"), Text("z"), Text("w")])))
+	["sql_run"] => answer(Str.inspect(self.sql_run!("INSERT INTO noidx (a, b) VALUES (?, ?), (?, ?)", ("x", "y", "z", "w"))))
 	["sql_all"] => {
 		rows : Try(List(Row), _)
-		rows = self.sql!("SELECT id, u FROM t WHERE id = ?", [Int(1)])
+		rows = self.sql!("SELECT id, u FROM t WHERE id = ?", [1.I64])
 		answer(Str.inspect(rows))
 	}
 	# The integer rules of MODULES.md 5.1: a parameter outside ±(2^53 - 1) goes as text and is stored exact, `CAST(v AS
 	# TEXT)` reads it into an `I64`, and with no cast it is `BadData` with the column.
 	["sql_int"] => {
-		_ = self.sql_run!("INSERT OR REPLACE INTO wide (k, v) VALUES ('max', ?), ('neg', ?)", [Int(9_223_372_036_854_775_807), Int(-2_687_166_099_708_853_831)])
+		_ = self.sql_run!("INSERT OR REPLACE INTO wide (k, v) VALUES ('max', ?), ('neg', ?)", (9_223_372_036_854_775_807.I64, -2_687_166_099_708_853_831.I64))
 		cast : Try(List(Wide), _)
-		cast = self.sql!("SELECT CAST(v AS TEXT) AS v FROM wide ORDER BY k", [])
+		cast = self.sql!("SELECT CAST(v AS TEXT) AS v FROM wide ORDER BY k", Sql.none)
 		plain : Try(List(Wide), _)
-		plain = self.sql!("SELECT v FROM wide WHERE k = 'max'", [])
+		plain = self.sql!("SELECT v FROM wide WHERE k = 'max'", Sql.none)
 		answer("cast=${Str.inspect(cast)} plain=${Str.inspect(plain)}")
 	}
-	["sql_rows"] => answer(Str.inspect(self.sql_rows!("SELECT id, u, b, 1.5 AS r, NULL AS z FROM t WHERE id = 1", [])))
-	["sql_rows_with"] => answer(Str.inspect(self.sql_rows_with!("SELECT id FROM t WHERE id = 1", [], { max_bytes: 4 })))
+	# PLAN.md 8h item 3: parameters as an `Encodable` tuple or list (the same cases as `/d1/params/<case>`).
+	["sql_params", "count"] => {
+		n : Try(List({ n : I64 }), _)
+		n = self.sql!("SELECT count(*) AS n FROM pi WHERE k = 'u64over' OR v < 0", Sql.none)
+		answer(match n { Ok([row]) => "n=${row.n.to_str()}", _ => "Err" })
+	}
+	["sql_params", case] => sql_params!(self, case)
+	["sql_rows"] => answer(Str.inspect(self.sql_rows!("SELECT id, u, b, 1.5 AS r, NULL AS z FROM t WHERE id = 1", Sql.none)))
+	["sql_rows_with"] => answer(Str.inspect(self.sql_rows_with!("SELECT id FROM t WHERE id = 1", Sql.none, { max_bytes: 4 })))
 	# MC11: 22 rows of 100,000 bytes (2.2 MB) are above the 1 MiB default and the 2 MiB of the test, and below 4 MiB.
 	["sql_big"] => {
-		_ = self.sql_run!("CREATE TABLE IF NOT EXISTS big (x TEXT)", [])
-		_ = self.sql_run!("DELETE FROM big", [])
-		_ = self.sql_run!("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 22) INSERT INTO big (x) SELECT printf('%.*c', 100000, 'x') FROM n", [])
+		_ = self.sql_run!("CREATE TABLE IF NOT EXISTS big (x TEXT)", Sql.none)
+		_ = self.sql_run!("DELETE FROM big", Sql.none)
+		_ = self.sql_run!("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 22) INSERT INTO big (x) SELECT printf('%.*c', 100000, 'x') FROM n", Sql.none)
 		small : Try(List(Big), _)
-		small = self.sql!("SELECT x FROM big", [])
+		small = self.sql!("SELECT x FROM big", Sql.none)
 		two : Try(List(Big), _)
-		two = self.sql_with!("SELECT x FROM big", [], { max_bytes: 2_097_152 })
+		two = self.sql_with!("SELECT x FROM big", Sql.none, { max_bytes: 2_097_152 })
 		four : Try(List(Big), _)
-		four = self.sql_with!("SELECT x FROM big", [], { max_bytes: 4_194_304 })
-		rows = self.sql_rows!("SELECT x FROM big", [])
+		four = self.sql_with!("SELECT x FROM big", Sql.none, { max_bytes: 4_194_304 })
+		rows = self.sql_rows!("SELECT x FROM big", Sql.none)
 		show = |r| match r {
 			Ok(list) => "Ok rows=${List.len(list).to_str()}"
 			Err(e) => "Err ${Str.inspect(e)}"
 		}
 		answer("default=${show(small)} two=${show(two)} four=${show(four)} rows=${show(rows.map_ok(|x| x.rows))}")
 	}
-	["sql_syntax"] => answer(Str.inspect(self.sql_run!("SELEC 1", [])))
+	["sql_syntax"] => answer(Str.inspect(self.sql_run!("SELEC 1", Sql.none)))
 	# Cells a1, a2, b1: `list_with!` with a prefix, `list!` of all keys.
 	["cells"] => {
 		_ = Object.cell("a1").set!(self, "one")
@@ -249,12 +258,12 @@ counter_fetch! = |self, req| match req.segments() {
 	}
 	# A table, a cell and an alarm, then `delete_all!`: all three are gone.
 	["delete_all"] => {
-		_ = self.sql_run!("CREATE TABLE IF NOT EXISTS gone (a)", [])
+		_ = self.sql_run!("CREATE TABLE IF NOT EXISTS gone (a)", Sql.none)
 		_ = count.set!(self, 5)
 		_ = self.set_alarm!(Time.now_ms!({}) + 3_600_000)
 		del = if Q.text(req, "twin") == "1" Io.run!(self.delete_all()) else self.delete_all!()
 		table : Try(List({ a : I64 }), _)
-		table = self.sql!("SELECT a FROM gone", [])
+		table = self.sql!("SELECT a FROM gone", Sql.none)
 		answer("del=${Str.inspect(del)} table=${Str.inspect(table.is_ok())} cell=${Str.inspect(count.get!(self))} alarm=${Str.inspect(self.get_alarm!())}")
 	}
 	# API.md 10.2: `respond!` in the `Fetch` of an object, then work after it.
@@ -296,7 +305,7 @@ echo! = |_self, v| Ok(v)
 store_init! : Object.Self => Try({}, [SqlErr(Io.Thrown), Constraint(Sql.Constraint)])
 store_init! = |self| {
 	Time.sleep!(100)
-	_ = self.sql_run!("CREATE TABLE IF NOT EXISTS items (k TEXT)", [])?
+	_ = self.sql_run!("CREATE TABLE IF NOT EXISTS items (k TEXT)", Sql.none)?
 	Ok({})
 }
 
@@ -305,7 +314,7 @@ store_fetch! = |self, req| match req.segments() {
 	["set_alarm"] => answer(Str.inspect(self.set_alarm!(Time.now_ms!({}) + 60_000)))
 	_ => {
 		n : Try(List({ n : U64 }), _)
-		n = self.sql!("SELECT count(*) AS n FROM items", [])
+		n = self.sql!("SELECT count(*) AS n FROM items", Sql.none)
 		answer(Str.inspect(n))
 	}
 }
@@ -343,6 +352,83 @@ ticker_alarm! = |_self, info| {
 kv_only_fetch! : Object.Self, Request => Try(Response, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])
 kv_only_fetch! = |self, _req| {
 	rows : List({ x : I64 })
-	rows = self.sql!("SELECT 1 AS x", [])?
+	rows = self.sql!("SELECT 1 AS x", Sql.none)?
 	Ok(Response.from_text(200, Str.inspect(rows)))
+}
+
+Typed : { ta : Str, tb : Str, tc : Str, td : Str, a : Str, b : I64, c : F64, hd : Str }
+Nulls : { an : I64, b : I64, cn : I64, tb : Str }
+Stored : { v : Str, t : Str }
+TextRow : { t : Str }
+
+typed! : Object.Self, Str => Try(Response, e)
+typed! = |self, k| {
+	r : Try(List(Typed), _)
+	r = self.sql!("SELECT typeof(a) AS ta, typeof(b) AS tb, typeof(c) AS tc, typeof(d) AS td, a, b, c, hex(d) AS hd FROM pt WHERE k = ?", [k])
+	answer(Str.inspect(r))
+}
+
+stored! : Object.Self, Str, Try(a, e) => Try(Response, e2)
+stored! = |self, k, wrote| match wrote {
+	Ok(_) => {
+		r : Try(List(Stored), _)
+		r = self.sql!("SELECT CAST(v AS TEXT) AS v, typeof(v) AS t FROM pi WHERE k = ?", [k])
+		answer(Str.inspect(r))
+	}
+	Err(e) => answer("Err ${Str.inspect(e)}")
+}
+
+missing : Try(I64, [Nope])
+missing = Err(Nope)
+
+sql_params! : Object.Self, Str => Try(Response, e)
+sql_params! = |self, case| match case {
+	"tuple" => {
+		_ = self.sql_run!("INSERT INTO pt (k, a, b, c, d) VALUES (?, ?, ?, ?, ?)", ("tuple", "héllo", 42.I64, 1.5.F64, Sql.blob([1, 2, 3])))
+		typed!(self, "tuple")
+	}
+	"null" => {
+		present : Try(I64, [Nope])
+		present = Ok(7)
+		_ = self.sql_run!("INSERT INTO pt (k, a, b, c) VALUES (?, ?, ?, ?)", ("null", Sql.null, Sql.or_null(present), Sql.or_null(present)))
+		_ = self.sql_run!("INSERT INTO pt (k, a, b, c) VALUES (?, ?, ?, ?)", ("null_err", Sql.null, Sql.or_null(missing), Sql.or_null(missing)))
+		a : Try(List(Nulls), _)
+		a = self.sql!("SELECT a IS NULL AS an, b, c IS NULL AS cn, typeof(b) AS tb FROM pt WHERE k = ?", ["null"])
+		b : Try(List(Nulls), _)
+		b = self.sql!("SELECT a IS NULL AS an, ifnull(b, -1) AS b, c IS NULL AS cn, typeof(b) AS tb FROM pt WHERE k = ?", ["null_err"])
+		answer("ok=${Str.inspect(a)} err=${Str.inspect(b)}")
+	}
+	"u64max" => stored!(self, "u64max", self.sql_run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("u64max", 9_223_372_036_854_775_807.U64)))
+	"u64over" => stored!(self, "u64over", self.sql_run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("u64over", 9_223_372_036_854_775_808.U64)))
+	"p53" => stored!(self, "p53", self.sql_run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("p53", 9_007_199_254_740_993.I64)))
+	"record" => answer(Str.inspect(self.sql_run!("INSERT INTO pi (k, v) VALUES (?, ?)", { k: "record", v: 1.I64 })))
+	"empty_record" => answer(Str.inspect(self.sql_run!("SELECT 1", {})))
+	"err_null" => {
+		bare : Try(I64, [Null])
+		bare = Err(Null)
+		answer(Str.inspect(self.sql_run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("err_null", bare))))
+	}
+	"tag_item" => {
+		bare : [Hit(I64), Miss]
+		bare = Hit(3)
+		answer(Str.inspect(self.sql_run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("tag_item", bare))))
+	}
+	"bool" => answer(Str.inspect(self.sql_run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("bool", Bool.True))))
+	"none" => {
+		r : Try(List({ id : I64 }), _)
+		r = self.sql!("SELECT 1 AS id", Sql.none)
+		answer(Str.inspect(r))
+	}
+	"single" => {
+		r : Try(List(TextRow), _)
+		r = self.sql!("SELECT ? AS t", ["one"])
+		answer(Str.inspect(r))
+	}
+	"runtime_list" => {
+		items : List(Sql)
+		items = ["rt", "text"].map(|t| Text(t)).append(Int(5)).append(Real(2.5)).append(Blob([9]))
+		_ = self.sql_run!("INSERT INTO pt (k, a, b, c, d) VALUES (?, ?, ?, ?, ?)", items)
+		typed!(self, "rt")
+	}
+	_ => Ok(Response.from_text(404, "no case"))
 }

@@ -13,6 +13,7 @@ import pf.Worker
 import pf.Request
 import pf.Response
 import pf.D1
+import pf.Sql
 import pf.Cbor
 import pf.Http
 
@@ -36,7 +37,7 @@ fetch! = |req| {
 d1! : () => Response
 d1! = || {
 	rows : Try(List(Person), _)
-	rows = db.all!("SELECT 1 AS id, 'ann' AS name, x'010203' AS avatar", [])
+	rows = db.all!("SELECT 1 AS id, 'ann' AS name, x'010203' AS avatar", Sql.none)
 	match rows {
 		Ok(people) => Response.from_text(200, "Ok ${Str.inspect(people)}")
 		Err(e) => Response.from_text(500, "Err ${Str.inspect(e)}")

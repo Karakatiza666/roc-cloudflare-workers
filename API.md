@@ -324,12 +324,12 @@ Op : [
 Example, inside `D1` (all names are module code, not app code). Each function that waits has a pure twin that gives an `Io` (6.5):
 
 ```roc
-rows : D1, Str, List(Sql) -> Io(Sql.Rows, [D1Err(Thrown)])
+rows : D1, Str, params -> Io(Sql.Rows, [D1Err(Thrown)]) where [params.Encodable([])]
 rows = |db, sql, params| Io.new(
 	[
 		Get(Root("env"), db.name),                                            # slot 0: the binding
 		Call(Slot(0), "prepare", [Lit(Text(sql))]),                           # slot 1
-		Call(Slot(1), "bind", params.map(|v| Lit(v.to_js()))),                # slot 2: no BigInt (5)
+		Call(Root("pf"), "bind", [Slot(1), Lit(Packed(Cbor.encode(params)))]), # slot 2: the array, no BigInt (5.1)
 		Call(Slot(2), "raw", [Lit(Obj([("columnNames", Bool(Bool.True))]))]), # slot 3: awaited
 	],
 	|result| match result {
@@ -338,7 +338,7 @@ rows = |db, sql, params| Io.new(
 	},
 )
 
-rows! : D1, Str, List(Sql) => Try(Sql.Rows, [D1Err(Thrown)])
+rows! : D1, Str, params => Try(Sql.Rows, [D1Err(Thrown)]) where [params.Encodable([])]
 rows! = |db, sql, params| Io.run!(rows(db, sql, params))
 ```
 
@@ -364,6 +364,8 @@ The platform helpers (root `pf`) that this file names. Each one is a loop or a b
 | `pack(value, maxBytes)` | Writes the value as one `Packed` CBOR value (5.2). Above `maxBytes` (no default: the module gives it, 8c): a `TooLarge`, status 1. | `D1.all!`, `first!`, RPC, queue reads |
 | `packEach(array, key, maxBytes)` | Gives the array with the field `key` of each item as a `Packed` value. The other fields stay. `maxBytes` is the limit of all the packed fields together (built in `PLAN.md` 8c: the rows of a whole batch, MC11). | `D1.batch!` (6.2): `results` and `meta` of each `D1Result` |
 | `limit(value, maxBytes)` | Gives the value as a `Js` tree (J1 to J7), with a limit of its CBOR size: above it, a `TooLarge` (status 1), before any copy into wasm (built in `PLAN.md` 8c) | `D1.rows!`: rows with no types do not go through `pack` |
+| `bind(stmt, params)` | `stmt.bind(...params)`. `params` is the CBOR array of the call, decoded: null, text, a number and bytes go as they are, a `BigInt` as decimal text (`BadParam` outside I64), a map, a list or a bool is `BadParam` (MODULES.md 5.1, "Parameters"). | `D1` (all query functions and `batch!`) |
+| `sqlExec(sql, text, params)` | `sql.exec(text, ...params)` with the rules of `bind` | `Object.Self.sql!` and the other `sql_` functions |
 | `findById(array, id)` | Gives the item whose `id` is `id`, else `undefined` (OP7) | `Queue.Message.ack!`, `retry!`: `Get(Root("event"), "messages")`, then `findById`, then `Call` of `ack` |
 | `spawn(ops)` | Runs the ops as an async program of the task. A throw goes to the log. The task context stays until it settles (RS1). | `Io.start!` (6.5) |
 | `writer()` | Makes a `TransformStream`, and records its writable side in the task table, so the task stays until the stream closes or is cancelled (10.2). Built in `PLAN.md` 8b: it gives `{ readable, writer }` (the writer of `getWriter()`, so `write!` is a `Call` of `write` on its ref). | `Body.writer!` (`MODULES.md` 4) |
@@ -413,7 +415,7 @@ The full surface. Each module is pure Roc over `Js` (6) or `Native` (8). `MODULE
 | `Body` | `ReadableStream`, `crypto.DigestStream` | `text!`, `json!`, `bytes!` (one wait: the helper `pf.readUpTo`), `chunk!`, `tee!`, `sha256!` (no copy into wasm), `writer!` (a stream that the task writes, 10.2), `compress!`, `decompress!` (gzip, deflate) (4) | Yes | A |
 | `Env`, `Secret` | `env` vars, secrets | `var!`, `json!`, `secret!`. A `Secret` does not show in `Str.inspect` and has no codec. `Secret.from_str` makes one (8c). (10) | No | A |
 | `Ctx` | `ctx.waitUntil`, `ctx.passThroughOnException` | `respond!(Response)` (10.2), `wait_until!(Io)` (a JS throw goes to the log, 6.5), `pass_through!` (only in a Worker `Fetch`) (11) | No | A |
-| `D1`, `Sql` | `D1Database`, `D1PreparedStatement`, Sessions API | `all!` and `first!` into the type of the call (rows as objects, CBOR, AQ9), `run!`, `rows!` (no types, for columns that are not known at compile time), `batch!` (one crossing, 6.2, a typed `D1.Result` for each statement), `exec!`, `with_session!` (gives a `D1.Session` with the same query functions and `bookmark!`). Reads stop at 1 MiB (`TooLarge`), and the `_with` forms take `max_bytes`. A constraint failure is `Constraint({ kind, message })`, with the kind from the extended code in the message text. A parameter is a `Sql` value. D1 takes no BigInt, so an `Int` in ±(2^53 - 1) goes as a number, and an `Int` outside it as decimal text. A text parameter becomes an integer only where it meets an INTEGER column (an insert, a compare), arithmetic or a `CAST`: `? = ? + 0` is false. D1 gives an INTEGER of size 2^53 or more back as a rounded number, so a query that reads one uses `CAST(x AS TEXT)`, and an integer field reads that text. A typed read of a rounded value is `BadData` with the column name. (5.1) | Yes | A |
+| `D1`, `Sql` | `D1Database`, `D1PreparedStatement`, Sessions API | `all!` and `first!` into the type of the call (rows as objects, CBOR, AQ9), `run!`, `rows!` (no types, for columns that are not known at compile time), `batch!` (one crossing, 6.2, a typed `D1.Result` for each statement), `exec!`, `with_session!` (gives a `D1.Session` with the same query functions and `bookmark!`). Reads stop at 1 MiB (`TooLarge`), and the `_with` forms take `max_bytes`. A constraint failure is `Constraint({ kind, message })`, with the kind from the extended code in the message text. A parameter is any value that encodes to a CBOR array: `[x]`, `(a, b)`, `Sql.none`; `Sql.null`, `Sql.or_null` and `Sql.blob` make NULL and a blob. D1 takes no BigInt, so an integer in ±(2^53 - 1) goes as a number, and an integer of size 2^53 or more as decimal text. An integer outside I64 is `BadParam`. A text parameter becomes an integer only where it meets an INTEGER column (an insert, a compare), arithmetic or a `CAST`: `? = ? + 0` is false. D1 gives an INTEGER of size 2^53 or more back as a rounded number, so a query that reads one uses `CAST(x AS TEXT)`, and an integer field reads that text. A typed read of a rounded value is `BadData` with the column name. (5.1) | Yes | A |
 | `R2` | `R2Bucket`, `R2Object`, multipart | `get!`, `get_with!` (range, condition), `put!`, `put_with!` (a failed `only_if` is `PreconditionFailed`; HTTP metadata, a checksum, `length_bytes` for a stream of unknown length), `respond!` and `to_response` (an object as an HTTP response, with the conditional headers of the request: `only_if: R2.from_headers(req.headers)`), `head!`, `delete!`, `list!` (`include`, `start_after`), `create_multipart_upload!`, `resume_multipart_upload` (pure), and on the `R2.Upload` data `upload_part!`, `complete!`, `abort!`, so an upload can span requests (5.3) | Yes | A |
 | `Cache` | `caches.default`, `caches.open` | `get!` (`match`), `put!`, `delete!`, local to the data center (RF1) (5.4) | Yes | A |
 | `WebCrypto` | `crypto.subtle`, `getRandomValues`, `randomUUID`, `timingSafeEqual` | `sign!`, `verify!`, `encrypt!`, `decrypt!`, `derive_bits!` with the key as data (imported in the same crossing), `import_key!`, `export_key!`, `generate_key!` (the key as data), `hmac_sha256` (pure Roc), `sha256!` (the builtin below 4,096 bytes, `digest` above), `timing_safe_equal!`, `random!`, `random_uuid!` (10). Each function that waits has an `Io` twin. `Cipher.RsaOaep` has a `hash`, and `export_key!` of a key that is data gives only its own form (as built, `MODULES.md` 10). Not `Crypto`: that is a builtin module of Roc, and it stays useful next to `WebCrypto`: SHA-256 and BLAKE3 of small values in wasm memory, with no wait (`MODULES.md` 10). | Each `crypto.subtle` function: yes. `timing_safe_equal!`, `random!`, `random_uuid!`: no. `hmac_sha256`: no crossing. | A |

@@ -26,6 +26,7 @@ header='app [event!] { pf: platform "../../bench/platform/main.roc" }
 import pf.Worker
 import pf.Cbor
 import pf.Id64
+import pf.Sql
 worker = Worker.{ fetch!: |_req| crash "unused" }
 event! = |e| worker.event!(e)
 id = Id64.from_u64(5)'
@@ -36,6 +37,7 @@ cases=(
   'control: Id64.Web in JSON (read)|x : Try({ id : Id64.Web }, _)\nx = Encoding.Json.parse("{}")|-'
   'control: Id64 in CBOR (write)|x = Cbor.encode({ id })|-'
   'control: Id64 in CBOR (read)|x : Try({ id : Id64 }, _)\nx = Cbor.parse([])|-'
+  'control: Id64 in a SQL parameter tuple|x = Sql.stmt("SELECT ?, ?", (id, 1.I64))|-'
   'id + 1|x = id + 1|MISSING METHOD'
   'id + id|x = id + id|MISSING METHOD'
   'id.plus(1)|x = id.plus(1)|MISSING METHOD'
@@ -62,4 +64,15 @@ done
 out=$("$ROC" check "$dir/f64_json_ok.roc" 2>&1)
 if [ $? -eq 0 ]; then echo "PASS f64_json_ok.roc compiles"
 else echo "FAIL f64_json_ok.roc: a record with an F64 field does not compile as JSON"; echo "$out" | head -20; rc=1; fi
+# PLAN.md 8h item 3: SQL parameters. A U128 parameter fails with a missing `encode_u128`, a bare `[]` with "type not determined"
+# for `encoder_for`. Each `_ok` file is the same call with an allowed type (a U64, `Sql.none`).
+for pair in 'u128:encode_u128' 'empty:encoder_for'; do
+  kind=${pair%%:*}; word=${pair#*:}
+  out=$("$ROC" check "$dir/sql_${kind}_bad.roc" 2>&1)
+  if [ $? -eq 1 ] && grep -q "$word" <<< "$out"; then echo "PASS sql_${kind}_bad.roc does not compile (an error names $word)"
+  else echo "FAIL sql_${kind}_bad.roc: it compiles, or the error does not name $word"; echo "$out" | head -20; rc=1; fi
+  out=$("$ROC" check "$dir/sql_${kind}_ok.roc" 2>&1)
+  if [ $? -eq 0 ]; then echo "PASS sql_${kind}_ok.roc compiles"
+  else echo "FAIL sql_${kind}_ok.roc: the control does not compile"; echo "$out" | head -20; rc=1; fi
+done
 exit "$rc"

@@ -97,7 +97,7 @@ fetch! : Request => Try(Response, _)
 fetch! = |req| match (req.method, req.segments()) {
 	(GET, ["v1", "pkg", owner, name]) => {
 		pkg : Pkg
-		pkg = db.first!("select name, version from pkg where name = ?", [Text("${owner}/${name}")])?
+		pkg = db.first!("select name, version from pkg where name = ?", ["${owner}/${name}"])?
 		Ok(Response.from_json(200, pkg))
 	}
 	(POST, ["v1", "jobs"]) => {
@@ -363,13 +363,13 @@ As built in `PLAN.md` 8c, wave 1 (`platform/Http.roc`):
 ```roc
 D1 :: { name : Str }.{
 	binding : Str -> D1
-	all! : D1, Str, List(Sql) => Try(rows, [D1Err(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Parseable]
-	all_with! : D1, Str, List(Sql), { max_bytes : U64 } => Try(rows, [D1Err(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Parseable]
-	first! : D1, Str, List(Sql) => Try(row, [NotFound, D1Err(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [row.Parseable]
-	run! : D1, Str, List(Sql) => Try(Sql.Info, [D1Err(Thrown), Constraint(Sql.Constraint)])
-	rows! : D1, Str, List(Sql) => Try(Sql.Rows, [D1Err(Thrown), Constraint(Sql.Constraint), TooLarge])
+	all! : D1, Str, params => Try(rows, [D1Err(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Parseable, params.Encodable([])]
+	all_with! : D1, Str, params, { max_bytes : U64 } => Try(rows, [D1Err(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Parseable, params.Encodable([])]
+	first! : D1, Str, params => Try(row, [NotFound, D1Err(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [row.Parseable, params.Encodable([])]
+	run! : D1, Str, params => Try(Sql.Info, [D1Err(Thrown), Constraint(Sql.Constraint)]) where [params.Encodable([])]
+	rows! : D1, Str, params => Try(Sql.Rows, [D1Err(Thrown), Constraint(Sql.Constraint), TooLarge]) where [params.Encodable([])]
 	batch! : D1, List(Sql.Stmt) => Try(List(D1.Result), [D1Err(Thrown), Constraint(Sql.Constraint), TooLarge])
-	all_tuples! : D1, Str, List(Sql) => Try(rows, [D1Err(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Parseable]   # rows as tuples (`raw()`)
+	all_tuples! : D1, Str, params => Try(rows, [D1Err(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Parseable, params.Encodable([])]   # rows as tuples (`raw()`)
 	first_with!, rows_with!, batch_with!, all_tuples_with!   # as all_with!: the same, with a last { max_bytes : U64 }
 	exec! : D1, Str => Try({}, [D1Err(Thrown), Constraint(Sql.Constraint)])
 	with_session! : D1, [Primary, Any, After(Str)] => Try(D1.Session, [D1Err(Thrown)])   # withSession, sync
@@ -387,9 +387,13 @@ D1 :: { name : Str }.{
 	}
 }
 
-Sql := [Null, Int(I64), Real(F64), Text(Str), Blob(List(U8))].{
-	stmt : Str, List(Sql) -> Sql.Stmt
-	Stmt : { sql : Str, params : List(Sql) }
+Sql := [Null, Int(I64), Real(F64), Text(Str), Blob(List(U8))].{   # the value of a row of `rows!`, and a parameter built at run time
+	stmt : Str, params -> Sql.Stmt where [params.Encodable([])]
+	Stmt : { sql : Str, params : List(U8) }   # the parameters as the CBOR of an array
+	none : List(Sql)                            # no parameters
+	null : Sql.Null                             # NULL
+	or_null : Try(a, _) -> Sql.OrNull(a)        # Ok(x) is x, Err(_) is NULL
+	blob : List(U8) -> Cbor.Bytes               # a blob
 	Info : { changes : U64, last_row_id : Try(I64, [Rounded]), rows_read : U64, rows_written : U64, duration_ms : F64 }
 	Rows : { columns : List(Str), rows : List(List(Sql)) }
 	Constraint : { kind : [PrimaryKey, Unique, ForeignKey, Check, NotNull, Trigger, Datatype, Other], message : Str }
@@ -404,11 +408,28 @@ Sql := [Null, Int(I64), Real(F64), Text(Str), Blob(List(U8))].{
 | `all_tuples!` | PLAN.md 8g, P1 (2026-10-17). D1 `raw()` (rows as arrays, no column names), `pf.pack`, then `Cbor.parse_with` into the tuple type of the call: `rows : List((Str, I64))`, one tuple item for each column of the SELECT, in its order. The rows type must be a list of tuples: a record type is `BadData("row 0: the row does not fit the type")`. Same limit (MC11, `all_tuples_with!`), same errors, and the same integer rules as `all!` (`int_from_text`, a float above 2^53 - 1 into an integer item is `BadData`). The column has no name in an array, so the text names its index from 0: `BadData("column 1 (from 0): integer above 2^53, use CAST(... AS TEXT)")` and `"column 1 (from 0): the value does not fit the type"`. A row of another length is `BadData("row 0: the row does not fit the type")`. Measured in the platform, 200 rows: 91.4 against 196 us for `all!` in Node (2.14 times), 102.3 against 231.7 us in workerd (2.26 times), and cheaper than `rows!` (`bench/README.md` "Step 8g", `PLAN.md` 8g P1). No `first_tuple!` (D1 `first()` gives an object, so a tuple read of one row is `all_tuples!` with `LIMIT 1`) and no `D1.Result` form (`batch()` gives the rows as objects, and `raw()` has no batch form). The record form `all!` stays the default: it keeps the names in the type. |
 | `rows!` | D1 `raw({ columnNames: true })` as `Sql` values, with no types. For columns that are not known at compile time: an admin tool, a SQL console, a generic export. |
 | `batch!` | One transaction and one crossing (`API.md` 6.2). One `D1.Result` for each statement, in order. A write batch uses only `info`. A read in a batch gives its rows with `result.all()` or `result.first()`, typed by the annotation at the use (MC7), because each statement can have another row type. A batch has no branch (`API.md` RF4). |
-| Parameters | `Sql` values. D1 takes no `BigInt` (`D1_TYPE_ERROR`), so an `Int` in ±(2^53 - 1) goes as a number, and an `Int` outside it goes as decimal text (`API.md` 7). A text parameter is text in SQL. It becomes an integer only where SQLite converts it: an insert into an INTEGER column, a compare with an INTEGER column, arithmetic (`id = ? + 0`), or `CAST(? AS INTEGER)`. A compare with no column (`? = ? + 0`) compares text with an integer, and it is false (Talon K10, local D1 2026-10-16). |
+| Parameters | Any value that encodes to a CBOR array, in place of `List(Sql)`: `[x]` for one parameter, `(a, b)` for two or more, `Sql.none` for none (a bare `[]` does not compile: its item type has no encoder). The app does not see CBOR. The module encodes the value (`Cbor.encode`) and the JS helper `pf.bind` (`pf.sqlExec` for an object) reads the decoded array (`js/helpers.js`, `sqlParams`). Each item binds as in the table "SQL parameter items". D1 takes no `BigInt` (`D1_TYPE_ERROR`), so an integer in ±(2^53 - 1) goes as a number, and an integer of size 2^53 or more goes as decimal text (`API.md` 7). A text parameter is text in SQL. It becomes an integer only where SQLite converts it: an insert into an INTEGER column, a compare with an INTEGER column, arithmetic (`id = ? + 0`), or `CAST(? AS INTEGER)`. A compare with no column (`? = ? + 0`) compares text with an integer, and it is false (Talon K10, local D1 2026-10-16). |
+| SQL parameter items | See the table below. | Each item of the array binds as shown. |
 | `with_session!` | `withSession("first-primary")` for `Primary`, `"first-unconstrained"` for `Any`, the bookmark for `After(b)`. It gives a `D1.Session`, its own type: a session holds a ref, and a binding never does (MC1, MC13). So `D1` stays a constant, and a `D1.Session` is good for one task. It has the query functions of `D1` (not `exec!`: the session of Workers has only `prepare` and `batch`). A bad bookmark is `D1Err` (`D1_SESSION_ERROR`, workerd source). Keep `bookmark!` in a cookie or a header, and give it to `After` in the next request. |
 | Size (MC11) | `all!`, `first!`, `rows!` and `batch!` read at most 1 MiB of rows. `pf.pack` stops at the limit, so a larger result is `TooLarge` with no copy into wasm memory. The `_with` form names the limit. |
 | `Constraint(Sql.Constraint)` (MC9) | A throw whose message ends in `: SQLITE_CONSTRAINT` or in `: SQLITE_CONSTRAINT (extended: <code>)` is `Constraint({ kind, message })`. `kind` comes from the extended code in the message text (table "Constraint kinds"): the D1 error has no code field. `message` is the SQLite text with no `D1_ERROR: ` at the start and no `: SQLITE_CONSTRAINT ...` at the end. For `Trigger`, it is the `RAISE` text. A `RAISE` text that looks like another failure (`UNIQUE constraint failed: x`) still gives `Trigger`. `exec!` gives `D1_EXEC_ERROR: Error in line <n>: <sql>: <text>: SQLITE_CONSTRAINT (extended: <code>)`, so its `message` starts with `Error in line <n>: <sql>: `. The docs give no example, so `PLAN.md` 8d checks the texts on the edge. `Object.Self` SQL uses the same tag. Its message has no `D1_ERROR: ` and the error has no `cause`. |
 | Same types for objects | `Object.Self` uses `Sql` and `Sql.Rows` (7). Its `sql_run!` gives `Object.SqlInfo`, because the SQL cursor of an object has fewer fields than D1 `meta`. |
+
+SQL parameter items (items of the array that is the parameter value):
+
+| Roc item | CBOR | JS binds | Note |
+| --- | --- | --- | --- |
+| `Sql.null` | null | `null` | A value of the type `Sql.Null`, which has its own encoder |
+| `Sql.or_null(t)` | the value, or null | the value, or `null` | `Ok(x)` is `x`, `Err(_)` is NULL |
+| `Sql.blob(list)` | byte string | `Uint8Array` | The same as `Cbor.bytes(list)` |
+| `Str` | text | string | |
+| `F64` | f64 | number | |
+| an integer type | integer | number, or decimal text from 2^53 | Roc types with no CBOR encoder (`U128`, `I128`) do not compile. A `U64` above 2^63 - 1 is `BadParam` (never a wrap). |
+| `Id64` | text (the I64 decimal) | string | SQLite stores the exact integer in an INTEGER column ("Ids: `Id64`") |
+| a `Sql` value | per tag | as above | For SQL built at run time: `Null`, `Int`, `Real`, `Text`, `Blob` |
+| anything else | map or array | none | `BadParam` |
+
+A value that does not encode to an array (a record, `{}`) is `BadParam("SQL parameters must be a list or a tuple ...")`. A bare `Err(Null)` in a tuple encodes as a map `{"Err":"Null"}`: the JS binder refuses a map item with `BadParam` and says to use `Sql.null` or `Sql.or_null`. `BadParam` is the `name` of the `Thrown` in `D1Err` (and `SqlErr`): the call stops before D1 sees the statement. The integer 2^53 as an exact `Number` binds as a number (JS cannot tell it from an f64).
 
 As built (`PLAN.md` 8c, "Status of step 8c, D1, Sql and Memo"), where the code differs from the table above or adds to it:
 
@@ -441,9 +462,9 @@ Constraint kinds. The messages are from local D1 (Miniflare 5.20261012.0-beta, 2
 
 ```roc
 results = db.batch!([
-	Sql.stmt("insert into release (grp, version, hash) values (?, ?, ?)", [Text(grp), Text(version), Text(hash)]),
-	Sql.stmt("insert into leaf (grp, version) values (?, ?)", [Text(grp), Text(version)]),
-	Sql.stmt("select count(*) as n from release where grp = ?", [Text(grp)]),
+	Sql.stmt("insert into release (grp, version, hash) values (?, ?, ?)", (grp, version, hash)),
+	Sql.stmt("insert into leaf (grp, version) values (?, ?)", (grp, version)),
+	Sql.stmt("select count(*) as n from release where grp = ?", [grp]),
 ])?
 match results {
 	[_, _, counted] => {
@@ -468,7 +489,7 @@ match results {
 
 | Form | Write | Read |
 | --- | --- | --- |
-| CBOR, a SQL parameter, a row (`Id64`) | The I64 decimal text, so a `Text` parameter and `CAST(id AS TEXT)` agree (R-IK2) | I64 or U64 text, or a CBOR integer |
+| CBOR, a SQL parameter, a row (`Id64`) | The I64 decimal text, so the `Id64` as a SQL parameter (`[id]`, `(id, x)`) binds as text, and it agrees with `CAST(id AS TEXT)` (R-IK2) | I64 or U64 text, or a CBOR integer |
 | JSON (`Id64.Web`) | The U64 decimal text, in any format | I64 or U64 text. A number (JSON or CBOR) is an error: an id in JSON must be text, a browser rounds a number above 2^53. |
 | A bare `Id64` in JSON | Does not compile: the encoder needs `encode_bytes` and the parser needs `parse_bytes`, which only a binary format has (`conformance/must-not-compile.sh`) | Same |
 
@@ -481,10 +502,10 @@ Row : { id : Id64, name : Str }         # a row: read with CAST(id AS TEXT)
 Reply : { id : Id64.Web, name : Str }   # an answer: the U64 text
 
 row : Try(Row, _)
-row = db.first!("SELECT CAST(id AS TEXT) AS id, name FROM user WHERE name = ?", [Text(name)])
+row = db.first!("SELECT CAST(id AS TEXT) AS id, name FROM user WHERE name = ?", [name])
 
-# A SQL parameter: the I64 text binds as text, and SQLite stores the integer exactly.
-_ = db.run!("UPDATE user SET seen = 1 WHERE id = ?", [Text(row.id.to_str())])
+# A SQL parameter: the `Id64` encodes as the I64 text, which binds as text, and SQLite stores the integer exactly.
+_ = db.run!("UPDATE user SET seen = ? WHERE id = ?", (1.I64, row.id))
 
 # A Dict key.
 by_id : Dict(Id64, Str)
@@ -692,11 +713,11 @@ Inside: a class is a record of handlers, all optional, as for `Worker`.
 
 	Self := { ... }.{
 		id : Object.Self -> Str
-		sql! : Object.Self, Str, List(Sql) => Try(rows, [SqlErr(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Parseable]
-		sql_with! : Object.Self, Str, List(Sql), { max_bytes : U64 } => Try(rows, [SqlErr(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Parseable]
-		sql_run! : Object.Self, Str, List(Sql) => Try(Object.SqlInfo, [SqlErr(Thrown), Constraint(Sql.Constraint)])
-		sql_rows! : Object.Self, Str, List(Sql) => Try(Sql.Rows, [SqlErr(Thrown), Constraint(Sql.Constraint), TooLarge])
-		sql_rows_with! : Object.Self, Str, List(Sql), { max_bytes : U64 } => Try(Sql.Rows, [SqlErr(Thrown), Constraint(Sql.Constraint), TooLarge])
+		sql! : Object.Self, Str, params => Try(rows, [SqlErr(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Parseable, params.Encodable([])]
+		sql_with! : Object.Self, Str, params, { max_bytes : U64 } => Try(rows, [SqlErr(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Parseable, params.Encodable([])]
+		sql_run! : Object.Self, Str, params => Try(Object.SqlInfo, [SqlErr(Thrown), Constraint(Sql.Constraint)]) where [params.Encodable([])]
+		sql_rows! : Object.Self, Str, params => Try(Sql.Rows, [SqlErr(Thrown), Constraint(Sql.Constraint), TooLarge]) where [params.Encodable([])]
+		sql_rows_with! : Object.Self, Str, params, { max_bytes : U64 } => Try(Sql.Rows, [SqlErr(Thrown), Constraint(Sql.Constraint), TooLarge]) where [params.Encodable([])]
 		set_alarm! : Object.Self, U64 => Try({}, [StorageErr(Thrown)])                 # setAlarm: a promise, one wait
 		get_alarm! : Object.Self => Try(U64, [NotFound, StorageErr(Thrown)])           # getAlarm: a promise, one wait
 		delete_alarm! : Object.Self => Try({}, [StorageErr(Thrown)])                   # deleteAlarm: a promise, one wait
@@ -780,8 +801,8 @@ As built in `PLAN.md` 8f, part 1 (`platform/Object.roc`, `platform/Remote.roc`, 
 | `id!` | `idFromName(name).toString()` with `call!`. A stub of an id gives its id with no crossing. | |
 | `jurisdiction` | Local workerd throws "Jurisdiction restrictions are not implemented in workerd." at `jurisdiction(j)`, so `id!`, `fetch!` and `call!` of such a stub give `ObjectErr`/`RpcErr` locally | `PLAN.md` 11c checks the edge |
 | `location_hint` | The option `{ locationHint }` of `getByName` and `get`. Local workerd takes any text (also `bogus`, `research/objects-probe/hint.txt`), so no local test sees it. | `PLAN.md` 11c |
-| The SQL rules | `SqlRules.roc` (not in `exposes`) has the parameter rule, the typed rows with the integer rules, the rows with no types and `constraint_of` of `D1` (moved from `D1.roc`). Local object SQL gives the same texts as D1 with no `D1_ERROR: `, also for `ForeignKey` (foreign keys are on) and `Datatype`. A `BigInt` parameter throws "Cannot convert a BigInt value to a number", so an `Int` outside ±(2^53 - 1) goes as text, as for D1. An INTEGER of size 2^53 or more comes back rounded, as for D1. | DO4 of `PLAN.md` 8c |
-| `sql!` | `exec(sql, ...params).toArray()`, then `pf.pack` with the limit. `sql_rows!`: `columnNames`, `Array.from(raw())`, then `pf.limit`. Both one `call!`. | MC11 |
+| The SQL rules | `SqlRules.roc` (not in `exposes`) has the typed rows with the integer rules, the rows with no types and `constraint_of` of `D1` (moved from `D1.roc`). Local object SQL gives the same texts as D1 with no `D1_ERROR: `, also for `ForeignKey` (foreign keys are on) and `Datatype`. A `BigInt` parameter throws "Cannot convert a BigInt value to a number", so an integer of size 2^53 or more goes as text, as for D1. The parameters have the same form and rules as for D1 (5.1, "Parameters"): `pf.sqlExec(sql, text, params)` binds them. An INTEGER of size 2^53 or more comes back rounded, as for D1. | DO4 of `PLAN.md` 8c |
+| `sql!` | `pf.sqlExec` (`exec(sql, ...params)`), `.toArray()`, then `pf.pack` with the limit. `sql_rows!`: `columnNames`, `Array.from(raw())`, then `pf.limit`. Both one `call!`. | MC11 |
 | `sql_run!` | `exec`, then `toArray()` (the cursor runs to its end), then `Fields` of `rowsRead` and `rowsWritten`. A cursor that gives other values is `SqlErr` with the name `BadData` (the type has no `BadData`). | `rowsWritten` is 2 for an insert of 2 rows before and after the iteration (probe) |
 | `list!` | `storage.kv.list(options)`, then the new helper `pf.keys(entries, max)`: the keys as a `Js` tree with the limit of MC11 (`TooLarge`). The values stay in JS. Options: `prefix`, `start`, `startAfter`, `end`, `limit`, `reverse`. | OP4: a program has no loop |
 | `Object.Cell` | `get! : Object.Cell(a), Object.Self => Try(a, [NotFound, BadData(Str), StorageErr(Thrown)])`, `get_or! : Object.Cell(a), Object.Self, a => Try(a, [BadData(Str), StorageErr(Thrown)])` (the default for a cell with no value), `set! : Object.Cell(a), Object.Self, a => Try({}, [StorageErr(Thrown)])`, `delete! : Object.Cell(a), Object.Self => Try({}, [StorageErr(Thrown)])` (a key with no value is `Ok`). The value is CBOR bytes (`kv.put(key, Uint8Array)`). | The design gives only the names (9) |

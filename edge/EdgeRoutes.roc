@@ -149,7 +149,7 @@ EdgeRoutes :: [].{
 		cron = s.cron
 		time_ms = s.time_ms
 		now = Time.now_ms!({})
-		row = db.run!("INSERT INTO cron_runs (cron, time_ms, run_ms) VALUES (?, ?, ?)", [Text(cron), Int(time_ms.to_i64_wrap()), Int(now.to_i64_wrap())])
+		row = db.run!("INSERT INTO cron_runs (cron, time_ms, run_ms) VALUES (?, ?, ?)", (cron, time_ms, now))
 		match row {
 			Err(e) => Err(D1Err(Str.inspect(e)))
 			Ok(_) =>
