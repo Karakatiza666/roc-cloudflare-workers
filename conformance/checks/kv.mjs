@@ -223,4 +223,23 @@ export const checks = [
     answer(await route(t, 'timeout_get', k), 'Ok "hi"');
     await route(t, 'delete', k);
   }],
+  // The clamp of `ttl_ms` (MODULES.md 5.2): under 60 s goes up to 60 s, for `put_with!`, its Io twin and `Kv.Cell.set_with!`; 60 s and more stay.
+  ['kv ttl_ms under 60 s is raised to 60 s (put_with!, the Io twin, Cell.set_with!), and 60 s or more is kept', async (t) => {
+    const kv = await t.mf.getKVNamespace('KV');
+    const k = `clamp-${rand()}`;
+    const before = Math.floor(Date.now() / 1000);
+    const exp = async (name) => (await kv.list({ prefix: name })).keys.find((x) => x.name === name)?.expiration;
+    const near = (e, secs, what) => ok(e >= before + secs && e <= before + secs + 5, `${what}: expiration ${e}, want about ${before + secs}`);
+    for (const [ms, secs] of [[0, 60], [1, 60], [59_999, 60], [60_000, 60], [120_000, 120]]) {
+      answer(await route(t, 'put_ttl', `${k}-${ms}`, `&v=a&ttl=${ms}`), 'Ok {}');
+      near(await exp(`${k}-${ms}`), secs, `put_with! ttl ${ms}`);
+    }
+    answer(await route(t, 'put_ttl_io', `${k}-io`, '&v=a&ttl=10000'), 'Ok {}');
+    near(await exp(`${k}-io`), 60, 'Io twin ttl 10000');
+    answer(await route(t, 'cell_set_ttl', '', '&v=dark&ttl=10000'), 'Ok {}');
+    near(await exp('cell-prefs'), 60, 'Cell.set_with! ttl 10000');
+    answer(await route(t, 'cell_set_ttl_io', '', '&v=dark&ttl=5000'), 'Ok {}');
+    near(await exp('cell-prefs'), 60, 'Cell.set_with Io twin ttl 5000');
+    await route(t, 'cell_delete');
+  }],
 ];

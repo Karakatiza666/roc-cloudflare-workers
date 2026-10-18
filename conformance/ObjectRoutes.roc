@@ -258,6 +258,22 @@ counter_fetch! = |self, req| match req.segments() {
 		del2 = self.delete_alarm!()
 		answer("set=${Str.inspect(set)} same=${Str.inspect(got == Ok(t))} twin=${Str.inspect(twin == Ok(t))} del=${Str.inspect(del)} after=${Str.inspect(after)} set2=${Str.inspect(set2)} del2=${Str.inspect(del2)}")
 	}
+	# `set_alarm_in!(ms)` (or its Io twin): the alarm is `ms` after the call, not now. The answer has the clock before and
+	# after, and `get_alarm!`. `alarm!` logs "counter alarm" with the id and the time.
+	["alarm_in"] => {
+		delay = Q.num(req, "ms")
+		t0 = Time.now_ms!({})
+		set = if Q.text(req, "twin") == "1" Io.run!(self.set_alarm_in(delay)) else self.set_alarm_in!(delay)
+		got = self.get_alarm!()
+		answer("set=${Str.inspect(set)} id=${self.id()} t0=${t0.to_str()} alarm=${Str.inspect(got)}")
+	}
+	# `set_alarm_at!(now + ms)`: the alarm is at that time.
+	["alarm_at"] => {
+		t = Time.now_ms!({}) + Q.num(req, "ms")
+		set = self.set_alarm_at!(t)
+		got = self.get_alarm!()
+		answer("set=${Str.inspect(set)} id=${self.id()} t=${t.to_str()} alarm=${Str.inspect(got)}")
+	}
 	# A table, a cell and an alarm, then `delete_all!`: all three are gone.
 	["delete_all"] => {
 		_ = self.sql_run!("CREATE TABLE IF NOT EXISTS gone (a)", Sql.none)
@@ -281,7 +297,10 @@ counter_fetch! = |self, req| match req.segments() {
 }
 
 counter_alarm! : Object.Self, { retry_count : U32, is_retry : Bool } => Try({}, [])
-counter_alarm! = |_self, _info| Ok({})
+counter_alarm! = |self, _info| {
+	Log.info!("counter alarm", { id: self.id(), at: Time.now_ms!({}) })
+	Ok({})
+}
 
 increment! : Object.Self, { by : I64 } => Try(I64, [StorageErr(Io.Thrown)])
 increment! = |self, { by }| {

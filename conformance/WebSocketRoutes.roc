@@ -20,6 +20,15 @@ User : { name : Str }
 user_slot : Object.Attachment(User)
 user_slot = Object.attachment("user")
 
+## A richer attachment, and a slot of another type over the same socket attachment (MODULES.md 12.1).
+Prefs : { name : Str, n : U64, tags : List(Str), on : Bool, score : I64 }
+
+prefs_slot : Object.Attachment(Prefs)
+prefs_slot = Object.attachment("prefs")
+
+count_slot : Object.Attachment(U64)
+count_slot = Object.attachment("count")
+
 ## The constructor runs of the object (`init!`), and the messages that reached `web_socket_message!`.
 starts : Object.Cell(U64)
 starts = Object.cell("starts")
@@ -254,7 +263,7 @@ room_fetch! = |self, req| match Q.text(req, "op") {
 		user = Q.text(req, "user")
 		match self.accept_with!(req, { tags: ["room", user] }) {
 			Ok({ socket, response }) => {
-				attached = user_slot.set!(socket, { name: user })
+				attached = if Q.text(req, "noattach") == "1" Ok({}) else user_slot.set!(socket, { name: user })
 				if attached.is_ok() Ok(response) else answer("attach! gave ${Str.inspect(attached)}")
 			}
 			Err(e) => answer(Str.inspect(e))
@@ -303,6 +312,26 @@ room_message! = |self, socket, msg| {
 		Text("bcast_tag") => {
 			sent = self.broadcast_with!({ tag: name }, Text("tag from ${name}"))
 			_ = socket.send!(Text("sent=${sent.to_str()}"))
+			{}
+		}
+		# The typed attachment: before any `set!`, a read as another type, and a round trip of a record.
+		Text("att_before") => {
+			_ = socket.send!(Text(Str.inspect(prefs_slot.get!(socket))))
+			{}
+		}
+		Text("att_wrong") => {
+			as_count : Try(U64, _)
+			as_count = count_slot.get!(socket)
+			_ = socket.send!(Text(Str.inspect(as_count)))
+			{}
+		}
+		Text("att_round") => {
+			want : Prefs
+			want = { name: "ann", n: 1_152_921_504_606_846_976, tags: ["a", "b"], on: Bool.True, score: -7 }
+			set = prefs_slot.set!(socket, want)
+			got : Try(Prefs, _)
+			got = prefs_slot.get!(socket)
+			_ = socket.send!(Text("set=${Str.inspect(set)} same=${Str.inspect(got == Ok(want))}"))
 			{}
 		}
 		Text("json") => {

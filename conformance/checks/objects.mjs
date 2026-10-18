@@ -202,4 +202,35 @@ export const checks = [
     eq(got.join(', '), '0 false, 1 true, 2 true', 'the runs');
     return got.join(', ');
   }],
+  // `set_alarm_in!` (MODULES.md 7): the alarm is `delay` after the call (`pf.alarmIn` adds `Date.now()`), not at once. `alarm!` logs "counter alarm".
+  ['objects set_alarm_in! and its Io twin: get_alarm! is about now + delay, and the alarm fires after the delay, not at once', async (t) => {
+    const alarmLogs = (id) => t.logs.filter((l) => String(l.message).includes('"msg":"counter alarm"')).map((l) => JSON.parse(String(l.message).slice(String(l.message).indexOf('{')))).filter((l) => l.id === id);
+    for (const [twin, name] of [['0', 'ain1'], ['1', 'ain2']]) {
+      const t1 = Date.now();
+      const r = await counter(t, 'alarm_in', name, `&ms=1500&twin=${twin}`);
+      const t2 = Date.now();
+      const m = /^set=Ok\(\{\}\) id=(\w+) t0=(\d+) alarm=Ok\((\d+)\)$/.exec(r.body);
+      ok(m, `the answer: ${r.body}`);
+      const [id, t0, alarm] = [m[1], Number(m[2]), Number(m[3])];
+      ok(alarm >= t0 + 1500 && alarm <= t2 + 1500, `get_alarm! ${alarm}, want ${t0 + 1500} to ${t2 + 1500}`);
+      ok(alarm >= t1 + 1500 - 50, `get_alarm! ${alarm} is not about now + 1500 (${t1 + 1500})`);
+      eq(alarmLogs(id).length, 0, 'the alarm has not fired at once');
+      await sleep(600);
+      eq(alarmLogs(id).length, 0, 'the alarm has not fired 600 ms after the call');
+      for (let i = 0; i < 100 && !alarmLogs(id).length; i++) await sleep(50);
+      const fired = alarmLogs(id)[0];
+      ok(fired, 'the alarm fired');
+      ok(fired.at >= t0 + 1500 - 50, `fired at ${fired.at}, before the delay (t0 ${t0})`);
+    }
+  }],
+  ['objects set_alarm_at!: get_alarm! gives the time, and the alarm fires at it', async (t) => {
+    const logs = (id) => t.logs.filter((l) => String(l.message).includes('"msg":"counter alarm"')).map((l) => JSON.parse(String(l.message).slice(String(l.message).indexOf('{')))).filter((l) => l.id === id);
+    const r = await counter(t, 'alarm_at', 'aat', '&ms=1000');
+    const m = /^set=Ok\(\{\}\) id=(\w+) t=(\d+) alarm=Ok\((\d+)\)$/.exec(r.body);
+    ok(m, `the answer: ${r.body}`);
+    eq(m[3], m[2], 'get_alarm! is the time that was set');
+    for (let i = 0; i < 100 && !logs(m[1]).length; i++) await sleep(50);
+    const fired = logs(m[1])[0];
+    ok(fired && fired.at >= Number(m[2]) - 50, `fired ${JSON.stringify(fired)}, want at ${m[2]} or later`);
+  }],
 ];

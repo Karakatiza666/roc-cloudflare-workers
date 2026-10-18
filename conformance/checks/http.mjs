@@ -76,4 +76,34 @@ export const checks = [
     ok(bad.status === 200 && bad.body.startsWith('BadData '), `got ${bad.body}`);
     eq(bad.awaits, 0, 'no crossing: nothing is sent');
   }],
+  // `Http.cloudflare_error` (MODULES.md 4): status 400 or more, a body of at most 64 bytes that is `error code: <digits>`, a body of text or bytes.
+  ['http cloudflare_error: 530 error code: 1016 and 403 error code: 1003 (bytes body of send!)', async (t) => {
+    answer(await t.get(`/http/cf_error?url=${q(t.server + '/cf530')}`), 'Ok({ code: 1016, status: 530 })');
+    answer(await t.get(`/http/cf_error?url=${q(t.server + '/cf403')}`), 'Ok({ code: 1003, status: 403 })');
+  }],
+  ['http cloudflare_error: a 404 with a normal body, and a status under 400, are NotCloudflareError', async (t) => {
+    answer(await t.get(`/http/cf_error?url=${q(t.server + '/nothing')}`), 'Err(NotCloudflareError)');
+    answer(await t.get(`/http/cf_error?url=${q(t.server + '/cf200')}`), 'Err(NotCloudflareError)');
+    answer(await t.get(`/http/cf_error?url=${q(t.server + '/hello')}`), 'Err(NotCloudflareError)');
+  }],
+  ['http cloudflare_error: a body of 64 bytes is read, a body of 76 bytes is not', async (t) => {
+    answer(await t.get(`/http/cf_error?url=${q(t.server + '/cf64')}`), 'Ok({ code: 1003, status: 403 })');
+    answer(await t.get(`/http/cf_error?url=${q(t.server + '/cflong')}`), 'Err(NotCloudflareError)');
+  }],
+  ['http cloudflare_error: a stream body (open!) is NotCloudflareError', async (t) => {
+    answer(await t.get(`/http/cf_error?open=1&url=${q(t.server + '/cf530')}`), 'Err(NotCloudflareError)');
+  }],
+  ['http cloudflare_error: a text body, the prefix, the digits and the status', async (t) => {
+    const r = (status, body) => t.get(`/http/cf_error_text?status=${status}&body=${q(body)}`);
+    answer(await r(530, 'error code: 1016'), 'Ok({ code: 1016, status: 530 })');
+    answer(await r(403, 'error code: 1003\n'), 'Ok({ code: 1003, status: 403 })');
+    answer(await r(400, 'error code: 7'), 'Ok({ code: 7, status: 400 })');
+    answer(await r(399, 'error code: 1016'), 'Err(NotCloudflareError)');
+    answer(await r(530, 'error code: 10x6'), 'Err(NotCloudflareError)');
+    answer(await r(530, 'error code: '), 'Err(NotCloudflareError)');
+    answer(await r(530, 'Error code: 1016'), 'Err(NotCloudflareError)');
+    answer(await r(530, 'xerror code: 1016'), 'Err(NotCloudflareError)');
+    answer(await r(403, `error code: 1003${' '.repeat(48)}`), 'Ok({ code: 1003, status: 403 })');
+    answer(await r(403, `error code: 1003${' '.repeat(49)}`), 'Err(NotCloudflareError)');
+  }],
 ];

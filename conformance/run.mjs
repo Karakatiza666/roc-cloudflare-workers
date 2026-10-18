@@ -62,6 +62,12 @@ const server = createServer((req, res) => {
     if (path === '/slow') return setTimeout(() => res.end('late'), 2000);
     if (path === '/echo_json') return res.end(`${req.method} ${req.headers['content-type'] ?? '-'} ${Buffer.concat(chunks).toString()}`);
     if (path === '/echo') return res.end(`${req.method} ${req.headers['x-test'] ?? '-'} ${Buffer.concat(chunks).toString()}`);
+    // Cloudflare error pages for `Http.cloudflare_error`: the status and the body `error code: <n>` (`/cf64`: 64 bytes, `/cflong`: 76).
+    if (path === '/cf530') return ((res.statusCode = 530), res.end('error code: 1016'));
+    if (path === '/cf403') return ((res.statusCode = 403), res.end('error code: 1003'));
+    if (path === '/cf200') return res.end('error code: 1003');
+    if (path === '/cf64') return ((res.statusCode = 403), res.end(`error code: 1003${' '.repeat(48)}`));
+    if (path === '/cflong') return ((res.statusCode = 403), res.end(`error code: 1003${' '.repeat(60)}`));
     if (path.startsWith('/status/')) {
       res.statusCode = Number(path.slice(8));
       return res.end();
