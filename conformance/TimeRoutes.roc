@@ -25,6 +25,12 @@ TimeRoutes :: [].{
 			got = r.result
 			ok("index=${r.index.to_str()} ${Str.inspect(got)}")
 		}
+		# `Io.timeout`: a sleep that ends in time is `Ok`, a sleep that is too long is `TimedOut` and the task does not wait for it.
+		["timeout"] => {
+			fast = Time.sleep(10).timeout(1_000).run!()
+			slow = Time.sleep(3_000).timeout(40).run!()
+			ok("fast=${Str.inspect(fast)} slow=${Str.inspect(slow)}")
+		}
 		_ => Response.from_text(404, "no route")
 	}
 }

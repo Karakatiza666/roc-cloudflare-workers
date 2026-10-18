@@ -134,6 +134,35 @@ WebSocketRoutes :: [].{
 			}
 			Response.from_text(200, got)
 		}
+		# `Io.timeout` that does not fire: the message comes at once, the sleep of 5 s is aborted (the task is short).
+		["timeout_ok"] => {
+			got = match WebSocket.connect!(Q.text(req, "url")) {
+				Ok(ws) => {
+					_ = ws.send!(Text("m"))
+					first = ws.receive().timeout(5_000).run!()
+					ws.close!(1000, "done")
+					"first=${Str.inspect(first)}"
+				}
+				Err(e) => "Err ${Str.inspect(e)}"
+			}
+			Response.from_text(200, got)
+		}
+		# `send_json!` of a `NaN`: `BadData`, and no frame goes out (the next reply is for the text after it).
+		["send_json_nan"] => {
+			got = match WebSocket.connect!(Q.text(req, "url")) {
+				Ok(ws) => {
+					bad = ws.send_json!({ r: 0.0.F64 / 0.0.F64 })
+					good = ws.send_json!({ r: 0.5.F64 })
+					first = ws.receive!()
+					_ = ws.send!(Text("after"))
+					second = ws.receive!()
+					ws.close!(1000, "done")
+					"bad=${Str.inspect(bad)} good=${Str.inspect(good)} first=${Str.inspect(first)} second=${Str.inspect(second)}"
+				}
+				Err(e) => "Err ${Str.inspect(e)}"
+			}
+			Response.from_text(200, got)
+		}
 		# OP8, the same turn: the message at 100 ms is in the queue. A race of a branch with no wait (it wins) and `receive`:
 		# `receive` takes the message in the same turn as the end of the race, and gives it back.
 		["race_ready"] => {
@@ -255,6 +284,11 @@ room_message! = |self, socket, msg| {
 		}
 		Text("json") => {
 			_ = socket.send_json!({ user: name, n })
+			{}
+		}
+		Text("json_nan") => {
+			bad = socket.send_json!({ r: 0.0.F64 / 0.0.F64 })
+			_ = socket.send!(Text("bad=${Str.inspect(bad)}"))
 			{}
 		}
 		Text(t) =>

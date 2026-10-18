@@ -1,5 +1,5 @@
 // `Time` (MODULES.md 11, PLAN.md 8c): routes of conformance/TimeRoutes.roc.
-import { answer, ok } from '../assert.mjs';
+import { answer, eq, ok } from '../assert.mjs';
 
 export const options = {};
 
@@ -28,5 +28,13 @@ export const checks = [
     answer(r, 'index=1 Ok(Fast)');
     ok(r.waits === 1 && r.ms >= 45 && r.ms < 250, `${r.waits} waits, ${r.ms} ms: want 1 wait and about 50 ms`);
     return `${r.waits} wait, ${r.ms} ms`;
+  }],
+  // Io.timeout: a sleep in time is Ok, a sleep that is too long is TimedOut after about 40 ms (not 3 s: it is aborted).
+  ['time Io.timeout: Ok when the sleep ends in time, TimedOut after the limit, the sleep is aborted', async (t) => {
+    const r = await t.get('/time/timeout');
+    answer(r, 'fast=Ok({}) slow=Err(TimedOut)');
+    ok(r.ms >= 45 && r.ms < 600, `${r.ms} ms: want about 50 ms (the sleep of 3 s is aborted)`);
+    eq(r.waits, 2, 'waits');
+    return `${r.waits} waits, ${r.ms} ms`;
   }],
 ];

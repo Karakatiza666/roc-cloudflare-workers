@@ -17,4 +17,8 @@ for kind in log cbor; do
   if [ $? -eq 0 ]; then echo "PASS secret_${kind}_ok.roc compiles"
   else echo "FAIL secret_${kind}_ok.roc: the control does not compile"; echo "$out" | head -20; rc=1; fi
 done
+# A control only: a record with an `F64` field is JSON-encodable (the open error of `Json.Encodable(enc)`).
+out=$("$ROC" check "$dir/f64_json_ok.roc" 2>&1)
+if [ $? -eq 0 ]; then echo "PASS f64_json_ok.roc compiles"
+else echo "FAIL f64_json_ok.roc: a record with an F64 field does not compile as JSON"; echo "$out" | head -20; rc=1; fi
 exit "$rc"

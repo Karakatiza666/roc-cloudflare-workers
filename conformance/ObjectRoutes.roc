@@ -218,6 +218,15 @@ counter_fetch! = |self, req| match req.segments() {
 		_ = count.delete!(self)
 		answer("none=${Str.inspect(none)} some=${Str.inspect(some)}")
 	}
+	# `get_or!` of a cell whose value is not of its type: `BadData`, not the default.
+	["cell_or_bad"] => {
+		_ = count.set!(self, 7)
+		as_text : Object.Cell(Str)
+		as_text = Object.cell("count")
+		got = as_text.get_or!(self, "dflt")
+		_ = count.delete!(self)
+		answer(Str.inspect(got))
+	}
 	["cell"] => {
 		before = count.get!(self)
 		set = count.set!(self, -9_007_199_254_740_993)

@@ -126,6 +126,11 @@ export const checks = [
     answer(await route(t, 'cell_delete'), 'Ok {}');
     answer(await route(t, 'cell_get_or'), 'Ok { big: 0, n: 0, theme: "none" }');
     answer(await route(t, 'cell_get_or_io'), 'Ok { big: 0, n: 0, theme: "none" }');
+    // A cell with a value gives the value, not the default.
+    await route(t, 'cell_set', '', '&v=stored');
+    answer(await route(t, 'cell_get_or'), 'Ok { big: 1152921504606846976, n: 3, theme: "stored" }');
+    answer(await route(t, 'cell_get_or_io'), 'Ok { big: 1152921504606846976, n: 3, theme: "stored" }');
+    await route(t, 'cell_delete');
     await route(t, 'delete', k);
   }],
   ['kv json of a record with an F64 field: a value is stored, a NaN is BadData and nothing is sent', async (t) => {
@@ -139,6 +144,7 @@ export const checks = [
     eq(r.body, '{"name":"pi","ratio":0.5}', 'Response.from_json of an F64 field');
     const bad = await route(t, 'f64_response', '', '&v=nan');
     eq(bad.status, 500, 'a NaN gives a 500');
+    ok(bad.body.startsWith('the response does not encode as JSON: '), `the 500 text: ${bad.body}`);
     await route(t, 'delete', k);
   }],
   ['kv Cell: set!, get!, delete! and the twins', async (t) => {
@@ -160,5 +166,58 @@ export const checks = [
     ok(Math.abs(exp - (Math.floor(Date.now() / 1000) + 90)) <= 2, `expiration ${exp}`);
     answer(await route(t, 'cell_set_ttl_io', '', '&v=dark&ttl=120000'), 'Ok {}');
     await route(t, 'cell_delete');
+  }],
+  ['kv get_or!: only NotFound gets the default, a value that does not parse stays BadData', async (t) => {
+    const k = `orbad-${rand()}`;
+    await route(t, 'put', k, '&v=not-json');
+    const r = await route(t, 'get_or_bad', k);
+    ok(r.status === 200 && r.body.startsWith('Err BadData("'), `got ${r.body}`);
+    answer(await route(t, 'get_or_bad', `${k}-missing`), 'Ok { big: 0, n: 0, theme: "default" }');
+    await route(t, 'delete', k);
+  }],
+  ['kv F64 field: the twin, put_with! and Cell set! give BadData for a NaN and send nothing, a value is stored', async (t) => {
+    const k = `f64b-${rand()}`;
+    const bad = (r, what) => ok(r.status === 200 && r.body.startsWith('Err BadData("the value does not encode: '), `${what}: ${r.body}`);
+    answer(await route(t, 'f64_put_io', k, '&v=pi'), 'Ok {}');
+    answer(await route(t, 'f64_get', k), 'Ok { name: "pi", ratio: 0.5 }');
+    bad(await route(t, 'f64_put_io', `${k}-io`, '&v=nan'), 'put (Io twin)');
+    answer(await route(t, 'f64_get', `${k}-io`), 'Err NotFound');
+    bad(await route(t, 'f64_put_with', `${k}-w`, '&v=nan'), 'put_with!');
+    answer(await route(t, 'f64_get', `${k}-w`), 'Err NotFound');
+    answer(await route(t, 'f64_put_with', `${k}-w2`, '&v=ok'), 'Ok {}');
+    answer(await route(t, 'f64_get', `${k}-w2`), 'Ok { name: "ok", ratio: 0.5 }');
+    answer(await route(t, 'f64_cell_set', '', '&v=cell'), 'Ok {}');
+    bad(await route(t, 'f64_cell_set', '', '&v=nan'), 'Cell set!');
+    // The stored value is still the one before the NaN.
+    answer(await route(t, 'f64_cell_get'), 'Ok { name: "cell", ratio: 0.5 }');
+    for (const x of ['', '-io', '-w', '-w2']) await route(t, 'delete', `${k}${x}`);
+  }],
+  ['kv a NaN is no write: the old value stays', async (t) => {
+    const k = `f64c-${rand()}`;
+    answer(await route(t, 'f64_put', k, '&v=one'), 'Ok {}');
+    ok((await route(t, 'f64_put', k, '&v=nan')).body.startsWith('Err BadData('), 'NaN put');
+    answer(await route(t, 'f64_get', k), 'Ok { name: "one", ratio: 0.5 }');
+    await route(t, 'delete', k);
+  }],
+  ['io recover: NotFound is a value, a BadData goes to the new error, a value stays (one crossing)', async (t) => {
+    const k = `rec-${rand()}`;
+    const r = await route(t, 'recover', k);
+    answer(r, 'Ok "recovered"');
+    eq(r.awaits, 1, 'js_await');
+    answer(await route(t, 'recover_bad', k), 'Ok recovered');
+    await route(t, 'put', k, '&v=hi');
+    answer(await route(t, 'recover', k), 'Ok "hi"');
+    await route(t, 'put', k, '&v=not-json');
+    answer(await route(t, 'recover_bad', k), 'Err Other');
+    await route(t, 'delete', k);
+  }],
+  ['io timeout keeps the error of the operation: NotFound is not TimedOut, a value is Ok', async (t) => {
+    const k = `to-${rand()}`;
+    const r = await route(t, 'timeout_get', k);
+    answer(r, 'NotFound');
+    ok(r.ms < 1500, `the sleep of 5 s is aborted: ${r.ms} ms`);
+    await route(t, 'put', k, '&v=hi');
+    answer(await route(t, 'timeout_get', k), 'Ok "hi"');
+    await route(t, 'delete', k);
   }],
 ];

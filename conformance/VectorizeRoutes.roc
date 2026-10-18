@@ -13,6 +13,11 @@ Wrong : { genre : U64 }
 index : Vectorize(Meta)
 index = Vectorize.json("STUB_VECTORIZE")
 
+Scored : { score : F64 }
+
+scored : Vectorize(Scored)
+scored = Vectorize.json("STUB_VECTORIZE")
+
 wrong : Vectorize(Wrong)
 wrong = Vectorize.json("STUB_VECTORIZE")
 
@@ -30,6 +35,10 @@ VectorizeRoutes :: [].{
 		match path {
 			["upsert"] => mutation(index.upsert!(vectors))
 			["upsert_io"] => mutation(Io.run!(index.upsert(vectors)))
+			# A metadata with an `F64` field is sent as JSON; a `NaN` is `BadData` and no call is made.
+			["upsert_f64"] => mutation(scored.upsert!([{ id: "f", values: [1.0], metadata: { score: 0.25 } }]))
+			["upsert_nan"] => mutation(scored.upsert!([{ id: "n", values: [1.0], metadata: { score: 0.0 / 0.0 } }]))
+			["insert_nan"] => mutation(Io.run!(scored.insert([{ id: "n", values: [1.0], metadata: { score: 0.0 / 0.0 } }])))
 			["insert"] => mutation(index.insert!(vectors))
 			["insert_io"] => mutation(Io.run!(index.insert(vectors)))
 			# `insert` of an id that exists changes nothing (the stub; Workers: the vector is ignored).

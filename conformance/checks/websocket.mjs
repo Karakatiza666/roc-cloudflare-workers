@@ -89,6 +89,9 @@ export const checks = [
     eq(JSON.stringify(await b.next()), '[3,2,1]', 'bytes');
     b.send('json');
     eq(await b.next(), '{"n":4,"user":"b"}', 'send_json!');
+    // `send_json!` of a NaN is BadData: no frame, so the next frame is the reply of `send!`.
+    b.send('json_nan');
+    ok((await b.next()).startsWith('bad=Err(BadData("'), 'Object.Socket send_json! of a NaN');
     await a.close(1000, 'a leaves');
     await b.close(4001, 'b leaves');
   }],
@@ -184,5 +187,15 @@ export const checks = [
     } finally {
       await mf.dispose();
     }
+  }],
+  ['websocket Io.timeout that does not fire: Ok at once, the sleep is aborted', async (t) => {
+    const r = await t.get(`/websocket/timeout_ok?url=${encodeURIComponent(await echoServer(t))}`);
+    answer(r, 'first=Ok(Text("echo m"))');
+    ok(r.ms < 1500, `${r.ms} ms: the sleep of 5 s is aborted`);
+  }],
+  ['websocket send_json! of a NaN is BadData and no frame goes out', async (t) => {
+    const r = await t.get(`/websocket/send_json_nan?url=${encodeURIComponent(await echoServer(t))}`);
+    ok(r.status === 200 && r.body.startsWith('bad=Err(BadData("'), `got ${r.body}`);
+    ok(r.body.endsWith(' good=Ok({}) first=Ok(Text("echo {\\"r\\":0.5}")) second=Ok(Text("echo after"))'), `got ${r.body}`);
   }],
 ];
