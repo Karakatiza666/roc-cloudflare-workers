@@ -5,7 +5,6 @@ import pf.Kv
 import pf.D1
 import pf.Io
 import pf.Memo
-import pf.Object
 import pf.Sql
 
 Gavel :: [].{
@@ -21,39 +20,51 @@ Gavel :: [].{
 	Config : { fee_percent : U64, max_step_cents : U64, currencies : List(Str) }
 
 	## Units of each currency for 1 USD, as the FX feed gives them.
-	Rates : { as_of_ms : U64, rates : List({ currency : Str, rate : Dec }) }
+	Rates : { as_of_ms : U64, rates : List({ currency : Str, rate : F64 }) }
 
 	Receipt : { lot_id : Str, winner : Str, amount_cents : U64, fee_cents : U64, converted : List({ currency : Str, amount_cents : U64 }), settled_ms : U64 }
 
+	## What a lot room can answer. Each Rpc method of the room has this error type, and the callee cannot give another tag.
+	RoomErr : [NotOpen, AlreadyOpen, StillOpen, StorageErr(Io.Thrown), SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]
+
+	## What `settle_due` can answer.
+	SettleErr : [D1Err(Io.Thrown), Constraint(Sql.Constraint), KvErr(Io.Thrown), BadData(Str), TooLarge]
+
 	# The Rpc methods. The Roc callee and the Roc caller both use these values.
-	open : Rpc(Gavel.Lot, {})
+	## The answer of `open` is the time of the alarm. (`{}` as the answer crashes the compiler: see REVIEW.md.)
+	open : Rpc(Gavel.Lot, { close_ms : U64 }, Gavel.RoomErr)
 	open = Rpc.method("open")
 
-	snapshot : Rpc({}, Gavel.Snapshot)
+	snapshot : Rpc({}, Gavel.Snapshot, Gavel.RoomErr)
 	snapshot = Rpc.method("snapshot")
 
-	close_out : Rpc({}, Gavel.Closeout)
+	close_out : Rpc({}, Gavel.Closeout, Gavel.RoomErr)
 	close_out = Rpc.method("close_out")
 
-	settle_due : Rpc({}, { settled : U32 })
+	settle_due : Rpc({}, { settled : U32 }, Gavel.SettleErr)
 	settle_due = Rpc.method("settle_due")
 
-	# Bindings with the same name in both wrangler files.
+	# Bindings with the same name in both wrangler files. The room namespace is in each Worker (the ledger names the script).
 	db = D1.binding("DB")
-	lot_rooms = Object.namespace("LOT_ROOM")
 
-	config_kv : Kv(Gavel.Config)
-	config_kv = Kv.json("KV")
+	## The KV namespace, for `declare` only: the typed values are the cells below.
+	kv = Kv.text("KV")
 
-	rates_kv : Kv(Gavel.Rates)
-	rates_kv = Kv.json("KV")
+	config_cell : Kv.Cell(Gavel.Config)
+	config_cell = Kv.json("KV").cell("config")
+
+	rates_cell : Kv.Cell(Gavel.Rates)
+	rates_cell = Kv.json("KV").cell("fx:rates")
+
+	no_rates : Gavel.Rates
+	no_rates = { as_of_ms: 0, rates: [] }
 
 	default_config : Gavel.Config
 	default_config = { fee_percent: 5, max_step_cents: 100_000, currencies: ["EUR", "GBP", "JPY"] }
 
 	## The site config, loaded once for each isolate. A missing key gives the default.
 	config : Memo(Gavel.Config, _)
-	config = Memo.new("gavel-config", { max_age_ms: 60_000, load!: load_config! })
+	config = Memo.new("gavel-config", { max_age_ms: 60_000, load!: || Gavel.config_cell.get_or!(Gavel.default_config) })
 
 	## Both Workers share one D1 database. Each Worker creates the tables once for each isolate.
 	tables : Memo({}, _)
@@ -66,19 +77,10 @@ Gavel :: [].{
 	]
 }
 
-load_config! : {} => Try(Gavel.Config, [KvErr(Io.Thrown), BadData(Str), TooLarge])
-load_config! = |{}| match Gavel.config_kv.get!("config") {
-	Ok(c) => Ok(c)
-	Err(NotFound) => Ok(Gavel.default_config)
-	Err(KvErr(t)) => Err(KvErr(t))
-	Err(BadData(s)) => Err(BadData(s))
-	Err(TooLarge) => Err(TooLarge)
-}
-
-create_tables! : {} => Try({}, [D1Err(Io.Thrown), Constraint(Sql.Constraint)])
-create_tables! = |{}| {
+create_tables! : () => Try({}, [D1Err(Io.Thrown), Constraint(Sql.Constraint)])
+create_tables! = || {
 	for sql in Gavel.schema {
-		_ = Gavel.db.run!(sql, [])?
+		_ = Gavel.db.run!(sql, Sql.none)?
 	}
 	Ok({})
 }

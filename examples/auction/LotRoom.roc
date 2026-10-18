@@ -19,10 +19,10 @@ state_cell = Object.cell("state")
 ## The bidder name. It stays with the socket while the object sleeps.
 Bidder : { name : Str }
 
-Top : { bidder : Str, amount_cents : U64, bids_count : U64 }
+bidder_slot : Object.Attachment(Bidder)
+bidder_slot = Object.attachment("bidder")
 
-## One error type for all handlers of the class.
-Fault : [StorageErr(Io.Thrown), SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge, NotOpen, TooLow(U64), TooHigh(U64), BadMessage, AlreadyOpen, StillOpen, OutOfRange]
+Top : { bidder : Str, amount_cents : U64, bids_count : U64 }
 
 LotRoom :: [].{
 
@@ -55,25 +55,21 @@ LotRoom :: [].{
 	}
 }
 
-init! : Object.Self => Try({}, Fault)
+init! : Object.Self => Try({}, _)
 init! = |self| {
-	_ = self.sql_run!("CREATE TABLE IF NOT EXISTS bids (seq INTEGER PRIMARY KEY AUTOINCREMENT, bidder TEXT NOT NULL, amount_cents INTEGER NOT NULL, at_ms INTEGER NOT NULL)", [])?
+	_ = self.sql_run!("CREATE TABLE IF NOT EXISTS bids (seq INTEGER PRIMARY KEY AUTOINCREMENT, bidder TEXT NOT NULL, amount_cents INTEGER NOT NULL, at_ms INTEGER NOT NULL)", Sql.none)?
 	Ok({})
 }
 
 ## The upgrade request comes from auction-web. The bidder name is in the query.
-fetch! : Object.Self, Request => Try(Response, Fault)
+fetch! : Object.Self, Request => Try(Response, _)
 fetch! = |self, req| match req.query("bidder") {
 	Err(NotFound) => Ok(Response.from_text(400, "bidder is needed"))
 	Ok(name) => match self.accept_with!(req, { tags: [name] }) {
 		Err(NotUpgrade) => Ok(Response.from_status(426))
 		Err(TooLarge) => Ok(Response.from_status(400))
 		Ok({ socket, response }) => {
-			socket.attach!(
-				{
-					name
-				},
-			)?
+			bidder_slot.set!(socket, { name: name })?
 			Ok(response)
 		}
 	}
@@ -81,11 +77,20 @@ fetch! = |self, req| match req.query("bidder") {
 
 # ---- Bids ----
 
+## The state of the lot. A lot with no state is not open. The other errors stay as they are.
+load_state! : Object.Self => Try(State, [NotOpen, BadData(Str), StorageErr(Io.Thrown)])
+load_state! = |self| match state_cell.get!(self) {
+	Ok(st) => Ok(st)
+	Err(NotFound) => Err(NotOpen)
+	Err(BadData(s)) => Err(BadData(s))
+	Err(StorageErr(t)) => Err(StorageErr(t))
+}
+
 ## The best bid and the count of bids. One query: the count is also right for an empty table.
 top! : Object.Self => Try(Top, _)
 top! = |self| {
 	rows : List(Top)
-	rows = self.sql!("SELECT bidder, amount_cents, (SELECT count(*) FROM bids) AS bids_count FROM bids ORDER BY amount_cents DESC, seq ASC LIMIT 1", [])?
+	rows = self.sql!("SELECT bidder, amount_cents, (SELECT count(*) FROM bids) AS bids_count FROM bids ORDER BY amount_cents DESC, seq ASC LIMIT 1", Sql.none)?
 	match rows {
 		[best, ..] => Ok(best)
 		[] => Ok({ bidder: "", amount_cents: 0, bids_count: 0 })
@@ -109,21 +114,19 @@ bid_amount = |msg| {
 place_bid! : Object.Self, Object.Socket, WebSocket.Message => Try({ bidder : Str, amount_cents : U64 }, _)
 place_bid! = |self, socket, msg| {
 	amount = bid_amount(msg)?
-	bidder : Bidder
-	bidder = socket.attachment!()?
-	name = bidder.name
-	st = state_cell.get!(self) ? |_| NotOpen
+	{ name } = bidder_slot.get!(socket)?
+	st = load_state!(self)?
 	best = top!(self)?
-	now = Time.now_ms!({})
+	now = Time.now_ms!()
 	LotRoom.check_bid(st, best.amount_cents, amount, now)?
-	_ = self.sql_run!("INSERT INTO bids (bidder, amount_cents, at_ms) VALUES (?, ?, ?)", [Text(name), Int(amount.to_i64_wrap()), Int(now.to_i64_wrap())])?
+	_ = self.sql_run!("INSERT INTO bids (bidder, amount_cents, at_ms) VALUES (?, ?, ?)", (name, amount, now))?
 	Ok({ bidder: name, amount_cents: amount })
 }
 
-on_message! : Object.Self, Object.Socket, WebSocket.Message => Try({}, Fault)
+on_message! : Object.Self, Object.Socket, WebSocket.Message => Try({}, _)
 on_message! = |self, socket, msg| match place_bid!(self, socket, msg) {
 	Ok({ bidder, amount_cents }) => {
-		broadcast!(self, Json.to_str({ event: "bid", bidder, amount_cents }))
+		_ = self.broadcast!(Text(Json.to_str({ event: "bid", bidder, amount_cents })))
 		Ok({})
 	}
 	Err(NotOpen) => reject!(socket, "the lot is not open")
@@ -137,18 +140,13 @@ on_message! = |self, socket, msg| match place_bid!(self, socket, msg) {
 	}
 }
 
-reject! : Object.Socket, Str => Try({}, Fault)
+reject! : Object.Socket, Str => Try({}, _)
 reject! = |socket, message| {
 	_ = socket.send!(Text(Json.to_str({ event: "error", message })))
 	Ok({})
 }
 
-broadcast! : Object.Self, Str => {}
-broadcast! = |self, text| for s in self.sockets!() {
-	_ = s.send!(Text(text))
-}
-
-on_close! : Object.Self, Object.Socket, WebSocket.Closed => Try({}, Fault)
+on_close! : Object.Self, Object.Socket, WebSocket.Closed => Try({}, _)
 on_close! = |self, socket, closed| {
 	Log.info!("socket closed", { lot: self.id(), code: closed.code, clean: closed.clean })
 	socket.close!(closed.code, closed.reason)
@@ -167,17 +165,16 @@ close_now! = |self, st| {
 	Ok(out)
 }
 
-alarm! : Object.Self, { retry_count : U32, is_retry : Bool } => Try({}, Fault)
+alarm! : Object.Self, { retry_count : U32, is_retry : Bool } => Try({}, _)
 alarm! = |self, _info| match state_cell.get!(self) {
 	Err(NotFound) => Ok({})
-	Err(BadData(s)) => Err(BadData(s))
-	Err(StorageErr(t)) => Err(StorageErr(t))
+	Err(e) => Err(e)
 	Ok(st) =>
 		if st.status == Closed {
 			Ok({})
 		} else {
 			out = close_now!(self, st)?
-			broadcast!(self, Json.to_str({ event: "closed", winner: out.winner, amount_cents: out.amount_cents }))
+			_ = self.broadcast!(Text(Json.to_str({ event: "closed", winner: out.winner, amount_cents: out.amount_cents })))
 			for s in self.sockets!() {
 				s.close!(1000, "lot closed")
 			}
@@ -187,7 +184,7 @@ alarm! = |self, _info| match state_cell.get!(self) {
 
 # ---- Rpc ----
 
-open! : Object.Self, Gavel.Lot => Try({}, Fault)
+open! : Object.Self, Gavel.Lot => Try({ close_ms : U64 }, _)
 open! = |self, lot| match state_cell.get!(self) {
 	Ok(_) => Err(AlreadyOpen)
 	Err(NotFound) => {
@@ -195,28 +192,28 @@ open! = |self, lot| match state_cell.get!(self) {
 			self,
 			{ status: Open, reserve_cents: lot.reserve_cents, close_ms: lot.close_ms, min_step_cents: lot.min_step_cents, max_step_cents: lot.max_step_cents, winner: "", final_cents: 0 },
 		)?
-		self.set_alarm!(lot.close_ms)?
-		Ok({})
+		self.set_alarm_at!(lot.close_ms)?
+		Ok({ close_ms: lot.close_ms })
 	}
 	Err(BadData(s)) => Err(BadData(s))
 	Err(StorageErr(t)) => Err(StorageErr(t))
 }
 
-snapshot! : Object.Self, {} => Try(Gavel.Snapshot, Fault)
+snapshot! : Object.Self, {} => Try(Gavel.Snapshot, _)
 snapshot! = |self, {}| {
-	st = state_cell.get!(self) ? |_| NotOpen
+	st = load_state!(self)?
 	best = top!(self)?
 	Ok({ high: best.amount_cents, bidder: best.bidder, open: st.status == Open, bids_count: best.bids_count })
 }
 
 ## Used by the ledger. A lot that is past its close time but whose alarm has not run yet is closed here.
-close_out! : Object.Self, {} => Try(Gavel.Closeout, Fault)
+close_out! : Object.Self, {} => Try(Gavel.Closeout, _)
 close_out! = |self, {}| {
-	st = state_cell.get!(self) ? |_| NotOpen
+	st = load_state!(self)?
 	match st.status {
 		Closed => Ok({ winner: st.winner, amount_cents: st.final_cents })
 		Open =>
-			if Time.now_ms!({}) >= st.close_ms {
+			if Time.now_ms!() >= st.close_ms {
 				Ok(close_now!(self, st)?)
 			} else {
 				Err(StillOpen)

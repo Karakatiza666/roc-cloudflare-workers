@@ -14,6 +14,8 @@ import pf.Request
 import pf.Response
 import pf.Env
 import pf.Kv
+import pf.Object
+import pf.Sql
 import pf.R2
 import pf.Service
 import pf.WebCrypto
@@ -25,16 +27,14 @@ import LotRoom
 
 db = Gavel.db
 
-lot_rooms = Gavel.lot_rooms
+lot_rooms = Object.namespace("LOT_ROOM", { class: "LotRoom" })
 
 images = R2.binding("BUCKET")
 
-ledger = Service.binding("LEDGER")
+ledger = Service.binding_with("LEDGER", { service: "auction-ledger" })
 
-catalog : Kv(List(Gavel.Lot))
-catalog = Kv.json("KV")
-
-catalog_key = "catalog"
+catalog : Kv.Cell(List(Gavel.Lot))
+catalog = Kv.json("KV").cell("catalog")
 
 lot_columns = "id, title, reserve_cents, close_ms, min_step_cents, max_step_cents"
 
@@ -50,7 +50,7 @@ fetch! = |req| match route!(req) {
 route! : Request => Try(Response, _)
 route! = |req| {
 	Gavel.tables.get!()?
-	match (req.method, req.segments()) {
+	match (req.method(), req.segments()) {
 		(GET, ["lots"]) => list_lots!()
 		(POST, ["lots"]) => create_lot!(req)
 		(GET, ["lots", id]) => show_lot!(id)
@@ -61,9 +61,11 @@ route! = |req| {
 	}
 }
 
-error_response! : [NotFound, Unauthorized, BadRequest(Str), BadData(Str), Constraint(_), ..] => Response
+error_response! : [NotFound, Unauthorized, BadRequest(Str), BadData(Str), Constraint(_), Remote(Gavel.RoomErr), ..] => Response
 error_response! = |e| match e {
 	NotFound => Response.from_text(404, "not found")
+	Remote(NotOpen) => Response.from_text(404, "the lot room is not open")
+	Remote(AlreadyOpen) => Response.from_text(409, "the lot room is open")
 	Unauthorized => Response.from_text(401, "admin token needed")
 	BadRequest(msg) => Response.from_text(400, msg)
 	BadData(msg) => Response.from_text(400, msg)
@@ -87,24 +89,18 @@ require_admin! = |req| {
 
 ## KV is a cache: a failed read is a miss.
 list_lots! : () => Try(Response, _)
-list_lots! = || {
-	lots = match catalog.get!(catalog_key) {
-		Ok(cached) => cached
-		Err(_) => {
-			fresh : List(Gavel.Lot)
-			fresh = db.all!("SELECT ${lot_columns} FROM lots ORDER BY close_ms", [])?
-			match catalog.put_with!(catalog_key, fresh, { ttl_ms: 300_000 }) {
-				Ok({}) => {}
-				Err(e) => Log.warn!("catalog cache write failed", Str.inspect(e))
-			}
-			fresh
-		}
+list_lots! = || match catalog.get!() {
+	Ok(cached) => Ok(Response.from_json(200, cached))
+	Err(_) => {
+		fresh : List(Gavel.Lot)
+		fresh = db.all!("SELECT ${lot_columns} FROM lots ORDER BY close_ms", Sql.none)?
+		# The client gets the list first. The cache write is after the response.
+		Ok(Response.from_json(200, fresh).after(|| catalog.set_with!(fresh, { ttl_ms: 300_000 })))
 	}
-	Ok(Response.from_json(200, lots))
 }
 
 find_lot! : Str => Try(Gavel.Lot, _)
-find_lot! = |id| db.first!("SELECT ${lot_columns} FROM lots WHERE id = ?", [Text(id)])
+find_lot! = |id| db.first!("SELECT ${lot_columns} FROM lots WHERE id = ?", [id])
 
 show_lot! : Str => Try(Response, _)
 show_lot! = |id| {
@@ -119,7 +115,7 @@ create_lot! = |req| {
 	require_admin!(req)?
 	new : NewLot
 	new = req.json!()?
-	if new.id == "" or new.close_ms <= Time.now_ms!({}) {
+	if new.id == "" or new.close_ms <= Time.now_ms!() {
 		return Err(BadRequest("id is empty or the close time is past"))
 	}
 	cfg = Gavel.config.get!()?
@@ -128,42 +124,30 @@ create_lot! = |req| {
 	lot = { id: new.id, title: new.title, reserve_cents: new.reserve_cents, close_ms: new.close_ms, min_step_cents: step, max_step_cents: cfg.max_step_cents }
 	_ = db.run!(
 		"INSERT INTO lots (${lot_columns}) VALUES (?, ?, ?, ?, ?, ?)",
-		[Text(lot.id), Text(lot.title), Int(lot.reserve_cents.to_i64_wrap()), Int(lot.close_ms.to_i64_wrap()), Int(lot.min_step_cents.to_i64_wrap()), Int(lot.max_step_cents.to_i64_wrap())],
+		(lot.id, lot.title, lot.reserve_cents, lot.close_ms, lot.min_step_cents, lot.max_step_cents),
 	)?
 	# The room sets its alarm to the close time. When it fails, remove the row.
 	match lot_rooms.named(lot.id).call!(Gavel.open, lot) {
-		Ok({}) => {}
+		Ok(_) => {}
 		Err(e) => {
-			_ = db.run!("DELETE FROM lots WHERE id = ?", [Text(lot.id)])
+			_ = db.run!("DELETE FROM lots WHERE id = ?", [lot.id])
 			return Err(e)
 		}
 	}
-	catalog.delete!(catalog_key)?
+	catalog.delete!()?
 	Ok(Response.from_json(201, lot))
 }
 
 # ---- Images ----
 
 get_image! : Request, Str => Try(Response, _)
-get_image! = |req, id| {
-	key = "images/${id}.jpg"
-	# R2 wants an etag with no quotes, a browser sends it with quotes.
-	found = match req.header("if-none-match") {
-		Ok(tag) => images.get_with!(key, { only_if: { etag_does_not_match: tag.drop_prefix("\"").drop_suffix("\"") } })
-		Err(NotFound) => images.get!(key)
-	}
-	match found {
-		Ok(obj) => Ok(Response.from_body(200, obj.meta.http.?content_type ?? "image/jpeg", obj.body).with_header("etag", obj.meta.http_etag))
-		Err(PreconditionFailed) => Ok(Response.from_status(304))
-		Err(e) => Err(e)
-	}
-}
+get_image! = |req, id| Ok(images.respond!("images/${id}.jpg", req)?)
 
 put_image! : Request, Str => Try(Response, _)
 put_image! = |req, id| {
 	require_admin!(req)?
 	_ = find_lot!(id)?
-	meta = images.put_with!("images/${id}.jpg", req.body, { http: { content_type: req.header("content-type") ?? "image/jpeg" } })?
+	meta = images.put_with!("images/${id}.jpg", req.body(), { http: { content_type: req.header("content-type") ?? "image/jpeg" } })?
 	Ok(Response.from_json(201, { etag: meta.http_etag, size_bytes: meta.size_bytes }))
 }
 
@@ -182,13 +166,18 @@ live! = |req, id| {
 
 # ---- Cron ----
 
-scheduled! : Worker.Scheduled => Try({}, _)
-scheduled! = |s| {
+settle! : Worker.Scheduled => Try({}, _)
+settle! = |s| {
 	{ settled } = ledger.call!(Gavel.settle_due, {})?
-	Log.info!("settled lots", { cron: s.cron, settled })
+	Log.info!("settled lots", { cron: s.cron(), settled })
 	Ok({})
 }
 
-worker = Worker.{ fetch!, scheduled!, objects: [LotRoom.class] }
+worker = Worker.new({
+	fetch!,
+	objects: [LotRoom.class],
+	bindings: [Gavel.db.declare(), Gavel.kv.declare(), images.declare(), lot_rooms.declare(), ledger.declare()],
+	crons: [Worker.cron("*/5 * * * *", settle!)],
+})
 
 event! = |e| worker.event!(e)

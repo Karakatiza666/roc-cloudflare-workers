@@ -5,49 +5,47 @@ app [event!] { pf: platform "../../platform/main.roc" }
 ## | Entry | Does |
 ## | --- | --- |
 ## | Rpc `settle_due` (default entry point) | for each closed lot with no settlement: close_out on the room, receipt in R2, row in D1 |
-## | Cron `0 * * * *` | read the FX feed (WebSocket client), store the rates in KV, then settle |
+## | Cron `0 * * * *` (`Worker.cron`) | read the FX feed (WebSocket client), store the rates in KV, then settle |
 import pf.Worker
 import pf.Request
 import pf.Response
 import pf.R2
 import pf.WebSocket
 import pf.Time
-import pf.Io
+import pf.Object
+import pf.Sql
 import pf.Log
 import Gavel
 
 receipts = R2.binding("RECEIPTS")
+
+## The class `LotRoom` is in the script of auction-web.
+lot_rooms = Object.namespace("LOT_ROOM", { class: "LotRoom", script: "auction-web" })
 
 feed_url = "wss://fx.example.com/stream"
 
 ## The longest wait for the feed.
 feed_limit_ms = 20_000
 
-rates_key = "fx:rates"
-
 ## One message of the feed.
-Tick : { currency : Str, rate : Dec }
+Tick : { currency : Str, rate : F64 }
 
 fetch! : Request => Try(Response, e)
-fetch! = |req| match (req.method, req.segments()) {
+fetch! = |req| match (req.method(), req.segments()) {
 	(GET, ["health"]) => Ok(Response.from_text(200, "ok"))
 	_ => Ok(Response.from_status(404))
 }
 
 # ---- Settlement ----
 
-settle_due! : {}, {} => Try({ settled : U32 }, _)
-settle_due! = |{}, {}| {
+settle_due! : {} => Try({ settled : U32 }, Gavel.SettleErr)
+settle_due! = |{}| {
 	Gavel.tables.get!()?
 	cfg = Gavel.config.get!()?
-	now = Time.now_ms!({})
-	rates = match Gavel.rates_kv.get!(rates_key) {
-		Ok(r) => r
-		Err(NotFound) => { as_of_ms: 0, rates: [] }
-		Err(e) => return Err(e)
-	}
+	now = Time.now_ms!()
+	rates = Gavel.rates_cell.get_or!(Gavel.no_rates)?
 	due : List({ id : Str })
-	due = Gavel.db.all!("SELECT id FROM lots WHERE close_ms <= ? AND id NOT IN (SELECT lot_id FROM settlements) ORDER BY close_ms LIMIT 50", [Int(now.to_i64_wrap())])?
+	due = Gavel.db.all!("SELECT id FROM lots WHERE close_ms <= ? AND id NOT IN (SELECT lot_id FROM settlements) ORDER BY close_ms LIMIT 50", [now])?
 	var $settled = 0.U32
 	for lot in due {
 		# One bad lot (for example, a room that is still open) does not stop the others.
@@ -64,12 +62,12 @@ settle_due! = |{}, {}| {
 ## The receipt goes to R2 first and the row to D1 last. A failure between them leaves the lot due, and the next run does it again.
 settle_one! : Str, Gavel.Config, Gavel.Rates, U64 => Try({}, _)
 settle_one! = |id, cfg, rates, now| {
-	closeout = Gavel.lot_rooms.named(id).call!(Gavel.close_out, {})?
+	closeout = lot_rooms.named(id).call!(Gavel.close_out, {})?
 	receipt = make_receipt(id, closeout, cfg, rates, now)
 	_ = receipts.put_with!("receipts/${id}.json", Text(Json.to_str(receipt)), { http: { content_type: "application/json" } })?
 	_ = Gavel.db.run!(
 		"INSERT OR REPLACE INTO settlements (lot_id, winner, amount_cents, settled_ms) VALUES (?, ?, ?, ?)",
-		[Text(id), Text(closeout.winner), Int(closeout.amount_cents.to_i64_wrap()), Int(now.to_i64_wrap())],
+		(id, closeout.winner, closeout.amount_cents, now),
 	)?
 	Ok({})
 }
@@ -79,7 +77,7 @@ make_receipt : Str, Gavel.Closeout, Gavel.Config, Gavel.Rates, U64 -> Gavel.Rece
 make_receipt = |id, closeout, cfg, rates, now| {
 	converted = cfg.currencies.keep_oks(
 		|currency| match rates.rates.find_first(|r| r.currency == currency) {
-			Ok(r) => Ok({ currency, amount_cents: (closeout.amount_cents.to_dec() * r.rate).round_to_u64_try() ?? 0 })
+			Ok(r) => Ok({ currency, amount_cents: (closeout.amount_cents.to_f64() * r.rate).round_to_u64_try() ?? 0 })
 			Err(NotFound) => Err(NoRate)
 		},
 	)
@@ -104,19 +102,17 @@ refresh_rates! = || {
 	cfg = Gavel.config.get!()?
 	ws = WebSocket.connect!(feed_url)?
 	_ = ws.send_json!({ op: "subscribe", base: "USD", currencies: cfg.currencies })
-	deadline = Time.now_ms!({}) + feed_limit_ms
+	deadline = Time.now_ms!() + feed_limit_ms
 	no_ticks : List(Tick)
 	no_ticks = []
 	var $ticks = no_ticks
 	while !has_all(cfg.currencies, $ticks) {
-		now = Time.now_ms!({})
+		now = Time.now_ms!()
 		if now >= deadline {
 			break
 		}
-		# A receive that loses the race takes no message (MODULES.md 12.2).
-		got = Io.race!([ws.receive().map(|m| Got(m)), Time.sleep(deadline - now).map(|_| TimedOut)])
-		match got.result {
-			Ok(Got(msg)) => {
+		match ws.receive().timeout(deadline - now).run!() {
+			Ok(msg) => {
 				tick : Try(Tick, _)
 				tick = msg.json()
 				# A frame that is not a tick (a heartbeat) is skipped.
@@ -127,7 +123,7 @@ refresh_rates! = || {
 					Err(_) => {}
 				}
 			}
-			Ok(TimedOut) => break
+			Err(TimedOut) => break
 			Err(Closed(_)) => break
 		}
 	}
@@ -137,30 +133,27 @@ refresh_rates! = || {
 		return Err(MissingRates(missing))
 	}
 	rates : Gavel.Rates
-	rates = { as_of_ms: Time.now_ms!({}), rates: $ticks.map(|t| { currency: t.currency, rate: t.rate }) }
-	Gavel.rates_kv.put_with!(rates_key, rates, { ttl_ms: 7_200_000 })?
+	rates = { as_of_ms: Time.now_ms!(), rates: $ticks.map(|t| { currency: t.currency, rate: t.rate }) }
+	Gavel.rates_cell.set_with!(rates, { ttl_ms: 7_200_000 })?
 	Ok({ stored: rates.rates.len() })
 }
 
-scheduled! : Worker.Scheduled => Try({}, _)
-scheduled! = |s| match s.cron {
-	"0 * * * *" => {
-		match refresh_rates!() {
-			Ok({ stored }) => Log.info!("fx rates stored", { count: stored })
-			Err(e) => Log.warn!("fx refresh failed", Str.inspect(e))
-		}
-		{ settled } = settle_due!({}, {})?
-		Log.info!(
-			"settled lots",
-			{
-				settled
-			},
-		)
-		Ok({})
+hourly! : Worker.Scheduled => Try({}, _)
+hourly! = |_s| {
+	match refresh_rates!() {
+		Ok({ stored }) => Log.info!("fx rates stored", { count: stored })
+		Err(e) => Log.warn!("fx refresh failed", Str.inspect(e))
 	}
-	other => Err(UnknownCron(other))
+	{ settled } = settle_due!({})?
+	Log.info!("settled lots", { settled: settled })
+	Ok({})
 }
 
-worker = Worker.{ fetch!, scheduled!, rpc: [Gavel.settle_due.on(settle_due!)] }
+worker = Worker.new({
+	fetch!,
+	rpc: [Gavel.settle_due.on_worker(settle_due!)],
+	bindings: [Gavel.db.declare(), Gavel.kv.declare(), receipts.declare(), lot_rooms.declare()],
+	crons: [Worker.cron("0 * * * *", hourly!)],
+})
 
 event! = |e| worker.event!(e)
