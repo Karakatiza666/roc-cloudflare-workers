@@ -105,7 +105,7 @@ params = |text| if text == "" [] else text.split_on(",").map(|item| match item.s
 })
 
 stmts : Str -> List(Sql.Stmt)
-stmts = |text| text.split_on(";").map(|s| Sql.stmt(s, []))
+stmts = |text| text.split_on(";").map(|s| Sql.stmt(s, Sql.none))
 
 How : [Direct, Twin, With(U64), WithTwin(U64)]
 
@@ -267,9 +267,9 @@ batch = |r| match r {
 ## PLAN.md 8c: 2 inserts and a select in one `batch!`: 3 results, and `first()` of the third reads the count.
 batch_count! : Str => Response
 batch_count! = |grp| match db.batch!([
-	Sql.stmt("INSERT INTO release (grp, version) VALUES (?, ?)", [Text(grp), Text("1.0.0")]),
-	Sql.stmt("INSERT INTO release (grp, version) VALUES (?, ?)", [Text(grp), Text("1.1.0")]),
-	Sql.stmt("SELECT count(*) AS n FROM release WHERE grp = ?", [Text(grp)]),
+	Sql.stmt("INSERT INTO release (grp, version) VALUES (?, ?)", (grp, "1.0.0")),
+	Sql.stmt("INSERT INTO release (grp, version) VALUES (?, ?)", (grp, "1.1.0")),
+	Sql.stmt("SELECT count(*) AS n FROM release WHERE grp = ?", [grp]),
 ]) {
 	Ok([a, b, counted]) => {
 		count : Try(Count, _)
@@ -308,7 +308,7 @@ session! : Str => Response
 session! = |k| match db.with_session!(Primary) {
 	Ok(s) => {
 		before = s.bookmark!()
-		inserted = s.run!("INSERT INTO kv (k, v) VALUES (?, ?)", [Text(k), Text("session")])
+		inserted = s.run!("INSERT INTO kv (k, v) VALUES (?, ?)", (k, "session"))
 		after = s.bookmark!()
 		Response.from_text(200, "before=${Str.inspect(before)} insert=${Str.inspect(inserted.map_ok(|_| {}))} after=${after ?? "none"}")
 	}
@@ -320,7 +320,7 @@ session_after! : Str, Str => Response
 session_after! = |b, k| match db.with_session!(After(b)) {
 	Ok(s) => {
 		r : Try(TextRow, _)
-		r = s.first!("SELECT v AS t FROM kv WHERE k = ?", [Text(k)])
+		r = s.first!("SELECT v AS t FROM kv WHERE k = ?", [k])
 		out(r)
 	}
 	Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")

@@ -178,15 +178,15 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 
 		## Rows as the type of the call (`rows : List(Row)`), to `Body.default_max` bytes of CBOR: `sql.exec(...).toArray()`,
 		## then `pf.pack`. The integer rules of `D1.all!` (MODULES.md 5.1): `CAST(x AS TEXT)` reads into an `I64`.
-		sql! : Object.Self, Str, List(Sql) => Try(rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
-		sql! = |self, sql, params| sql_typed!(self, sql, params, Body.default_max)
+		sql! : Object.Self, Str, params => Try(rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs]), params.Cbor.Encodable([])]
+		sql! = |self, sql, params| sql_typed!(self, sql, Cbor.encode(params), Body.default_max)
 
-		sql_with! : Object.Self, Str, List(Sql), { max_bytes : U64 } => Try(rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
-		sql_with! = |self, sql, params, opts| sql_typed!(self, sql, params, opts.max_bytes)
+		sql_with! : Object.Self, Str, params, { max_bytes : U64 } => Try(rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs]), params.Cbor.Encodable([])]
+		sql_with! = |self, sql, params, opts| sql_typed!(self, sql, Cbor.encode(params), opts.max_bytes)
 
 		## A write: `rowsRead` and `rowsWritten` of the cursor (an object cursor has no `changes` and no last row id).
-		sql_run! : Object.Self, Str, List(Sql) => Try(Object.SqlInfo, [SqlErr(Io.Thrown), Constraint(Sql.Constraint)])
-		sql_run! = |_self, sql, params| match Io.call!(sql_ops(sql, params).concat([Call(Slot(2), "toArray", []), Fields(Slot(2), ["rowsRead", "rowsWritten"])])) {
+		sql_run! : Object.Self, Str, params => Try(Object.SqlInfo, [SqlErr(Io.Thrown), Constraint(Sql.Constraint)]) where [params.Cbor.Encodable([])]
+		sql_run! = |_self, sql, params| match Io.call!(sql_ops(sql, Cbor.encode(params)).concat([Call(Slot(2), "toArray", []), Fields(Slot(2), ["rowsRead", "rowsWritten"])])) {
 			Ok(Obj(fields)) => match (field(fields, "rowsRead"), field(fields, "rowsWritten")) {
 				(Int(r), Int(w)) => Ok({ rows_read: r.to_u64_try() ?? 0, rows_written: w.to_u64_try() ?? 0 })
 				other => Err(SqlErr({ name: "BadData", message: "the cursor gave ${Str.inspect(other)}" }))
@@ -200,11 +200,11 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 		}
 
 		## Rows with no types: the column names, then the values (`raw()`), to `Body.default_max` bytes.
-		sql_rows! : Object.Self, Str, List(Sql) => Try(Sql.Rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), TooLarge])
-		sql_rows! = |self, sql, params| sql_raw!(self, sql, params, Body.default_max)
+		sql_rows! : Object.Self, Str, params => Try(Sql.Rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), TooLarge]) where [params.Cbor.Encodable([])]
+		sql_rows! = |self, sql, params| sql_raw!(self, sql, Cbor.encode(params), Body.default_max)
 
-		sql_rows_with! : Object.Self, Str, List(Sql), { max_bytes : U64 } => Try(Sql.Rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), TooLarge])
-		sql_rows_with! = |self, sql, params, opts| sql_raw!(self, sql, params, opts.max_bytes)
+		sql_rows_with! : Object.Self, Str, params, { max_bytes : U64 } => Try(Sql.Rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), TooLarge]) where [params.Cbor.Encodable([])]
+		sql_rows_with! = |self, sql, params, opts| sql_raw!(self, sql, Cbor.encode(params), opts.max_bytes)
 
 		## `storage.setAlarm(time_ms)`: a promise, one wait. A class with no `alarm!` has no `alarm` method in JS, so
 		## Workers throws: `StorageErr`.
@@ -497,16 +497,17 @@ location_text = |l| match l {
 	Me => "me"
 }
 
-## `ctx.storage.sql.exec(sql, ...params)`: the cursor is in slot 2. A parameter follows the rule of D1 (MODULES.md 5.1):
-## object SQL takes no `BigInt` either ("Cannot convert a BigInt value to a number", PLAN.md 8f, part 1).
-sql_ops : Str, List(Sql) -> List(Js.Op)
+## `ctx.storage.sql.exec(sql, ...params)` as `pf.sqlExec(sql_api, sql, params)` (js/helpers.js): the cursor is in slot 2.
+## `params` is the CBOR of an array, checked as for D1 (MODULES.md 5.1): object SQL takes no `BigInt` either
+## ("Cannot convert a BigInt value to a number", PLAN.md 8f, part 1).
+sql_ops : Str, List(U8) -> List(Js.Op)
 sql_ops = |sql, params| [
 	Get(Root("ctx"), "storage"),
 	Get(Slot(0), "sql"),
-	Call(Slot(1), "exec", [Lit(Text(sql))].concat(params.map(|p| Lit(SqlRules.param(p))))),
+	Call(Root("pf"), "sqlExec", [Slot(1), Lit(Text(sql)), Lit(Packed(params))]),
 ]
 
-sql_typed! : Object.Self, Str, List(Sql), U64 => Try(rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+sql_typed! : Object.Self, Str, List(U8), U64 => Try(rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
 sql_typed! = |_self, sql, params, max| match Io.call!(sql_ops(sql, params).concat([Call(Slot(2), "toArray", []), Call(Root("pf"), "pack", [Slot(3), Lit(Int(limit(max)))])])) {
 	Ok(Packed(bytes)) => match SqlRules.typed(bytes) {
 		Ok(v) => Ok(v)
@@ -520,7 +521,7 @@ sql_typed! = |_self, sql, params, max| match Io.call!(sql_ops(sql, params).conca
 	}
 }
 
-sql_raw! : Object.Self, Str, List(Sql), U64 => Try(Sql.Rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), TooLarge])
+sql_raw! : Object.Self, Str, List(U8), U64 => Try(Sql.Rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), TooLarge])
 sql_raw! = |_self, sql, params, max| {
 	ops = sql_ops(sql, params).concat([
 		Get(Slot(2), "columnNames"),

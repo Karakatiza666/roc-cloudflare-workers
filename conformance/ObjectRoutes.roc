@@ -142,7 +142,7 @@ counter_fetch! = |self, req| match req.segments() {
 		]
 		var $failed = []
 		for sql in made {
-			match self.sql_run!(sql, []) {
+			match self.sql_run!(sql, Sql.none) {
 				Ok(_) => {}
 				Err(e) => {
 					$failed = $failed.append(e)
@@ -163,45 +163,45 @@ counter_fetch! = |self, req| match req.segments() {
 			"trigger" => "INSERT INTO t (id, u, n) VALUES (99, 'w', 1)"
 			_ => "SELEC 1"
 		}
-		answer(Str.inspect(self.sql_run!(sql, [])))
+		answer(Str.inspect(self.sql_run!(sql, Sql.none)))
 	}
-	["sql_run"] => answer(Str.inspect(self.sql_run!("INSERT INTO noidx (a, b) VALUES (?, ?), (?, ?)", [Text("x"), Text("y"), Text("z"), Text("w")])))
+	["sql_run"] => answer(Str.inspect(self.sql_run!("INSERT INTO noidx (a, b) VALUES (?, ?), (?, ?)", ("x", "y", "z", "w"))))
 	["sql_all"] => {
 		rows : Try(List(Row), _)
-		rows = self.sql!("SELECT id, u FROM t WHERE id = ?", [Int(1)])
+		rows = self.sql!("SELECT id, u FROM t WHERE id = ?", [1.I64])
 		answer(Str.inspect(rows))
 	}
 	# The integer rules of MODULES.md 5.1: a parameter outside ±(2^53 - 1) goes as text and is stored exact, `CAST(v AS
 	# TEXT)` reads it into an `I64`, and with no cast it is `BadData` with the column.
 	["sql_int"] => {
-		_ = self.sql_run!("INSERT OR REPLACE INTO wide (k, v) VALUES ('max', ?), ('neg', ?)", [Int(9_223_372_036_854_775_807), Int(-2_687_166_099_708_853_831)])
+		_ = self.sql_run!("INSERT OR REPLACE INTO wide (k, v) VALUES ('max', ?), ('neg', ?)", (9_223_372_036_854_775_807.I64, -2_687_166_099_708_853_831.I64))
 		cast : Try(List(Wide), _)
-		cast = self.sql!("SELECT CAST(v AS TEXT) AS v FROM wide ORDER BY k", [])
+		cast = self.sql!("SELECT CAST(v AS TEXT) AS v FROM wide ORDER BY k", Sql.none)
 		plain : Try(List(Wide), _)
-		plain = self.sql!("SELECT v FROM wide WHERE k = 'max'", [])
+		plain = self.sql!("SELECT v FROM wide WHERE k = 'max'", Sql.none)
 		answer("cast=${Str.inspect(cast)} plain=${Str.inspect(plain)}")
 	}
-	["sql_rows"] => answer(Str.inspect(self.sql_rows!("SELECT id, u, b, 1.5 AS r, NULL AS z FROM t WHERE id = 1", [])))
-	["sql_rows_with"] => answer(Str.inspect(self.sql_rows_with!("SELECT id FROM t WHERE id = 1", [], { max_bytes: 4 })))
+	["sql_rows"] => answer(Str.inspect(self.sql_rows!("SELECT id, u, b, 1.5 AS r, NULL AS z FROM t WHERE id = 1", Sql.none)))
+	["sql_rows_with"] => answer(Str.inspect(self.sql_rows_with!("SELECT id FROM t WHERE id = 1", Sql.none, { max_bytes: 4 })))
 	# MC11: 22 rows of 100,000 bytes (2.2 MB) are above the 1 MiB default and the 2 MiB of the test, and below 4 MiB.
 	["sql_big"] => {
-		_ = self.sql_run!("CREATE TABLE IF NOT EXISTS big (x TEXT)", [])
-		_ = self.sql_run!("DELETE FROM big", [])
-		_ = self.sql_run!("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 22) INSERT INTO big (x) SELECT printf('%.*c', 100000, 'x') FROM n", [])
+		_ = self.sql_run!("CREATE TABLE IF NOT EXISTS big (x TEXT)", Sql.none)
+		_ = self.sql_run!("DELETE FROM big", Sql.none)
+		_ = self.sql_run!("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 22) INSERT INTO big (x) SELECT printf('%.*c', 100000, 'x') FROM n", Sql.none)
 		small : Try(List(Big), _)
-		small = self.sql!("SELECT x FROM big", [])
+		small = self.sql!("SELECT x FROM big", Sql.none)
 		two : Try(List(Big), _)
-		two = self.sql_with!("SELECT x FROM big", [], { max_bytes: 2_097_152 })
+		two = self.sql_with!("SELECT x FROM big", Sql.none, { max_bytes: 2_097_152 })
 		four : Try(List(Big), _)
-		four = self.sql_with!("SELECT x FROM big", [], { max_bytes: 4_194_304 })
-		rows = self.sql_rows!("SELECT x FROM big", [])
+		four = self.sql_with!("SELECT x FROM big", Sql.none, { max_bytes: 4_194_304 })
+		rows = self.sql_rows!("SELECT x FROM big", Sql.none)
 		show = |r| match r {
 			Ok(list) => "Ok rows=${List.len(list).to_str()}"
 			Err(e) => "Err ${Str.inspect(e)}"
 		}
 		answer("default=${show(small)} two=${show(two)} four=${show(four)} rows=${show(rows.map_ok(|x| x.rows))}")
 	}
-	["sql_syntax"] => answer(Str.inspect(self.sql_run!("SELEC 1", [])))
+	["sql_syntax"] => answer(Str.inspect(self.sql_run!("SELEC 1", Sql.none)))
 	# Cells a1, a2, b1: `list_with!` with a prefix, `list!` of all keys.
 	["cells"] => {
 		_ = Object.cell("a1").set!(self, "one")
@@ -231,12 +231,12 @@ counter_fetch! = |self, req| match req.segments() {
 	}
 	# A table, a cell and an alarm, then `delete_all!`: all three are gone.
 	["delete_all"] => {
-		_ = self.sql_run!("CREATE TABLE IF NOT EXISTS gone (a)", [])
+		_ = self.sql_run!("CREATE TABLE IF NOT EXISTS gone (a)", Sql.none)
 		_ = count.set!(self, 5)
 		_ = self.set_alarm!(Time.now_ms!({}) + 3_600_000)
 		del = if Q.text(req, "twin") == "1" Io.run!(self.delete_all()) else self.delete_all!()
 		table : Try(List({ a : I64 }), _)
-		table = self.sql!("SELECT a FROM gone", [])
+		table = self.sql!("SELECT a FROM gone", Sql.none)
 		answer("del=${Str.inspect(del)} table=${Str.inspect(table.is_ok())} cell=${Str.inspect(count.get!(self))} alarm=${Str.inspect(self.get_alarm!())}")
 	}
 	# API.md 10.2: `respond!` in the `Fetch` of an object, then work after it.
@@ -278,7 +278,7 @@ echo! = |_self, v| Ok(v)
 store_init! : Object.Self => Try({}, [SqlErr(Io.Thrown), Constraint(Sql.Constraint)])
 store_init! = |self| {
 	Time.sleep!(100)
-	_ = self.sql_run!("CREATE TABLE IF NOT EXISTS items (k TEXT)", [])?
+	_ = self.sql_run!("CREATE TABLE IF NOT EXISTS items (k TEXT)", Sql.none)?
 	Ok({})
 }
 
@@ -287,7 +287,7 @@ store_fetch! = |self, req| match req.segments() {
 	["set_alarm"] => answer(Str.inspect(self.set_alarm!(Time.now_ms!({}) + 60_000)))
 	_ => {
 		n : Try(List({ n : U64 }), _)
-		n = self.sql!("SELECT count(*) AS n FROM items", [])
+		n = self.sql!("SELECT count(*) AS n FROM items", Sql.none)
 		answer(Str.inspect(n))
 	}
 }
@@ -325,6 +325,6 @@ ticker_alarm! = |_self, info| {
 kv_only_fetch! : Object.Self, Request => Try(Response, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])
 kv_only_fetch! = |self, _req| {
 	rows : List({ x : I64 })
-	rows = self.sql!("SELECT 1 AS x", [])?
+	rows = self.sql!("SELECT 1 AS x", Sql.none)?
 	Ok(Response.from_text(200, Str.inspect(rows)))
 }

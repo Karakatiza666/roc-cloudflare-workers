@@ -1,22 +1,10 @@
-## The SQL rules that `D1` and the SQL of a Durable Object (`Object.Self`) share (MODULES.md 5.1, 7): the parameter rule,
-## typed rows with the integer rules, rows with no types, and the map of a constraint failure. Not in `exposes`: only
+## The SQL rules that `D1` and the SQL of a Durable Object (`Object.Self`) share (MODULES.md 5.1, 7): typed rows with the integer rules, rows with no types, and the map of a constraint failure. Not in `exposes`: only
 ## platform modules use it. Local object SQL gives the same texts as D1, with no `D1_ERROR: ` (PLAN.md 8f, part 1).
 import Js
 import Sql
 import cbor.Cbor
 
 SqlRules :: [].{
-	## A parameter (5.1): D1 takes no `BigInt` (`D1_TYPE_ERROR`), so an `Int` outside ±(2^53 - 1) goes as decimal text.
-	## SQLite makes it an integer where it meets an INTEGER column, arithmetic or a `CAST`.
-	param : Sql -> Js
-	param = |v| match v {
-		Null => Null
-		Int(i) => if i > max_safe or i < -max_safe Text(i.to_str()) else Int(i)
-		Real(f) => Num(f)
-		Text(s) => Text(s)
-		Blob(b) => Bytes(b)
-	}
-
 	row_of : Js -> List(Sql)
 	row_of = |r| match r {
 		Arr(values) => values.map(value_of)
@@ -64,9 +52,6 @@ SqlRules :: [].{
 		}
 	}
 }
-
-max_safe : I64
-max_safe = 9_007_199_254_740_991
 
 ## A value of `raw()`: D1 gives a blob as an array of numbers, and a number as a JS `Number` (a size of 2^53 or more
 ## is an f64, `Real`).
@@ -160,12 +145,6 @@ expect SqlRules.constraint_of("x failed: SQLITE_CONSTRAINT") == Ok({ kind: Other
 expect SqlRules.constraint_of("D1_ERROR: x: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_ROWID)") == Ok({ kind: Other, message: "x" })
 expect SqlRules.constraint_of("D1_ERROR: near \"SELEC\": syntax error at offset 0: SQLITE_ERROR") == Err(NotConstraint)
 expect SqlRules.constraint_of("D1_ERROR: CHECK constraint failed: c >= 0: SQLITE_CONSTRAINT_EXTRA") == Err(NotConstraint)
-
-# 5.1, "Parameters": an `Int` outside ±(2^53 - 1) goes as decimal text.
-expect SqlRules.param(Int(9_007_199_254_740_991)) == Int(9_007_199_254_740_991)
-expect SqlRules.param(Int(9_007_199_254_740_992)) == Text("9007199254740992")
-expect SqlRules.param(Int(-9_007_199_254_740_991)) == Int(-9_007_199_254_740_991)
-expect SqlRules.param(Int(-9_007_199_254_740_993)) == Text("-9007199254740993")
 
 expect missing("MissingRequiredField(\"id\")") == "column id: missing"
 expect missing("Other") == "Other"
