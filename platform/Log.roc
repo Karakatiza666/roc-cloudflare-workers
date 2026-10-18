@@ -35,7 +35,7 @@ line = |level, msg, fields| {
 
 ## `console.<method>(line)`. A throw is a platform bug: a crash.
 write! : Str, Str => {}
-write! = |method, text| match Io.call!([Get(Root("global"), "console"), Call(Slot(0), method, [Lit(Text(text))])]) {
+write! = |method, text| match Js.call!([Get(Root("global"), "console"), Call(Slot(0), method, [Lit(Text(text))])]) {
 	Ok(_) => {}
 	Err(t) => crash "Log: console.${method}: ${t.name}: ${t.message}"
 }

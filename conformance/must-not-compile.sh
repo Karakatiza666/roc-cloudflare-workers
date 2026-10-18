@@ -103,7 +103,7 @@ import pf.Cache
 import pf.Ctx
 fetch! : Request => Try(Response, _)
 fetch! = |req| {
-	res = Response.from_body(200, "text/plain", req.body)
+	res = Response.from_body(200, "text/plain", req.body())
 	cache = Cache.default'
 fetch_footer='	Ok(res)
 }
@@ -120,11 +120,11 @@ trap 'rm -f "$tmp" "$dir/_id64_case.roc"' EXIT
 cases=(
   'control: put! result kept|fetch|\t_ = cache.put!("https://x/a", res)?|-'
   'control: wait_until! of an Io({}, e)|fetch|\tCtx.wait_until!(cache.delete("https://x/b"))|-'
-  'control: after in a fetch! handler|fetch|\t_ = cache\n\t_ = res.after(|_| Ok({}))|-'
+  'control: after in a fetch! handler|fetch|\t_ = cache\n\t_ = res.after(|| Ok({}))|-'
   'control: a cron handler that gives {}|cron|scheduled! = |_s| Ok({})|-'
   'put! as a statement|fetch|\tcache.put!("https://x/a", res)?|must evaluate to {}'
   'wait_until! of cache.put|fetch|\tCtx.wait_until!(cache.put("https://x/b", res))|Io({}, e)'
-  'after in a cron handler|cron|scheduled! = |_s| Ok(Response.from_text(200, "x").after(|_| Ok({})))|Ok(Response)'
+  'after in a cron handler|cron|scheduled! = |_s| Ok(Response.from_text(200, "x").after(|| Ok({})))|Ok(Response)'
 )
 for c in "${cases[@]}"; do
   IFS='|' read -r name kind rest <<< "$c"
@@ -137,4 +137,54 @@ for c in "${cases[@]}"; do
   elif [ $code -eq 1 ] && grep -qF -- "$want" <<< "$out"; then echo "PASS after/put $name does not compile ($want)"
   else echo "FAIL after/put $name: it compiles, or the error has no '$want'"; echo "$out" | head -12; rc=1; fi
 done
+# 8h wave C (MODULES.md MC14, MC15): `Request`, `Response` and the handler payloads are opaque, read through methods; a function with
+# no argument takes `()`; `Io.await!` is `Js.await!`. Each bad case is one line in a body, with its control (the allowed line) first.
+wc_header='app [event!] { pf: platform "../../bench/platform/main.roc" }
+import pf.Worker
+import pf.Request
+import pf.Response
+import pf.Time
+import pf.Io
+import pf.Js
+import pf.Memo'
+tmp=$dir/_wavec_case.roc
+trap 'rm -f "$tmp" "$dir/_id64_case.roc" "$dir/_after_case.roc"' EXIT
+# name | kind (fetch, sched, top) | lines | expected error text ("-" for a control)
+cases=(
+  'control: req.method() on an annotated request|fetch|\tm = req.method()\n\t_ = m|-'
+  'req.method as a field|fetch|\tm = req.method\n\t_ = m|need a record'
+  'control: Request.new|fetch|\tx = Request.new(GET, "http://x")\n\t_ = x|-'
+  'Request.{ ... } literal|fetch|\tx = Request.{ method: GET, url: "http://x" }\n\t_ = x|opaque'
+  'control: Response.from_status|fetch|\tx = Response.from_status(200)\n\t_ = x|-'
+  'Response.{ ... } literal|fetch|\tx = Response.{ status: 200 }\n\t_ = x|opaque'
+  'control: res.with_status|fetch|\tx = Response.from_status(200).with_status(404)\n\t_ = x|-'
+  'record update of a Response|fetch|\tx = { ..Response.from_status(200), status: 404 }\n\t_ = x|does not have any fields to update'
+  'control: Time.now_ms!()|fetch|\tx = Time.now_ms!()\n\t_ = x|-'
+  'Time.now_ms!({})|fetch|\tx = Time.now_ms!({})\n\t_ = x|too many args'
+  'control: after with no argument|fetch|\t_ = Response.from_status(200).after(|| Ok({}))|-'
+  'after with an argument|fetch|\t_ = Response.from_status(200).after(|_| Ok({}))|TYPE MISMATCH'
+  'control: s.cron()|sched|scheduled! : Worker.Scheduled => Try({}, [])\nscheduled! = |s| if s.cron() == "" Ok({}) else Ok({})|-'
+  's.cron as a field|sched|scheduled! : Worker.Scheduled => Try({}, [])\nscheduled! = |s| if s.cron == "" Ok({}) else Ok({})|need a record'
+  'control: Js.await!|fetch|\t_ = Js.await!([])|-'
+  'Io.await! (moved to Js)|fetch|\t_ = Io.await!([])|await!'
+  'control: Memo.new with a () loader|top|keys = Memo.new("k", { max_age_ms: 5, load!: || Ok("v") })|-'
+  'Memo.new with a {} loader|top|keys = Memo.new("k", { max_age_ms: 5, load!: |{}| Ok("v") })|TYPE MISMATCH'
+)
+for c in "${cases[@]}"; do
+  IFS='|' read -r name kind rest <<< "$c"
+  want=${rest##*|}; line=${rest%|*}
+  case $kind in
+    fetch) printf '%s\nfetch! : Request => Try(Response, _)\nfetch! = |req| {\n\t_ = req\n%b\n\tOk(Response.from_status(200))\n}\nworker = Worker.new({ fetch!: fetch! })\nevent! = |e| worker.event!(e)\n' "$wc_header" "$line" > "$tmp" ;;
+    sched) printf '%s\n%b\nworker = Worker.new({ scheduled!: scheduled! })\nevent! = |e| worker.event!(e)\n' "$wc_header" "$line" > "$tmp" ;;
+    top) printf '%s\n%b\nfetch! = |_req| Ok(Response.from_status(200))\nworker = Worker.new({ fetch!: fetch! })\nevent! = |e| worker.event!(e)\n' "$wc_header" "$line" > "$tmp" ;;
+  esac
+  out=$("$ROC" check "$tmp" 2>&1); code=$?
+  if [ "$want" = "-" ]; then
+    if [ $code -eq 0 ]; then echo "PASS wave C $name"; else echo "FAIL wave C $name: the control does not compile"; echo "$out" | head -12; rc=1; fi
+  elif [ $code -eq 1 ] && grep -qiF -- "$want" <<< "$out"; then echo "PASS wave C $name does not compile ($want)"
+  else echo "FAIL wave C $name: it compiles, or the error has no '$want'"; echo "$out" | head -12; rc=1; fi
+done
+out=$("$ROC" check "$dir/handler_methods_ok.roc" 2>&1)
+if [ $? -eq 0 ]; then echo "PASS handler_methods_ok.roc compiles (an unannotated fetch! with methods)"
+else echo "FAIL handler_methods_ok.roc: the control does not compile"; echo "$out" | head -20; rc=1; fi
 exit "$rc"

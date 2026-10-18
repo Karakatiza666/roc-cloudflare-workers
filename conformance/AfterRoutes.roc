@@ -33,25 +33,25 @@ AfterRoutes :: [].{
 			}
 			# Two `after` calls: the second work reads what the first one wrote.
 			["two"] => {
-				first! = |_| {
+				first! = || {
 					Time.sleep!(300)
 					store.put!("after-${id}-a", "one")
 				}
-				second! = |_| {
+				second! = || {
 					a = store.get_or!("after-${id}-a", "missing") ?? "error"
 					store.put!("after-${id}-b", a)
 				}
 				Response.from_text(200, "first").after(first!).after(second!)
 			}
 			# A work that fails: the log line, and the client still has 200.
-			["fail"] => Response.from_text(200, "ok").after(|_| Err(Boom(id)))
+			["fail"] => Response.from_text(200, "ok").after(|| Err(Boom(id)))
 			_ => Response.from_text(404, "no route")
 		}
 	}
 }
 
-slow_work! : Str, Str => ({} => Try({}, _))
-slow_work! = |url, key| |_| {
+slow_work! : Str, Str => (() => Try({}, _))
+slow_work! = |url, key| || {
 	_ = Http.send!(Request.get(url))
 	store.put!(key, "done")
 }

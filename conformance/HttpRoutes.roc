@@ -37,7 +37,13 @@ HttpRoutes :: [].{
 				}
 			}
 			# A body of text, built here: `Text` is the other body that `cloudflare_error` reads.
-			["cf_error_text"] => Response.from_text(200, Str.inspect(Http.cloudflare_error({ status: Q.num(req, "status").to_u16_try() ?? 0, headers: [], body: Text(Q.text(req, "body")) })))
+			["cf_error_text"] => Response.from_text(200, Str.inspect(Http.cloudflare_error(Response.from_status(Q.num(req, "status").to_u16_try() ?? 0).with_body(Text(Q.text(req, "body"))))))
+			# Wave C builders of the opaque `Request` and `Response`: each result is read back through the methods (no network).
+			["builders"] => {
+				out = Request.new(POST, "http://x/y").with_body(Text("hi")).with_method(PUT).with_url("http://x/z")
+				res = Response.from_text(200, "a").with_status(418).with_body(Text("teapot"))
+				Response.from_text(200, "${Str.inspect(out.method())} ${out.url()} ${Str.inspect(out.body())} ${res.status().to_str()} ${Str.inspect(res.body())}")
+			}
 			["get"] => show!(Http.get!(url))
 			["get_io"] => show!(Io.run!(Http.get(url)))
 			# The errors of `Http` join the errors of another module in one crossing (API.md 6.5).
@@ -54,7 +60,7 @@ HttpRoutes :: [].{
 show! : Try(Response, [Network(Io.Thrown), HttpErr(Io.Thrown), TooLarge]) => Response
 show! = |r| match r {
 	Ok(res) => match res.text!() {
-		Ok(text) => Response.from_text(200, "${res.status.to_str()} ${text}")
+		Ok(text) => Response.from_text(200, "${res.status().to_str()} ${text}")
 		Err(e) => Response.from_text(200, "body ${Str.inspect(e)}")
 	}
 	Err(e) => Response.from_text(200, error(e))
@@ -64,12 +70,12 @@ show! = |r| match r {
 show_open! : Try(Response, [Network(Io.Thrown), HttpErr(Io.Thrown)]) => Response
 show_open! = |r| match r {
 	Ok(res) => {
-		kind = match res.body {
+		kind = match res.body() {
 			Stream(_) => "stream"
 			_ => "not a stream"
 		}
 		match res.text!() {
-			Ok(text) => Response.from_text(200, "${res.status.to_str()} ${kind} ${text}")
+			Ok(text) => Response.from_text(200, "${res.status().to_str()} ${kind} ${text}")
 			Err(e) => Response.from_text(200, "body ${Str.inspect(e)}")
 		}
 	}

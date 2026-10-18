@@ -17,11 +17,11 @@ RpcRoutes :: [].{
 
 	## The RPC methods of the default export.
 	rpc : List(Rpc.Handler({}))
-	rpc = [RpcMethods.ping.on(default_ping!), RpcMethods.hello.on(default_hello!)].concat(RpcErrRoutes.service_handlers)
+	rpc = [RpcMethods.ping.on_worker(default_ping!), RpcMethods.hello.on_worker(default_hello!)].concat(RpcErrRoutes.service_handlers)
 
 	## The named entry points.
 	entrypoints : List(Rpc.Entrypoint)
-	entrypoints = [Rpc.entrypoint("Admin", { fetch!: admin_fetch!, rpc: [RpcMethods.purge.on(purge!)].concat(RpcErrRoutes.service_handlers) })]
+	entrypoints = [Rpc.entrypoint("Admin", { fetch!: admin_fetch!, rpc: [RpcMethods.purge.on_worker(purge!)].concat(RpcErrRoutes.service_handlers) })]
 
 	route! : Request, List(Str) => Response
 	route! = |_req, path| match path {
@@ -31,11 +31,11 @@ RpcRoutes :: [].{
 		["nothere"] => show(self_service.call!(RpcMethods.nothere, { n: 1 }))
 		# `Service.fetch!` on a binding with `entrypoint = "Admin"` reaches the `fetch!` of `Admin`.
 		["admin_fetch"] => match admin_service.fetch!(Request.get("http://x/hello")) {
-			Ok(res) => Response.from_text(200, "${res.status.to_str()} ${res.text!() ?? "?"}")
+			Ok(res) => Response.from_text(200, "${res.status().to_str()} ${res.text!() ?? "?"}")
 			Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
 		}
 		["admin_fetch_io"] => match Io.run!(admin_service.fetch(Request.get("http://x/hello"))) {
-			Ok(res) => Response.from_text(200, "${res.status.to_str()} ${res.text!() ?? "?"}")
+			Ok(res) => Response.from_text(200, "${res.status().to_str()} ${res.text!() ?? "?"}")
 			Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
 		}
 		["admin_call"] => show(admin_service.call!(RpcMethods.purge, { prefix: "v1/" }))
@@ -56,14 +56,14 @@ RpcRoutes :: [].{
 
 show = |r| Response.from_text(200, Str.inspect(r))
 
-default_ping! : {}, { n : I64 } => Try(Str, Rpc.NoErr)
-default_ping! = |{}, { n }| Ok("default ping ${n.to_str()}")
+default_ping! : { n : I64 } => Try(Str, Rpc.NoErr)
+default_ping! = |{ n }| Ok("default ping ${n.to_str()}")
 
-default_hello! : {}, {} => Try(Str, Rpc.NoErr)
-default_hello! = |{}, {}| Ok("default hello")
+default_hello! : {} => Try(Str, Rpc.NoErr)
+default_hello! = |{}| Ok("default hello")
 
 admin_fetch! : Request => Try(Response, [])
-admin_fetch! = |req| Ok(Response.from_text(200, "admin fetch ${req.url}"))
+admin_fetch! = |req| Ok(Response.from_text(200, "admin fetch ${req.url()}"))
 
-purge! : {}, { prefix : Str } => Try(Str, Rpc.NoErr)
-purge! = |{}, { prefix }| Ok("purged ${prefix}")
+purge! : { prefix : Str } => Try(Str, Rpc.NoErr)
+purge! = |{ prefix }| Ok("purged ${prefix}")

@@ -1,17 +1,16 @@
 ## One operation as a value: a program and the function that reads its result (API.md 6.5).
-## Pure data: it does nothing until a run.
+## Pure data: it does nothing until a run. The raw program forms are in `Js`.
 import Js
-import Host
 
 Io(a, e) := { ops : List(Js.Op), waits : Bool, read : Try(Js, Io.Thrown) -> Try(a, e) }.{
 	## What JS threw: the name and the message of the error (API.md 4, status 1).
-	Thrown : { name : Str, message : Str }
+	Thrown : Js.Thrown
 
-	## An operation that runs with `await!` (one JSPI wait).
+	## Low level: an operation from `Js` ops, that runs with `Js.await!` (one JSPI wait).
 	new : List(Js.Op), (Try(Js, Io.Thrown) -> Try(a, e)) -> Io(a, e)
 	new = |ops, read| { ops, waits: Bool.True, read }
 
-	## An operation that runs with `call!` (no wait). A promise in it is an error (status 2).
+	## Low level: an operation from `Js` ops, that runs with `Js.call!` (no wait). A promise in it is an error (status 2).
 	sync : List(Js.Op), (Try(Js, Io.Thrown) -> Try(a, e)) -> Io(a, e)
 	sync = |ops, read| { ops, waits: Bool.False, read }
 
@@ -32,23 +31,15 @@ Io(a, e) := { ops : List(Js.Op), waits : Bool, read : Try(Js, Io.Thrown) -> Try(
 	run! : Io(a, e) => Try(a, e)
 	run! = |io| {
 		read = io.read
-		read(if io.waits await!(io.ops) else call!(io.ops))
+		read(if io.waits Js.await!(io.ops) else Js.call!(io.ops))
 	}
-
-	## Run a program with one wait (`Js.await!` in API.md 6.4). The value of the last op, or what JS threw.
-	await! : List(Js.Op) => Try(Js, Io.Thrown)
-	await! = |ops| result(Host.await!(Js.program(ops)))
-
-	## Run a program with no wait (`Js.call!` in API.md 6.4).
-	call! : List(Js.Op) => Try(Js, Io.Thrown)
-	call! = |ops| result(Host.call!(Js.program(ops)))
 
 	## Two operations at the same time, in one crossing (`Par`, OP6).
 	both! : Io(a, e), Io(b, e) => Try((a, b), e)
 	both! = |x, y| {
 		rx = x.read
 		ry = y.read
-		(bx, by) = match await!([Par([x.ops, y.ops])]) {
+		(bx, by) = match Js.await!([Par([x.ops, y.ops])]) {
 			Ok(Arr([vx, vy])) => (branch(vx), branch(vy))
 			Ok(_) => crash "Io.both!: the Par result is not two branches"
 			Err(t) => (Err(t), Err(t))
@@ -64,7 +55,7 @@ Io(a, e) := { ops : List(Js.Op), waits : Bool, read : Try(Js, Io.Thrown) -> Try(
 		if ios.is_empty() {
 			return []
 		}
-		got = match await!([Par(ios.map(|io| io.ops))]) {
+		got = match Js.await!([Par(ios.map(|io| io.ops))]) {
 			Ok(Arr(items)) if items.len() == ios.len() => items.map(branch)
 			Ok(_) => crash "Io.all!: the Par result has another length"
 			Err(t) => ios.map(|_| Err(t))
@@ -79,7 +70,7 @@ Io(a, e) := { ops : List(Js.Op), waits : Bool, read : Try(Js, Io.Thrown) -> Try(
 	## The others are aborted. A `Race` with no branch is a bad program (status 3).
 	race! : List(Io(a, e)) => { index : U64, result : Try(a, e) }
 	race! = |ios| {
-		match await!([Race(ios.map(|io| io.ops))]) {
+		match Js.await!([Race(ios.map(|io| io.ops))]) {
 			Ok(Arr([Int(i), r])) => {
 				index = i.to_u64_try() ?? crash "Io.race!: a bad index"
 				match ios.get(index) {
@@ -122,39 +113,10 @@ Io(a, e) := { ops : List(Js.Op), waits : Bool, read : Try(Js, Io.Thrown) -> Try(
 	## Start an operation, and give its promise as a ref (for `Ctx.wait_until!`). No wait.
 	## The reader does not run: a Roc-level `Err` is not seen. A JS throw goes to the log (6.5).
 	start! : Io(a, e) => Js.Ref
-	start! = |io| match call!([Start(Root("pf"), "spawn", [Lit(Js.program(io.ops))]), Keep(Slot(0))]) {
+	start! = |io| match Js.call!([Start(Root("pf"), "spawn", [Lit(Js.program(io.ops))]), Keep(Slot(0))]) {
 		Ok(Ref(r)) => r
 		Ok(_) => crash "Io.start!: the result is not a ref"
 		Err(t) => crash "Io.start!: ${t.name}: ${t.message}"
-	}
-
-	## The pin table of the isolate (API.md RS2): `Js.pin!`, `pinned!` and `unpin!` of API.md, here for the reason of
-	## `await!` and `call!` (`Host` imports `Js`, no import cycles). Each is one `call!`, no wait.
-	## `pin!` keeps the value for later tasks of this isolate by name: each `Ref` in it keeps its object. A full table
-	## (shim option `pinLimit`) is `PinErr`.
-	pin! : Str, Js, { max_age_ms : U64 } => Try({}, [PinErr(Io.Thrown)])
-	pin! = |name, value, opts| {
-		age = opts.max_age_ms.to_i64_try() ?? I64.highest
-		match call!([Call(Root("pf"), "pin", [Lit(Text(name)), Lit(value), Lit(Int(age))])]) {
-			Ok(_) => Ok({})
-			Err(t) => Err(PinErr(t))
-		}
-	}
-
-	## The value that `pin!` kept (J1 to J7: each object gets a new ref of this task). `NotPinned`: no entry, or an
-	## entry past its age.
-	pinned! : Str => Try(Js, [NotPinned])
-	pinned! = |name| match call!([Call(Root("pf"), "pinned", [Lit(Text(name))])]) {
-		Ok(Undefined) => Err(NotPinned)
-		Ok(v) => Ok(v)
-		Err(t) => crash "Io.pinned!: ${t.name}: ${t.message}"
-	}
-
-	## Remove the entry. No entry: no change.
-	unpin! : Str => {}
-	unpin! = |name| match call!([Call(Root("pf"), "unpin", [Lit(Text(name))])]) {
-		Ok(_) => {}
-		Err(t) => crash "Io.unpin!: ${t.name}: ${t.message}"
 	}
 }
 
@@ -170,14 +132,6 @@ timeout_read = |read, r| {
 	}
 	v = got?
 	Ok(v)
-}
-
-## Status 0 to 3 of a hosted call (API.md 4). Status 3 is a platform bug: crash.
-result : { status : U8, value : Js } -> Try(Js, Io.Thrown)
-result = |r| match r.status {
-	0 => Ok(r.value)
-	3 => crash "bad program: ${thrown(r.value).name}: ${thrown(r.value).message}"
-	_ => Err(thrown(r.value))
 }
 
 thrown : Js -> Io.Thrown

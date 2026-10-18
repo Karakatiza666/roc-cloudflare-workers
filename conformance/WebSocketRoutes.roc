@@ -60,7 +60,7 @@ WebSocketRoutes :: [].{
 			base = Request.get("http://o/?op=${op}")
 			to_object = if op == "tags" base.with_header("Upgrade", "websocket") else base
 			match rooms.named(name).fetch!(to_object) {
-				Ok(res) => Response.from_text(200, res.text!() ?? "status ${res.status.to_str()}")
+				Ok(res) => Response.from_text(200, res.text!() ?? "status ${res.status().to_str()}")
 				Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
 			}
 		}
@@ -213,7 +213,7 @@ WebSocketRoutes :: [].{
 echo! : Request => Response
 echo! = |req| match WebSocket.accept!(req) {
 	Ok({ socket, response }) => {
-		work! = |_| {
+		work! = || {
 			closed = serve!(socket)
 			Log.info!("echo closed", closed)
 			Ok({})

@@ -62,7 +62,7 @@ R2 :: { name : Str }.{
 	## (`content-type`, `content-language`, `content-disposition`, `content-encoding`, `cache-control`, `expires`) and
 	## `etag` (`http_etag`). The same headers as `writeHttpMetadata` and `httpEtag` of Workers.
 	to_response : R2.Object -> Response
-	to_response = |obj| Response.{ status: 200, headers: meta_headers(obj.meta), body: obj.body }
+	to_response = |obj| Response.from_status(200).with_headers(meta_headers(obj.meta)).with_body(obj.body)
 
 	## A GET request answered from the bucket. The key is the argument, the request gives the conditions and the range.
 	## `If-None-Match` and `If-Modified-Since` that fail: 304 with `etag`. `If-Match` and `If-Unmodified-Since` that
@@ -74,7 +74,7 @@ R2 :: { name : Str }.{
 	respond = |bucket, key, req| {
 		wanted = wanted_range(req)
 		opts0 : { range ?: R2.Range, only_if ?: R2.Cond }
-		opts0 = { only_if: R2.from_headers(req.headers) }
+		opts0 = { only_if: R2.from_headers(req.headers()) }
 		opts = match wanted {
 			Ok(range) => { ..opts0, range }
 			Err(_) => opts0
@@ -96,9 +96,9 @@ R2 :: { name : Str }.{
 	respond! = |bucket, key, req| {
 		res = Io.run!(respond(bucket, key, req))?
 		# The error 10039 gives a 416 with no size: one `head!` adds `content-range` (the `Io` twin `respond` has none).
-		if res.status == 416 and res.headers.is_empty() {
+		if res.status() == 416 and res.headers().is_empty() {
 			match head!(bucket, key) {
-				Ok(meta) => Ok({ ..res, headers: [Header.{ name: "content-range", value: "bytes */${meta.size_bytes.to_str()}" }] })
+				Ok(meta) => Ok(res.with_headers([Header.{ name: "content-range", value: "bytes */${meta.size_bytes.to_str()}" }]))
 				Err(_) => Ok(res)
 			}
 		} else {
@@ -306,7 +306,7 @@ R2 :: { name : Str }.{
 	## other fields are not used when `headers` is there.
 	Cond : { etag_matches ?: Str, etag_does_not_match ?: Str, uploaded_before_ms ?: U64, uploaded_after_ms ?: U64, headers ?: List(Header) }
 
-	## `only_if: R2.from_headers(req.headers)`: the conditions of the request. A header that is not a conditional header
+	## `only_if: R2.from_headers(req.headers())`: the conditions of the request. A header that is not a conditional header
 	## is not sent to R2.
 	from_headers : List(Header) -> R2.Cond
 	from_headers = |headers| { headers: headers }
@@ -411,12 +411,12 @@ range_span = |range, size| match range {
 
 found_response : R2.Object, Try(R2.Range, [NoRange]) -> Response
 found_response = |obj, wanted| {
-	plain = { ..R2.to_response(obj), headers: meta_headers(obj.meta).append(Header.{ name: "accept-ranges", value: "bytes" }) }
+	plain = R2.to_response(obj).with_headers(meta_headers(obj.meta).append(Header.{ name: "accept-ranges", value: "bytes" }))
 	size = obj.meta.size_bytes
 	match wanted {
 		Ok(range) => match range_span(range, size) {
-			Ok({ first, last }) => { ..plain, status: 206, headers: plain.headers.append(Header.{ name: "content-range", value: "bytes ${first.to_str()}-${last.to_str()}/${size.to_str()}" }) }
-			Err(Unsatisfiable) => Response.{ status: 416, headers: [Header.{ name: "content-range", value: "bytes */${size.to_str()}" }] }
+			Ok({ first, last }) => plain.with_status(206).with_header("content-range", "bytes ${first.to_str()}-${last.to_str()}/${size.to_str()}")
+			Err(Unsatisfiable) => Response.from_status(416).with_header("content-range", "bytes */${size.to_str()}")
 		}
 		Err(_) => plain
 	}
@@ -426,7 +426,7 @@ found_response = |obj, wanted| {
 not_met_response : Request, R2.Meta -> Response
 not_met_response = |req, meta| {
 	asks_change = req.header("if-none-match").is_ok() or req.header("if-modified-since").is_ok()
-	Response.{ status: if asks_change 304 else 412, headers: validator_headers(meta) }
+	Response.from_status(if asks_change 304 else 412).with_headers(validator_headers(meta))
 }
 
 ## "Sun, 06 Nov 1994 08:49:37 GMT" for a time in ms.

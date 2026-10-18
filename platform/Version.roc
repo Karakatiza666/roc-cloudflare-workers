@@ -13,7 +13,7 @@ Version :: { name : Str }.{
 	declare = |b| { name: b.name, kind: "version", props: [] }
 
 	metadata! : Version => { id : Str, tag : Str, timestamp_ms : U64 }
-	metadata! = |v| match Io.call!(
+	metadata! = |v| match Js.call!(
 		[
 			Get(Root("env"), v.name),
 			Get(Slot(0), "id"),

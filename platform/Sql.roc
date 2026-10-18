@@ -1,6 +1,7 @@
 ## SQL values and results (MODULES.md 5.1): the same types for D1 and, in phase B, for the storage of a Durable
 ## Object. `rows!` (no types) gives `Sql` values. A parameter is any value that encodes to a CBOR array: a list `[x]` or a
 ## tuple `(a, b)`. Use `Sql.null` and `Sql.or_null` for NULL, `Sql.blob` for a blob.
+## Typed data: the format, what a JS peer sees, and what survives a round trip are in MODULES.md 1, "Formats of typed data".
 import Cbor
 
 Sql := [Null, Int(I64), Real(F64), Text(Str), Blob(List(U8))].{

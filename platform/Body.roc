@@ -46,7 +46,7 @@ Body := [Empty, Text(Str), Bytes(List(U8)), Stream(Js.Ref)].{
 			Empty => []
 			Text(s) => s.to_utf8()
 			Bytes(b) => b
-			Stream(r) => match Io.await!([Call(Root("pf"), "readUpTo", [Lit(Ref(r)), Lit(Int(limit(max_bytes)))])]) {
+			Stream(r) => match Js.await!([Call(Root("pf"), "readUpTo", [Lit(Ref(r)), Lit(Int(limit(max_bytes)))])]) {
 				Ok(Bytes(b)) => b
 				Ok(other) => crash "Body.bytes_with!: readUpTo gave ${Str.inspect(other)}"
 				Err(t) if t.name == "TooLarge" => return Err(TooLarge)
@@ -64,7 +64,7 @@ Body := [Empty, Text(Str), Bytes(List(U8)), Stream(Js.Ref)].{
 		Empty => Ok(End)
 		Text(s) => Ok(Chunk(s.to_utf8()))
 		Bytes(b) => Ok(Chunk(b))
-		Stream(r) => match Io.await!([Call(Root("pf"), "chunk", [Lit(Ref(r)), Lit(Int(limit(default_max)))])]) {
+		Stream(r) => match Js.await!([Call(Root("pf"), "chunk", [Lit(Ref(r)), Lit(Int(limit(default_max)))])]) {
 			Ok(Bytes(b)) => Ok(Chunk(b))
 			Ok(Undefined) => Ok(End)
 			Ok(other) => crash "Body.chunk!: pf.chunk gave ${Str.inspect(other)}"
@@ -75,7 +75,7 @@ Body := [Empty, Text(Str), Bytes(List(U8)), Stream(Js.Ref)].{
 	## Two bodies with the same bytes. A stream: `ReadableStream.tee()`, no wait. A stream that was read is `BodyErr`.
 	tee! : Body => Try((Body, Body), [BodyErr(Io.Thrown)])
 	tee! = |body| match body {
-		Stream(r) => match Io.call!([Call(Ref(r), "tee", [])]) {
+		Stream(r) => match Js.call!([Call(Ref(r), "tee", [])]) {
 			Ok(Arr([Ref(a), Ref(b)])) => Ok((Stream(a), Stream(b)))
 			Ok(other) => crash "Body.tee!: tee gave ${Str.inspect(other)}"
 			Err(t) => Err(BodyErr(t))
@@ -90,7 +90,7 @@ Body := [Empty, Text(Str), Bytes(List(U8)), Stream(Js.Ref)].{
 		Empty => Ok(Crypto.SHA256.hash([]).to_bytes())
 		Text(s) => Ok(Crypto.SHA256.hash(s.to_utf8()).to_bytes())
 		Bytes(b) => Ok(Crypto.SHA256.hash(b).to_bytes())
-		Stream(r) => match Io.await!([Call(Root("pf"), "sha256", [Lit(Ref(r))])]) {
+		Stream(r) => match Js.await!([Call(Root("pf"), "sha256", [Lit(Ref(r))])]) {
 			Ok(Bytes(d)) => Ok(d)
 			Ok(other) => crash "Body.sha256!: pf.sha256 gave ${Str.inspect(other)}"
 			Err(t) => Err(BodyErr(t))
@@ -99,8 +99,8 @@ Body := [Empty, Text(Str), Bytes(List(U8)), Stream(Js.Ref)].{
 
 	## A stream that the task writes, for example in the work of `Response.after` (API.md 10.2): `pf.writer`, a
 	## `TransformStream`, no wait. The 30 s limit after the response starts at `close!`.
-	writer! : {} => Try({ body : Body, writer : Body.Writer }, [BodyErr(Io.Thrown)])
-	writer! = |_| match Io.call!([Call(Root("pf"), "writer", [])]) {
+	writer! : () => Try({ body : Body, writer : Body.Writer }, [BodyErr(Io.Thrown)])
+	writer! = || match Js.call!([Call(Root("pf"), "writer", [])]) {
 		Ok(Obj(fields)) => match (field(fields, "readable"), field(fields, "writer")) {
 			(Ref(readable), Ref(w)) => Ok({ body: Stream(readable), writer: Body.Writer.{ writer: w } })
 			_ => crash "Body.writer!: pf.writer gave ${Str.inspect(Obj(fields))}"
@@ -149,7 +149,7 @@ Body := [Empty, Text(Str), Bytes(List(U8)), Stream(Js.Ref)].{
 		close! : Body.Writer => {}
 		close! = |w| {
 			Body.Writer.{ writer } = w
-			_ = Io.call!([Call(Root("pf"), "close", [Lit(Ref(writer))])])
+			_ = Js.call!([Call(Root("pf"), "close", [Lit(Ref(writer))])])
 			{}
 		}
 	}
@@ -168,7 +168,7 @@ transform! = |body, kind, format| {
 		Bytes(b) => Bytes(b)
 		Stream(r) => Ref(r)
 	}
-	match Io.call!([Call(Root("pf"), "transform", [Lit(input), Lit(Text(kind)), Lit(Text(name))])]) {
+	match Js.call!([Call(Root("pf"), "transform", [Lit(input), Lit(Text(kind)), Lit(Text(name))])]) {
 		Ok(Ref(r)) => Ok(Stream(r))
 		Ok(other) => crash "Body.${kind}!: pf.transform gave ${Str.inspect(other)}"
 		Err(t) => Err(BodyErr(t))

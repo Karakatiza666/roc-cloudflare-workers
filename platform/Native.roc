@@ -25,8 +25,8 @@ Native :: [].{
 	ZstdStream :: { handle : U32 }.{
 
 		## A stream with the default window limit (8 MiB) and the default limit of one push (16 MiB).
-		open! : {} => Try(Native.ZstdStream, [TooManyHandles, NoTask])
-		open! = |_| {
+		open! : () => Try(Native.ZstdStream, [TooManyHandles, NoTask])
+		open! = || {
 			match call!(2, []) {
 				Ok(out) => Ok(Native.ZstdStream.{ handle: handle_of(out) })
 				Err("too_many_handles") => Err(TooManyHandles)
@@ -87,8 +87,8 @@ Native :: [].{
 
 	## BLAKE3 with state. `final!` frees the state, so a second `final!` or `update!` is `BadHandle`.
 	Blake3 :: { handle : U32 }.{
-		new! : {} => Try(Native.Blake3, [TooManyHandles, NoTask])
-		new! = |_| {
+		new! : () => Try(Native.Blake3, [TooManyHandles, NoTask])
+		new! = || {
 			match call!(5, []) {
 				Ok(out) => Ok(Native.Blake3.{ handle: handle_of(out) })
 				Err("too_many_handles") => Err(TooManyHandles)
@@ -123,8 +123,8 @@ Native :: [].{
 
 	## SHA-256 with state. The same rules as `Blake3`.
 	Sha256 :: { handle : U32 }.{
-		new! : {} => Try(Native.Sha256, [TooManyHandles, NoTask])
-		new! = |_| {
+		new! : () => Try(Native.Sha256, [TooManyHandles, NoTask])
+		new! = || {
 			match call!(8, []) {
 				Ok(out) => Ok(Native.Sha256.{ handle: handle_of(out) })
 				Err("too_many_handles") => Err(TooManyHandles)

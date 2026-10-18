@@ -45,10 +45,10 @@ Cache :: { which : [Default, Named(Str)] }.{
 	put : Cache, Str, Response -> Io(Response, [CacheErr(Io.Thrown)])
 	put = |cache, url, res| {
 		init = Record([
-			("status", Lit(Int(res.status.to_i64()))),
-			("headers", Lit(Arr(res.headers.map(|h| Arr([Text(h.name), Text(h.value)]))))),
+			("status", Lit(Int(res.status().to_i64()))),
+			("headers", Lit(Arr(res.headers().map(|h| Arr([Text(h.name), Text(h.value)]))))),
 		])
-		match res.body {
+		match res.body() {
 			Stream(r) => Io.new(
 				# Slot 2: [a, b]. Slot 3: a. Slot 4: the init. Slot 5: the put. Slot 6 (the result): b.
 				cache_ops(cache).concat([
@@ -60,7 +60,7 @@ Cache :: { which : [Default, Named(Str)] }.{
 					Get(Slot(2), "1"),
 				]),
 				|got| match got {
-					Ok(Ref(b)) => Ok({ ..res, body: Stream(b) })
+					Ok(Ref(b)) => Ok(res.with_body(Stream(b)))
 					Ok(other) => crash "Cache.put: the branch of the tee is ${Str.inspect(other)}"
 					Err(t) => Err(CacheErr(t))
 				},
@@ -91,9 +91,9 @@ Cache :: { which : [Default, Named(Str)] }.{
 	## `fetch: after respond: failed: ...`. Only for the response of a `fetch!` handler: elsewhere the work does not run.
 	put_after! : Cache, Str, Response => Try(Response, [CacheErr(Io.Thrown)])
 	put_after! = |cache, url, res| {
-		(mine, theirs) = res.body.tee!() ? |BodyErr(t)| CacheErr(t)
-		copy = { ..res, body: theirs }
-		Ok({ ..res, body: mine }.after(|_| cache.put!(url, copy).map_ok(|_| {})))
+		(mine, theirs) = res.body().tee!() ? |BodyErr(t)| CacheErr(t)
+		copy = res.with_body(theirs)
+		Ok(res.with_body(mine).after(|| cache.put!(url, copy).map_ok(|_| {})))
 	}
 
 	## `cache.delete(url)`: `false` is `NotFound`.
@@ -141,7 +141,7 @@ response_of = |v| match v {
 			Ref(r) => Stream(r)
 			other => crash "Cache: the body is ${Str.inspect(other)}"
 		}
-		Response.{ status, headers, body }
+		Response.from_status(status).with_headers(headers).with_body(body)
 	}
 	other => crash "Cache: the response is ${Str.inspect(other)}"
 }

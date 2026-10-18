@@ -2,6 +2,7 @@
 ## One constant gives the type and the format (MC6), so the producer and the consumer agree. A message crosses as
 ## CBOR (MC5): JS gets a plain object (the same as from `JSON.parse`), and sends it with the content type of the
 ## declaration. `Queue.v8` also keeps a `BigInt` and a `Cbor.Bytes` field (a `Uint8Array` in JS).
+## Typed data: the format, what a JS peer sees, and what survives a round trip are in MODULES.md 1, "Formats of typed data".
 import Io
 import Js
 import Log
@@ -134,7 +135,17 @@ Queue(a) :: { name : Str, content_type : Str, write : a -> Js, read : List(U8) -
 
 	## A consumer batch: the queue name (not the binding name) and its messages. A batch has the limit of the Queues
 	## config (MC11), so it crosses with no `max_bytes`.
-	Batch := { queue : Str, messages : List(Queue.Message) }.{
+	Batch :: { queue : Str, messages : List(Queue.Message) }.{
+		## Plain data (MC13): a test can make one.
+		new : { queue : Str, messages : List(Queue.Message) } -> Queue.Batch
+		new = |r| Queue.Batch.{ queue: r.queue, messages: r.messages }
+
+		queue : Queue.Batch -> Str
+		queue = |x| x.queue
+
+		messages : Queue.Batch -> List(Queue.Message)
+		messages = |x| x.messages
+
 
 		## `batch.ackAll()`: no wait.
 		ack_all! : Queue.Batch => {}
@@ -150,7 +161,23 @@ Queue(a) :: { name : Str, content_type : Str, write : a -> Js, read : List(U8) -
 
 	## One message. `body`: the message as CBOR (MC5). `attempts` starts at 1. A function finds its message in the batch
 	## of the task by `id` (`pf.findById`), so a message holds no ref.
-	Message := { id : Str, timestamp_ms : U64, attempts : U32, body : List(U8) }.{
+	Message :: { id : Str, timestamp_ms : U64, attempts : U32, body : List(U8) }.{
+		## Plain data (MC13): a test can make one.
+		new : { id : Str, timestamp_ms : U64, attempts : U32, body : List(U8) } -> Queue.Message
+		new = |r| Queue.Message.{ id: r.id, timestamp_ms: r.timestamp_ms, attempts: r.attempts, body: r.body }
+
+		id : Queue.Message -> Str
+		id = |x| x.id
+
+		timestamp_ms : Queue.Message -> U64
+		timestamp_ms = |x| x.timestamp_ms
+
+		attempts : Queue.Message -> U32
+		attempts = |x| x.attempts
+
+		body : Queue.Message -> List(U8)
+		body = |x| x.body
+
 
 		## `message.ack()`: no wait.
 		ack! : Queue.Message => {}
@@ -189,7 +216,7 @@ of_message = |m, method, args| [
 ## A call with no result and no wait. A throw is dropped: `ack` and `retry` have no `Try` (MODULES.md 6).
 drop! : List(Js.Op) => {}
 drop! = |ops| {
-	_ = Io.call!(ops)
+	_ = Js.call!(ops)
 	{}
 }
 

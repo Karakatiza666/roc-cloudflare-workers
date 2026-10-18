@@ -47,6 +47,10 @@ const TESTS = {
 // name, the test, the checks that must fail (conformance only), edits: [file, from, to].
 const R = (name, test, checks, ...edits) => ({ name, test, checks, edits });
 const reverts = [
+  // 8h wave C: the builders of the opaque Request and Response (one route, `/http/builders`).
+  R('Response.with_status: keeps the status', 'conformance', ['http wave C builders: Request.new with_body, with_method, with_url, and Response.with_status, with_body'], [BP + 'Response.roc', 'with_status = |r, code| { ..r, status: code }', 'with_status = |r, _code| r']),
+  R('Request.with_body: keeps the body', 'conformance', ['http wave C builders: Request.new with_body, with_method, with_url, and Response.with_status, with_body'], [BP + 'Request.roc', 'with_body = |r, b| { ..r, body: b }', 'with_body = |r, _b| r']),
+  R('Request.with_url: keeps the url', 'conformance', ['http wave C builders: Request.new with_body, with_method, with_url, and Response.with_status, with_body'], [BP + 'Request.roc', 'with_url = |r, u| { ..r, url: u }', 'with_url = |r, _u| r']),
   // A wrong JS method name in one function of each module: its route fails.
   R('Http: fetch is called "fetchx"', 'conformance', ['http send!', 'http get!', 'http open!'], [BP + 'Http.roc', 'Call(Root("global"), "fetch",', 'Call(Root("global"), "fetchx",']),
   R('Env.json!: JSON.stringify is called "stringifyx"', 'conformance', ['env json!'], [BP + 'Env.roc', 'Call(Slot(0), "stringify",', 'Call(Slot(0), "stringifyx",']),

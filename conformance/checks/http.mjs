@@ -42,6 +42,8 @@ export const checks = [
     once(r, 2);
   }],
   ['http open (Io twin)', async (t) => answer(await t.get(`/http/open_io?url=${q(t.server + '/hello')}`), '200 stream hello')],
+  ['http wave C builders: Request.new with_body, with_method, with_url, and Response.with_status, with_body', async (t) =>
+    answer(await t.get('/http/builders'), 'PUT http://x/z Text("hi") 418 Text("teapot")')],
   ['http get!', async (t) => answer(await t.get(`/http/get?url=${q(t.server + '/hello')}`), '200 hello')],
   ['http get (Io twin)', async (t) => answer(await t.get(`/http/get_io?url=${q(t.server + '/hello')}`), '200 hello')],
   ['http get in Io.both! with Time.sleep', async (t) => {

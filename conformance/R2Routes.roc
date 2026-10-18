@@ -26,7 +26,7 @@ R2Routes :: [].{
 			["put_with_io"] => out(Io.run!(bucket.put_with(key, Text(Q.text(req, "text")), put_options(req))), show_meta)
 			["get_with"] => out!(bucket.get_with!(key, get_options(req)), show_object!)
 			["get_with_io"] => out!(Io.run!(bucket.get_with(key, get_options(req))), show_object!)
-			["get_cond"] => out!(bucket.get_with!(key, { only_if: R2.from_headers(req.headers) }), show_object!)
+			["get_cond"] => out!(bucket.get_with!(key, { only_if: R2.from_headers(req.headers()) }), show_object!)
 			["respond"] => respond!(bucket.respond!(key, req))
 			["respond_io"] => respond!(Io.run!(bucket.respond(key, req)))
 			["to_response"] => match bucket.get!(key) {
@@ -42,7 +42,7 @@ R2Routes :: [].{
 			["put_gen"] => put_gen!(if Q.text(req, "trace") == "" bucket else trace, key, Q.num(req, "bytes"), put_options(req))
 			# A stream of the local server that breaks after 6 MiB, put on `TRACE`.
 			["put_broken"] => match Http.open!(Request.get(Q.text(req, "from"))) {
-				Ok(res) => out(trace.put!(key, res.body), show_meta)
+				Ok(res) => out(trace.put!(key, res.body()), show_meta)
 				Err(e) => Response.from_text(200, "open Err ${Str.inspect(e)}")
 			}
 			["mp_create"] => mp_create!(key, part_number(req), Bool.False)
@@ -255,7 +255,7 @@ list_options = |req| {
 ## before the put, with the public API: `Io.start!` of the `write` and `write_text` twins queues the chunks (a write
 ## waits until the put reads it), then `close!` queues the end, then `put_with!` reads all of it.
 put_stream! : Str, Str => Response
-put_stream! = |key, len| match Body.writer!({}) {
+put_stream! = |key, len| match Body.writer!() {
 	Err(BodyErr(t)) => Response.from_text(200, "writer ${t.name}")
 	Ok({ body, writer }) => {
 		_ = Io.start!(writer.write("hello ".to_utf8()))
@@ -271,7 +271,7 @@ put_stream! = |key, len| match Body.writer!({}) {
 
 ## A writer stream of `total` bytes with no known length, in chunks of 1 MiB (byte `A` + the number of the chunk), then `put_with!`.
 put_gen! : R2, Str, U64, { only_if ?: R2.Cond, http ?: R2.Http, custom ?: List((Str, Str)), checksum ?: R2.Checksum, length_bytes ?: U64 } => Response
-put_gen! = |target, key, total, opts| match Body.writer!({}) {
+put_gen! = |target, key, total, opts| match Body.writer!() {
 	Err(BodyErr(t)) => Response.from_text(200, "writer ${t.name}")
 	Ok({ body, writer }) => {
 		full = total // 1_048_576

@@ -54,7 +54,30 @@ Email :: { name : Str }.{
 
 	## An incoming mail. `raw` is a stream (`Body.Stream`), read once (RS3). `raw_size_bytes` is `rawSize` (MC10).
 	## `can_be_forwarded`: `canBeForwarded` of the message, true when the runtime does not give it.
-	Mail := { from : Str, to : Str, headers : List(Header), raw : Body, raw_size_bytes : U64, can_be_forwarded : Bool }.{
+	## Opaque: read it with its methods (`mail.from()`, `mail.raw()`, ...).
+	Mail :: { from : Str, to : Str, headers : List(Header), raw : Body, raw_size_bytes : U64, can_be_forwarded : Bool }.{
+		## Plain data (MC13): a test can make one.
+		new : { from : Str, to : Str, headers : List(Header), raw : Body, raw_size_bytes : U64, can_be_forwarded : Bool } -> Email.Mail
+		new = |r| Email.Mail.{ from: r.from, to: r.to, headers: r.headers, raw: r.raw, raw_size_bytes: r.raw_size_bytes, can_be_forwarded: r.can_be_forwarded }
+
+		from : Email.Mail -> Str
+		from = |x| x.from
+
+		to : Email.Mail -> Str
+		to = |x| x.to
+
+		headers : Email.Mail -> List(Header)
+		headers = |x| x.headers
+
+		raw : Email.Mail -> Body
+		raw = |x| x.raw
+
+		raw_size_bytes : Email.Mail -> U64
+		raw_size_bytes = |x| x.raw_size_bytes
+
+		can_be_forwarded : Email.Mail -> Bool
+		can_be_forwarded = |x| x.can_be_forwarded
+
 
 		## The first header with this name (the case does not matter), or `Missing`.
 		header : Email.Mail, Str -> Try(Str, [Missing])
@@ -67,40 +90,40 @@ Email :: { name : Str }.{
 
 		## `message.forward(to)`: to a verified destination address. One wait.
 		forward : Email.Mail, Str -> Io({}, [EmailErr(Io.Thrown)])
-		forward = |_mail, to| Io.new([Call(Root("event"), "forward", [Lit(Text(to))])], unit)
+		forward = |_mail, dest| Io.new([Call(Root("event"), "forward", [Lit(Text(dest))])], unit)
 
 		forward! : Email.Mail, Str => Try({}, [EmailErr(Io.Thrown)])
-		forward! = |mail, to| Io.run!(mail.forward(to))
+		forward! = |mail, dest| Io.run!(mail.forward(dest))
 
 		## `message.forward(to, headers)`. Workers keeps only the headers that start with `X-`.
 		forward_with : Email.Mail, Str, { headers ?: List(Header) } -> Io({}, [EmailErr(Io.Thrown)])
-		forward_with = |_mail, to, opts| {
-			headers = opts.?headers ?? []
+		forward_with = |_mail, dest, opts| {
+			extra = opts.?headers ?? []
 			Io.new(
 				[
-					New(Root("global"), "Headers", [Lit(Arr(headers.map(|h| Arr([Text(h.name), Text(h.value)]))))]),
-					Call(Root("event"), "forward", [Lit(Text(to)), Slot(0)]),
+					New(Root("global"), "Headers", [Lit(Arr(extra.map(|h| Arr([Text(h.name), Text(h.value)]))))]),
+					Call(Root("event"), "forward", [Lit(Text(dest)), Slot(0)]),
 				],
 				unit,
 			)
 		}
 
 		forward_with! : Email.Mail, Str, { headers ?: List(Header) } => Try({}, [EmailErr(Io.Thrown)])
-		forward_with! = |mail, to, opts| Io.run!(mail.forward_with(to, opts))
+		forward_with! = |mail, dest, opts| Io.run!(mail.forward_with(dest, opts))
 
 		## `message.reply(new EmailMessage(to, from, raw))`: `raw` is the MIME message of the reply, as text. It goes from
 		## the address that got the mail to the sender.
 		reply : Email.Mail, Str -> Io({}, [EmailErr(Io.Thrown)])
-		reply = |mail, raw| Io.new(
+		reply = |mail, mime| Io.new(
 			[
-				Call(Root("pf"), "emailMessage", [Lit(Text(mail.to)), Lit(Text(mail.from)), Lit(Text(raw))]),
+				Call(Root("pf"), "emailMessage", [Lit(Text(mail.to)), Lit(Text(mail.from)), Lit(Text(mime))]),
 				Call(Root("event"), "reply", [Slot(0)]),
 			],
 			unit,
 		)
 
 		reply! : Email.Mail, Str => Try({}, [EmailErr(Io.Thrown)])
-		reply! = |mail, raw| Io.run!(mail.reply(raw))
+		reply! = |mail, mime| Io.run!(mail.reply(mime))
 
 		## `message.setReject(reason)`: the mail is rejected with this text. Workers gives no result, and the local
 		## runtime answers through a stub, so the call waits (`await!`). A throw is dropped: there is no `Try`.
@@ -136,14 +159,14 @@ sent = |r| match r {
 }
 
 mail : Email.Mail
-mail = Email.Mail.{
+mail = Email.Mail.new({
 	from: "a@example.com",
 	to: "b@example.com",
 	headers: [Header.{ name: "Subject", value: "hi" }, Header.{ name: "X-Test", value: "1" }],
 	raw: Empty,
 	raw_size_bytes: 0,
 	can_be_forwarded: Bool.True,
-}
+})
 
 expect mail.header("subject") == Ok("hi")
 expect mail.header("X-TEST") == Ok("1")

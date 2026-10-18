@@ -21,12 +21,12 @@ handle! = |req| {
 event! : Worker.Event => Worker.Outcome
 event! = |e| match e {
 	Fetch(req) => {
-		text = match req.body {
+		text = match req.body() {
 			Bytes(b) => Str.from_utf8(b) ?? ""
 			Text(s) => s
 			_ => ""
 		}
-		Respond(Response.{ status: 200, body: Text(handle!(text)) })
+		Respond(Response.from_status(200).with_body(Text(handle!(text))))
 	}
 	_ => Unhandled
 }

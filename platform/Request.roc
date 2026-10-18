@@ -1,11 +1,14 @@
 ## An HTTP request, incoming or outgoing (MODULES.md 4). `Method` and `Header` come from `roc-lang/http` (AQ2).
-## `cf`: incoming only, `request.cf` typed. A field that Workers does not give is `Err(Missing)` (MC8).
+## Opaque: read it with its methods (`req.method()`, `req.url()`, `req.headers()`, `req.body()`, `req.cf()`), and make
+## it with `new`, `get`, `post` and `with_*`. `cf`: incoming only, `request.cf` typed. A field that Workers does not
+## give is `Err(Missing)` (MC8).
+## Typed data: the format, what a JS peer sees, and what survives a round trip are in MODULES.md 1, "Formats of typed data".
 import Body
 import Io
 import http.Method
 import http.Header
 
-Request := {
+Request :: {
 	method : Method,
 	url : Str,
 	headers : List(Header) ?? [],
@@ -35,19 +38,23 @@ Request := {
 		client_tcp_rtt_ms : Try(U64, [Missing]),
 	}
 
+	## A request with no headers and no body.
+	new : Method, Str -> Request
+	new = |m, u| Request.{ method: m, url: u }
+
 	get : Str -> Request
-	get = |url| Request.{ method: GET, url }
+	get = |u| Request.{ method: GET, url: u }
 
 	post : Str, Body -> Request
-	post = |url, body| Request.{ method: POST, url, body }
+	post = |u, b| Request.{ method: POST, url: u, body: b }
 
 	## A value that JSON cannot show (a `NaN` in an `F64`) is `BadData`.
 	post_json : Str, a -> Try(Request, [BadData(Str)]) where [a.Json.Encodable(enc)]
-	post_json = |url, value| match Json.to_str_try(value) {
+	post_json = |u, value| match Json.to_str_try(value) {
 		Ok(text) => Ok(
 			Request.{
 				method: POST,
-				url,
+				url: u,
 				headers: [Header.{ name: "content-type", value: "application/json" }],
 				body: Text(text),
 			},
@@ -55,8 +62,41 @@ Request := {
 		Err(e) => Err(BadData(Str.inspect(e)))
 	}
 
+	method : Request -> Method
+	method = |r| r.method
+
+	url : Request -> Str
+	url = |r| r.url
+
+	headers : Request -> List(Header)
+	headers = |r| r.headers
+
+	body : Request -> Body
+	body = |r| r.body
+
+	## `request.cf` of an incoming request. `Missing`: an outgoing request, or a request with no `cf`.
+	cf : Request -> Try(Request.Cf, [Missing])
+	cf = |r| r.?cf.map_err(|_| Missing)
+
 	with_header : Request, Str, Str -> Request
 	with_header = |r, name, value| { ..r, headers: r.headers.append(Header.{ name, value }) }
+
+	## All headers in place of the old ones.
+	with_headers : Request, List(Header) -> Request
+	with_headers = |r, list| { ..r, headers: list }
+
+	with_method : Request, Method -> Request
+	with_method = |r, m| { ..r, method: m }
+
+	with_url : Request, Str -> Request
+	with_url = |r, u| { ..r, url: u }
+
+	with_body : Request, Body -> Request
+	with_body = |r, b| { ..r, body: b }
+
+	## Low level: the `cf` of an incoming request (the platform entry, a test).
+	with_cf : Request, Request.Cf -> Request
+	with_cf = |r, c| { ..r, cf: c }
 
 	## The path as segments, for a `match` with a list pattern: `(GET, ["v1", "pkg", name])`.
 	## "https://x/v1/packages/a/b/releases?q=1" gives ["v1", "packages", "a", "b", "releases"].

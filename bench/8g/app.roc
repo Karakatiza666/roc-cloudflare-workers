@@ -82,7 +82,7 @@ cross! = |n, k, waits| {
 		op : Js.Op
 		op = Call(Root("global"), "isFinite", [Lit(Int($i.to_i64_wrap()))])
 		ops = List.repeat(op, k)
-		r = if waits Io.await!(ops) else Io.call!(ops)
+		r = if waits Js.await!(ops) else Js.call!(ops)
 		match r {
 			Ok(Bool(Bool.True)) => {
 				$acc = $acc + 1
@@ -152,7 +152,7 @@ d1_ops! = |n, rows, which| {
 			RawOnly => b.concat([Call(Slot(2), "raw", [Lit(Obj([("columnNames", Bool(Bool.True))]))]), Call(Root("pf"), "limit", [Slot(3), limit_arg])])
 			ObjTree => b.concat([Call(Slot(2), "all", []), Get(Slot(3), "results"), Call(Root("pf"), "limit", [Slot(4), limit_arg])])
 		}
-		match Io.await!(ops) {
+		match Js.await!(ops) {
 			Ok(Packed(bytes)) => {
 				$acc = $acc + bytes.len()
 			}
@@ -254,7 +254,7 @@ d1_tree_typed! = |n, rows| {
 		b = bound_ops(rows)
 		ops : List(Js.Op)
 		ops = b.concat([Call(Slot(2), "raw", [Lit(Obj([("columnNames", Bool(Bool.True))]))]), Call(Root("pf"), "limit", [Slot(3), limit_arg])])
-		match Io.await!(ops) {
+		match Js.await!(ops) {
 			Ok(Arr([_names, .. as items])) => {
 				list = items.map(row_of_js)
 				$acc = $acc + sum_rows(list)
@@ -368,7 +368,7 @@ packed! = |rows, maps| {
 	} else {
 		b.concat([Call(Slot(2), "raw", []), Call(Root("pf"), "pack", [Slot(3), limit_arg])])
 	}
-	match Io.await!(ops) {
+	match Js.await!(ops) {
 		Ok(Packed(bytes)) => bytes
 		other => crash "packed!: ${Str.inspect(other)}"
 	}
@@ -465,7 +465,7 @@ sha_digest! = |n, size, which| {
 				Call(Slot(0), "len", [Lit(Bytes($data))]),
 			]
 		}
-		match Io.await!(ops) {
+		match Js.await!(ops) {
 			Ok(Bytes(d)) => {
 				$last = d
 			}

@@ -38,7 +38,7 @@ Entry :: [].{
 		fields = obj(js, "event")
 		match get(fields, "kind") {
 			Text("fetch") => Fetch(request(get(fields, "request")))
-			Text("scheduled") => Scheduled(Worker.Scheduled.{ cron: text(get(fields, "cron"), "cron"), time_ms: u64(get(fields, "time_ms"), "time_ms") })
+			Text("scheduled") => Scheduled(Worker.Scheduled.new({ cron: text(get(fields, "cron"), "cron"), time_ms: u64(get(fields, "time_ms"), "time_ms") }))
 			Text("queue") => Queue(queue_batch(fields))
 			Text("email") => Email(mail(fields))
 			Text("tail") => Tail(trace_items(fields))
@@ -56,14 +56,14 @@ Entry :: [].{
 	## outcome (`Done`, or `Failed` with the text of the error).
 	finish! : Worker.Outcome => Js
 	finish! = |o| match o {
-		Respond(res) => match res.?after_work! {
+		Respond(res) => match res.after_work() {
 			Ok(work!) => {
-				match Io.call!([Call(Root("pf"), "respond", [Lit(Entry.outcome(o))])]) {
+				match Js.call!([Call(Root("pf"), "respond", [Lit(Entry.outcome(o))])]) {
 					Ok(_) => {}
 					# No hook (a `Respond` for an event that is not a fetch) or a response that Workers refuses: a bug of the app.
 					Err(t) => crash "Response.after: respond: ${t.name}: ${t.message}"
 				}
-				match work!({}) {
+				match work!() {
 					Ok({}) => Entry.outcome(Done)
 					Err(why) => Entry.outcome(Failed(why))
 				}
@@ -78,11 +78,11 @@ Entry :: [].{
 		Respond(res) => {
 			base = [
 				("outcome", Text("respond")),
-				("status", Int(res.status.to_i64())),
-				("headers", Arr(res.headers.map(|h| Arr([Text(h.name), Text(h.value)])))),
-				("body", body_js(res.body)),
+				("status", Int(res.status().to_i64())),
+				("headers", Arr(res.headers().map(|h| Arr([Text(h.name), Text(h.value)])))),
+				("body", body_js(res.body())),
 			]
-			match res.?web_socket {
+			match res.web_socket() {
 				Ok(r) => Obj(base.append(("webSocket", Ref(r))))
 				Err(_) => Obj(base)
 			}
@@ -148,9 +148,10 @@ request = |js| {
 		other => crash "Entry: headers is ${Str.inspect(other)}"
 	}
 	body = body_of(get(f, "body"))
+	req = Request.new(method, url).with_headers(headers).with_body(body)
 	match get(f, "cf") {
-		Undefined => Request.{ method, url, headers, body }
-		cf => Request.{ method, url, headers, body, cf: cf_of(cf) }
+		Undefined => req
+		cf => req.with_cf(cf_of(cf))
 	}
 }
 
@@ -161,7 +162,7 @@ queue_batch = |f| {
 		Arr(items) => items.map(queue_message)
 		other => crash "Entry: messages is ${Str.inspect(other)}"
 	}
-	Queue.Batch.{ queue: text(get(f, "queue"), "queue"), messages }
+	Queue.Batch.new({ queue: text(get(f, "queue"), "queue"), messages })
 }
 
 queue_message : Js -> Queue.Message
@@ -171,16 +172,16 @@ queue_message = |js| {
 		Packed(bytes) => bytes
 		_ => []
 	}
-	Queue.Message.{
+	Queue.Message.new({
 		id: text(get(m, "id"), "id"),
 		timestamp_ms: u64(get(m, "timestamp_ms"), "timestamp_ms"),
 		attempts: u32(get(m, "attempts"), "attempts"),
 		body,
-	}
+	})
 }
 
 mail : List((Str, Js)) -> Email.Mail
-mail = |f| Email.Mail.{
+mail = |f| Email.Mail.new({
 	from: text(get(f, "from"), "from"),
 	to: text(get(f, "to"), "to"),
 	headers: match get(f, "headers") {
@@ -190,7 +191,7 @@ mail = |f| Email.Mail.{
 	raw: body_of(get(f, "raw")),
 	raw_size_bytes: u64(get(f, "raw_size_bytes"), "raw_size_bytes"),
 	can_be_forwarded: get(f, "can_be_forwarded") == Bool(Bool.True),
-}
+})
 
 ## The batch of a Tail Worker: one `Packed` value, parsed into the typed items (MODULES.md 3). A shape that does not
 ## fit is a platform bug: a crash, with the text of the parse error.

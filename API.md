@@ -112,15 +112,15 @@ flowchart TB
 
 ## 4. The fixed ABI
 
-Hosted functions (`platform/Host.roc`, not in `exposes`):
+Hosted functions (step 8h wave C: the two program runs are in `platform/Js.roc`, `native!` is in `platform/Host.roc`, not in `exposes`):
 
 | Function | Type | JS import | Waits |
 | --- | --- | --- | --- |
-| `await!` | `Js => { status : U8, value : Js }` | `js_await`, wrapped in `WebAssembly.Suspending` | Yes, one JSPI wait |
-| `call!` | `Js => { status : U8, value : Js }` | `js_call`, a plain import | No |
-| `native!` | `U32, List(U8) => { status : U8, bytes : List(U8) }` | none: Zig code in the host | No |
+| `Js.host_await!` | `Js => { status : U8, value : Js }` | `js_await`, wrapped in `WebAssembly.Suspending` | Yes, one JSPI wait |
+| `Js.host_call!` | `Js => { status : U8, value : Js }` | `js_call`, a plain import | No |
+| `Host.native!` | `U32, List(U8) => { status : U8, bytes : List(U8) }` | none: Zig code in the host | No |
 
-Apps and modules reach them through `Io.await!(ops)` and `Io.call!(ops)` (`platform/Io.roc`, built in `PLAN.md` 8a), not `Js.await!` and `Js.call!` (6.4): `Host.roc` imports `Js`, and Roc has no import cycles (`research/bridge-check/`), so `Js.roc` cannot call `Host`.
+Apps and modules reach them through `Js.await!(ops)` and `Js.call!(ops)` (6.4). The host symbols are `roc_await`, `roc_call` and `roc_native` (the `hosted` section of `main.roc`). Before step 8h wave C, the runs were `Io.await!` and `Io.call!`, because `Host.roc` imported `Js` and Roc has no import cycles (`research/bridge-check/`). A hosted function in `Js` itself removes the cycle. The glue names of the return types are `JsHost_await` and `JsHost_call` (`host/host.zig`).
 
 The argument of `await!` and `call!` is a program (6.2) as a `Js` value. The result is a `Js` value (5). Roc never sees the byte format: the Zig host encodes the argument into a host block for JS (4.1), and decodes the bytes that JS writes back into Roc values (5.1). JS reads the argument before its first `await` (`../DESIGN-REGISTRY.md` 8). The host frees the argument (glue `decref`), because a hosted function owns its arguments.
 
@@ -353,7 +353,7 @@ A binding value holds the name of the binding: `D1 :: { name : Str }`, made with
 | Need | Use |
 | --- | --- |
 | A platform module needs a loop or a branch in JS: a stream read to a limit, the pin table (9) | A platform helper in the shim: `Call(Root("pf"), "readUpTo", [Slot(n), Lit(Num(max))])`. The helpers are part of the platform release, like the modules that call them. |
-| A Workers API that has no module yet | `Io.await!(ops)`, `Io.call!(ops)` or an `Io` (6.5) in the app. Same rules as in a module. (Was `Js.await!` and `Js.call!`: see 4.) |
+| A Workers API that has no module yet | `Js.await!(ops)`, `Js.call!(ops)` or an `Io` (6.5, `Io.new`, `Io.sync`) in the app. Same rules as in a module. |
 | JS logic with a branch, a loop or a callback (HTMLRewriter, a library from npm) | The app adds JS functions: `makeHandler(module, { ops: { name: async (...args) => ... } })`. Roc calls them with `Call(Root("ops"), "name", args)`. A value of `ops` can also be an object (a library): Roc calls its methods with `Get(Root("ops"), "lib")`, then `Call` (`PLAN.md` 8c, C11). A Roc package that needs JS code tells the app to add its functions to `ops`. |
 
 The platform helpers (root `pf`) that this file names. Each one is a loop or a branch that a program cannot have (OP4).
@@ -381,7 +381,7 @@ The platform helpers (root `pf`) that this file names. Each one is a loop or a b
 | `wsPair()`, `wsAccept(ws)`, `wsReceive(ws, signal)` | Built in `PLAN.md` 8f, part 3. `wsPair` makes a `WebSocketPair` and accepts its server end, `wsAccept` accepts a socket (`undefined` for `null`, OP7). Both set `binaryType` to `arraybuffer` and keep a queue of the messages that come before a `receive`. `wsReceive` gives the next message (text or bytes) or `{ code, reason, clean }` after the close. It stops its wait on the abort of `signal` and leaves the message for the next call. A message that a lost branch took goes back to the front of the queue (`onLoss`, OP8). A wait in `wsReceive` has no deadline (10.2). | `WebSocket.accept!`, `connect!`, `receive!` (`MODULES.md` 12.2) |
 | `tcpConnect(host, port, tls)`, `tcpOpen(socket)`, `tcpRead(socket, max, signal)`, `tcpWrite(socket, bytes)`, `tcpStartTls(socket)`, `tcpClose(socket)` | Built in `PLAN.md` 8f, part 3. `connect` of `cloudflare:sockets` (a dynamic import), a wait for `opened`, a read of at most `max` bytes (`undefined` at the end; on an abort the read stays for the next call, and bytes that a lost branch took go back to the front, OP8), a write (the text `closed` for a closed socket), `startTls`, `close` with no wait. A wait in `tcpRead` has no deadline (10.2). | `Tcp` (`MODULES.md` 12.3), `Hyperdrive.connect!` (`tcpOpen`) |
 | `keys(entries, maxBytes)` | The keys of an iterator of `[key, value]` entries as a `Js` tree, with the limit of `limit` (built in `PLAN.md` 8f). The values stay in JS. | `Object.Self.list!` (a program has no loop, OP4) |
-| `pin(name, value, maxAgeMs)`, `pinned(name)`, `unpin(name)` | The pin table (RS2). `pinned` gives `undefined` for a name with no entry or an entry past its age (8a; `Js.pinned!` makes it `NotPinned` in 8c). | `Js.pin!`, `pinned!`, `unpin!` (built as `Io.pin!`, `Io.pinned!`, `Io.unpin!`, RS2), `Memo` |
+| `pin(name, value, maxAgeMs)`, `pinned(name)`, `unpin(name)` | The pin table (RS2). `pinned` gives `undefined` for a name with no entry or an entry past its age (8a; `Js.pinned!` makes it `NotPinned` in 8c). | `Js.pin!`, `pinned!`, `unpin!` (RS2), `Memo` |
 
 The app is trusted code: it is the developer's own Worker. A program can reach only the roots of OP3, and Workers does not allow `eval` or `new Function`.
 
@@ -395,7 +395,7 @@ Thrown : { name : Str, message : Str }
 
 | Function | Crossings | Use |
 | --- | --- | --- |
-| `Io.new(ops, read)`, `Io.sync(ops, read)` | none | Make an `Io` that uses `await!` or `call!` |
+| `Io.new(ops, read)`, `Io.sync(ops, read)` | none | Make an `Io` that uses `Js.await!` or `Js.call!` (low level: they stay in `Io`, because `Io` imports `Js`) |
 | `Io.map(io, f)` | none | Change the result |
 | `Io.run!(io) => Try(a, e)` | 1 | The usual call. Each module function `f!` is `Io.run!(f(...))`. |
 | `Io.both!(Io(a, e), Io(b, e)) => Try((a, b), e)` | 1 (`Par`) | Two operations at the same time |
@@ -539,7 +539,7 @@ A Native op that Roc gets in its builtins later moves to Roc, and the op stays f
 | # | Rule |
 | --- | --- |
 | RS1 | A ref is a u32 id in the table of the task that made it. The table gives one id to one JS object (a `Map` from object to id), so two refs of the same object are equal in Roc: a Durable Object finds the sender among its sockets with `==` (`MODULES.md` 12.1). JS frees all refs of a task at its end, its trap and its cancel (`PLAN.md` 8a). A program that `Io.start!` started (6.5) uses the context of its task: the ref table and the roots. So at the end of the task, JS keeps that context until each started program settles, or until the 30 s limit of `waitUntil`, and frees it then. So a ref never outlives its task and its started programs, and Roc never has to free one. |
-| RS2 | The pin table keeps JS values for later tasks of the same isolate, by name. A later task cannot get an id from an earlier one, because Roc keeps no state across events, so a name is the key. `Js.pin!(Str, Js, { max_age_ms })` stores the value (each `Ref` in it becomes its object). `Js.pinned!(Str) => Try(Js, [NotPinned])` gives it back by J1 to J7, so each object in it gets a new ref of the task. `Js.unpin!(Str)` removes it. All three are one `call!` to a platform helper (6.4), with no wait. The table has a limit of entries (default 1,000, shim option `pinLimit`). A pin over the limit is status 1. Each pin and unpin is counted (`PLAN.md` M11). In a stateless Worker, only objects that are not I/O objects can be used from a later request (a `CryptoKey` can). Workers throws for a stream, a body, a socket or a `Response` of another request. Inside a Durable Object, all events share one context, so a `WebSocket` can be pinned. `Memo` (`MODULES.md` 9) is the typed wrapper for data: it pins the CBOR bytes, so JS does not parse them. `Js.pin!` is for JS objects. As built (`PLAN.md` 8c): `Io.pin! : Str, Js, { max_age_ms : U64 } => Try({}, [PinErr(Io.Thrown)])` (a full table is `PinErr`), `Io.pinned! : Str => Try(Js, [NotPinned])`, `Io.unpin! : Str => {}`. They are in `Io`, not in `Js`, for the reason of `Io.await!` (4). |
+| RS2 | The pin table keeps JS values for later tasks of the same isolate, by name. A later task cannot get an id from an earlier one, because Roc keeps no state across events, so a name is the key. `Js.pin!(Str, Js, { max_age_ms })` stores the value (each `Ref` in it becomes its object). `Js.pinned!(Str) => Try(Js, [NotPinned])` gives it back by J1 to J7, so each object in it gets a new ref of the task. `Js.unpin!(Str)` removes it. All three are one `call!` to a platform helper (6.4), with no wait. The table has a limit of entries (default 1,000, shim option `pinLimit`). A pin over the limit is status 1. Each pin and unpin is counted (`PLAN.md` M11). In a stateless Worker, only objects that are not I/O objects can be used from a later request (a `CryptoKey` can). Workers throws for a stream, a body, a socket or a `Response` of another request. Inside a Durable Object, all events share one context, so a `WebSocket` can be pinned. `Memo` (`MODULES.md` 9) is the typed wrapper for data: it pins the CBOR bytes, so JS does not parse them. `Js.pin!` is for JS objects. As built (`PLAN.md` 8c, moved to `Js` in 8h wave C): `Js.pin! : Str, Js, { max_age_ms : U64 } => Try({}, [PinErr(Js.Thrown)])` (a full table is `PinErr`), `Js.pinned! : Str => Try(Js, [NotPinned])`, `Js.unpin! : Str => {}`. |
 | RS3 | A `Body` is `[Empty, Bytes(List(U8)), Text(Str), Stream(Ref)]`. A request body, a fetch response body and an R2 body arrive as `Stream(Ref)`, with no copy. `Body.bytes!` copies with a `max`, and gives an error past it. A `Stream` given to a `Response` or an R2 `put` goes back to JS with no copy (`PLAN.md` 10a, 10b). A stream can be read once. A copy of the `Body` value in Roc points to the same stream, so a second read gives status 1. `Body.tee!` gives two streams. |
 | RS4 | JS writes its result bytes into a `js_alloc` block (4.1). The host decodes them into Roc values that it allocates with the owner of the task, then frees the block (5.1). So the sums and `freeOwner` cover the values (`PLAN.md` 2a, 12a). |
 
@@ -659,7 +659,7 @@ The event and the outcome cross as `Js` trees (5) with these shapes (`platform/E
 
 ### 10.2 Respond now, work after
 
-A `fetch!` handler gives `Ok(response.after(work!))` (`Response.after`, `MODULES.md` 4): the platform gives the response to Workers at once, and then runs `work! : {} => Try({}, e)` in the same task. The work is an argument, so the order is in the types: no code runs after the handler gives its result, and the handler has one response. `Response.after` works for the `fetch!` of a Worker, of a named entry point (`EntrypointFetch`) and of a Durable Object, the only handlers that give a `Response`. `Entry.finish!` (`platform/main.roc`) sends the response with `pf.respond` and then runs the work. An `Err(e)` of the work is the log line `fetch: after respond: failed: <Str.inspect(e)>`.
+A `fetch!` handler gives `Ok(response.after(work!))` (`Response.after`, `MODULES.md` 4): the platform gives the response to Workers at once, and then runs `work! : () => Try({}, e)` in the same task. The work is an argument, so the order is in the types: no code runs after the handler gives its result, and the handler has one response. `Response.after` works for the `fetch!` of a Worker, of a named entry point (`EntrypointFetch`) and of a Durable Object, the only handlers that give a `Response`. `Entry.finish!` (`platform/main.roc`) sends the response with `pf.respond` and then runs the work. An `Err(e)` of the work is the log line `fetch: after respond: failed: <Str.inspect(e)>`.
 
 | Event | How the task stays alive after the response |
 | --- | --- |
@@ -705,7 +705,7 @@ This one form covers 3 needs:
 | Need | How |
 | --- | --- |
 | Work after the response (cache put, tile catch-up, RN5, RN11) | `Ok(response.after(\|_\| work!()))`. A cache put after the response: `cache.put_after!(url, res)` (`MODULES.md` 5.4). |
-| A streaming response (SSE, a long export) | `{ body, writer } = Body.writer!({})?`, then `Ok(Response.from_body(200, "text/event-stream", body).after(write_all!))`, where `write_all!` calls `writer.write!(chunk)` for each chunk and `writer.close!()` at the end (`MODULES.md` 4). No `Js`. |
+| A streaming response (SSE, a long export) | `{ body, writer } = Body.writer!()?`, then `Ok(Response.from_body(200, "text/event-stream", body).after(write_all!))`, where `write_all!` calls `writer.write!(chunk)` for each chunk and `writer.close!()` at the end (`MODULES.md` 4). No `Js`. |
 | A WebSocket | `{ socket, response } = WebSocket.accept!(req)?`, then `Ok(response.after(\|_\| serve!(socket)))`, where `serve!` calls `receive!` and `send!` (`MODULES.md` 12) |
 
 As built in `PLAN.md` 8b (second half). Measured in local workerd (`research/stream-cancel/`, `bench/stream-workerd.mjs`):

@@ -1,13 +1,14 @@
 ## A value kept in the isolate across requests (MODULES.md 9): a cache, never state. The pin table of the shim (API.md
 ## RS2) keeps the value as CBOR bytes, so JS never parses it, and a later request reads it with one `call!` (no wait)
 ## and `Cbor.parse`. The first `get!` in an isolate, and the first after `max_age_ms`, runs `load!`.
+## Typed data: the format, what a JS peer sees, and what survives a round trip are in MODULES.md 1, "Formats of typed data".
 import Io
 import Js
 import cbor.Cbor
 
-Memo(a, e) := { name : Str, max_age_ms : U64, load! : {} => Try(a, e), write : a -> List(U8), read : List(U8) -> Try(a, Str) }.{
+Memo(a, e) := { name : Str, max_age_ms : U64, load! : () => Try(a, e), write : a -> List(U8), read : List(U8) -> Try(a, Str) }.{
 	## A constant (WR1): it does nothing until `get!`. `load!` needs a type annotation (MODULES.md 15).
-	new : Str, { max_age_ms : U64, load! : {} => Try(a, e) } -> Memo(a, e) where [a.Cbor.Encodable([]), a.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+	new : Str, { max_age_ms : U64, load! : () => Try(a, e) } -> Memo(a, e) where [a.Cbor.Encodable([]), a.Cbor.Parseable([InvalidCbor(U64), ..errs])]
 	new = |name, opts| Memo.{
 		name,
 		max_age_ms: opts.max_age_ms,
@@ -21,7 +22,7 @@ Memo(a, e) := { name : Str, max_age_ms : U64, load! : {} => Try(a, e), write : a
 	get! : Memo(a, e) => Try(a, e)
 	get! = |m| {
 		read = m.read
-		pinned = match Io.call!([Call(Root("pf"), "pinned", [Lit(Text(m.name))])]) {
+		pinned = match Js.call!([Call(Root("pf"), "pinned", [Lit(Text(m.name))])]) {
 			Ok(Bytes(bytes)) => read(bytes)
 			_ => Err("not pinned")
 		}
@@ -30,9 +31,9 @@ Memo(a, e) := { name : Str, max_age_ms : U64, load! : {} => Try(a, e), write : a
 			Err(_) => {
 				load! = m.load!
 				write = m.write
-				v = load!({})?
+				v = load!()?
 				age = m.max_age_ms.to_i64_try() ?? I64.highest
-				_ = Io.call!([Call(Root("pf"), "pin", [Lit(Text(m.name)), Lit(Bytes(write(v))), Lit(Int(age))])])
+				_ = Js.call!([Call(Root("pf"), "pin", [Lit(Text(m.name)), Lit(Bytes(write(v))), Lit(Int(age))])])
 				Ok(v)
 			}
 		}
@@ -41,7 +42,7 @@ Memo(a, e) := { name : Str, max_age_ms : U64, load! : {} => Try(a, e), write : a
 	## Drop the pinned value, so the next `get!` loads again.
 	clear! : Memo(a, e) => {}
 	clear! = |m| {
-		_ = Io.call!([Call(Root("pf"), "unpin", [Lit(Text(m.name))])])
+		_ = Js.call!([Call(Root("pf"), "unpin", [Lit(Text(m.name))])])
 		{}
 	}
 }

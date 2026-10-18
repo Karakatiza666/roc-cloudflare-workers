@@ -8,7 +8,7 @@ CfRoutes :: [].{
 	route! = |req, path| match path {
 		[] => Response.from_text(
 			200,
-			match req.?cf {
+			match req.cf() {
 				Ok(cf) => "colo=${Str.inspect(cf.colo)} metro_code=${Str.inspect(cf.metro_code)} asn=${Str.inspect(cf.asn)} is_eu_country=${Str.inspect(cf.is_eu_country)}"
 				Err(_) => "no cf"
 			},

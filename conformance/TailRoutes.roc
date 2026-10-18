@@ -10,7 +10,7 @@ TailRoutes :: [].{
 	handle! : List(Worker.TraceItem) => Try({}, [Boom])
 	handle! = |items| {
 		for item in items {
-			request = match item.event {
+			request = match item.event() {
 				Ok(e) => {
 					status = match e.response {
 						Ok(r) => r.status.to_str()
@@ -27,29 +27,29 @@ TailRoutes :: [].{
 				}
 				Err(Missing) => "no event"
 			}
-			script = match item.script_name {
+			script = match item.script_name() {
 				Ok(s) => s
 				Err(Missing) => "none"
 			}
-			timestamp = match item.event_timestamp_ms {
+			timestamp = match item.event_timestamp_ms() {
 				Ok(t) => if t > 0 "set" else "zero"
 				Err(Missing) => "none"
 			}
-			messages = item.logs.map(|l| l.message)
+			messages = item.logs().map(|l| l.message)
 			bytes = messages.map(|m| m.count_utf8_bytes()).sum()
-			first = match item.logs.first() {
+			first = match item.logs().first() {
 				Ok(l) => "${l.level} ${l.message}"
 				Err(_) => "none"
 			}
-			exceptions = item.exceptions.map(|x| "${x.name}: ${x.message}")
+			exceptions = item.exceptions().map(|x| "${x.name}: ${x.message}")
 			Log.info!(
 				"trace",
 				{
 					script,
-					outcome: item.outcome,
+					outcome: item.outcome(),
 					request,
 					timestamp,
-					logs: item.logs.len(),
+					logs: item.logs().len(),
 					log_bytes: bytes,
 					first,
 					exceptions,

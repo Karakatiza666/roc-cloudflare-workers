@@ -710,6 +710,48 @@ pub const RocEnv = struct {
     roc_io: RocIo,
 };
 
+/// Element type for __AnonStruct_46176cbc4274aa78
+pub const __AnonStruct_46176cbc4274aa78 = if (@sizeOf(usize) == 4) extern struct {
+    @"bytes": RocListWith(u8, false),
+    @"status": u8,
+    /// Recursively decrement Roc-owned fields.
+    pub fn decref(self: @This(), roc_host: *RocHost) void {
+        const value = self;
+        value.@"bytes".decref(roc_host);
+    }
+
+    /// Increment Roc-owned fields.
+    pub fn incref(self: @This(), amount: isize) void {
+        const value = self;
+        value.@"bytes".incref(amount);
+    }
+} else extern struct {
+    @"bytes": RocListWith(u8, false),
+    @"status": u8,
+    /// Recursively decrement Roc-owned fields.
+    pub fn decref(self: @This(), roc_host: *RocHost) void {
+        const value = self;
+        value.@"bytes".decref(roc_host);
+    }
+
+    /// Increment Roc-owned fields.
+    pub fn incref(self: @This(), amount: isize) void {
+        const value = self;
+        value.@"bytes".incref(amount);
+    }
+};
+
+comptime {
+    if (@sizeOf(usize) == 8) {
+        if (@sizeOf(__AnonStruct_46176cbc4274aa78) != 32) @compileError("__AnonStruct_46176cbc4274aa78 size mismatch");
+        if (@alignOf(__AnonStruct_46176cbc4274aa78) != 8) @compileError("__AnonStruct_46176cbc4274aa78 alignment mismatch");
+    }
+    if (@sizeOf(usize) == 4) {
+        if (@sizeOf(__AnonStruct_46176cbc4274aa78) != 16) @compileError("__AnonStruct_46176cbc4274aa78 size mismatch");
+        if (@alignOf(__AnonStruct_46176cbc4274aa78) != 4) @compileError("__AnonStruct_46176cbc4274aa78 alignment mismatch");
+    }
+}
+
 /// Element type for __AnonStruct_60e2f498ccfd46d9
 pub const __AnonStruct_60e2f498ccfd46d9 = if (@sizeOf(usize) == 4) extern struct {
     @"value": Js,
@@ -839,48 +881,6 @@ comptime {
     if (@sizeOf(usize) == 4) {
         if (@sizeOf(JsRef) != 4) @compileError("JsRef size mismatch");
         if (@alignOf(JsRef) != 4) @compileError("JsRef alignment mismatch");
-    }
-}
-
-/// Element type for __AnonStruct_46176cbc4274aa78
-pub const __AnonStruct_46176cbc4274aa78 = if (@sizeOf(usize) == 4) extern struct {
-    @"bytes": RocListWith(u8, false),
-    @"status": u8,
-    /// Recursively decrement Roc-owned fields.
-    pub fn decref(self: @This(), roc_host: *RocHost) void {
-        const value = self;
-        value.@"bytes".decref(roc_host);
-    }
-
-    /// Increment Roc-owned fields.
-    pub fn incref(self: @This(), amount: isize) void {
-        const value = self;
-        value.@"bytes".incref(amount);
-    }
-} else extern struct {
-    @"bytes": RocListWith(u8, false),
-    @"status": u8,
-    /// Recursively decrement Roc-owned fields.
-    pub fn decref(self: @This(), roc_host: *RocHost) void {
-        const value = self;
-        value.@"bytes".decref(roc_host);
-    }
-
-    /// Increment Roc-owned fields.
-    pub fn incref(self: @This(), amount: isize) void {
-        const value = self;
-        value.@"bytes".incref(amount);
-    }
-};
-
-comptime {
-    if (@sizeOf(usize) == 8) {
-        if (@sizeOf(__AnonStruct_46176cbc4274aa78) != 32) @compileError("__AnonStruct_46176cbc4274aa78 size mismatch");
-        if (@alignOf(__AnonStruct_46176cbc4274aa78) != 8) @compileError("__AnonStruct_46176cbc4274aa78 alignment mismatch");
-    }
-    if (@sizeOf(usize) == 4) {
-        if (@sizeOf(__AnonStruct_46176cbc4274aa78) != 16) @compileError("__AnonStruct_46176cbc4274aa78 size mismatch");
-        if (@alignOf(__AnonStruct_46176cbc4274aa78) != 4) @compileError("__AnonStruct_46176cbc4274aa78 alignment mismatch");
     }
 }
 
@@ -1046,9 +1046,9 @@ comptime {
     }
 }
 
-/// Return type record for Host.await!
+/// Return type record for Js.host_await!
 /// Fields ordered by compiler-emitted ABI offsets.
-pub const HostAwaitRetRecord = if (@sizeOf(usize) == 4) extern struct {
+pub const JsHost_awaitRetRecord = if (@sizeOf(usize) == 4) extern struct {
     @"value": Js,
     @"status": u8,
 } else extern struct {
@@ -1058,18 +1058,18 @@ pub const HostAwaitRetRecord = if (@sizeOf(usize) == 4) extern struct {
 
 comptime {
     if (@sizeOf(usize) == 8) {
-        if (@sizeOf(HostAwaitRetRecord) != 64) @compileError("HostAwaitRetRecord size mismatch");
-        if (@alignOf(HostAwaitRetRecord) != 8) @compileError("HostAwaitRetRecord alignment mismatch");
+        if (@sizeOf(JsHost_awaitRetRecord) != 64) @compileError("JsHost_awaitRetRecord size mismatch");
+        if (@alignOf(JsHost_awaitRetRecord) != 8) @compileError("JsHost_awaitRetRecord alignment mismatch");
     }
     if (@sizeOf(usize) == 4) {
-        if (@sizeOf(HostAwaitRetRecord) != 40) @compileError("HostAwaitRetRecord size mismatch");
-        if (@alignOf(HostAwaitRetRecord) != 8) @compileError("HostAwaitRetRecord alignment mismatch");
+        if (@sizeOf(JsHost_awaitRetRecord) != 40) @compileError("JsHost_awaitRetRecord size mismatch");
+        if (@alignOf(JsHost_awaitRetRecord) != 8) @compileError("JsHost_awaitRetRecord alignment mismatch");
     }
 }
 
-/// Return type record for Host.call!
+/// Return type record for Js.host_call!
 /// Fields ordered by compiler-emitted ABI offsets.
-pub const HostCallRetRecord = if (@sizeOf(usize) == 4) extern struct {
+pub const JsHost_callRetRecord = if (@sizeOf(usize) == 4) extern struct {
     @"value": Js,
     @"status": u8,
 } else extern struct {
@@ -1079,12 +1079,12 @@ pub const HostCallRetRecord = if (@sizeOf(usize) == 4) extern struct {
 
 comptime {
     if (@sizeOf(usize) == 8) {
-        if (@sizeOf(HostCallRetRecord) != 64) @compileError("HostCallRetRecord size mismatch");
-        if (@alignOf(HostCallRetRecord) != 8) @compileError("HostCallRetRecord alignment mismatch");
+        if (@sizeOf(JsHost_callRetRecord) != 64) @compileError("JsHost_callRetRecord size mismatch");
+        if (@alignOf(JsHost_callRetRecord) != 8) @compileError("JsHost_callRetRecord alignment mismatch");
     }
     if (@sizeOf(usize) == 4) {
-        if (@sizeOf(HostCallRetRecord) != 40) @compileError("HostCallRetRecord size mismatch");
-        if (@alignOf(HostCallRetRecord) != 8) @compileError("HostCallRetRecord alignment mismatch");
+        if (@sizeOf(JsHost_callRetRecord) != 40) @compileError("JsHost_callRetRecord size mismatch");
+        if (@alignOf(JsHost_callRetRecord) != 8) @compileError("JsHost_callRetRecord alignment mismatch");
     }
 }
 
@@ -1109,17 +1109,17 @@ comptime {
     }
 }
 
-/// Arguments for Host.await!
+/// Arguments for Js.host_await!
 /// Roc signature: Js => { status : U8, value : Js }
 /// Refcounted fields are owned by the hosted function.
-pub const HostAwaitArgs = extern struct {
+pub const JsHost_awaitArgs = extern struct {
     arg0: Js,
 };
 
-/// Arguments for Host.call!
+/// Arguments for Js.host_call!
 /// Roc signature: Js => { status : U8, value : Js }
 /// Refcounted fields are owned by the hosted function.
-pub const HostCallArgs = extern struct {
+pub const JsHost_callArgs = extern struct {
     arg0: Js,
 };
 
@@ -1139,11 +1139,17 @@ pub const JsArrPayload = JsPayload;
 pub const JsArrTag = JsTag;
 pub const JsArrObj = __AnonStruct_3050890b99a769ac;
 pub const JsArrRef = JsRef;
-pub const HostAwait = __AnonStruct_60e2f498ccfd46d9;
-pub const HostCall = __AnonStruct_60e2f498ccfd46d9;
+pub const JsHost_await = __AnonStruct_60e2f498ccfd46d9;
+pub const JsHost_call = __AnonStruct_60e2f498ccfd46d9;
 pub const HostNative = __AnonStruct_46176cbc4274aa78;
 
 // Generated Refcount Helpers
+
+pub const __AnonStruct_46176cbc4274aa78Release = struct {
+    pub fn release(value: __AnonStruct_46176cbc4274aa78, roc_host: *RocHost) void {
+        value.decref(roc_host);
+    }
+};
 
 pub const __AnonStruct_60e2f498ccfd46d9Release = struct {
     pub fn release(value: __AnonStruct_60e2f498ccfd46d9, roc_host: *RocHost) void {
@@ -1235,12 +1241,6 @@ pub const JsRefRelease = struct {
     }
 };
 
-pub const __AnonStruct_46176cbc4274aa78Release = struct {
-    pub fn release(value: __AnonStruct_46176cbc4274aa78, roc_host: *RocHost) void {
-        value.decref(roc_host);
-    }
-};
-
 /// Release one owned reference to a `RocList(Js)`.
 ///
 /// The allocation's final reference is claimed atomically before any element
@@ -1260,13 +1260,13 @@ pub fn decrefListOf__AnonStruct_3050890b99a769ac(value: RocList(__AnonStruct_305
 
 fn rocReleasePolicy(comptime T: type) type {
     if (T == RocStr) return RocStrRelease;
+    if (T == __AnonStruct_46176cbc4274aa78) return __AnonStruct_46176cbc4274aa78Release;
+    if (T == RocListWith(u8, false)) return RocListSpineRelease(RocListWith(u8, false));
     if (T == __AnonStruct_60e2f498ccfd46d9) return __AnonStruct_60e2f498ccfd46d9Release;
     if (T == Js) return JsRelease;
     if (T == RocList(Js)) return RocListRelease(RocList(Js), JsRelease);
-    if (T == RocListWith(u8, false)) return RocListSpineRelease(RocListWith(u8, false));
     if (T == RocList(__AnonStruct_3050890b99a769ac)) return RocListRelease(RocList(__AnonStruct_3050890b99a769ac), __AnonStruct_3050890b99a769acRelease);
     if (T == __AnonStruct_3050890b99a769ac) return __AnonStruct_3050890b99a769acRelease;
-    if (T == __AnonStruct_46176cbc4274aa78) return __AnonStruct_46176cbc4274aa78Release;
     @compileError("generated glue has no recursive release policy for " ++ @typeName(T));
 }
 
@@ -1293,7 +1293,7 @@ pub extern fn roc_crashed(bytes: [*]const u8, len: usize) callconv(.c) void;
 // The platform host must export these symbols with the exact direct C ABI signatures.
 // Refcounted arguments are owned by the hosted function.
 
-/// Hosted symbol for Host.await!
+/// Hosted symbol for Js.host_await!
 /// Roc signature: Js => { status : U8, value : Js }
 /// Owned arguments. Release each exactly once before returning, unless it is
 /// moved into storage or into the result:
@@ -1301,7 +1301,7 @@ pub extern fn roc_crashed(bytes: [*]const u8, len: usize) callconv(.c) void;
 /// The result is owned by Roc: return exactly one owned reference.
 pub extern fn roc_await(arg0: Js) callconv(.c) __AnonStruct_60e2f498ccfd46d9;
 
-/// Hosted symbol for Host.call!
+/// Hosted symbol for Js.host_call!
 /// Roc signature: Js => { status : U8, value : Js }
 /// Owned arguments. Release each exactly once before returning, unless it is
 /// moved into storage or into the result:

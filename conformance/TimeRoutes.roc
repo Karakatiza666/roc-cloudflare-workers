@@ -8,7 +8,7 @@ import Q
 TimeRoutes :: [].{
 	route! : Request, List(Str) => Response
 	route! = |req, path| match path {
-		["now"] => ok(Time.now_ms!({}).to_str())
+		["now"] => ok(Time.now_ms!().to_str())
 		["sleep"] => {
 			Time.sleep!(Q.num(req, "ms"))
 			ok("slept")

@@ -2,13 +2,13 @@ app [event!] { pf: platform "platform/main.roc" }
 
 import pf.Worker
 import pf.Response
-import pf.Io
+import pf.Js
 
 ## One wait, and no heap allocation by the app (`bench/cpu-test.mjs`: the CPU check in `waitBegin` alone). The program
 ## is empty: an empty list has no heap block. Body: "ok".
 handle! : Str => Str
 handle! = |_req| {
-	_w = Io.await!([])
+	_w = Js.await!([])
 	"ok"
 }
 
@@ -17,12 +17,12 @@ handle! = |_req| {
 event! : Worker.Event => Worker.Outcome
 event! = |e| match e {
 	Fetch(req) => {
-		text = match req.body {
+		text = match req.body() {
 			Bytes(b) => Str.from_utf8(b) ?? ""
 			Text(s) => s
 			_ => ""
 		}
-		Respond(Response.{ status: 200, body: Text(handle!(text)) })
+		Respond(Response.from_status(200).with_body(Text(handle!(text))))
 	}
 	_ => Unhandled
 }

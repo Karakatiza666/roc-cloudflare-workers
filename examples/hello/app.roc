@@ -54,7 +54,7 @@ cbor = || {
 
 fetch_url! : Str => Response
 fetch_url! = |url| match Http.get!(url) {
-	Ok(r) => Response.from_text(200, "status ${r.status.to_str()}")
+	Ok(r) => Response.from_text(200, "status ${r.status().to_str()}")
 	Err(e) => Response.from_text(502, "Err ${Str.inspect(e)}")
 }
 

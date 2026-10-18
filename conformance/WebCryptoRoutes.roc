@@ -4,6 +4,7 @@ import pf.Request
 import pf.Response
 import pf.WebCrypto
 import pf.Io
+import pf.Js
 import Q
 
 E : [CryptoErr(Io.Thrown), BadSignature, Odd(Str)]
@@ -17,13 +18,13 @@ WebCryptoRoutes :: [].{
 		data = Q.text(req, "data").to_utf8()
 		match path {
 			["agree", name] => reply(agree!(name))
-			["ed25519"] => reply(ed25519!({}))
-			["rsa_oaep"] => reply(rsa_oaep!({}))
-			["aes"] => reply(aes!({}))
-			["raw_roundtrip"] => reply(raw_roundtrip!({}))
-			["generate_err"] => reply(generate_err!({}))
-			["twins"] => reply(twins!({}))
-			["sync"] => reply(sync!({}))
+			["ed25519"] => reply(ed25519!())
+			["rsa_oaep"] => reply(rsa_oaep!())
+			["aes"] => reply(aes!())
+			["raw_roundtrip"] => reply(raw_roundtrip!())
+			["generate_err"] => reply(generate_err!())
+			["twins"] => reply(twins!())
+			["sync"] => reply(sync!())
 			# PLAN.md 8c, the measure: `n` hashes of `size` bytes in wasm (`bench/sha256-bench.mjs`).
 			["sha256"] => Response.from_text(200, sha256_loop(Q.num(req, "size"), Q.num(req, "n")))
 			# PLAN.md 8g P2: `WebCrypto.sha256!` of `size` bytes (the builtin below 4,096 bytes, `digest` above), and its twin.
@@ -35,7 +36,7 @@ WebCryptoRoutes :: [].{
 			["rs256_sign"] => reply(rs256_sign!(from_hex(Q.text(req, "pkcs8")), data))
 			["jwk_import"] => reply(jwk_import!(Q.text(req, "priv"), Q.text(req, "pub"), data))
 			["hmac"] => reply(hmac!(Q.text(req, "key").to_utf8(), data))
-			# A key pinned by one request (`Io.pin!`), used by a later one (API.md RS2).
+			# A key pinned by one request (`Js.pin!`), used by a later one (API.md RS2).
 			["pin", name] => reply(pin!(name))
 			["use", name] => reply(use!(name, data))
 			_ => Response.from_text(404, "no route")
@@ -83,8 +84,8 @@ agree! = |name| {
 }
 
 ## The signature of the private key verifies with the public key. A changed text does not.
-ed25519! : {} => Try(Str, E)
-ed25519! = |{}| {
+ed25519! : () => Try(Str, E)
+ed25519! = || {
 	p = pair!(Ed25519)?
 	text = "a message".to_utf8()
 	signature = WebCrypto.sign!({ alg: Ed25519, key: p.private, data: text })?
@@ -100,8 +101,8 @@ show_unit = |r| match r {
 	Err(CryptoErr(t)) => "CryptoErr ${t.name}"
 }
 
-rsa_oaep! : {} => Try(Str, E)
-rsa_oaep! = |{}| {
+rsa_oaep! : () => Try(Str, E)
+rsa_oaep! = || {
 	p = match WebCrypto.generate_key_with!(RsaOaep(Sha256), { modulus_bits: 2048 })? {
 		Pair(keys) => keys
 		One(_) => return Err(Odd("not a pair"))
@@ -114,8 +115,8 @@ rsa_oaep! = |{}| {
 }
 
 ## AES-GCM (the key of 256 and of 128 bits), AES-CBC and AES-CTR: encrypt, then decrypt.
-aes! : {} => Try(Str, E)
-aes! = |{}| {
+aes! : () => Try(Str, E)
+aes! = || {
 	text = "the secret of the day".to_utf8()
 	k256 = one!(WebCrypto.generate_key!(AesGcm)?)?
 	k128 = one!(WebCrypto.generate_key_with!(AesGcm, { length_bits: 128 })?)?
@@ -151,8 +152,8 @@ one! = |g| match g {
 }
 
 ## `export_key!` of an `import_key!` of `Raw(b)` is `Raw(b)`. The other forms and keys as data.
-raw_roundtrip! : {} => Try(Str, E)
-raw_roundtrip! = |{}| {
+raw_roundtrip! : () => Try(Str, E)
+raw_roundtrip! = || {
 	b = WebCrypto.random!(32)
 	aes = WebCrypto.import_key!(AesGcm, Raw(b))?
 	raw = WebCrypto.export_key!(aes, Raw)?
@@ -173,15 +174,15 @@ raw_roundtrip! = |{}| {
 }
 
 ## PBKDF2 and HKDF have no `generateKey`: `CryptoErr`.
-generate_err! : {} => Try(Str, E)
-generate_err! = |{}| match WebCrypto.generate_key!(Pbkdf2) {
+generate_err! : () => Try(Str, E)
+generate_err! = || match WebCrypto.generate_key!(Pbkdf2) {
 	Ok(_) => Ok("Ok")
 	Err(CryptoErr(t)) => Ok("CryptoErr ${t.name}: ${t.message}")
 }
 
 ## Every function through its `Io` twin: one wait each (`calls=` is the number of them).
-twins! : {} => Try(Str, E)
-twins! = |{}| {
+twins! : () => Try(Str, E)
+twins! = || {
 	hmac_key = one!(Io.run!(WebCrypto.generate_key(Hmac(Sha256)))?)?
 	signature = Io.run!(WebCrypto.sign({ alg: Hmac(Sha256), key: hmac_key, data: "x".to_utf8() }))?
 	Io.run!(WebCrypto.verify({ alg: Hmac(Sha256), key: hmac_key, signature, data: "x".to_utf8() }))?
@@ -205,13 +206,13 @@ twins! = |{}| {
 }
 
 ## `timing_safe_equal!`, `random!` and `random_uuid!`: `call!`, no wait.
-sync! : {} => Try(Str, E)
-sync! = |{}| {
+sync! : () => Try(Str, E)
+sync! = || {
 	a = WebCrypto.random!(16)
 	b = WebCrypto.random!(16)
 	big = WebCrypto.random!(100_000)
 	Ok(
-		"equal=${Str.inspect(WebCrypto.timing_safe_equal!(a, a.map(|x| x)))} differ=${Str.inspect(WebCrypto.timing_safe_equal!(a, b))} short=${Str.inspect(WebCrypto.timing_safe_equal!([1, 2], [1, 2, 3]))} random=${a.len().to_str()} big=${big.len().to_str()} distinct=${Str.inspect(a != b)} uuid=${WebCrypto.random_uuid!({})}",
+		"equal=${Str.inspect(WebCrypto.timing_safe_equal!(a, a.map(|x| x)))} differ=${Str.inspect(WebCrypto.timing_safe_equal!(a, b))} short=${Str.inspect(WebCrypto.timing_safe_equal!([1, 2], [1, 2, 3]))} random=${a.len().to_str()} big=${big.len().to_str()} distinct=${Str.inspect(a != b)} uuid=${WebCrypto.random_uuid!()}",
 	)
 }
 
@@ -253,23 +254,23 @@ hmac! = |key, data| {
 	Ok("sign=${to_hex(signature)} roc=${to_hex(roc)} same=${Str.inspect(WebCrypto.timing_safe_equal!(signature, roc))} verify=${show_unit(good)} changed=${show_unit(changed)}")
 }
 
-## RS2: the key of `import_key!` is a ref of this request. `Io.pin!` keeps the `CryptoKey` for a later request.
+## RS2: the key of `import_key!` is a ref of this request. `Js.pin!` keeps the `CryptoKey` for a later request.
 pin! : Str => Try(Str, E)
 pin! = |name| {
 	key = match WebCrypto.import_key!(Hmac(Sha256), Raw("pin-secret".to_utf8()))? {
 		Imported(ref) => ref
 		_ => return Err(Odd("not imported"))
 	}
-	match Io.pin!(name, Ref(key), { max_age_ms: 600_000 }) {
+	match Js.pin!(name, Ref(key), { max_age_ms: 600_000 }) {
 		Ok({}) => Ok("pinned")
 		Err(PinErr(t)) => Err(CryptoErr(t))
 	}
 }
 
-## A later request gets the key with `Io.pinned!` (a new ref of this request), and signs and verifies with it.
+## A later request gets the key with `Js.pinned!` (a new ref of this request), and signs and verifies with it.
 use! : Str, List(U8) => Try(Str, E)
 use! = |name, data| {
-	key = match Io.pinned!(name) {
+	key = match Js.pinned!(name) {
 		Ok(Ref(ref)) => Imported(ref)
 		Ok(other) => return Err(Odd("pinned gave ${Str.inspect(other)}"))
 		Err(NotPinned) => return Err(Odd("NotPinned"))

@@ -12,15 +12,15 @@ Ctx :: [].{
 	## goes to the log. The context of the task stays until the operation settles, or until the 30 s limit of
 	## `waitUntil` (API.md 6.5, RS1).
 	wait_until! : Io({}, e) => {}
-	wait_until! = |io| match Io.call!([Start(Root("pf"), "spawn", [Lit(Js.program(io.ops))]), Call(Root("ctx"), "waitUntil", [Slot(0)])]) {
+	wait_until! = |io| match Js.call!([Start(Root("pf"), "spawn", [Lit(Js.program(io.ops))]), Call(Root("ctx"), "waitUntil", [Slot(0)])]) {
 		Ok(_) => {}
 		Err(t) => crash "Ctx.wait_until!: ${t.name}: ${t.message}"
 	}
 
 	## `ctx.passThroughOnException()`: after it, an `Err` of the `fetch` handler makes the shim throw, so Workers
 	## sends the request to the origin. Only in the `Fetch` of a Worker. Elsewhere `InvalidState`.
-	pass_through! : {} => Try({}, [InvalidState])
-	pass_through! = |_| match Io.call!([Call(Root("pf"), "passThrough", [])]) {
+	pass_through! : () => Try({}, [InvalidState])
+	pass_through! = || match Js.call!([Call(Root("pf"), "passThrough", [])]) {
 		Ok(_) => Ok({})
 		Err(t) if t.name == "InvalidStateError" => Err(InvalidState)
 		Err(t) => crash "Ctx.pass_through!: ${t.name}: ${t.message}"

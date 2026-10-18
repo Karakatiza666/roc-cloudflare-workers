@@ -18,7 +18,7 @@ Hyperdrive :: { name : Str }.{
 
 	## A binding that is not in the config gives `undefined` fields (OP7): a crash with the name of the binding.
 	config! : Hyperdrive => Hyperdrive.Config
-	config! = |h| match Io.call!(
+	config! = |h| match Js.call!(
 		[
 			Get(Root("env"), h.name),
 			Fields(Slot(0), ["connectionString", "host", "port", "user", "password", "database"]),

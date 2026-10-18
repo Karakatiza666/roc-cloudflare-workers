@@ -2,19 +2,19 @@ app [event!] { pf: platform "platform/main.roc" }
 
 import pf.Worker
 import pf.Response
-import pf.Io
+import pf.Js
 
 ## One wait: the op `db` of the bench runner (`bench/core.js`).
 wait_ops = [Call(Root("ops"), "db", [Lit(Text("x"))])]
 
 ## `waits` waits. A function of its own, and recursive, so it is not inlined: the frame of `down!` stays small
-## (the locals of `Io.await!` are in this frame, once, at the bottom).
+## (the locals of `Js.await!` are in this frame, once, at the bottom).
 wait_n! : U64 => U64
 wait_n! = |waits| {
 	if waits == 0 {
 		0
 	} else {
-		_w = Io.await!(wait_ops)
+		_w = Js.await!(wait_ops)
 		wait_n!(waits - 1)
 	}
 }
@@ -50,12 +50,12 @@ handle! = |req| {
 event! : Worker.Event => Worker.Outcome
 event! = |e| match e {
 	Fetch(req) => {
-		text = match req.body {
+		text = match req.body() {
 			Bytes(b) => Str.from_utf8(b) ?? ""
 			Text(s) => s
 			_ => ""
 		}
-		Respond(Response.{ status: 200, body: Text(handle!(text)) })
+		Respond(Response.from_status(200).with_body(Text(handle!(text))))
 	}
 	_ => Unhandled
 }

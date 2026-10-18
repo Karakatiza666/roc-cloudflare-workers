@@ -2,6 +2,7 @@
 ## so it is good for one task (MC13). JS keeps the messages that come before a `receive!` in a queue (the helpers
 ## `wsPair`, `wsAccept` and `wsReceive` of `js/helpers.js`). The sockets of a Durable Object (the hibernation API, 12.1)
 ## are `Object.Socket`: the same `send!`, `send_json!` and `close!`, and no `receive!` (an object gets events).
+## Typed data: the format, what a JS peer sees, and what survives a round trip are in MODULES.md 1, "Formats of typed data".
 import Io
 import Js
 import Request
@@ -42,8 +43,8 @@ WebSocket :: { ref : Js.Ref }.{
 		if !is_upgrade(req) {
 			Err(NotUpgrade)
 		} else {
-			match Io.call!([Call(Root("pf"), "wsPair", [])]) {
-				Ok(Arr([Ref(client), Ref(server)])) => Ok({ socket: WebSocket.{ ref: server }, response: Response.{ status: 101, web_socket: client } })
+			match Js.call!([Call(Root("pf"), "wsPair", [])]) {
+				Ok(Arr([Ref(client), Ref(server)])) => Ok({ socket: WebSocket.{ ref: server }, response: Response.from_status(101).with_web_socket(client) })
 				Ok(other) => crash "WebSocket.accept!: pf.wsPair gave ${Str.inspect(other)}"
 				Err(t) => crash "WebSocket.accept!: ${t.name}: ${t.message}"
 			}

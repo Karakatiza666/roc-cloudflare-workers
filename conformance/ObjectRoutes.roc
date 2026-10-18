@@ -7,6 +7,7 @@ import pf.Object
 import pf.Rpc
 import pf.Sql
 import pf.Io
+import pf.Js
 import pf.Time
 import pf.Log
 import pf.Ctx
@@ -83,9 +84,9 @@ ObjectRoutes :: [].{
 			["kvonly"] => Response.from_text(200, text!(kv_only.named(name).fetch!(Request.get("http://o/"))))
 			# `respond!` in the object, then a wait of 300 ms, then a cell: the Worker gets the response first.
 			["respond"] => {
-				t0 = Time.now_ms!({})
+				t0 = Time.now_ms!()
 				body = text!(counters.named(name).fetch!(Request.get("http://o/respond")))
-				Response.from_text(200, "${body} fast=${Str.inspect(Time.now_ms!({}) - t0 < 250)}")
+				Response.from_text(200, "${body} fast=${Str.inspect(Time.now_ms!() - t0 < 250)}")
 			}
 			# RPC (MODULES.md 8) on an object stub, and the `Io` twins of `call` and `fetch`.
 			["rpc", "increment"] => {
@@ -107,7 +108,7 @@ ObjectRoutes :: [].{
 ## The request to the object: the op as its path, and the query of the route.
 forward! : Object, List(Str), Request => Response
 forward! = |o, op, req| {
-	query = match req.url.split_first("?") {
+	query = match req.url().split_first("?") {
 		Ok({ after, .. }) => "?${after}"
 		Err(_) => ""
 	}
@@ -118,7 +119,7 @@ forward! = |o, op, req| {
 text! : Try(Response, [ObjectErr(Io.Thrown)]) => Str
 text! = |r| match r {
 	Ok(res) => match res.text!() {
-		Ok(t) => if res.status == 200 t else "status ${res.status.to_str()} ${t}"
+		Ok(t) => if res.status() == 200 t else "status ${res.status().to_str()} ${t}"
 		Err(e) => "body ${Str.inspect(e)}"
 	}
 	Err(e) => "Err ${Str.inspect(e)}"
@@ -248,7 +249,7 @@ counter_fetch! = |self, req| match req.segments() {
 	}
 	# `get_alarm!` after `set_alarm_at!(t)` gives `t` (and the twins), `delete_alarm!` removes it.
 	["alarm"] => {
-		t = Time.now_ms!({}) + 3_600_000
+		t = Time.now_ms!() + 3_600_000
 		set = self.set_alarm_at!(t)
 		got = self.get_alarm!()
 		twin = Io.run!(self.get_alarm())
@@ -262,14 +263,14 @@ counter_fetch! = |self, req| match req.segments() {
 	# after, and `get_alarm!`. `alarm!` logs "counter alarm" with the id and the time.
 	["alarm_in"] => {
 		delay = Q.num(req, "ms")
-		t0 = Time.now_ms!({})
+		t0 = Time.now_ms!()
 		set = if Q.text(req, "twin") == "1" Io.run!(self.set_alarm_in(delay)) else self.set_alarm_in!(delay)
 		got = self.get_alarm!()
 		answer("set=${Str.inspect(set)} id=${self.id()} t0=${t0.to_str()} alarm=${Str.inspect(got)}")
 	}
 	# `set_alarm_at!(now + ms)`: the alarm is at that time.
 	["alarm_at"] => {
-		t = Time.now_ms!({}) + Q.num(req, "ms")
+		t = Time.now_ms!() + Q.num(req, "ms")
 		set = self.set_alarm_at!(t)
 		got = self.get_alarm!()
 		answer("set=${Str.inspect(set)} id=${self.id()} t=${t.to_str()} alarm=${Str.inspect(got)}")
@@ -278,7 +279,7 @@ counter_fetch! = |self, req| match req.segments() {
 	["delete_all"] => {
 		_ = self.sql_run!("CREATE TABLE IF NOT EXISTS gone (a)", Sql.none)
 		_ = count.set!(self, 5)
-		_ = self.set_alarm_at!(Time.now_ms!({}) + 3_600_000)
+		_ = self.set_alarm_at!(Time.now_ms!() + 3_600_000)
 		del = if Q.text(req, "twin") == "1" Io.run!(self.delete_all()) else self.delete_all!()
 		table : Try(List({ a : I64 }), _)
 		table = self.sql!("SELECT a FROM gone", Sql.none)
@@ -286,20 +287,20 @@ counter_fetch! = |self, req| match req.segments() {
 	}
 	# API.md 10.2: `Response.after` in the `Fetch` of an object: the response, then the work.
 	["respond"] => {
-		work! = |_| {
+		work! = || {
 			Time.sleep!(300)
 			late.set!(self, "written")
 		}
 		Ok(Response.from_text(200, "early").after(work!))
 	}
 	["late"] => answer(Str.inspect(late.get!(self)))
-	["pass_through"] => answer(Str.inspect(Ctx.pass_through!({})))
+	["pass_through"] => answer(Str.inspect(Ctx.pass_through!()))
 	_ => Ok(Response.from_text(404, "no op"))
 }
 
 counter_alarm! : Object.Self, { retry_count : U32, is_retry : Bool } => Try({}, [])
 counter_alarm! = |self, _info| {
-	Log.info!("counter alarm", { id: self.id(), at: Time.now_ms!({}) })
+	Log.info!("counter alarm", { id: self.id(), at: Time.now_ms!() })
 	Ok({})
 }
 
@@ -333,7 +334,7 @@ store_init! = |self| {
 
 store_fetch! : Object.Self, Request => Try(Response, e)
 store_fetch! = |self, req| match req.segments() {
-	["set_alarm"] => answer(Str.inspect(self.set_alarm_at!(Time.now_ms!({}) + 60_000)))
+	["set_alarm"] => answer(Str.inspect(self.set_alarm_at!(Time.now_ms!() + 60_000)))
 	_ => {
 		n : Try(List({ n : U64 }), _)
 		n = self.sql!("SELECT count(*) AS n FROM items", Sql.none)
@@ -344,7 +345,7 @@ store_fetch! = |self, req| match req.segments() {
 # Flaky: `init!` gives `Err` while the key `fail-init` is in the local KV namespace `OBJFLAGS` (a raw program: the `Kv`
 # module is another part of 8f).
 flaky_init! : Object.Self => Try({}, [InitFailed, KvErr(Io.Thrown)])
-flaky_init! = |_self| match Io.await!([Get(Root("env"), "OBJFLAGS"), Call(Slot(0), "get", [Lit(Text("fail-init"))])]) {
+flaky_init! = |_self| match Js.await!([Get(Root("env"), "OBJFLAGS"), Call(Slot(0), "get", [Lit(Text("fail-init"))])]) {
 	Ok(Text(_)) => Err(InitFailed)
 	Ok(_) => Ok({})
 	Err(t) => Err(KvErr(t))
@@ -362,7 +363,7 @@ plain_fetch! = |self, _req| answer("ok ${self.id()}")
 
 # Ticker: `alarm!` gives `Err` while `retry_count` is less than 2, and logs `retry_count` and `is_retry`.
 ticker_fetch! : Object.Self, Request => Try(Response, e)
-ticker_fetch! = |self, _req| answer(Str.inspect(self.set_alarm_at!(Time.now_ms!({}) + 10)))
+ticker_fetch! = |self, _req| answer(Str.inspect(self.set_alarm_at!(Time.now_ms!() + 10)))
 
 ticker_alarm! : Object.Self, { retry_count : U32, is_retry : Bool } => Try({}, [Retry(U32)])
 ticker_alarm! = |_self, info| {

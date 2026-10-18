@@ -9,8 +9,8 @@ import pf.Time
 Keys : { kid : Str, big : U64, made : Str }
 
 ## MODULES.md 15: `load!` has an annotation.
-load_keys! : {} => Try(Keys, [LoadErr])
-load_keys! = |{}| Ok({ kid: "k1", big: 1_152_921_504_606_846_976, made: WebCrypto.random_uuid!({}) })
+load_keys! : () => Try(Keys, [LoadErr])
+load_keys! = || Ok({ kid: "k1", big: 1_152_921_504_606_846_976, made: WebCrypto.random_uuid!() })
 
 keys : Memo(Keys, [LoadErr])
 keys = Memo.new("conformance-keys", { max_age_ms: 600_000, load!: load_keys! })

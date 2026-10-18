@@ -5,8 +5,8 @@ import Js
 Time :: [].{
 
 	## `Date.now()`: one `call!`, no wait. On the edge it is coarse: it moves only at I/O.
-	now_ms! : {} => U64
-	now_ms! = |{}| match Io.call!([Get(Root("global"), "Date"), Call(Slot(0), "now", [])]) {
+	now_ms! : () => U64
+	now_ms! = || match Js.call!([Get(Root("global"), "Date"), Call(Slot(0), "now", [])]) {
 		Ok(Int(i)) => i.to_u64_try() ?? crash "Time.now_ms!: Date.now() is negative"
 		Ok(Num(f)) => f.to_u64_try() ?? crash "Time.now_ms!: Date.now() is not a time"
 		Ok(other) => crash "Time.now_ms!: Date.now() gave ${Str.inspect(other)}"

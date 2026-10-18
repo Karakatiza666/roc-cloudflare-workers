@@ -28,13 +28,13 @@ const StrOps = lib.roc.StrOf(RocStr);
 /// The CBOR profile of API.md 5 over the glue types (HD1: its `comptime` checks).
 const cbor = @import("cbor.zig").Codec(abi);
 const JsVal = abi.Js;
-const BridgeRet = abi.HostAwait;
+const BridgeRet = abi.JsHost_await; // glue name of `Js.host_await!`
 
 comptime {
     mem.checkStr(RocStr);
     _ = mem.fieldOff(BridgeRet, "status", u8);
     _ = mem.fieldOff(BridgeRet, "value", JsVal);
-    _ = mem.fieldOff(abi.HostCall, "value", JsVal);
+    _ = mem.fieldOff(abi.JsHost_call, "value", JsVal);
     _ = mem.fieldOff(abi.HostNative, "bytes", Bytes);
     _ = mem.fieldOff(abi.HostNative, "status", u8);
 }

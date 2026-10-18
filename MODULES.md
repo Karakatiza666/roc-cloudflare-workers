@@ -27,6 +27,8 @@ In the signatures, `a.Encodable` stands for `a.Cbor.Encodable([])` and `a.Parsea
 | MC11 | A read into wasm memory has a limit, because wasm memory never gets smaller (`PLAN.md` problem 4). The default limit is 1 MiB (`Body.default_max`). A larger read names its limit. Large data stays a `Body` stream in JS. Each typed read has the default limit: a body, `Kv.get!`, `D1.all!`, `first!`, `rows!` and `batch!`, `Object.Self.sql!` and `sql_rows!`. JS checks the size before the copy, and a read above the limit is `Err(TooLarge)`. The `_with` form takes `max_bytes`. A queue batch has the limit of the Queues config (6). A tail batch drops log lines past the limit (3). | `req.json!()`, `req.bytes_with!({ max_bytes: 30_000_000 })`, `db.all_with!(sql, params, { max_bytes: 8_000_000 })` |
 | MC12 | Names are the Workers names in snake_case, so the Workers docs apply. A name changes only for a Roc reason. Each name that changes is in the table "Exceptions to MC10 and MC12" below, with its reason. | `kv.get_with_metadata!` for `getWithMetadata`, `queue.send_batch!` for `sendBatch`, `cache.get!` for `match` (a keyword) |
 | MC13 | A value that holds a ref (a `Body` stream, a `D1.Session`, a socket, an imported key) is good for one task (RS1). All other module values are plain data: a test can make them and compare them. A value that holds a ref has its own type. It is never a binding (MC1). | `db.with_session!(Primary)` gives a `D1.Session`, not a `D1` |
+| MC14 | A function with no argument has the type `() => a`. The call is `f!()`, the lambda is `\|\| ...`, as in the Roc docs. This is also so for the callbacks that the app gives (`Response.after`, `Memo` `load!`). `{}` is only a value: an RPC argument of the type `{}` (`Rpc({}, ret, err)`), `Ok({})`. A Worker RPC method has no `self` (`Rpc.on_worker`, 8). | `Time.now_ms!()`, `res.after(\|\| work!())` |
+| MC15 | A type that the platform gives the app to read is opaque (`::`): `Request`, `Response`, `Worker.Scheduled`, `Worker.TraceItem`, `Queue.Batch`, `Queue.Message`, `Email.Mail`. The app reads it with methods. A field read does not compile. Reason: a method call waits for the type, a field read does not. On an unannotated handler, `req.method` makes `req` a record, and the error is far away at `Worker.new`. With `req.method()`, the type comes from `Worker.new`, and an error is at the use (`research/c-sweep-probe/`). The data that the app defines (rows, `R2.Object`, `Sql.Info`, `WebSocket.Closed`) stays a record. | `req.method()`, `res.status()`, `batch.messages()` |
 
 Limits of MC5:
 
@@ -36,6 +38,35 @@ Limits of MC5:
 | Cost | 200 D1 rows into typed records, native (`research/api-probe/cbor/`): JSON 265 to 363 µs (JS 23, Roc `Json.parse` 242 to 340), CBOR 216 µs (JS 79, Roc `Cbor.parse` 137). About 70 µs of the 137 is the record matching of the derived parser. `db.rows!` (no types, a `Js` tree from the Zig host) costs about 82 µs, but it is for columns that are not known at compile time, not for speed (5.1). |
 | Field names | A record field is a column name or a JSON key. Roc fields are snake_case, so SQL columns are too. `Cbor.parse_camel` reads camelCase keys, for a JS peer. |
 | Bytes | A `List(U8)` field reads a CBOR byte string or an array. It writes an array of numbers, because the derived encoder has no hook for bytes. So JS gets an `Array`, not a `Uint8Array`. A field that must reach JS as bytes (a `Uint8Array` for a JS callee, a binary queue message) has the type `Cbor.Bytes` (`Cbor.Bytes := List(U8)`). Its hand-written `parser_for` and `encoder_for` use `parse_bytes` and `encode_bytes` of the `Cbor` format: CBOR major type 2 in both directions (`research/api-probe/cbor/Cbor.roc`). `Cbor.bytes(list)` makes one (the platform `Cbor.Bytes` is an alias of the package type, so it has no constructor `Cbor.Bytes.(list)` in an app), and `bytes.to_list()` gives the list. It reads only a byte string, and it has no `Json` codec. |
+
+Formats of typed data. The format depends on the binding. Each module of the table points here. "Exact" is a round trip from Roc to Roc. "JS" is what a JS peer sees (a JS Worker, a JS consumer, a JS callee). Evidence: `research/c-sweep-probe/formats.roc` (the Roc side, `roc test`), the checks of `conformance/` (the JS side), and the rows of 5.1 and 12.4.
+
+| Binding or function | At rest or on the wire | A JS peer sees | Integer above 2^53 | `F64` NaN | `Dec` | `List(U8)` | `Cbor.Bytes` | `Id64` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `Kv.json`, a `Kv.Cell` of it | JSON text | The value of `get(key, "json")` | Exact. JS: a rounded `Number` | `BadData` at the put | Exact. JS: the nearest `Number` | An array of numbers | Does not compile (no JSON codec) | Does not compile. Use `Id64.Web` (U64 text). |
+| `Kv.text`, `Kv.bytes` | The `Str` or the bytes as they are | A string, an `ArrayBuffer` | Not typed data | | | | | |
+| `Queue.json` | CBOR to JS, then JSON (content type `json`) | A plain object | `QueueErr` at the send (`JSON.stringify` throws for a `BigInt`). Use `Queue.v8`. | Not checked | Does not compile (CBOR has no `Dec`) | An `Array` | Not checked. Use `Queue.v8`. | The I64 text |
+| `Queue.v8` | CBOR to JS, then the structured clone of Workers (content type `v8`) | A plain object | Exact. JS: a `BigInt` | Exact (CBOR f64) | Does not compile | An `Array` | Exact. JS: a `Uint8Array` | The I64 text |
+| `Queue.text`, `Queue.bytes` | The `Str` or the bytes | A string, an `ArrayBuffer` | Not typed data | | | | | |
+| `Object.Cell`, `Object.attachment` | CBOR bytes in the storage of the object, in `serializeAttachment` | The CBOR bytes (a JS peer needs a CBOR decoder) | Exact | Exact | Does not compile | Exact | Exact | Exact |
+| `Memo` | CBOR bytes in the pin table of the isolate | Nothing: JS does not parse them | Exact | Exact | Does not compile | Exact | Exact | Exact |
+| RPC (`call!`, `Rpc.on`, `on_worker`) | CBOR to JS, then the structured clone of RPC. The reply is `{"Ok": v}` or `{"Err": tag}` (8). | A plain object | Exact. JS: a `BigInt` | Exact | Does not compile | An `Array` of numbers | Exact. JS: a `Uint8Array` | The I64 text |
+| SQL parameters (`D1`, `Object.Self.sql!`) | A CBOR array, each item bound by `pf.bind` (5.1, "SQL parameter items") | The bound value | Decimal text from 2^53. An INTEGER column stores the exact integer. | Not checked | Does not compile | `BadParam` (an array item). Use `Sql.blob`. | A `Uint8Array`: a BLOB | The I64 text: an exact INTEGER |
+| SQL rows (typed reads) | D1 gives JS values, `pf.pack` writes CBOR | Not a peer: D1 makes the values | Rounded by D1: the typed read gives `BadData`. Use `CAST(x AS TEXT)`. | Not checked | Does not compile | A BLOB (an array of numbers in D1) | `BadData`: a BLOB is not a byte string | Exact with `CAST(id AS TEXT)` |
+| `Response.from_json`, `Request.post_json`, `req.json!()`, `res.json!()` | JSON text | The JSON text | Exact. JS: `JSON.parse` rounds | `from_json`: a 500 response with a text. `post_json`: `BadData`. | Exact. JS: the nearest `Number` | An array of numbers | Does not compile | Does not compile. Use `Id64.Web`. |
+| `WebSocket` and `Object.Socket` `send_json!`, `Message.json` | A JSON text frame | The text | As JSON above | `BadData`, and no frame goes out | As JSON above | An array of numbers | Does not compile | Does not compile. Use `Id64.Web`. |
+
+Modules. `main.roc` exposes the app modules first, and the low-level modules last:
+
+| Group | Modules | For |
+| --- | --- | --- |
+| Entry and HTTP | `Worker`, `Request`, `Response`, `Body`, `Http`, `Ctx`, `Time`, `Log`, `Env`, `Secret` | Each app |
+| Data | `D1`, `Sql`, `Id64`, `Kv`, `R2`, `Cache`, `Memo`, `Queue` | Bindings of data |
+| Objects and services | `Object`, `Rpc`, `Service`, `WebSocket`, `Tcp`, `Email` | |
+| Other bindings | `WebCrypto`, `RateLimit`, `Ai`, `Vectorize`, `Analytics`, `Hyperdrive`, `Workflows`, `Assets`, `Version`, `SecretsStore` | |
+| Low level, used by apps | `Cbor` (`Cbor.Bytes`, `Cbor.bytes`, `encode`, `parse`, the `where` aliases of MC5), `Native` (BLAKE3, SHA-256 and zstd in the host, `API.md` 8) | An app needs them for typed bytes and for hashes, so they stay public |
+| Operations | `Io`: an operation as a value (MC3), `run!`, `both!`, `all!`, `race!`, `timeout`, `map`, `recover`, `start!`, and `Io.Thrown`. `Io.new` and `Io.sync` make an `Io` from `Js` ops: they are low level, but they stay in `Io`, because `Io` imports `Js` and Roc has no import cycles. | `Io.both!` and `Io.race!` in apps |
+| The escape hatch | `Js`: the `Js` value, the ops of a program (`Js.Op`: `Get`, `Call`, `Root`, `Slot`, `Lit`, ...), `Js.program`, the raw runs `Js.await!` and `Js.call!`, the pin table (`Js.pin!`, `pinned!`, `unpin!`), `Js.Thrown`, and the hosted functions `Js.host_await!` and `Js.host_call!` (`API.md` 4). | A Workers API that no module has |
 
 Exceptions to MC10 and MC12 (each other name is the Workers name in snake_case, and each other unit follows MC10):
 
@@ -94,7 +125,7 @@ jobs : Queue(Job)
 jobs = Queue.json("JOBS")
 
 fetch! : Request => Try(Response, _)
-fetch! = |req| match (req.method, req.segments()) {
+fetch! = |req| match (req.method(), req.segments()) {
 	(GET, ["v1", "pkg", owner, name]) => {
 		pkg : Pkg
 		pkg = db.first!("select name, version from pkg where name = ?", ["${owner}/${name}"])?
@@ -130,7 +161,7 @@ Worker :: { handlers : List(Str), own! : Worker.Event => Worker.Outcome, rpc : .
 		email! ?: Email.Mail => Try({}, e4),
 		tail! ?: List(Worker.TraceItem) => Try({}, e5),
 		other! ?: Str, Js => Try(Js, e6),
-		rpc ?: List(Rpc.Handler({})),         # methods of the default entry point
+		rpc ?: List(Rpc.Handler({})),         # methods of the default entry point (Rpc.on_worker)
 		entrypoints ?: List(Rpc.Entrypoint),  # named WorkerEntrypoint classes
 		objects ?: List(Object.Class),        # Durable Object classes
 		bindings ?: List(Worker.Binding),     # the bindings that the app uses: db.declare(), ... (manifest only)
@@ -142,13 +173,17 @@ Worker :: { handlers : List(Str), own! : Worker.Event => Worker.Outcome, rpc : .
 	Cron : { cron : Str, run! : Worker.Scheduled => Worker.Outcome }
 	Binding : { name : Str, kind : Str, props : List((Str, Str)) }
 
-	## The payload of a cron run. The same type is in `Worker.Event` (`API.md` 10.1).
-	Scheduled := { cron : Str, time_ms : U64 }.{
+	## The payload of a cron run. The same type is in `Worker.Event` (`API.md` 10.1). Opaque (MC15).
+	Scheduled :: { cron : Str, time_ms : U64 }.{
+		new : { cron : Str, time_ms : U64 } -> Worker.Scheduled   # plain data (MC13): a test can make one
+		cron : Worker.Scheduled -> Str
+		time_ms : Worker.Scheduled -> U64
 		no_retry! : Worker.Scheduled => {}    # controller.noRetry(), one call!: in workerd, not in the docs
 	}
 
-	## One item of the batch of a Tail Worker (TraceItem): plain data, read as CBOR (MC5). Rules below.
-	TraceItem := {
+	## One item of the batch of a Tail Worker (TraceItem): plain data, read as CBOR (MC5). Rules below. Opaque (MC15):
+	## a method for each field (`item.outcome()`, `item.logs()`, ...).
+	TraceItem :: {
 		script_name : Try(Str, [Missing]),
 		outcome : Str,                                   # "ok", "exception", "exceededCpu", ... (Cloudflare docs)
 		event_timestamp_ms : Try(U64, [Missing]),
@@ -182,8 +217,8 @@ Cron rules (`scheduled!`):
 
 | Item | Rule |
 | --- | --- |
-| Payload | `cron` is `controller.cron`, the cron expression that started the run. `time_ms` is `controller.scheduledTime`, the planned time of the run, not the start time. |
-| Annotation | A `scheduled!` that calls `no_retry!` needs the annotation `Worker.Scheduled => Try({}, _)`: the type of the argument does not come from the later use in `Worker.new({ ... })` (15). |
+| Payload | `s.cron()` is `controller.cron`, the cron expression that started the run. `s.time_ms()` is `controller.scheduledTime`, the planned time of the run, not the start time. |
+| Annotation | Not needed: the methods (`s.cron()`, `s.no_retry!()`) wait for the type, which comes from `Worker.new` (MC15). |
 | Retry | The shim never calls `noRetry` by itself, also not for `Err` or a missing field. `Err(e)` is a failed run (outcome `exception`). Edge, 2026-10-17 (`PLAN.md` 11c, E13, settles `API.md` AQ12): production does not retry a failed cron run. In 1 hour, each planned time of a cron that gave `Err` had exactly 1 run, with and without `no_retry!`. So `no_retry!` has no effect today; it stays, because workerd keeps the flag. The next run of a cron is its next planned time. |
 | Time | A cron run can last 15 min (Cloudflare docs). The deadlines of the task: `API.md` 10.2. |
 | Local test | `wrangler dev` and Miniflare serve `GET /cdn-cgi/local/scheduled?cron=<cron>&time=<ms>&format=json` (Cloudflare docs, and the Miniflare source). It runs `scheduled` with that `cron` and `scheduledTime`, and answers `{ "outcome": ..., "noRetry": ... }`, status 200 for the outcome `ok` and 500 for the others. The conformance app and the registry handler tests use it (`API.md` 11). |
@@ -279,7 +314,8 @@ As built in `PLAN.md` 8f, part 1 (`platform/Worker.roc`, `js/index.js`, `js/runn
 One request type and one response type, for both directions: the request of a `fetch` handler and the request of `Http.send!`, the response of a handler and the response of `Http.send!` or `Cache.get!`. The body is a `Body`, so a stream stays in JS (RS3).
 
 ```roc
-Request := {
+## Opaque (MC15): read with the methods, make with `new`, `get`, `post` and `with_*`.
+Request :: {
 	method : Method,
 	url : Str,
 	headers : List(Header) ?? [],
@@ -295,10 +331,22 @@ Request := {
 		client_tcp_rtt_ms : Try(U64, [Missing]),
 	}
 
+	new : Method, Str -> Request          # no headers, no body
 	get : Str -> Request
 	post : Str, Body -> Request
 	post_json : Str, a -> Try(Request, [BadData(Str)]) where [a.JsonEncodable]
 	with_header : Request, Str, Str -> Request
+	with_headers : Request, List(Header) -> Request   # all headers in place of the old ones
+	with_method : Request, Method -> Request
+	with_url : Request, Str -> Request
+	with_body : Request, Body -> Request
+	with_cf : Request, Request.Cf -> Request          # low level: the platform entry, a test
+
+	method : Request -> Method
+	url : Request -> Str
+	headers : Request -> List(Header)
+	body : Request -> Body
+	cf : Request -> Try(Request.Cf, [Missing])        # Missing: a request that the app made
 
 	segments : Request -> List(Str)       # "https://x/v1/packages/a/b/releases?q=1" gives ["v1", "packages", "a", "b", "releases"]
 	query : Request, Str -> Try(Str, [NotFound])
@@ -311,7 +359,8 @@ Request := {
 	bytes_with! : Request, { max_bytes : U64 } => Try(List(U8), [TooLarge, BodyErr(Thrown)])
 }
 
-Response := { status : U16, headers : List(Header) ?? [], body : Body ?? Empty, web_socket ?: Js.Ref, after_work! ?: {} => Try({}, Str) }.{
+## Opaque (MC15): read with the methods, make with `from_*` and `with_*`.
+Response :: { status : U16, headers : List(Header) ?? [], body : Body ?? Empty, web_socket ?: Js.Ref, after_work! ?: () => Try({}, Str) }.{
 	from_status : U16 -> Response
 	from_text : U16, Str -> Response                  # text/plain; charset=utf-8
 	from_json : U16, a -> Response where [a.JsonEncodable]
@@ -319,8 +368,18 @@ Response := { status : U16, headers : List(Header) ?? [], body : Body ?? Empty, 
 	from_body : U16, Str, Body -> Response            # a stream: an R2 body, a fetch body
 	redirect : U16, Str -> Response
 	with_header : Response, Str, Str -> Response
-	after : Response, ({} => Try({}, e)) -> Response  # respond now, then run the work (API.md 10.2)
+	with_headers : Response, List(Header) -> Response # all headers in place of the old ones
+	with_status : Response, U16 -> Response
+	with_body : Response, Body -> Response
+	after : Response, (() => Try({}, e)) -> Response  # respond now, then run the work (API.md 10.2)
+
+	status : Response -> U16
+	headers : Response -> List(Header)
+	body : Response -> Body
 	header : Response, Str -> Try(Str, [NotFound])
+	web_socket : Response -> Try(Js.Ref, [Missing])   # the client end of a 101
+	with_web_socket : Response, Js.Ref -> Response    # low level: the 101 of WebSocket and Object
+	after_work : Response -> Try((() => Try({}, Str)), [Missing])   # low level: for the platform entry
 	text!, json!, bytes!, bytes_with!                 # as for Request
 
 	from_http : http.Response -> Response             # for packages that use roc-lang/http
@@ -333,7 +392,7 @@ Body := [Empty, Text(Str), Bytes(List(U8)), Stream(Js.Ref)].{
 	chunk! : Body => Try([Chunk(List(U8)), End], [BodyErr(Thrown)])
 	tee! : Body => Try((Body, Body), [BodyErr(Thrown)])
 	sha256! : Body => Try(List(U8), [BodyErr(Thrown)]) # crypto.DigestStream: no copy into wasm
-	writer! : {} => Try({ body : Body, writer : Body.Writer }, [BodyErr(Thrown)])   # pf.writer: a TransformStream, sync
+	writer! : () => Try({ body : Body, writer : Body.Writer }, [BodyErr(Thrown)])   # pf.writer: a TransformStream, sync
 	compress! : Body, Body.Format => Try(Body, [BodyErr(Thrown)])     # pipeThrough(new CompressionStream(format)), sync
 	decompress! : Body, Body.Format => Try(Body, [BodyErr(Thrown)])   # pipeThrough(new DecompressionStream(format)), sync
 	Format : [Gzip, Deflate]
@@ -358,16 +417,16 @@ Http :: [].{
 
 | Item | Rule |
 | --- | --- |
-| Routing | `match (req.method, req.segments())` with list patterns: `(GET, ["v1", "pkg", owner, name])`. No router module. A router is a package. |
+| Routing | `match (req.method(), req.segments())` with list patterns: `(GET, ["v1", "pkg", owner, name])`. No router module. A router is a package. |
 | `Http.send!` | Reads the body in the same crossing, to 1 MiB (one wait, AG4). So `res.json!()` after it needs no wait. `open!` keeps the body a stream. |
-| Status codes | `send!` gives `Ok` for each status. The handler looks at `res.status`. Only a throw of `fetch` is an `Err`. On the edge a DNS failure and a blocked address are no throw but a status: 530 with the body `error code: 1016` (a host that does not exist), 403 with `error code: 1003` (a closed port of `127.0.0.1`, a private address). So `send!` gives `Ok` for them, not `Network` (1, "Named error tags", `Http` row; `PLAN.md` 11c, EP1). `Http.cloudflare_error(res)` tells these from an answer of the origin: `Ok({ status, code })` for a status of 400 or more with a body of the form `error code: <digits>` (also 1042, 1102 and the other pages of this form), else `Err(NotCloudflareError)`. It is a pure function on the `Response`. It reads the body of `send!` (always bytes) or a `Text` body, and only when the body is 64 bytes or less: a body that is longer, an HTML page, or a `Stream` body of `open!` is `NotCloudflareError` (the stream stays unread, so the app can still pass it on). |
+| Status codes | `send!` gives `Ok` for each status. The handler looks at `res.status()`. Only a throw of `fetch` is an `Err`. On the edge a DNS failure and a blocked address are no throw but a status: 530 with the body `error code: 1016` (a host that does not exist), 403 with `error code: 1003` (a closed port of `127.0.0.1`, a private address). So `send!` gives `Ok` for them, not `Network` (1, "Named error tags", `Http` row; `PLAN.md` 11c, EP1). `Http.cloudflare_error(res)` tells these from an answer of the origin: `Ok({ status, code })` for a status of 400 or more with a body of the form `error code: <digits>` (also 1042, 1102 and the other pages of this form), else `Err(NotCloudflareError)`. It is a pure function on the `Response`. It reads the body of `send!` (always bytes) or a `Text` body, and only when the body is 64 bytes or less: a body that is longer, an HTML page, or a `Stream` body of `open!` is `NotCloudflareError` (the stream stays unread, so the app can still pass it on). |
 | Errors (MC9) | A `TypeError` from `fetch` is a bad request: `HttpErr(Thrown)` ("Invalid URL", "Fetch API cannot load" for a scheme that is not http or https, "Invalid header name.", "Invalid header value.": workerd source, `api/http.c++`, `api/headers.c++`). Each other throw is `Network(Thrown)`: the request did not get a response. In workerd, a refused or reset connection is `Error: Network connection lost.`, and a DNS failure is `Error: internal error` (workerd source, `jsg/util.c++`). The docs give only "Network connection lost", so `PLAN.md` 8d tests the map locally and on the edge. Local only: on the edge a DNS failure and a blocked address are not a throw but a status (530 `error code: 1016`, 403 `error code: 1003`), so they are `Ok`, not `Network`. `Network` there is a reset connection or `TimeoutError`. |
 | `cf` | `Request.Cf` is the incoming `request.cf`, read in the same crossing as the event. A field that the docs mark "if known", null or undefined is `Err(Missing)`. The shim writes it in the tag form `{"Err": "Missing"}`, which the derived parser reads (15). `is_eu_country` is `True` only for `"1"` (Cloudflare docs: "otherwise omitted or false"). `latitude` and `longitude` are text in Workers, so they stay `Str`. `client_tcp_rtt_ms` is absent for QUIC. Other fields (`botManagement`, `tlsClientAuth`, `hostMetadata`) are not typed: read them with `Js` (`API.md` 6.4). A request that the app builds has no `cf`. The cf options of an outgoing `fetch` (`cacheTtl`, `cacheEverything`) are the `cf` option of `send_with!`: a `Js` object that the app builds, so it has no null to check. |
 | A `Stream` body | Can be read once (RS3). `tee!` gives two. |
-| Build | A nominal record with defaults: `Request.{ method: PUT, url, body: Bytes(b) }` is also a request. |
-| `web_socket` | The client end of a WebSocket, in a 101 response (`webSocket` of the Workers `Response`), as a ref (MC13). A response from `Object.fetch!` or `Service.fetch!` keeps it, so a Worker can give the 101 response of a Durable Object to the client (12). It is a ref and not a `WebSocket`, because `WebSocket.accept!` gives a `Response`, and two modules cannot import each other. The app does not read it: `accept!` sets it. |
+| Build | `Request.new(PUT, url).with_body(Bytes(b))`. A record literal `Request.{ ... }` and a field read (`req.url`) do not compile: the types are opaque (MC15). |
+| `web_socket` | The client end of a WebSocket, in a 101 response (`webSocket` of the Workers `Response`), as a ref (MC13). A response from `Object.fetch!` or `Service.fetch!` keeps it, so a Worker can give the 101 response of a Durable Object to the client (12). It is a ref and not a `WebSocket`, because `WebSocket.accept!` gives a `Response`, and two modules cannot import each other. The app does not read it: `accept!` sets it (`with_web_socket`), and the platform entry reads it (`web_socket()`). |
 | Response of an R2 object | `R2.to_response(obj)` and `R2.respond!(bucket, key, req)` (5.3). `Response` has no `from_r2`: it would import `R2`, and `R2` imports `Response`. |
-| Respond now, work after | `Ok(res.after(work!))`: the platform sends `res`, then runs `work! : {} => Try({}, e)` in the same task (`API.md` 10.2). The order is in the types: the handler gives one result, and the work is its argument. Two `after` calls run both works, in order. An `Err(e)` of the work is the log line `fetch: after respond: failed: <e>`. Only the result of a `fetch!` (of a Worker, a named entry point, an object) runs its work. `after_work!` is the field that `after` sets: the app does not set it. |
+| Respond now, work after | `Ok(res.after(work!))`: the platform sends `res`, then runs `work! : () => Try({}, e)` in the same task (`API.md` 10.2). The order is in the types: the handler gives one result, and the work is its argument. Two `after` calls run both works, in order. An `Err(e)` of the work is the log line `fetch: after respond: failed: <e>`. Only the result of a `fetch!` (of a Worker, a named entry point, an object) runs its work. `after_work!` is the field that `after` sets: the app does not set it, and the platform entry reads it with `after_work()`. |
 | Request body and `after` | Read the request body in the handler, not in the work. workerd ends the request body when the response is sent, so a `text!`, `json!` or `bytes!` in the work gives `BodyErr` (`API.md` 10.2). A closure can use `req`, so the types do not stop it: give the work the value that it needs. |
 | `Body.writer!` | A stream that the task writes after the response: `Response.from_body(200, "text/event-stream", body).after(work!)`, and the work calls `writer.write!` for each chunk, then `writer.close!()`. The task stays while the stream is open, and the 30 s limit after the response starts at `close!` (`API.md` 10.2). When the client stops reading, Workers cancels the stream, and the shim cancels the task. A `write!` after `close!` gives `BodyErr`. |
 | `compress!`, `decompress!` | `CompressionStream` and `DecompressionStream` of Workers: `Gzip` (`"gzip"`) and `Deflate` (`"deflate"`). A `Text` or `Bytes` body becomes a stream first. The result is a `Stream` body, so the bytes stay in JS. zstd is not in Workers: `Native` (`API.md` 8). Set `Content-Encoding` on the response by hand. |
@@ -405,10 +464,19 @@ As built in `PLAN.md` 8h, wave B (`platform/Response.roc`, `platform/Entry.roc`,
 
 | Item | Built as | Why |
 | --- | --- | --- |
-| `Response.after` | Sets the optional field `after_work! : {} => Try({}, Str)`, with the error of the work as `Str.inspect(e)` (as `Worker.new`). A second call keeps the first work and runs it first; an `Err` of the first stops the second. | The handler type stays `Request => Try(Response, e)`, so no app changes its `fetch!` signature |
+| `Response.after` | Sets the optional field `after_work! : () => Try({}, Str)`, with the error of the work as `Str.inspect(e)` (as `Worker.new`). A second call keeps the first work and runs it first; an `Err` of the first stops the second. | The handler type stays `Request => Try(Response, e)`, so no app changes its `fetch!` signature |
 | `Entry.finish!` | `main.roc` gives each outcome of `event!` to it. A `Respond` with `after_work!`: one `call!` of `pf.respond` with the response, then the work, and the outcome is `Done` or `Failed(text)`. A throw of `pf.respond` (no hook, a response that Workers refuses) is a `crash`. Other outcomes: as before. | One place for the `fetch!` of a Worker, of an entry point and of an object: `Worker`, `Rpc` and `Object` give `Respond(res)` as they are |
 | After the response | The shim logs each outcome that is not `Done` (`fetch: after respond: ...`, `<class>.fetch: after respond: ...`) | `Done` is the outcome of a work that gave `Ok` |
 | `Ctx.respond!` | Removed | Its order was not in the types: a body read after it, and a return value after it that the shim ignored |
+
+As built in `PLAN.md` 8h, wave C (`platform/Request.roc`, `Response.roc`, `Entry.roc`, `Http.roc`, `Cache.roc`, `Remote.roc`, `R2.roc`):
+
+| Item | Built as | Why |
+| --- | --- | --- |
+| Opaque types | `Request ::` and `Response ::` with a reader for each field and `with_*` for each field that an app or a module sets. The modules of the platform use the same methods (a field of an opaque type is private to its module). | MC15, issue 7 |
+| Names | The readers have the names of the fields (`method`, `url`, `status`). `with_headers` sets all headers; `with_header` adds one. | The Workers names (MC12) |
+| `web_socket`, `with_web_socket`, `after_work`, `with_cf` | Public, because `Entry`, `WebSocket`, `Object` and `Remote` are other modules. They take or give a `Js.Ref` or an erased work: an app does not need them. | Roc has no visibility between modules of one platform |
+| Pattern match | A `match` on the fields of a request (`{ method: GET, .. }`) does not compile. Routing matches the tuple `(req.method(), req.segments())`, as before. | No app of the repo matched a record |
 
 ## 5. Data: `D1`, `Sql`, `Kv`, `R2`, `Cache`
 
@@ -658,7 +726,7 @@ R2 :: { name : Str }.{
 | Compare and swap | `put_with!(key, body, { only_if: { etag_matches: old } })`. A failed condition is `Err(PreconditionFailed)`, not a null. `R2.absent` writes only a new key (`etagDoesNotMatch: "*"`). The wildcard is in the workerd source, not in the R2 docs, so `PLAN.md` 8c tests it on the edge. This is the checkpoint write of RN4. |
 | Conditions | `Cond` is the `R2Conditional` of Workers, with each field optional. R2 checks each field that is there: the workerd source sets each one on one condition, and the docs do not say how they join, so `PLAN.md` 8c tests two fields at once. An etag has no quotes (a quoted etag is `R2Err`, workerd source). |
 | Body | `obj.body` is a stream. `R2.to_response(obj)` sends it with no copy into wasm: status 200, the HTTP metadata of the object and `etag` (below). |
-| Conditions of a request | `only_if: R2.from_headers(req.headers)` gives the request headers to R2 as a `Headers` object (`onlyIf` of Workers takes one). R2 reads If-Match, If-None-Match, If-Modified-Since and If-Unmodified-Since as HTTP headers, so a quoted etag is fine and the app does not cut the quotes. A weak etag (`W/"..."`) is fine only in If-None-Match (weak comparison). If-Match uses strong comparison: a weak etag there does not match. Only these four headers are sent. When `headers` is in a `Cond`, its other fields are not used. `Cond` is the same record with one more optional field, so the old calls work. |
+| Conditions of a request | `only_if: R2.from_headers(req.headers())` gives the request headers to R2 as a `Headers` object (`onlyIf` of Workers takes one). R2 reads If-Match, If-None-Match, If-Modified-Since and If-Unmodified-Since as HTTP headers, so a quoted etag is fine and the app does not cut the quotes. A weak etag (`W/"..."`) is fine only in If-None-Match (weak comparison). If-Match uses strong comparison: a weak etag there does not match. Only these four headers are sent. When `headers` is in a `Cond`, its other fields are not used. `Cond` is the same record with one more optional field, so the old calls work. |
 | `R2.to_response`, `R2.respond!` | These are in `R2` and not in `Response`: `Response` cannot import `R2` when `R2` imports `Response` (4, "Two modules cannot import each other"). `to_response(obj)`: status 200, `content-type`, `content-language`, `content-disposition`, `content-encoding`, `cache-control`, `expires` (from `cache_expiry_ms`, as an HTTP date) and `etag` (`http_etag`) of the object, and its body. A header that the object does not have is not set. `respond!(key, req)` is the whole GET: 200 (with `accept-ranges: bytes`), 304 for a failed If-None-Match or If-Modified-Since (with `etag`, `cache-control`, `expires`), 412 for a failed If-Match or If-Unmodified-Since, 404 with the text `Not found`, 206 with `content-range` for one `Range` (`bytes=a-b`, `bytes=a-`, `bytes=-n`), 416 for a range after the end. `Err` is only `R2Err`. Not in scope: a `Range` with more than one range (the whole object is sent), `If-Range` (a request with it gets the whole object), the method (the app sends GET and HEAD to it, and Workers drops the body of a HEAD), and a 412 when both If-Match and If-None-Match are in the request (it is 304 if the request has If-None-Match or If-Modified-Since). The app that needs more uses `get_with!` and `to_response`. |
 | HTTP metadata | `R2.Http` is `R2HTTPMetadata` (Cloudflare docs), each field optional. A field that the object does not have is absent, so `meta.http.?content_type` gives an `Err`, not an empty text (MC8). |
 | Known length | R2 takes a stream body only with a known length: "Provided readable stream must have a known length (request/response body or readable half of FixedLengthStream)" (workerd source, `api/r2-rpc.c++`; the R2 docs do not say). A `Text` or `Bytes` body, and the body of a request or a response, have one. A stream that the app makes (`Body.writer!`, `compress!`) does not. Since `PLAN.md` 8h wave B, `put!` and `put_with!` take it: the helper `pf.r2put` (`API.md` 6.4) tries the put, and on that error reads the stream in JS. Up to 5 MiB: one put of the bytes, with each option. Past 5 MiB: a multipart upload with parts of 5 MiB (the last one smaller), one part in memory at a time, then `complete`; any error aborts the upload. |
@@ -710,18 +778,19 @@ Queue(a) :: { ... }.{
 
 	each! : Queue(a), Queue.Batch, (Queue.Message, a => Try({}, e)) => { acked : U64, retried : U64 }
 
-	Batch := { queue : Str, messages : List(Queue.Message) }.{ ack_all!, retry_all!, retry_all_with! }   # retry_all_with!(batch, { delay_ms })
-	Message := { id : Str, timestamp_ms : U64, attempts : U32, body : List(U8) }.{ ack!, retry!, retry_with! }   # body: CBOR
+	## Opaque (MC15): a reader for each field, and `new` (plain data, MC13: a test can make one).
+	Batch :: { queue : Str, messages : List(Queue.Message) }.{ new, queue, messages, ack_all!, retry_all!, retry_all_with! }   # retry_all_with!(batch, { delay_ms })
+	Message :: { id : Str, timestamp_ms : U64, attempts : U32, body : List(U8) }.{ new, id, timestamp_ms, attempts, body, ack!, retry!, retry_with! }   # body(): CBOR
 }
 ```
 
 | Item | Rule |
 | --- | --- |
 | One constant, both sides | The producer and the consumer use the same `Queue(Job)` (MC6), so the types agree. |
-| Format | The message crosses as CBOR, and JS sends it as an object with the content type of the declaration. A JS consumer gets the same object. `Queue.json` cannot hold a `BigInt` (an integer above 2^53), `Queue.v8` can. |
-| `each!` | Reads each message as `a`, and gives the handler the `Queue.Message` too (`id`, `timestamp_ms`, `attempts`, which starts at 1), so it can decide by the number of attempts: `jobs.each!(batch, \|msg, job\| build!(job, msg.attempts))`. `Ok` acks it. `Err(e)` retries it and logs `Str.inspect(e)`. A body that is not an `a` is logged and retried, so after `max_retries` it goes to the dead letter queue, if the queue has one. |
-| Many queues | One `queue!` handler. Match on `batch.queue`, the queue name (not the binding name). |
-| Low level | `batch.messages` with `Message.ack!` and `retry!` for an app that decides alone. |
+| Format | The message crosses as CBOR, and JS sends it as an object with the content type of the declaration. A JS consumer gets the same object. `Queue.json` cannot hold a `BigInt` (an integer above 2^53), `Queue.v8` can. The table "Formats of typed data" (1). |
+| `each!` | Reads each message as `a`, and gives the handler the `Queue.Message` too (`id`, `timestamp_ms`, `attempts`, which starts at 1), so it can decide by the number of attempts: `jobs.each!(batch, \|msg, job\| build!(job, msg.attempts()))`. `Ok` acks it. `Err(e)` retries it and logs `Str.inspect(e)`. A body that is not an `a` is logged and retried, so after `max_retries` it goes to the dead letter queue, if the queue has one. |
+| Many queues | One `queue!` handler. Match on `batch.queue()`, the queue name (not the binding name). |
+| Low level | `batch.messages()` with `Message.ack!` and `retry!` for an app that decides alone. |
 | Delays (MC10) | `delay_ms` of `send_with!`, `send_batch_with!`, `retry_with!` and `retry_all_with!` goes to `delaySeconds`, which takes whole seconds from 0 to 86,400 (24 h, Cloudflare docs). The module rounds up to the next whole second, so a message never comes before its delay. More than 24 h is `QueueErr` for a send. A retry is sync and has no `Try`, so the module gives Workers at most 86,400 s. |
 | Limits | A message is 128 KB or less, and a `send_batch!` is 100 messages and 256 KB or less (Cloudflare docs, Queues limits). More is `QueueErr`. |
 | As built (`PLAN.md` 8f, part 2) | `Queue(a) :: { name, content_type, write, read }`: `json` and `v8` write `Packed(Cbor.encode(v))` (JS gets the object), `text` writes `Text`, `bytes` writes `Bytes`. `Queue.Message` and `Queue.Batch` hold no ref: `ack!` and `retry!` find the message in the batch of the task with `pf.findById` (the root `event` is the `MessageBatch`). `ack`, `retry`, `ack_all` and `retry_all` have no `Try`: a throw is dropped. A delay above 86,400 s is not checked in Roc: Workers gives `QueueErr` for a send, and a retry is cut to 86,400 s. A message body that CBOR cannot write (a class instance) is an empty body in the event, so `each!` retries it. `retry_all_with!` and `retry_with!` take the options record, not an optional one. |
@@ -883,7 +952,8 @@ One constant names a method and its types, also the errors that the callee can g
 ```roc
 Rpc(arg, ret, err) :: { name : Str }.{
 	method : Str -> Rpc(arg, ret, err)
-	on : Rpc(arg, ret, err), (self, arg => Try(ret, err)) -> Rpc.Handler(self) where [arg.Parseable, ret.Encodable, err.Encodable]
+	on : Rpc(arg, ret, err), (self, arg => Try(ret, err)) -> Rpc.Handler(self) where [arg.Parseable, ret.Encodable, err.Encodable]   # a Durable Object: self is Object.Self
+	on_worker : Rpc(arg, ret, err), (arg => Try(ret, err)) -> Rpc.Handler({}) where [arg.Parseable, ret.Encodable, err.Encodable]  # a Worker: no self
 	entrypoint : Str, { fetch! ?: Request => Try(Response, e), rpc ?: List(Rpc.Handler({})) } -> Rpc.Entrypoint
 	reply_of : List(U8) -> Try(ret, [BadData(Str), Remote(err)]) where [ret.Parseable, err.Parseable]
 	NoErr := []                                               # the err of a method with no errors, with its own codec
@@ -916,10 +986,10 @@ match auctions.named("a").call!(close_out, { id: 7 }) {                         
 | Item | Rule |
 | --- | --- |
 | Interface | A package of `Rpc` constants is the interface of a service. The caller and the callee import the same package, so their types agree. |
-| On the wire | One argument. The module sends it as CBOR, and JS gives the callee the JS value, so a JS callee gets a plain object (a `BigInt` above 2^53, a `Uint8Array` for a `Cbor.Bytes` field, an `Array` of numbers for a `List(U8)` field, MC5). JS sends the reply of a JS callee back as CBOR. |
+| On the wire | The table "Formats of typed data" (1). One argument. The module sends it as CBOR, and JS gives the callee the JS value, so a JS callee gets a plain object (a `BigInt` above 2^53, a `Uint8Array` for a `Cbor.Bytes` field, an `Array` of numbers for a `List(U8)` field, MC5). JS sends the reply of a JS callee back as CBOR. |
 | Errors | `err` is a tag union that the callee can give: a handler that gives another tag does not compile. An `Err(e)` of the callee is a normal reply, and the caller gets `Remote(e)`, the same tag. A method with no errors has `err` `Rpc.NoErr`: `[]` has no derived codec (`research/e1-errors/rpc_empty.roc`). A throw (a crash, a JS throw, a bad argument with "bad argument", a missing method) is `RpcErr(Thrown)`. A reply that does not fit `ret` or `err` is `BadData`. |
 | A JS method with many arguments | `Js` (`API.md` 6.4) |
-| `self` | `Object.Self` in a Durable Object, `{}` in a Worker entry point |
+| `self` | `Object.Self` in a Durable Object (`on`). A Worker entry point has no `self`: `on_worker(\|arg\| ...)` (MC14). `on` with a `{}` self still compiles for a Worker. |
 | The default entry point | The `rpc` field of `Worker` (3). `makeHandler` gives a subclass of `WorkerEntrypoint`, because Workers sends RPC only to a class that extends it (Cloudflare docs, service bindings RPC). |
 | A named entry point | `Rpc.entrypoint("Admin", { rpc: [...] })` and `export const Admin = entrypointClass("Admin")` (3). A service binding with `entrypoint = "Admin"` reaches it. Its `fetch!` gets the requests of `Service.fetch!` on that binding, as the event `EntrypointFetch` with the name (`API.md` 10.1), so they do not go to the `fetch!` of the Worker. With no `fetch!`, the class has no `fetch` method. `Rpc.Entrypoint` turns errors into log text, as `Object.class` does. |
 
@@ -962,7 +1032,7 @@ Three declarations of a typed value with the same shape: a name and a type at th
 
 ```roc
 Memo(a, e) := { ... }.{
-	new : Str, { max_age_ms : U64, load! : {} => Try(a, e) } -> Memo(a, e) where [a.Encodable, a.Parseable]
+	new : Str, { max_age_ms : U64, load! : () => Try(a, e) } -> Memo(a, e) where [a.Encodable, a.Parseable]
 	get! : Memo(a, e) => Try(a, e)
 	clear! : Memo(a, e) => {}
 }
@@ -975,7 +1045,7 @@ keys = jwks.get!()?    # the first call in an isolate runs load_jwks!, later cal
 
 | Item | Rule |
 | --- | --- |
-| Content | CBOR bytes (MC5). JS does not parse them. No JS objects. A key needs no `Memo`: `WebCrypto` imports it in the same crossing as its use (10), so RN6 keeps the JWKS as data. For a JS object, use `Js.pin!` (RS2). As built, `Js.pin!` is `Io.pin!` (`API.md` RS2). |
+| Content | CBOR bytes (MC5). JS does not parse them. No JS objects. A key needs no `Memo`: `WebCrypto` imports it in the same crossing as its use (10), so RN6 keeps the JWKS as data. For a JS object, use `Js.pin!` (RS2). The table "Formats of typed data" (1). |
 | Two tasks at once | Both can run `load!`. The second pin replaces the first. So `load!` must give an equal value each time. |
 | Instance replace (`PLAN.md` M1) | The pin table is in JS, so the values stay. |
 | As built (`PLAN.md` 8c) | `Memo(a, e) := { name, max_age_ms, load!, write, read }`: `new` keeps the two functions of the `Cbor` format (MC6). `get!` is one `call!` of `pf.pinned` (no wait); a hit is parsed with `Cbor.parse`. A miss runs `load!`, then one `call!` of `pf.pin(name, bytes, max_age_ms)`. A pinned value that does not parse (an older type with the same name) loads again. A pin that fails (a full pin table, `pinLimit`) does not fail `get!`: the value is a cache. The name is the name in the pin table, with no prefix, so a `Memo` and a `Js.pin!` of the same name share an entry. |
@@ -997,7 +1067,7 @@ WebCrypto :: [].{
 	sha256! : List(U8) => Try(List(U8), [CryptoErr(Thrown)])  # SHA-256 of bytes in wasm: the builtin below 4,096 bytes (no crossing), else `digest` (one wait)
 	timing_safe_equal! : List(U8), List(U8) => Bool        # timingSafeEqual, sync
 	random! : U64 => List(U8)                              # getRandomValues, sync
-	random_uuid! : {} => Str                               # randomUUID, sync
+	random_uuid! : () => Str                               # randomUUID, sync
 
 	Key : [Jwk(Str), Raw(List(U8)), Pkcs8(List(U8)), Spki(List(U8)), Imported(Js.Ref)]
 	Generated : [One(WebCrypto.Key), Pair({ private : WebCrypto.Key, public : WebCrypto.Key })]
@@ -1080,11 +1150,11 @@ So `Crypto` is useful on Workers, and `WebCrypto` is not a replacement for it. T
 ```roc
 Ctx :: [].{
 	wait_until! : Io({}, e) => {}                     # starts the operation now; a JS throw goes to the log, a Roc Err is not seen
-	pass_through! : {} => Try({}, [InvalidState])     # only in the Fetch of a Worker
+	pass_through! : () => Try({}, [InvalidState])     # only in the Fetch of a Worker
 }
 
 Time :: [].{
-	now_ms! : {} => U64                               # coarse on the edge: it moves at I/O
+	now_ms! : () => U64                               # coarse on the edge: it moves at I/O
 	sleep! : U64 => {}                                # scheduler.wait(ms): one wait
 	sleep : U64 -> Io({}, e)                          # the twin, for Io.race! (API.md 6.5). For a timeout use Io.timeout
 	seconds_up : U64 -> U64                           # MC10: ms to whole seconds, rounded up (1,001 ms gives 2 s)
@@ -1165,7 +1235,7 @@ user_slot : Object.Attachment(User)
 user_slot = Object.attachment("user")
 
 # The Worker: give the upgrade request to the object, and its 101 response to the client.
-fetch! = |req| match (req.method, req.segments()) {
+fetch! = |req| match (req.method(), req.segments()) {
 	(GET, ["room", name]) if WebSocket.is_upgrade(req) => rooms.named(name).fetch!(req)
 	(GET, ["room", _]) => Ok(Response.from_status(426))
 	_ => Ok(Response.from_status(404))
@@ -1200,7 +1270,7 @@ room = Object.class("Room", {
 | Item | Rule |
 | --- | --- |
 | Hibernation | Workers can take the object out of memory while its sockets are open, and wakes it for the next message. Roc keeps no state across events, so nothing is lost. State that a socket needs is in its attachment (`Object.Attachment`, CBOR, 16,384 bytes or less) or in the storage of the object. A wake runs the constructor, so `init!` runs before the message (7). |
-| The Worker | Gives the request to the object with `fetch!` and the 101 response back with no change: `Response.web_socket` carries the client end (4). It checks `WebSocket.is_upgrade(req)` first and answers 426, as in the Cloudflare example. An RPC call cannot carry the socket: use `fetch!`. |
+| The Worker | Gives the request to the object with `fetch!` and the 101 response back with no change: `Response.web_socket` carries the client end (4, `web_socket()`). It checks `WebSocket.is_upgrade(req)` first and answers 426, as in the Cloudflare example. An RPC call cannot carry the socket: use `fetch!`. |
 | `accept!` | `new WebSocketPair()`, `ctx.acceptWebSocket(server, tags)` and a 101 response with the client end, in one `call!`. `NotUpgrade` when the request has no `Upgrade: websocket`. |
 | Tags | `accept_with!(req, { tags })`: 10 tags or less, 256 characters or less each, else `TooLarge`. `sockets_with!(self, { tag })` finds the sockets of a tag, for example of one user. |
 | Broadcast | `self.broadcast!(message)` sends the message to each open socket. `self.broadcast_with!({ tag }, message)` sends it to the sockets with the tag. Each gives the number of sockets that got it (`U64`). A socket that is closed (its `send!` is `Err(Closed)`) is skipped. The message is a `WebSocket.Message`: `Text(...)` or `Bytes(...)`. For JSON, make the text with `Json.to_str`. |
@@ -1233,7 +1303,7 @@ WebSocket :: { ... }.{
 # A Worker that answers each message, for the life of the socket.
 fetch! = |req| {
 	{ socket, response } = WebSocket.accept!(req)?
-	serve! = |_| {
+	serve! = || {
 		while Bool.True {
 			match socket.receive!() {
 				Ok(Text(t)) => socket.send!(Text("echo ${t}")) ?? {}
@@ -1328,7 +1398,7 @@ Each follows MC1 to MC13. Most functions are one `Call` op.
 
 | Module | Declaration | Functions | Phase |
 | --- | --- | --- | --- |
-| `Email` | `Email.binding("EMAIL")`; incoming mail is the `email!` field | `send!({ from, to, subject, text ?, html ?, cc ?, bcc ?, reply_to ? })` (the structured send that the docs recommend), `send_raw!({ from, to, raw })` (`EmailMessage`, MIME). `Email.Mail`: `from`, `to`, `header`, `raw : Body`, `raw_size_bytes` (MC10), `can_be_forwarded`, `forward!(to)`, `forward_with!(to, { headers ? })` (Workers keeps only `X-` headers, Cloudflare docs), `reply!(raw)`, `set_reject!(reason)`. As built (`PLAN.md` 8f, part 2): `send!` takes `to : List(Str)`, `cc` and `bcc : List(Str)`, `reply_to : Str`, and gives `{ message_id : Str }`. `send_raw!` gives it too (`raw : Str`, made into an `EmailMessage` by `pf.emailMessage`, a dynamic import of `cloudflare:email`). `Mail := { from, to, headers, raw, raw_size_bytes, can_be_forwarded }` is plain data (MC13): its functions reach the message through the root `event`. `can_be_forwarded` is not in the Workers API: the shim gives `message.canBeForwarded !== false`. `set_reject!` waits (`await!`): the local runtime gives the message as an RPC stub, so a sync call would be status 2. Each function has its `Io` twin. An `Err` of `email!` is a throw: the mail is rejected | B |
+| `Email` | `Email.binding("EMAIL")`; incoming mail is the `email!` field | `send!({ from, to, subject, text ?, html ?, cc ?, bcc ?, reply_to ? })` (the structured send that the docs recommend), `send_raw!({ from, to, raw })` (`EmailMessage`, MIME). `Email.Mail` (opaque, MC15: `mail.from()`, ...): `from`, `to`, `headers`, `header`, `raw : Body`, `raw_size_bytes` (MC10), `can_be_forwarded`, `new` (plain data, for a test), `forward!(to)`, `forward_with!(to, { headers ? })` (Workers keeps only `X-` headers, Cloudflare docs), `reply!(raw)`, `set_reject!(reason)`. As built (`PLAN.md` 8f, part 2): `send!` takes `to : List(Str)`, `cc` and `bcc : List(Str)`, `reply_to : Str`, and gives `{ message_id : Str }`. `send_raw!` gives it too (`raw : Str`, made into an `EmailMessage` by `pf.emailMessage`, a dynamic import of `cloudflare:email`). `Mail :: { from, to, headers, raw, raw_size_bytes, can_be_forwarded }` is plain data (MC13): its functions reach the message through the root `event`. `can_be_forwarded` is not in the Workers API: the shim gives `message.canBeForwarded !== false`. `set_reject!` waits (`await!`): the local runtime gives the message as an RPC stub, so a sync call would be status 2. Each function has its `Io` twin. An `Err` of `email!` is a throw: the mail is rejected | B |
 | `Ai` | `Ai.binding("AI")` | `run!(model, input) => Try(out, [AiErr(Thrown), BadData(Str), TooLarge])`, typed in and out (MC5), the output to `Body.default_max` (MC11). `run_with!(model, input, { gateway ?, max_bytes ? })` with `gateway : { id : Str, skip_cache ?: Bool, cache_ttl_ms ?: U64, cache_key ?: Str }` (AI Gateway, Cloudflare docs; `cacheTtl` is in seconds, rounded up, MC10). `stream!(model, input) => Try(Body, [AiErr(Thrown)])`: `run` with `stream: true` in the input, the stream stays in JS. Each has an `Io` twin. | B, built (`PLAN.md` 8f part 4) |
 | `Vectorize` | `index : Vectorize(Meta)`, `Vectorize.json("INDEX")` (the metadata is JSON at rest) | `query!(values)`, `query_with!(values, { top_k ?, namespace ?, return_values ?, return_metadata ?, filter ?, max_bytes ? })` (MC4: the options are in the `_with` form), `upsert!`, `insert!` (a list of `Vector(Meta)`: `{ id, values, namespace ?, metadata ? }`), `get!(ids)`, `delete!(ids)`. Each has an `Io` twin. A match has `metadata : Try(Meta, [Missing])`. | B, built |
 | `Analytics` | `Analytics.binding("STATS")` | `write!({ blobs, doubles, indexes }) => Try({}, [AnalyticsErr(Thrown)])`, sync, so no twin (MC3) | B, built |
@@ -1388,6 +1458,9 @@ The table above is the design. The code differs in these points, each with its r
 | Races (D4) | None | `Io.race!` (op `Race`, OP8) and `Time.sleep` (11) | A timeout on a socket read or a fetch |
 | Streams (G5) | A body stream from JS only | `Body.writer!`, `compress!`, `decompress!` (4) | A response that Roc writes in parts |
 | `Ctx.pass_through!` (11) | `{}` | `Try({}, [InvalidState])` | It is only for `Fetch`, before `respond!` |
+| No argument (MC14) | `{} => a`, called as `f!({})` | `() => a`, called as `f!()` | The form of the Roc docs. One form for each function with no argument. |
+| `Request`, `Response` (MC15) | Nominal records (`:=`): `req.method`, `Request.{ ... }` | Opaque (`::`): `req.method()`, `Request.new(...)` | An error at the use, also in an unannotated handler |
+| Raw runs (6.4) | `Io.await!`, `Io.call!`, `Io.pin!`, `Io.pinned!`, `Io.unpin!` | `Js.await!`, `Js.call!`, `Js.pin!`, `Js.pinned!`, `Js.unpin!`, as this file first said. The hosted functions are in `Js` (`Js.host_await!`, `Js.host_call!`). | One module for the escape hatch |
 | `Scheduled` (3) | `{ cron, time_ms }` | `Worker.Scheduled` with `no_retry!` | The app controls the retry (AQ12) |
 | Object events (7) | `Alarm`, no `init!` | `Init` in `blockConcurrencyWhile`, `Alarm({ retry_count, is_retry })`, `id!` as one `call!` | Schema setup before the first event, and an end to alarm retries |
 | Named entry points (8) | RPC methods only | `EntrypointFetch`, and `makeHandler` gives a `WorkerEntrypoint` subclass | Workers sends RPC only to a `WorkerEntrypoint` |
@@ -1425,7 +1498,7 @@ Lessons from the compiler (nightlies 10-09 and 10-12):
 | A function stored in a declaration has a closed error type | The stored reader gives `Try(a, Str)`, and the module wraps it at the use |
 | A `where` clause cannot name `List(a)` | `all!` takes the type of the whole result. The caller writes `List(Pkg)`. |
 | A type module `Crypto` shadows the builtin module (`clash/`) | `WebCrypto` |
-| The tags of the nominal `Method` of `roc-lang/http` match in a tuple with a list pattern, from another module | Routing by `match (req.method, req.segments())` |
+| The tags of the nominal `Method` of `roc-lang/http` match in a tuple with a list pattern, from another module | Routing by `match (req.method(), req.segments())` |
 | A phantom type variable on an opaque type (`Rpc(arg, ret, err) :: { name : Str }`) fixes the types of both sides | Typed RPC with one constant |
 | An optional field of a structural record can hold an effectful function with an error type variable | `Object.class` takes a plain record |
 | `Str.inspect` works on the type variable `e` of `Worker(e)` (now of each handler in `Worker.new`) | `Err(e)` becomes a log line |

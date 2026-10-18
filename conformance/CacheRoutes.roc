@@ -53,7 +53,7 @@ made = |req| {
 show_get! : Try(Response, [NotFound, CacheErr(Io.Thrown)]) => Response
 show_get! = |r| match r {
 	Ok(res) => match res.text!() {
-		Ok(text) => Response.from_text(200, "Ok ${res.status.to_str()} cc=${res.header("cache-control") ?? "none"} text=${text}")
+		Ok(text) => Response.from_text(200, "Ok ${res.status().to_str()} cc=${res.header("cache-control") ?? "none"} text=${text}")
 		Err(e) => Response.from_text(200, "Err body ${Str.inspect(e)}")
 	}
 	Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
