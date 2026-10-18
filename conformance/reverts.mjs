@@ -41,6 +41,8 @@ const TESTS = {
   'layout-test': () => [process.execPath, ['bench/layout-test.mjs', 'bench/out/app.wasm']],
   'entry-test': () => [process.execPath, ['bench/entry-test.mjs', 'bench/out/app_events.wasm']],
   'program-test': () => [process.execPath, ['bench/program-test.mjs']],
+  'bindings-test': () => [process.execPath, ['bench/bindings-test.mjs', 'bench/out']],
+  'cli-test': () => [process.execPath, ['bench/cli-test.mjs', 'bench/out']],
 };
 // name, the test, the checks that must fail (conformance only), edits: [file, from, to].
 const R = (name, test, checks, ...edits) => ({ name, test, checks, edits });
@@ -587,6 +589,25 @@ const reverts = [
   R('8h: a field of Worker.new of the wrong handler type compiles (fetch! takes a Str)', 'must-not-compile', ['worker_field_bad.roc'],
     [BP + 'Worker.roc', 'fetch! ?: Request => Try(Response, e1),', 'fetch! ?: Str => Try(Response, e1),'],
     [BP + 'Worker.roc', 'Ok(f!) => match f!(req) {', 'Ok(f!) => match f!(Str.inspect(req)) {']),
+  // PLAN.md 8h wave B issue 5: bindings and crons of Worker.new.
+  R('8h B5: the check of env for the bindings is off (checkEnv, load)', 'conformance',
+    ['bindings load: a binding that env does not have: the message names it and the Wrangler part', 'bindings load: DB is a KV namespace (a wrong kind): the message says it is not a D1 database', 'bindings load: KV is a D1 database (the other wrong kind)', 'bindings load: a namespace that env does not have'],
+    [IX, 'return problems.length ? new Error(', 'return false ? new Error(']),
+  R('8h B5: the check of env for the bindings is off (bindings-test)', 'bindings-test', [],
+    [IX, 'return problems.length ? new Error(', 'return false ? new Error(']),
+  R('8h B5: a namespace class that is not in objects is not checked', 'bindings-test', [],
+    ['js/manifest.js', '!b.script && !Object.hasOwn(out.objects, b.class)', 'false']),
+  R('8h B5: a binding name twice is not checked', 'bindings-test', [],
+    ['js/manifest.js', 'if (out.bindings.some((x) => x.name === b.name)) throw', 'if (false) throw']),
+  R('8h B5: Worker.new does not look for the handler of the cron', 'conformance', ['cron Worker.cron: the run of its expression goes to its handler, not to scheduled!'],
+    [BP + 'Worker.roc', 'match crons.find_first(|c| c.cron == s.cron) {', 'match crons.find_first(|c| c.cron != c.cron) {']),
+  R('8h B5: a cron of Worker.cron goes before scheduled! (the order is the other way)', 'conformance', ['cron Worker.cron: the run of its expression goes to its handler, not to scheduled!'],
+    [BP + 'Worker.roc', 'match crons.find_first(|c| c.cron == s.cron) {', 'match crons.find_first(|c| c.cron == s.cron and h.?scheduled!.is_err()) {']),
+  R('8h B5: crons are not in the manifest (Roc)', 'roc test', [], ['platform/Worker.roc', '("crons", texts(w.crons)),', '("crons", Arr([])),']),
+  R('8h B5: crons are dropped by checkManifest (sync does not see them)', 'cli-test', [], ['js/manifest.js', '    out.crons.push(c);\n', '']),
+  R('8h B5: D1.declare gives the kind kv (roc test)', 'roc test', [], ['platform/D1.roc', 'kind: "d1", props: []', 'kind: "kv", props: []']),
+  R('8h B5: D1.declare gives the kind kv (the load)', 'conformance', ['start'], [BP + 'D1.roc', 'kind: "d1", props: []', 'kind: "kv", props: []']),
+  R('8h B5: checkConfig ignores the migrations', 'cli-test', [], ['js/cli.mjs', 'for (const mig of cfg.migrations ?? []) {', 'for (const mig of []) {']),
 ];
 
 // The filter: texts of names, joined by `|` (a revert runs when its name has one of them).

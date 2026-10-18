@@ -10,6 +10,9 @@ import Response
 import Queue
 import Email
 import Object
+import Service
+import D1
+import Kv
 import cbor.Cbor
 
 ## `handlers`: the handlers of the default export that the app gives (the manifest). `own!`: runs the events of those
@@ -261,3 +264,59 @@ expect {
 	w = Worker.new({ queue!: consume! })
 	manifest(w) == Obj([("default", Obj([("handlers", Arr([Text("queue")])), ("methods", Arr([]))])), ("objects", Obj([])), ("entrypoints", Obj([])), ("bindings", Arr([])), ("crons", Arr([]))])
 }
+
+# The tests below are for the bindings and crons of Worker.new (MODULES.md 3).
+# A binding of the manifest: the name, the kind and the props (`Object.Namespace.declare` and `Service.declare` give the props).
+expect {
+	w = Worker.new({
+		bindings: [
+			D1.binding("DB").declare(),
+			Kv.text("KV").declare(),
+			Object.namespace("ROOMS", { class: "Room" }).declare(),
+			Object.namespace("FAR", { class: "Far", script: "other" }).declare(),
+		],
+		crons: [Worker.cron("*/5 * * * *", |_s| Ok({})), Worker.cron("0 0 * * *", |_s| Ok({}))],
+	})
+	manifest(w) == Obj([
+		("default", Obj([("handlers", Arr([])), ("methods", Arr([]))])),
+		("objects", Obj([])),
+		("entrypoints", Obj([])),
+		(
+			"bindings",
+			Arr([
+				Obj([("name", Text("DB")), ("kind", Text("d1"))]),
+				Obj([("name", Text("KV")), ("kind", Text("kv"))]),
+				Obj([("name", Text("ROOMS")), ("kind", Text("object")), ("class", Text("Room"))]),
+				Obj([("name", Text("FAR")), ("kind", Text("object")), ("class", Text("Far")), ("script", Text("other"))]),
+			]),
+		),
+		("crons", Arr([Text("*/5 * * * *"), Text("0 0 * * *")])),
+	])
+}
+
+# A service binding with `service` and `entrypoint` has them in the manifest. A plain one has only the name and the kind.
+expect {
+	w = Worker.new({ bindings: [Service.binding("A").declare(), Service.binding_with("B", { service: "svc", entrypoint: "Admin" }).declare()] })
+	manifest(w) == Obj([
+		("default", Obj([("handlers", Arr([])), ("methods", Arr([]))])),
+		("objects", Obj([])),
+		("entrypoints", Obj([])),
+		(
+			"bindings",
+			Arr([
+				Obj([("name", Text("A")), ("kind", Text("service"))]),
+				Obj([("name", Text("B")), ("kind", Text("service")), ("service", Text("svc")), ("entrypoint", Text("Admin"))]),
+			]),
+		),
+		("crons", Arr([])),
+	])
+}
+
+# A cron handler is not a handler of the default export: `handlers` does not have `scheduled`.
+expect {
+	w = Worker.new({ crons: [Worker.cron("* * * * *", |_s| Ok({}))] })
+	w.handlers == []
+}
+
+# The order of a cron run (cron first, else scheduled!, else Unhandled) calls `own!`, an effect, so an expect cannot run it:
+# conformance/checks/cron.mjs tests it.

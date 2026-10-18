@@ -64,6 +64,8 @@ step "bridge-workerd.mjs (8a in workerd)" node bench/bridge-workerd.mjs
 # Events (PLAN.md 8b, first half)
 step "roc test platform/main.roc (8b: the pure expects of the platform modules)" env ROC_CACHE_DIR="$PWD/.cache/roc" XDG_CACHE_HOME="$PWD/.cache" "${ROC:-$(bench/get-roc.sh)}" test platform/main.roc
 step "entry-test.mjs (8b: makeHandler class, Worker, Request, Response, Body, cron rules, Other, crash text; Node)" node bench/entry-test.mjs bench/out/app_events.wasm
+step "bindings-test.mjs (8h wave B: bindings and crons of Worker.new, checks at load; Node)" node bench/bindings-test.mjs bench/out
+step "cli-test.mjs (8h wave B: roc-cloudflare-workers sync, sync --check, --force, init)" node bench/cli-test.mjs bench/out
 step "entry-workerd.mjs (8b in workerd: the scheduled path of Miniflare, a queue event as Other)" node bench/entry-workerd.mjs
 # Streams, respond!, the context of a task (PLAN.md 8b second half, 9c, 10a, 10b)
 step "stream-test.mjs (8b, 9c, 10a, 10b: stream bodies, respond!, pass_through!, writer!, compress!, wait_until!; Node)" node bench/stream-test.mjs bench/out/app_stream.wasm
