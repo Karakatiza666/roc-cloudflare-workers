@@ -89,6 +89,9 @@ export const checks = [
     eq(JSON.stringify(await b.next()), '[3,2,1]', 'bytes');
     b.send('json');
     eq(await b.next(), '{"n":4,"user":"b"}', 'send_json!');
+    // `send_json!` of a NaN is BadData: no frame, so the next frame is the reply of `send!`.
+    b.send('json_nan');
+    ok((await b.next()).startsWith('bad=Err(BadData("'), 'Object.Socket send_json! of a NaN');
     await a.close(1000, 'a leaves');
     await b.close(4001, 'b leaves');
   }],
@@ -219,6 +222,8 @@ export const checks = [
     answer(await t.get(`/websocket/client_with?url=${encodeURIComponent(await echoServer(t))}`), 'info=Ok(Text("proto=chat x-test=yes")) json=Ok(Text("echo {\\"n\\":5}")) parsed=Ok({ n: 5 }) bytes=Ok(Bytes([0, 1, 255]))')],
   ['websocket connect! to a server that answers 200 gives NotUpgrade (OP7)', async (t) =>
     answer(await t.get(`/websocket/client?url=${encodeURIComponent(`${t.server}/hello`)}`), 'Err NotUpgrade')],
+  ['websocket Io.timeout: receive().timeout(50) is TimedOut, the next one gets the message at 100 ms', async (t) =>
+    answer(await t.get(`/websocket/timeout?url=${encodeURIComponent(await echoServer(t))}`), 'first=Err(TimedOut) next=Ok(Text("echo m"))')],
   ['websocket Io.race! of receive and Time.sleep(50), the message at 100 ms: the sleep wins, the next receive! gets it', async (t) =>
     answer(await t.get(`/websocket/race?url=${encodeURIComponent(await echoServer(t))}`), 'first=1 Ok(TimedOut) next=Ok(Got(Text("echo m")))')],
   ['websocket OP8 in the same turn: a receive that loses to a branch with no wait gives its message back, the next receive gets it', async (t) =>
@@ -255,5 +260,15 @@ export const checks = [
     } finally {
       await mf.dispose();
     }
+  }],
+  ['websocket Io.timeout that does not fire: Ok at once, the sleep is aborted', async (t) => {
+    const r = await t.get(`/websocket/timeout_ok?url=${encodeURIComponent(await echoServer(t))}`);
+    answer(r, 'first=Ok(Text("echo m"))');
+    ok(r.ms < 1500, `${r.ms} ms: the sleep of 5 s is aborted`);
+  }],
+  ['websocket send_json! of a NaN is BadData and no frame goes out', async (t) => {
+    const r = await t.get(`/websocket/send_json_nan?url=${encodeURIComponent(await echoServer(t))}`);
+    ok(r.status === 200 && r.body.startsWith('bad=Err(BadData("'), `got ${r.body}`);
+    ok(r.body.endsWith(' good=Ok({}) first=Ok(Text("echo {\\"r\\":0.5}")) second=Ok(Text("echo after"))'), `got ${r.body}`);
   }],
 ];

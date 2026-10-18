@@ -97,4 +97,16 @@ export const checks = [
     answer(await t.get('/vectorize/query_big_max'), 'count=1 genre_len=1200000');
   }],
   ['vectorize query!: a binding that is not in the config is VectorizeErr', async (t) => answer(await t.get('/vectorize/missing'), 'VectorizeErr TypeError: Cannot read properties of undefined (reading \'query\')')],
+  ['vectorize an F64 field in the metadata is sent; a NaN is BadData and no call is made (and the Io twin)', async (t) => {
+    await reset(t);
+    answer(await t.get('/vectorize/upsert_f64'), 'Ok up-1');
+    eq(canon(await sent(t, 'upsert')), canon([[{ id: 'f', values: [1], metadata: { score: 0.25 } }]]), 'the F64 metadata');
+    for (const p of ['upsert_nan', 'insert_nan']) {
+      await reset(t);
+      const r = await t.get(`/vectorize/${p}`);
+      ok(r.status === 200 && r.body.startsWith('BadData the metadata does not encode: '), `${p}: ${r.body}`);
+      eq(r.awaits, 0, `${p}: no crossing`);
+      eq((await calls(t)).length, 0, `${p}: no call`);
+    }
+  }],
 ];

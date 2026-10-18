@@ -21,6 +21,13 @@ Io(a, e) := { ops : List(Js.Op), waits : Bool, read : Try(Js, Io.Thrown) -> Try(
 		{ ops: io.ops, waits: io.waits, read: |r| read(r).map_ok(f) }
 	}
 
+	## Handle an error: `Ok` gives a value in place of it, `Err` gives the error of the new type (`Try.on_err`).
+	recover : Io(a, e), (e -> Try(a, f)) -> Io(a, f)
+	recover = |io, f| {
+		read = io.read
+		{ ops: io.ops, waits: io.waits, read: |r| read(r).on_err(f) }
+	}
+
 	## The usual call: one crossing.
 	run! : Io(a, e) => Try(a, e)
 	run! = |io| {
@@ -94,6 +101,24 @@ Io(a, e) := { ops : List(Js.Op), waits : Bool, read : Try(Js, Io.Thrown) -> Try(
 		}
 	}
 
+	## The operation, or `Err(TimedOut)` when `ms` pass first: a race with a sleep (`Race`, OP8). The loser is aborted
+	## as in `race!` (a receive that lost takes no message). The sleep is the one of `Time.sleep`.
+	timeout : Io(a, e), U64 -> Io(a, [TimedOut, ..e])
+	timeout = |io, ms| {
+		read = io.read
+		sleep = [
+			Get(Root("global"), "scheduler"),
+			Keep(Root("signal")),
+			Record([("signal", Slot(1))]),
+			Call(Slot(0), "wait", [Lit(Int(ms.to_i64_try() ?? I64.highest)), Slot(2)]),
+		]
+		{
+			ops: [Race([io.ops, sleep])],
+			waits: Bool.True,
+			read: |r| timeout_read(read, r),
+		}
+	}
+
 	## Start an operation, and give its promise as a ref (for `Ctx.wait_until!`). No wait.
 	## The reader does not run: a Roc-level `Err` is not seen. A JS throw goes to the log (6.5).
 	start! : Io(a, e) => Js.Ref
@@ -131,6 +156,20 @@ Io(a, e) := { ops : List(Js.Op), waits : Bool, read : Try(Js, Io.Thrown) -> Try(
 		Ok(_) => {}
 		Err(t) => crash "Io.unpin!: ${t.name}: ${t.message}"
 	}
+}
+
+## The result of the `Race` of `timeout`: `[0, branch]` is the operation, `[1, branch]` the sleep. The `?` widens the
+## error type of `read` with `TimedOut` (a `match` that passes `Err(x)` on does not compile).
+timeout_read : (Try(Js, Io.Thrown) -> Try(a, e)), Try(Js, Io.Thrown) -> Try(a, [TimedOut, ..e])
+timeout_read = |read, r| {
+	got = match r {
+		Ok(Arr([Int(0), b])) => read(branch(b))
+		Ok(Arr([Int(_), _])) => return Err(TimedOut)
+		Ok(_) => crash "Io.timeout: the Race result is not [index, branch]"
+		Err(t) => read(Err(t))
+	}
+	v = got?
+	Ok(v)
 }
 
 ## Status 0 to 3 of a hosted call (API.md 4). Status 3 is a platform bug: crash.

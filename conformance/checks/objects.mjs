@@ -59,6 +59,12 @@ export const checks = [
     answer(await counter(t, 'cells', 'cells'), 'prefix=Ok(["a1", "a2"]) all=Ok(["a1", "a2", "b1"]) after=Ok(["a2"])')],
   ['objects Object.Cell get!, set!, delete!', async (t) =>
     answer(await counter(t, 'cell', 'cell'), 'before=Err(NotFound) set=Ok({}) got=Ok(-9007199254740993) del=Ok({}) after=Err(NotFound)')],
+  ['objects Object.Cell get_or!: the default, then the value', async (t) =>
+    answer(await counter(t, 'cell_or', 'cell_or'), 'none=Ok(42) some=Ok(7)')],
+  ['objects Object.Cell get_or!: a value of another type is BadData, not the default', async (t) => {
+    const r = await counter(t, 'cell_or_bad', 'cell_or_bad');
+    ok(r.status === 200 && r.body.startsWith('Err(BadData('), `got ${r.status} ${r.body}`);
+  }],
   ['objects get_alarm! after set_alarm!(t) gives t (and the Io twins)', async (t) =>
     answer(await counter(t, 'alarm', 'alarm'), 'set=Ok({}) same=True twin=True del=Ok({}) after=Err(NotFound) set2=Ok({}) del2=Ok({})')],
   ['objects delete_all!: the table, the cell and the alarm are gone (and the twin)', async (t) => {

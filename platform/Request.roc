@@ -41,12 +41,18 @@ Request := {
 	post : Str, Body -> Request
 	post = |url, body| Request.{ method: POST, url, body }
 
-	post_json : Str, a -> Request where [a.Json.Encodable([])]
-	post_json = |url, value| Request.{
-		method: POST,
-		url,
-		headers: [Header.{ name: "content-type", value: "application/json" }],
-		body: Text(Json.to_str(value)),
+	## A value that JSON cannot show (a `NaN` in an `F64`) is `BadData`.
+	post_json : Str, a -> Try(Request, [BadData(Str)]) where [a.Json.Encodable(enc)]
+	post_json = |url, value| match Json.to_str_try(value) {
+		Ok(text) => Ok(
+			Request.{
+				method: POST,
+				url,
+				headers: [Header.{ name: "content-type", value: "application/json" }],
+				body: Text(text),
+			},
+		)
+		Err(e) => Err(BadData(Str.inspect(e)))
 	}
 
 	with_header : Request, Str, Str -> Request

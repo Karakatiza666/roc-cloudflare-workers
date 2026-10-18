@@ -121,4 +121,22 @@ export const checks = [
       eq(canon(names), canon(['get', 'get', m]), f);
     }
   }],
+  ['workflows F64 params and payload: a value is sent as JSON, a NaN is BadData and no call is made', async (t) => {
+    await t.get('/__stub_reset');
+    answer(await t.get('/workflows/create_f64?binding=STUB_WORKFLOW&n=0'), 'Ok id=generated');
+    eq(canon((await calls(t)).filter((x) => x.method === 'create').map((x) => x.args)), canon([[{ params: { x: 0.5 } }]]), 'create');
+    await t.get('/__stub_reset');
+    for (const p of ['create_f64', 'create_f64_io']) {
+      const r = await t.get(`/workflows/${p}?binding=STUB_WORKFLOW&n=1&id=nan1`);
+      ok(r.status === 200 && r.body.startsWith('BadData the params do not encode: '), `${p}: ${r.body}`);
+      eq(r.awaits, 0, `${p}: no crossing`);
+    }
+    eq((await calls(t)).length, 0, 'no call after a NaN in create');
+    answer(await t.get('/workflows/send_event_f64?binding=STUB_WORKFLOW&id=s9&n=0'), 'Ok');
+    eq(canon((await calls(t)).filter((x) => x.method === 'sendEvent').map((x) => x.args)), canon([['s9', { type: 'go', payload: { x: 0.5 } }]]), 'send_event');
+    await t.get('/__stub_reset');
+    const r = await t.get('/workflows/send_event_f64?binding=STUB_WORKFLOW&id=s9&n=1');
+    ok(r.status === 200 && r.body.startsWith('BadData the payload does not encode: '), `send_event NaN: ${r.body}`);
+    eq((await calls(t)).filter((x) => x.method === 'sendEvent').length, 0, 'no sendEvent call');
+  }],
 ];

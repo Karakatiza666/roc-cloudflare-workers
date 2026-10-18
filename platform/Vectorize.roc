@@ -9,10 +9,10 @@ import Io
 import Js
 import Body
 
-Vectorize(meta) := { name : Str, write : meta -> Str, read : Str -> Try(meta, Str) }.{
+Vectorize(meta) := { name : Str, write : meta -> Try(Str, Str), read : Str -> Try(meta, Str) }.{
 	## A constant (WR1): the name of the binding and the codecs of the metadata.
-	json : Str -> Vectorize(meta) where [meta.Json.Encodable([]), meta.Json.Parseable([InvalidJson(Str), ..errs])]
-	json = |name| Vectorize.{ name, write: |m| Json.to_str(m), read: |text| Json.parse(text).map_err(|e| Str.inspect(e)) }
+	json : Str -> Vectorize(meta) where [meta.Json.Encodable(enc), meta.Json.Parseable([InvalidJson(Str), ..errs])]
+	json = |name| Vectorize.{ name, write: |m| Json.to_str_try(m).map_err(|e| Str.inspect(e)), read: |text| Json.parse(text).map_err(|e| Str.inspect(e)) }
 
 	## A vector to write: `namespace` and `metadata` are optional.
 	Vector(m) : { id : Str, values : List(F64), namespace ?: Str, metadata ?: m }
@@ -109,15 +109,19 @@ query_io = |index, values, opts, max| {
 write_io : Vectorize(meta), Str, List(Vectorize.Vector(meta)) -> Io(Vectorize.Mutation, [VectorizeErr(Io.Thrown), BadData(Str)])
 write_io = |index, method, vectors| {
 	write = index.write
-	Io.new(
-		[
-			Get(Root("global"), "JSON"),
-			Call(Slot(0), "parse", [Lit(Text(vectors_json(write, vectors)))]),
-			Get(Root("env"), index.name),
-			Call(Slot(2), method, [Slot(1)]),
-		],
-		mutation_read,
-	)
+	match vectors_json(write, vectors) {
+		Ok(text) => Io.new(
+			[
+				Get(Root("global"), "JSON"),
+				Call(Slot(0), "parse", [Lit(Text(text))]),
+				Get(Root("env"), index.name),
+				Call(Slot(2), method, [Slot(1)]),
+			],
+			mutation_read,
+		)
+		# A metadata that does not encode (a `NaN` in an `F64`): no program, so nothing is sent.
+		Err(m) => Io.sync([], |_| Err(BadData("the metadata does not encode: ${m}")))
+	}
 }
 
 mutation_read : Try(Js, Io.Thrown) -> Try(Vectorize.Mutation, [VectorizeErr(Io.Thrown), BadData(Str)])
@@ -161,22 +165,22 @@ query_js = |o| {
 }
 
 ## The JSON text of a list of vectors: `[{"id":..,"values":[..],"namespace":..,"metadata":..}]`.
-vectors_json : (meta -> Str), List(Vectorize.Vector(meta)) -> Str
+vectors_json : (meta -> Try(Str, Str)), List(Vectorize.Vector(meta)) -> Try(Str, Str)
 vectors_json = |write, vectors| {
-	items = vectors.map(
+	items = vectors.map_try(
 		|v| {
 			ns = match v.?namespace {
 				Ok(s) => ",\"namespace\":${Json.to_str(s)}"
 				Err(_) => ""
 			}
 			md = match v.?metadata {
-				Ok(m) => ",\"metadata\":${write(m)}"
+				Ok(m) => ",\"metadata\":${write(m)?}"
 				Err(_) => ""
 			}
-			"{\"id\":${Json.to_str(v.id)},\"values\":[${Str.join_with(v.values.map(f64_json), ",")}]${ns}${md}}"
+			Ok("{\"id\":${Json.to_str(v.id)},\"values\":[${Str.join_with(v.values.map(f64_json), ",")}]${ns}${md}}")
 		},
-	)
-	"[${Str.join_with(items, ",")}]"
+	)?
+	Ok("[${Str.join_with(items, ",")}]")
 }
 
 matches_of : (Str -> Try(meta, Str)), Js -> Try({ matches : List(Vectorize.Match(meta)), count : U64 }, Str)
@@ -312,7 +316,7 @@ expect query_js({}) == []
 expect query_js({ max_bytes: 5 }) == []
 expect query_js({ top_k: 3, namespace: "n", return_values: Bool.True, return_metadata: All }) == [("topK", Int(3)), ("namespace", Text("n")), ("returnValues", Bool(Bool.True)), ("returnMetadata", Text("all"))]
 expect query_js({ return_metadata: None, filter: Obj([("genre", Text("rock"))]) }) == [("returnMetadata", Text("none")), ("filter", Obj([("genre", Text("rock"))]))]
-expect vectors_json(|m| "{\"genre\":${Json.to_str(m.genre)}}", [{ id: "a", values: [0.5, 1.0], metadata: { genre: "x" } }, { id: "b", values: [], namespace: "ns" }]) == "[{\"id\":\"a\",\"values\":[0.5,1],\"metadata\":{\"genre\":\"x\"}},{\"id\":\"b\",\"values\":[],\"namespace\":\"ns\"}]"
+expect vectors_json(|m| Ok("{\"genre\":${Json.to_str(m.genre)}}"), [{ id: "a", values: [0.5, 1.0], metadata: { genre: "x" } }, { id: "b", values: [], namespace: "ns" }]) == Ok("[{\"id\":\"a\",\"values\":[0.5,1],\"metadata\":{\"genre\":\"x\"}},{\"id\":\"b\",\"values\":[],\"namespace\":\"ns\"}]")
 
 expect match matches_of(read_meta, Obj([("count", Int(1)), ("matches", Arr([Obj([("id", Text("a")), ("score", Num(0.75)), ("metadata", Obj([("genre", Text("x")), ("year", Int(1999))]))]), Obj([("id", Text("b")), ("score", Int(1))])]))])) {
 	Ok(r) => r.count == 1 and r.matches.len() == 2 and r.matches.first().map_ok(|m| m.id == "a" and m.score == 0.75 and m.metadata == Ok({ genre: "x", year: 1999 })) == Ok(Bool.True)

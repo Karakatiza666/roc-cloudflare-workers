@@ -126,8 +126,12 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 		send! : Object.Socket, WebSocket.Message => Try({}, [Closed])
 		send! = |sock, msg| Remote.socket_send!(sock.ref, frame(msg))
 
-		send_json! : Object.Socket, a => Try({}, [Closed]) where [a.Json.Encodable([])]
-		send_json! = |sock, value| Remote.socket_send!(sock.ref, Text(Json.to_str(value)))
+		## A value that JSON cannot show (a `NaN` in an `F64`) is `BadData`, and nothing is sent.
+		send_json! : Object.Socket, a => Try({}, [Closed, BadData(Str)]) where [a.Json.Encodable(enc)]
+		send_json! = |sock, value| match Json.to_str_try(value) {
+			Ok(text) => Remote.socket_send!(sock.ref, Text(text)).map_err(|_| Closed)
+			Err(e) => Err(BadData(Str.inspect(e)))
+		}
 
 		close! : Object.Socket, U16, Str => {}
 		close! = |sock, code, reason| Remote.socket_close!(sock.ref, code, reason)
@@ -429,6 +433,15 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 				Ok(other) => Err(BadData("the cell ${c.key} holds ${Str.inspect(other)}, not CBOR bytes"))
 				Err(t) => Err(StorageErr(t))
 			}
+		}
+
+		## `get!`, and `default` for a cell that has no value. The other errors stay.
+		get_or! : Object.Cell(a), Object.Self, a => Try(a, [BadData(Str), StorageErr(Io.Thrown)])
+		get_or! = |c, self, default| match c.get!(self) {
+			Ok(v) => Ok(v)
+			Err(NotFound) => Ok(default)
+			Err(BadData(m)) => Err(BadData(m))
+			Err(StorageErr(t)) => Err(StorageErr(t))
 		}
 
 		## `storage.kv.put(key, bytes)`.

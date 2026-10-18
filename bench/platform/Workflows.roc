@@ -7,23 +7,24 @@
 import Io
 import Js
 
-Workflows(a) := { name : Str, write : a -> Str }.{
+Workflows(a) := { name : Str, write : a -> Try(Str, Str) }.{
 	## A constant (WR1): the name of the binding in the Wrangler config, and the codec of the parameters.
-	json : Str -> Workflows(a) where [a.Json.Encodable([])]
-	json = |name| Workflows.{ name, write: |v| Json.to_str(v) }
+	## A value that JSON cannot show (a `NaN` in an `F64`) is `BadData` of the call.
+	json : Str -> Workflows(a) where [a.Json.Encodable(enc)]
+	json = |name| Workflows.{ name, write: |v| Json.to_str_try(v).map_err(|e| Str.inspect(e)) }
 
 	## `create({ params })`: a new instance with a new id. Gives the `Instance` (its id is `instance.id`).
-	create : Workflows(a), a -> Io(Workflows.Instance, [WorkflowsErr(Io.Thrown), AlreadyExists])
+	create : Workflows(a), a -> Io(Workflows.Instance, [WorkflowsErr(Io.Thrown), AlreadyExists, BadData(Str)])
 	create = |w, params| create_io(w, params, Err(NoId))
 
-	create! : Workflows(a), a => Try(Workflows.Instance, [WorkflowsErr(Io.Thrown), AlreadyExists])
+	create! : Workflows(a), a => Try(Workflows.Instance, [WorkflowsErr(Io.Thrown), AlreadyExists, BadData(Str)])
 	create! = |w, params| Io.run!(create(w, params))
 
 	## `id`: the id of the new instance (1 to 100 characters). An id that is in use is `AlreadyExists`.
-	create_with : Workflows(a), a, { id ?: Str } -> Io(Workflows.Instance, [WorkflowsErr(Io.Thrown), AlreadyExists])
+	create_with : Workflows(a), a, { id ?: Str } -> Io(Workflows.Instance, [WorkflowsErr(Io.Thrown), AlreadyExists, BadData(Str)])
 	create_with = |w, params, opts| create_io(w, params, opts.?id.map_err(|_| NoId))
 
-	create_with! : Workflows(a), a, { id ?: Str } => Try(Workflows.Instance, [WorkflowsErr(Io.Thrown), AlreadyExists])
+	create_with! : Workflows(a), a, { id ?: Str } => Try(Workflows.Instance, [WorkflowsErr(Io.Thrown), AlreadyExists, BadData(Str)])
 	create_with! = |w, params, opts| Io.run!(create_with(w, params, opts))
 
 	## `get(id)`: the `Instance` of an id, or `NotFound`.
@@ -87,23 +88,26 @@ Workflows(a) := { name : Str, write : a -> Str }.{
 
 		## `sendEvent({ type, payload })`: the payload is JSON (the format of the event). The waiting `step.waitForEvent`
 		## of the workflow takes it.
-		send_event : Workflows.Instance, Str, p -> Io({}, [WorkflowsErr(Io.Thrown), NotFound]) where [p.Json.Encodable([])]
-		send_event = |i, type, payload| Io.new(
-			[Get(Root("global"), "JSON"), Call(Slot(0), "parse", [Lit(Text(Json.to_str(payload)))])].concat(
-				[
-					Get(Root("env"), i.name),
-					Call(Slot(2), "get", [Lit(Text(i.id))]),
-					Record([("type", Lit(Text(type))), ("payload", Slot(1))]),
-					Call(Slot(3), "sendEvent", [Slot(4)]),
-				],
-			),
-			|r| match r {
-				Ok(_) => Ok({})
-				Err(t) => Err(error_of(t))
-			},
-		)
+		send_event : Workflows.Instance, Str, p -> Io({}, [WorkflowsErr(Io.Thrown), NotFound, BadData(Str)]) where [p.Json.Encodable(enc)]
+		send_event = |i, type, payload| match Json.to_str_try(payload) {
+			Ok(text) => Io.new(
+				[Get(Root("global"), "JSON"), Call(Slot(0), "parse", [Lit(Text(text))])].concat(
+					[
+						Get(Root("env"), i.name),
+						Call(Slot(2), "get", [Lit(Text(i.id))]),
+						Record([("type", Lit(Text(type))), ("payload", Slot(1))]),
+						Call(Slot(3), "sendEvent", [Slot(4)]),
+					],
+				),
+				|r| match r {
+					Ok(_) => Ok({})
+					Err(t) => Err(error_of(t))
+				},
+			)
+			Err(e) => Io.sync([], |_| Err(BadData("the payload does not encode: ${Str.inspect(e)}")))
+		}
 
-		send_event! : Workflows.Instance, Str, p => Try({}, [WorkflowsErr(Io.Thrown), NotFound]) where [p.Json.Encodable([])]
+		send_event! : Workflows.Instance, Str, p => Try({}, [WorkflowsErr(Io.Thrown), NotFound, BadData(Str)]) where [p.Json.Encodable(enc)]
 		send_event! = |i, type, payload| Io.run!(send_event(i, type, payload))
 	}
 
@@ -123,28 +127,32 @@ Workflows(a) := { name : Str, write : a -> Str }.{
 }
 
 ## `create({ id?, params })`. Slots: 0 `JSON`, 1 the parameters, 2 the binding, 3 the options, 4 the instance, 5 its id.
-create_io : Workflows(a), a, Try(Str, [NoId]) -> Io(Workflows.Instance, [WorkflowsErr(Io.Thrown), AlreadyExists])
+create_io : Workflows(a), a, Try(Str, [NoId]) -> Io(Workflows.Instance, [WorkflowsErr(Io.Thrown), AlreadyExists, BadData(Str)])
 create_io = |w, params, id| {
 	write = w.write
 	opts = match id {
 		Ok(s) => [("id", Lit(Text(s))), ("params", Slot(1))]
 		Err(NoId) => [("params", Slot(1))]
 	}
-	Io.new(
-		[
-			Get(Root("global"), "JSON"),
-			Call(Slot(0), "parse", [Lit(Text(write(params)))]),
-			Get(Root("env"), w.name),
-			Record(opts),
-			Call(Slot(2), "create", [Slot(3)]),
-			Get(Slot(4), "id"),
-		],
-		|r| match r {
-			Ok(Text(got)) => Ok(Workflows.Instance.{ name: w.name, id: got })
-			Ok(other) => crash "Workflows.create: the id is ${Str.inspect(other)}"
-			Err(t) => Err(create_error(t))
-		},
-	)
+	match write(params) {
+		Ok(text) => Io.new(
+			[
+				Get(Root("global"), "JSON"),
+				Call(Slot(0), "parse", [Lit(Text(text))]),
+				Get(Root("env"), w.name),
+				Record(opts),
+				Call(Slot(2), "create", [Slot(3)]),
+				Get(Slot(4), "id"),
+			],
+			|r| match r {
+				Ok(Text(got)) => Ok(Workflows.Instance.{ name: w.name, id: got })
+				Ok(other) => crash "Workflows.create: the id is ${Str.inspect(other)}"
+				Err(t) => Err(create_error(t))
+			},
+		)
+		# A value that does not encode: no program, so nothing is sent.
+		Err(m) => Io.sync([], |_| Err(BadData("the params do not encode: ${m}")))
+	}
 }
 
 ## The start of an instance program: slot 0 the binding, slot 1 the instance (`get` throws for an id that is not there).

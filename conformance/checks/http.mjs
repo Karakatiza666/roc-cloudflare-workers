@@ -1,6 +1,6 @@
 // `Http` (MODULES.md 4) and its error map (MC9, PLAN.md 8d): routes of conformance/HttpRoutes.roc. `t.server` is the
 // local server of run.mjs. Each check gives the text that the route answered.
-import { answer, ok } from '../assert.mjs';
+import { answer, eq, ok } from '../assert.mjs';
 
 export const options = {};
 
@@ -68,5 +68,12 @@ export const checks = [
     const r = await t.get(`/http/get?url=${q('not a url')}`);
     ok(r.body.startsWith('HttpErr TypeError: '), `got ${r.body}, want HttpErr TypeError`);
     return r.body;
+  }],
+  ['http Request.post_json: JSON with the content type; a NaN is BadData and nothing is sent', async (t) => {
+    const url = q(t.server + '/echo_json');
+    answer(await t.get(`/http/post_json?url=${url}&v=pi`), '200 POST application/json {"name":"pi","r":0.5}');
+    const bad = await t.get(`/http/post_json?url=${url}&v=nan`);
+    ok(bad.status === 200 && bad.body.startsWith('BadData '), `got ${bad.body}`);
+    eq(bad.awaits, 0, 'no crossing: nothing is sent');
   }],
 ];

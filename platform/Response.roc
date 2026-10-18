@@ -13,8 +13,12 @@ Response := { status : U16, headers : List(Header) ?? [], body : Body ?? Empty, 
 	from_text : U16, Str -> Response
 	from_text = |status, text| Response.{ status, headers: [content_type("text/plain; charset=utf-8")], body: Text(text) }
 
-	from_json : U16, a -> Response where [a.Json.Encodable([])]
-	from_json = |status, value| Response.{ status, headers: [content_type("application/json")], body: Text(Json.to_str(value)) }
+	## A value that JSON cannot show (a `NaN` in an `F64`) gives a 500 response with a text body that says so.
+	from_json : U16, a -> Response where [a.Json.Encodable(enc)]
+	from_json = |status, value| match Json.to_str_try(value) {
+		Ok(text) => Response.{ status, headers: [content_type("application/json")], body: Text(text) }
+		Err(e) => Response.from_text(500, "the response does not encode as JSON: ${Str.inspect(e)}")
+	}
 
 	## The Str is the content type.
 	from_bytes : U16, Str, List(U8) -> Response

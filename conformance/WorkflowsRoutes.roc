@@ -9,6 +9,7 @@ import pf.Io
 import Q
 
 Params : { name : Str, n : U64 }
+FParams : { x : F64 }
 Done : { payload : Params, id : Str }
 Waited : { started : Params, got : { x : U64 } }
 
@@ -26,6 +27,29 @@ WorkflowsRoutes :: [].{
 			["create_with_io"] => made(Io.run!(w.create_with(params, { id: id })))
 			# No `id` field: the same as `create!`.
 			["create_with_none"] => made(w.create_with!(params, {}))
+			# Parameters with an `F64` field: a value is sent as JSON, a `NaN` is `BadData` and no call is made (`?n=1` is a `NaN`).
+			["create_f64"] => {
+				fw : Workflows(FParams)
+				fw = Workflows.json(Q.text(req, "binding"))
+				made(fw.create!({ x: if Q.num(req, "n") == 1 0.0.F64 / 0.0.F64 else 0.5.F64 }))
+			}
+			["create_f64_io"] => {
+				fw : Workflows(FParams)
+				fw = Workflows.json(Q.text(req, "binding"))
+				made(Io.run!(fw.create_with({ x: if Q.num(req, "n") == 1 0.0.F64 / 0.0.F64 else 0.5.F64 }, { id: id })))
+			}
+			# `send_event!` with a payload that has an `F64`.
+			["send_event_f64"] => match w.get!(id) {
+				Ok(i) => ok(
+					match i.send_event!("go", { x: if Q.num(req, "n") == 1 0.0.F64 / 0.0.F64 else 0.5.F64 }) {
+						Ok({}) => "Ok"
+						Err(NotFound) => "NotFound"
+						Err(BadData(m)) => "BadData ${m}"
+						Err(WorkflowsErr(t)) => "WorkflowsErr ${t.name}: ${t.message}"
+					},
+				)
+				Err(e) => ok("get: ${Str.inspect(e)}")
+			}
 			["get"] => made(w.get!(id))
 			["get_io"] => made(Io.run!(w.get(id)))
 			["status"] => status!(w, id, Bool.False)
@@ -46,13 +70,14 @@ WorkflowsRoutes :: [].{
 ok : Str -> Response
 ok = |text| Response.from_text(200, text)
 
-made : Try(Workflows.Instance, [WorkflowsErr({ name : Str, message : Str }), AlreadyExists, NotFound]) -> Response
+made : Try(Workflows.Instance, [WorkflowsErr({ name : Str, message : Str }), AlreadyExists, NotFound, BadData(Str)]) -> Response
 made = |r| ok(
 	match r {
 		Ok(i) => "Ok id=${i.id()}"
 		Err(WorkflowsErr(t)) => "WorkflowsErr ${t.name}: ${t.message}"
 		Err(AlreadyExists) => "AlreadyExists"
 		Err(NotFound) => "NotFound"
+		Err(BadData(m)) => "BadData ${m}"
 	},
 )
 
@@ -103,6 +128,7 @@ act! = |w, id, which, twin, x| {
 		match r {
 			Ok({}) => "Ok"
 			Err(NotFound) => "NotFound"
+			Err(BadData(m)) => "BadData ${m}"
 			Err(WorkflowsErr(t)) => "WorkflowsErr ${t.name}: ${t.message}"
 		},
 	)

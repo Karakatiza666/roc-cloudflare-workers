@@ -58,4 +58,8 @@ for c in "${cases[@]}"; do
   elif [ $code -eq 1 ] && grep -qi "$want" <<< "$out"; then echo "PASS Id64 $name does not compile ($want)"
   else echo "FAIL Id64 $name: it compiles, or the error has no '$want'"; echo "$out" | head -12; rc=1; fi
 done
+# A control only: a record with an `F64` field is JSON-encodable (the open error of `Json.Encodable(enc)`).
+out=$("$ROC" check "$dir/f64_json_ok.roc" 2>&1)
+if [ $? -eq 0 ]; then echo "PASS f64_json_ok.roc compiles"
+else echo "FAIL f64_json_ok.roc: a record with an F64 field does not compile as JSON"; echo "$out" | head -20; rc=1; fi
 exit "$rc"
