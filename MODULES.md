@@ -454,6 +454,45 @@ match results {
 }
 ```
 
+#### Ids: `Id64`
+
+`pf.Id64` (`platform/Id64.roc`, prototype `research/id64/`) is the type of a 64-bit id of a D1 INTEGER column. It is opaque over the 64 bits of an `I64`. It has no number methods: `id + 1` and `id < other` do not compile (the signed order of SQL is not the U64 order).
+
+| Group | Functions |
+| --- | --- |
+| Make | `from_u64`, `from_i64`, `from_bytes` (8 bytes, big-endian, else `Err(BadLength)`), `from_str` (I64 text or U64 text, canonical decimal, else `Err(BadId)`) |
+| Read | `to_u64`, `to_i64`, `to_bytes`, `to_str` (I64 text), `to_u64_str` (U64 text) |
+| Compare | `==`, hash (a `Dict` key). No order. |
+| Browser | `to_web` gives `Id64.Web`, `from_web` gives the `Id64` back |
+
+| Form | Write | Read |
+| --- | --- | --- |
+| CBOR, a SQL parameter, a row (`Id64`) | The I64 decimal text, so a `Text` parameter and `CAST(id AS TEXT)` agree (R-IK2) | I64 or U64 text, or a CBOR integer |
+| JSON (`Id64.Web`) | The U64 decimal text, in any format | I64 or U64 text. A number (JSON or CBOR) is an error: an id in JSON must be text, a browser rounds a number above 2^53. |
+| A bare `Id64` in JSON | Does not compile: the encoder needs `encode_bytes` and the parser needs `parse_bytes`, which only a binary format has (`conformance/must-not-compile.sh`) | Same |
+
+```roc
+import pf.Id64
+import pf.D1
+import pf.Sql
+
+Row : { id : Id64, name : Str }         # a row: read with CAST(id AS TEXT)
+Reply : { id : Id64.Web, name : Str }   # an answer: the U64 text
+
+row : Try(Row, _)
+row = db.first!("SELECT CAST(id AS TEXT) AS id, name FROM user WHERE name = ?", [Text(name)])
+
+# A SQL parameter: the I64 text binds as text, and SQLite stores the integer exactly.
+_ = db.run!("UPDATE user SET seen = 1 WHERE id = ?", [Text(row.id.to_str())])
+
+# A Dict key.
+by_id : Dict(Id64, Str)
+by_id = Dict.empty().insert(row.id, row.name)
+
+# A JSON answer.
+Response.from_json(200, { id: row.id.to_web(), name: row.name })
+```
+
 ### 5.2 `Kv`
 
 ```roc

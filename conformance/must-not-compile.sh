@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Must-not-compile checks (MODULES.md 10, PLAN.md 8c): a `Secret` in the fields of a `Log` line, and in a CBOR encode.
+# Must-not-compile checks (MODULES.md 10, PLAN.md 8c): a `Secret` in the fields of a `Log` line, and in a CBOR encode. Also `Id64` (MODULES.md 5.1).
 # Each `*_bad.roc` must fail `roc check` with an error that names `Secret`, and its `*_ok.roc` (the same file with
 # `s.reveal()`) must pass, so the error is the secret and not another fault. The CBOR files import `pf.Cbor` (the platform module that
 # wraps `roc-cbor`, MC5) and have no `cbor` entry. Env: ROC (default: bench/get-roc.sh). Exit 1 on a failure.
@@ -16,5 +16,46 @@ for kind in log cbor; do
   out=$("$ROC" check "$dir/secret_${kind}_ok.roc" 2>&1)
   if [ $? -eq 0 ]; then echo "PASS secret_${kind}_ok.roc compiles"
   else echo "FAIL secret_${kind}_ok.roc: the control does not compile"; echo "$out" | head -20; rc=1; fi
+done
+
+# Id64 (MODULES.md 5.1, "Ids: Id64"): one line of Roc after a header. A bad case must fail `roc check` with the expected text in the
+# error. The controls must pass, so the failure is the line and not the header.
+tmp=$dir/_id64_case.roc
+trap 'rm -f "$tmp"' EXIT
+header='app [event!] { pf: platform "../../bench/platform/main.roc" }
+import pf.Worker
+import pf.Cbor
+import pf.Id64
+worker = Worker.{ fetch!: |_req| crash "unused" }
+event! = |e| worker.event!(e)
+id = Id64.from_u64(5)'
+# name | line | expected error text ("-" for a control, which must compile)
+cases=(
+  'control: to_u64 math is allowed|x = id.to_u64() + 1|-'
+  'control: Id64.Web in JSON (write)|x = Encoding.Json.to_str({ id: id.to_web() })|-'
+  'control: Id64.Web in JSON (read)|x : Try({ id : Id64.Web }, _)\nx = Encoding.Json.parse("{}")|-'
+  'control: Id64 in CBOR (write)|x = Cbor.encode({ id })|-'
+  'control: Id64 in CBOR (read)|x : Try({ id : Id64 }, _)\nx = Cbor.parse([])|-'
+  'id + 1|x = id + 1|MISSING METHOD'
+  'id + id|x = id + id|MISSING METHOD'
+  'id.plus(1)|x = id.plus(1)|MISSING METHOD'
+  'id < id (no order)|x = id < id|MISSING METHOD'
+  'id.bits (hidden field)|x = id.bits|TYPE MISMATCH'
+  'literal as Id64|x : Id64\nx = 5|TYPE MISMATCH'
+  'U64 compared to Id64|x = id.to_u64() + 1 == id|TYPE MISMATCH'
+  'record literal as Id64|x : Id64\nx = { bits: 5 }|TYPE MISMATCH'
+  'Id64 in JSON (write)|x = Encoding.Json.to_str({ id })|encode_bytes'
+  'Id64 in JSON (write), bare|x = Encoding.Json.to_str(id)|encode_bytes'
+  'Id64 in JSON (read)|x : Try({ id : Id64 }, _)\nx = Encoding.Json.parse("{}")|parse_bytes'
+  'Id64.{ bits }|x = Id64.{ bits: 5 }|opaque'
+)
+for c in "${cases[@]}"; do
+  IFS='|' read -r name line want <<< "$c"
+  printf '%s\n%b\n' "$header" "$line" > "$tmp"
+  out=$("$ROC" check "$tmp" 2>&1); code=$?
+  if [ "$want" = "-" ]; then
+    if [ $code -eq 0 ]; then echo "PASS Id64 $name"; else echo "FAIL Id64 $name: the control does not compile"; echo "$out" | head -12; rc=1; fi
+  elif [ $code -eq 1 ] && grep -qi "$want" <<< "$out"; then echo "PASS Id64 $name does not compile ($want)"
+  else echo "FAIL Id64 $name: it compiles, or the error has no '$want'"; echo "$out" | head -12; rc=1; fi
 done
 exit "$rc"

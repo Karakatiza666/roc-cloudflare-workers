@@ -100,6 +100,12 @@ const reverts = [
   R('WebCrypto.import_key!: a JWK is never private (the usages are verify)', 'conformance', ['webcrypto import_key! of a private and a public JWK'], [BP + 'WebCrypto.roc', 'parsed.is_ok()', 'Bool.False']),
   R('Js pins: pf.pin does not keep the value', 'conformance', ['webcrypto a pinned CryptoKey used by a later request'], ['js/helpers.js', '      shim.pins.pin(name, value, maxAgeMs);\n', '']),
   R('WebCrypto.hmac_sha256: the inner pad uses 0x5c', 'roc test', [], ['platform/WebCrypto.roc', 'bitwise_xor(0x36)', 'bitwise_xor(0x5c)']),
+  // Id64 (MODULES.md 5.1): the CBOR form is the I64 text; the JSON gate is the `encode_bytes` and `parse_bytes` markers; `Web` reads text only.
+  R('Id64.to_str gives the U64 text (the text param stores a wrong id)', 'conformance', ['d1 Id64'], [BP + 'Id64.roc', 'to_str = |id| id.bits.to_str()', 'to_str = |id| id.bits.to_u64_wrap().to_str()']),
+  R('Id64.from_u64 loses the top bit', 'roc test', [], ['platform/Id64.roc', 'Id64.{ bits: n.to_i64_wrap() }', 'Id64.{ bits: n.bitwise_and(0x7FFF_FFFF_FFFF_FFFF).to_i64_wrap() }']),
+  R('Id64.Web writes the I64 text', 'roc test', [], ['platform/Id64.roc', 'Encoding.encode_str(w.bits.to_u64_wrap().to_str(), state)', 'Encoding.encode_str(w.bits.to_str(), state)']),
+  R('Id64 encoder: no encode_bytes marker (bare Id64 compiles in JSON)', 'must-not-compile', [], [BP + 'Id64.roc', '\t\t\tencoding.encode_bytes : List(U8), state -> Try(state, err),\n\t\t]\n\tencoder_for = |_| {\n\t\tEncoding : encoding\n\n\t\t|id, state|', '\t\t]\n\tencoder_for = |_| {\n\t\tEncoding : encoding\n\n\t\t|id, state|']),
+  R('Id64 parser: no parse_bytes marker (a JSON number reads as an id)', 'must-not-compile', [], [BP + 'Id64.roc', '\t\t\tencoding.parse_bytes : encoding, state -> Try({ value : List(U8), rest : state }, err),\n', '']),
   R('WebCrypto.hmac_sha256: a key longer than the block is not hashed', 'roc test', [], ['platform/WebCrypto.roc', 'if key.len() > block Crypto', 'if key.len() > 100_000 Crypto']),
   // PLAN.md 8g P2: `WebCrypto.sha256!` picks the builtin below 4,096 bytes and `crypto.subtle.digest` from there.
   R('WebCrypto.sha256!: always the builtin (no crossing at 1 MB)', 'conformance', ['webcrypto sha256!: the digest of Node, 0 crossings below 4,096 bytes and 1 above', 'webcrypto sha256 (Io twin): the digest of Node, a wait above 4,096 bytes only'], [BP + 'WebCrypto.roc', 'bytes.len() < sha256_crossover_bytes', 'Bool.True']),

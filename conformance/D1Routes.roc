@@ -7,6 +7,7 @@ import pf.D1
 import pf.Sql
 import pf.Io
 import pf.Cbor
+import pf.Id64
 import Q
 
 db = D1.binding("DB")
@@ -18,6 +19,7 @@ RealRow : { x : F64 }
 Count : { n : U64 }
 TextRow : { t : Str }
 Big : { x : Str }
+IdRow64 : { id : Id64 }
 
 ## The tuple types of `all_tuples!` (the same columns, in the order of the SELECT).
 PersonT : (I64, Str)
@@ -69,6 +71,8 @@ D1Routes :: [].{
 			["batch_count"] => batch_count!(Q.text(req, "grp"))
 			# The rows of the last statement of a batch, typed by `?type=` with `D1.Result.first` and `all`.
 			["batch_first"] => batch_first!(ty, sql)
+			# MODULES.md 5.1, "Ids: Id64": `?k=` is the row of `bigids`. Read as `Id64`, write to `rid` with `Text(id.to_str())`, read back.
+			["id64"] => id64!(Q.num(req, "k"))
 			["session"] => session!(Q.text(req, "k"))
 			["session_after"] => session_after!(Q.text(req, "b"), Q.text(req, "k"))
 			_ => Response.from_text(404, "no route")
@@ -324,4 +328,26 @@ session_after! = |b, k| match db.with_session!(After(b)) {
 		out(r)
 	}
 	Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+}
+
+## Reads `bigids` row `k` with `CAST(id AS TEXT)` into an `Id64` field, stores it in `rid` as a text parameter, reads it back.
+## The answer: the id as I64 and U64, the id read back, and the JSON of the `Web` form.
+id64! : U64 => Response
+id64! = |k| {
+	r : Try(IdRow64, _)
+	r = db.first!("SELECT CAST(id AS TEXT) AS id FROM bigids WHERE k = ?", [Int(k.to_i64_wrap())])
+	match r {
+		Ok({ id }) => match db.run!("INSERT OR REPLACE INTO rid (id, v) VALUES (?, ?)", [Text(id.to_str()), Text("id64")]) {
+			Ok(_) => {
+				back : Try(IdRow64, _)
+				back = db.first!("SELECT CAST(id AS TEXT) AS id FROM rid WHERE v = 'id64' AND id = ?", [Text(id.to_str())])
+				match back {
+					Ok(b) => Response.from_text(200, "Ok i64=${id.to_str()} u64=${id.to_u64_str()} same=${Str.inspect(b.id == id)} json=${Encoding.Json.to_str({ id: b.id.to_web() })}")
+					Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+				}
+			}
+			Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+		}
+		Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+	}
 }

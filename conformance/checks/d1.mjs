@@ -96,6 +96,16 @@ export const checks = [
     answer(await route(t, 'all', 'SELECT CAST(id AS TEXT) AS id FROM bigids ORDER BY k', '', '&type=id'),
       'Ok [{ id: 9223372036854775807 }, { id: -9223372036854775807 }, { id: -2687166099708853831 }]');
   }],
+  // MODULES.md 5.1, "Ids: Id64": ids above 2^63 (as U64) read from CAST text, bound as text, stored exact, shown as U64 text for JSON.
+  ['d1 Id64: CAST text into an Id64 field, written back as Text(id.to_str()), JSON as U64 text', async (t) => {
+    answer(await t.get('/d1/id64?k=1'), 'Ok i64=-9223372036854775807 u64=9223372036854775809 same=True json={"id":"9223372036854775809"}');
+    answer(await t.get('/d1/id64?k=2'), 'Ok i64=-2687166099708853831 u64=15759577974000697785 same=True json={"id":"15759577974000697785"}');
+    answer(await t.get('/d1/id64?k=0'), 'Ok i64=9223372036854775807 u64=9223372036854775807 same=True json={"id":"9223372036854775807"}');
+    const db = await t.mf.getD1Database('DB');
+    // SQLite holds the exact integers (a U64 text would have become a REAL).
+    const rows = (await db.prepare("SELECT CAST(id AS TEXT) AS id, typeof(id) AS ty FROM rid WHERE v = 'id64' ORDER BY id").all()).results;
+    eq(JSON.stringify(rows), JSON.stringify([['-2687166099708853831'], ['-9223372036854775807'], ['9223372036854775807']].map(([id]) => ({ id, ty: 'integer' }))), 'the stored ids');
+  }],
   ['d1 all! with no cast: BadData with the column, for a positive and a negative id', async (t) => {
     answer(await route(t, 'all', 'SELECT id FROM bigids WHERE k = 0', '', '&type=id'), 'Err BadData("column id: integer above 2^53, use CAST(id AS TEXT)")');
     answer(await route(t, 'all', 'SELECT id FROM bigids WHERE k = 2', '', '&type=id'), 'Err BadData("column id: integer above 2^53, use CAST(id AS TEXT)")');
