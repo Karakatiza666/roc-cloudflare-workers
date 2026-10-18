@@ -5,6 +5,7 @@
 ## wait once. SQLite-backed classes only (`new_sqlite_classes`): the shim checks it in the constructor.
 ## The sockets of the hibernation API (MODULES.md 12.1): `accept!` and the other socket calls of `Self` and `Socket` are
 ## sync (`call!`, no wait); the events `SocketMessage`, `SocketClose` and `SocketError` go to the handlers of the class.
+## Typed data: the format, what a JS peer sees, and what survives a round trip are in MODULES.md 1, "Formats of typed data".
 import Io
 import Js
 import Body
@@ -110,7 +111,7 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 		Named(name) => {
 			ns = namespace_ops(obj)
 			n = ns.len().to_u32_wrap()
-			match Io.call!(ns.concat([Call(Slot(n - 1), "idFromName", [Lit(Text(name))]), Call(Slot(n), "toString", [])])) {
+			match Js.call!(ns.concat([Call(Slot(n - 1), "idFromName", [Lit(Text(name))]), Call(Slot(n), "toString", [])])) {
 				Ok(Text(id)) => Ok(id)
 				Ok(other) => crash "Object.id!: idFromName gave ${Str.inspect(other)}"
 				Err(t) => Err(ObjectErr(t))
@@ -152,7 +153,7 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 
 		## `ctx.getTags(ws)`: the tags of `accept_with!`.
 		tags! : Object.Socket => List(Str)
-		tags! = |sock| match Io.call!([Call(Root("ctx"), "getTags", [Lit(Ref(sock.ref))])]) {
+		tags! = |sock| match Js.call!([Call(Root("ctx"), "getTags", [Lit(Ref(sock.ref))])]) {
 			Ok(Arr(items)) => items.map(|t| match t {
 				Text(x) => x
 				other => crash "Object.Socket.tags!: a tag is ${Str.inspect(other)}"
@@ -163,7 +164,7 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 
 		## `ctx.getWebSocketAutoResponseTimestamp(ws)`: the time of the last auto response, or `NotFound`.
 		auto_response_ms! : Object.Socket => Try(U64, [NotFound])
-		auto_response_ms! = |sock| match Io.call!([Call(Root("ctx"), "getWebSocketAutoResponseTimestamp", [Lit(Ref(sock.ref))])]) {
+		auto_response_ms! = |sock| match Js.call!([Call(Root("ctx"), "getWebSocketAutoResponseTimestamp", [Lit(Ref(sock.ref))])]) {
 			Ok(Int(t)) => Ok(t.to_u64_try() ?? 0)
 			Ok(Num(f)) => Ok(f.to_u64_try() ?? 0)
 			Ok(_) => Err(NotFound)
@@ -187,7 +188,7 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 
 		## A write: `rowsRead` and `rowsWritten` of the cursor (an object cursor has no `changes` and no last row id).
 		sql_run! : Object.Self, Str, params => Try(Object.SqlInfo, [SqlErr(Io.Thrown), Constraint(Sql.Constraint)]) where [params.Cbor.Encodable([])]
-		sql_run! = |_self, sql, params| match Io.call!(sql_ops(sql, Cbor.encode(params)).concat([Call(Slot(2), "toArray", []), Fields(Slot(2), ["rowsRead", "rowsWritten"])])) {
+		sql_run! = |_self, sql, params| match Js.call!(sql_ops(sql, Cbor.encode(params)).concat([Call(Slot(2), "toArray", []), Fields(Slot(2), ["rowsRead", "rowsWritten"])])) {
 			Ok(Obj(fields)) => match (field(fields, "rowsRead"), field(fields, "rowsWritten")) {
 				(Int(r), Int(w)) => Ok({ rows_read: r.to_u64_try() ?? 0, rows_written: w.to_u64_try() ?? 0 })
 				other => Err(SqlErr({ name: "BadData", message: "the cursor gave ${Str.inspect(other)}" }))
@@ -292,7 +293,7 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 				Call(Slot(1), "list", [Lit(Obj(o3))]),
 				Call(Root("pf"), "keys", [Slot(2), Lit(Int(limit(Body.default_max)))]),
 			]
-			match Io.call!(ops) {
+			match Js.call!(ops) {
 				Ok(Arr(keys)) => Ok(keys.map(|k| match k {
 					Text(s) => s
 					other => crash "Object.list!: a key is ${Str.inspect(other)}"
@@ -337,14 +338,14 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 		## `request` with `response` and sends no event, so the object can stay asleep. 2,048 characters or less each
 		## (Workers), else `TooLarge`.
 		set_auto_response! : Object.Self, { request : Str, response : Str } => Try({}, [TooLarge])
-		set_auto_response! = |_self, pair| match Io.call!([New(Root("global"), "WebSocketRequestResponsePair", [Lit(Text(pair.request)), Lit(Text(pair.response))]), Call(Root("ctx"), "setWebSocketAutoResponse", [Slot(0)])]) {
+		set_auto_response! = |_self, pair| match Js.call!([New(Root("global"), "WebSocketRequestResponsePair", [Lit(Text(pair.request)), Lit(Text(pair.response))]), Call(Root("ctx"), "setWebSocketAutoResponse", [Slot(0)])]) {
 			Ok(_) => Ok({})
 			Err(_) => Err(TooLarge)
 		}
 
 		## `ctx.setWebSocketAutoResponse()`: no auto response.
 		clear_auto_response! : Object.Self => {}
-		clear_auto_response! = |_self| match Io.call!([Call(Root("ctx"), "setWebSocketAutoResponse", [])]) {
+		clear_auto_response! = |_self| match Js.call!([Call(Root("ctx"), "setWebSocketAutoResponse", [])]) {
 			Ok(_) => {}
 			Err(t) => crash "Object.Self.clear_auto_response!: ${t.name}: ${t.message}"
 		}
@@ -436,7 +437,7 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 		get! : Object.Cell(a), Object.Self => Try(a, [NotFound, BadData(Str), StorageErr(Io.Thrown)])
 		get! = |c, _self| {
 			read = c.read
-			match Io.call!(kv_ops("get", [Lit(Text(c.key))])) {
+			match Js.call!(kv_ops("get", [Lit(Text(c.key))])) {
 				Ok(Bytes(bytes)) => read(bytes).map_err(|m| BadData(m))
 				Ok(Undefined) | Ok(Null) => Err(NotFound)
 				Ok(other) => Err(BadData("the cell ${c.key} holds ${Str.inspect(other)}, not CBOR bytes"))
@@ -457,12 +458,12 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 		set! : Object.Cell(a), Object.Self, a => Try({}, [StorageErr(Io.Thrown)])
 		set! = |c, _self, v| {
 			write = c.write
-			Io.call!(kv_ops("put", [Lit(Text(c.key)), Lit(Bytes(write(v)))])).map_ok(|_| {}).map_err(|t| StorageErr(t))
+			Js.call!(kv_ops("put", [Lit(Text(c.key)), Lit(Bytes(write(v)))])).map_ok(|_| {}).map_err(|t| StorageErr(t))
 		}
 
 		## `storage.kv.delete(key)`. A key with no value is `Ok` too.
 		delete! : Object.Cell(a), Object.Self => Try({}, [StorageErr(Io.Thrown)])
-		delete! = |c, _self| Io.call!(kv_ops("delete", [Lit(Text(c.key))])).map_ok(|_| {}).map_err(|t| StorageErr(t))
+		delete! = |c, _self| Js.call!(kv_ops("delete", [Lit(Text(c.key))])).map_ok(|_| {}).map_err(|t| StorageErr(t))
 	}
 
 	## A typed attachment of a socket (MODULES.md 12.1): CBOR bytes in `ws.serializeAttachment`. A constant (WR1), like
@@ -477,7 +478,7 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 		set! : Object.Attachment(a), Object.Socket, a => Try({}, [TooLarge])
 		set! = |att, sock, value| {
 			write = att.write
-			match Io.call!([Call(Ref(sock.ref), "serializeAttachment", [Lit(Bytes(write(value)))])]) {
+			match Js.call!([Call(Ref(sock.ref), "serializeAttachment", [Lit(Bytes(write(value)))])]) {
 				Ok(_) => Ok({})
 				Err(_) => Err(TooLarge)
 			}
@@ -487,7 +488,7 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 		get! : Object.Attachment(a), Object.Socket => Try(a, [NotFound, BadData(Str)])
 		get! = |att, sock| {
 			read = att.read
-			match Io.call!([Call(Ref(sock.ref), "deserializeAttachment", [])]) {
+			match Js.call!([Call(Ref(sock.ref), "deserializeAttachment", [])]) {
 				Ok(Bytes(bytes)) => read(bytes).map_err(|m| BadData("the attachment ${att.name}: ${m}"))
 				Ok(Null) | Ok(Undefined) => Err(NotFound)
 				Ok(other) => Err(BadData("the attachment ${att.name} is ${Str.inspect(other)}, not CBOR bytes"))
@@ -530,7 +531,7 @@ unique_id! : Object.Namespace, List(Js.Arg) => Try(Str, Io.Thrown)
 unique_id! = |ns, args| {
 	start = if ns.jurisdiction == "" [Get(Root("env"), ns.binding)] else [Get(Root("env"), ns.binding), Call(Slot(0), "jurisdiction", [Lit(Text(ns.jurisdiction))])]
 	n = start.len().to_u32_wrap()
-	match Io.call!(start.concat([Call(Slot(n - 1), "newUniqueId", args), Call(Slot(n), "toString", [])])) {
+	match Js.call!(start.concat([Call(Slot(n - 1), "newUniqueId", args), Call(Slot(n), "toString", [])])) {
 		Ok(Text(id)) => Ok(id)
 		Ok(other) => crash "Object.unique!: newUniqueId gave ${Str.inspect(other)}"
 		Err(t) => Err(t)
@@ -570,7 +571,7 @@ sql_ops = |sql, params| [
 ]
 
 sql_typed! : Object.Self, Str, List(U8), U64 => Try(rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
-sql_typed! = |_self, sql, params, max| match Io.call!(sql_ops(sql, params).concat([Call(Slot(2), "toArray", []), Call(Root("pf"), "pack", [Slot(3), Lit(Int(limit(max)))])])) {
+sql_typed! = |_self, sql, params, max| match Js.call!(sql_ops(sql, params).concat([Call(Slot(2), "toArray", []), Call(Root("pf"), "pack", [Slot(3), Lit(Int(limit(max)))])])) {
 	Ok(Packed(bytes)) => match SqlRules.typed(bytes) {
 		Ok(v) => Ok(v)
 		Err(BadData(text)) => Err(BadData(text))
@@ -593,7 +594,7 @@ sql_raw! = |_self, sql, params, max| {
 		Record([("columns", Slot(3)), ("rows", Slot(6))]),
 		Call(Root("pf"), "limit", [Slot(7), Lit(Int(limit(max)))]),
 	])
-	match Io.call!(ops) {
+	match Js.call!(ops) {
 		Ok(Obj(fields)) => match (field(fields, "columns"), field(fields, "rows")) {
 			(Arr(names), Arr(rows)) => Ok({ columns: names.map(SqlRules.column_name), rows: rows.map(SqlRules.row_of) })
 			other => crash "Object.Self.sql_rows!: the cursor gave ${Str.inspect(other)}"
@@ -660,8 +661,8 @@ accept_tags! = |_self, req, tags|
 			Call(Root("ctx"), "acceptWebSocket", [Slot(2), Lit(Arr(tags.map(|t| Text(t))))]),
 			Array([Slot(1), Slot(2)]),
 		]
-		match Io.call!(ops) {
-			Ok(Arr([Ref(client), Ref(server)])) => Ok({ socket: Object.Socket.{ ref: server }, response: Response.{ status: 101, web_socket: client } })
+		match Js.call!(ops) {
+			Ok(Arr([Ref(client), Ref(server)])) => Ok({ socket: Object.Socket.{ ref: server }, response: Response.from_status(101).with_web_socket(client) })
 			Ok(other) => crash "Object.Self.accept!: the pair is ${Str.inspect(other)}"
 			Err(_) => Err(TooLarge)
 		}
@@ -669,7 +670,7 @@ accept_tags! = |_self, req, tags|
 
 ## `ctx.getWebSockets(...args)` as sockets.
 sockets_of! : List(Js.Arg) => List(Object.Socket)
-sockets_of! = |args| match Io.call!([Call(Root("ctx"), "getWebSockets", args)]) {
+sockets_of! = |args| match Js.call!([Call(Root("ctx"), "getWebSockets", args)]) {
 	Ok(Arr(items)) => items.map(|v| match v {
 		Ref(r) => Object.Socket.{ ref: r }
 		other => crash "Object.Self.sockets!: a socket is ${Str.inspect(other)}"

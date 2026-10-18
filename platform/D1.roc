@@ -2,6 +2,7 @@
 ## (API.md 5.2) and `Cbor.parse_with` reads them into the type of the call (MC7), with `int_from_text`, so
 ## `CAST(id AS TEXT)` goes straight into an `I64` field. A constraint failure is `Constraint` (MC9), a read above its
 ## limit is `TooLarge` (MC11). A parameter outside ±(2^53 - 1) goes as decimal text: D1 takes no `BigInt`.
+## Typed data: the format, what a JS peer sees, and what survives a round trip are in MODULES.md 1, "Formats of typed data".
 import Io
 import Js
 import Body
@@ -115,7 +116,7 @@ D1 :: { name : Str }.{
 			Any => "first-unconstrained"
 			After(b) => b
 		}
-		match Io.call!([Get(Root("env"), db.name), Call(Slot(0), "withSession", [Lit(Text(arg))])]) {
+		match Js.call!([Get(Root("env"), db.name), Call(Slot(0), "withSession", [Lit(Text(arg))])]) {
 			Ok(Ref(r)) => Ok(D1.Session.{ ref: r })
 			Ok(other) => crash "D1.with_session!: withSession gave ${Str.inspect(other)}"
 			Err(t) => Err(D1Err(t))
@@ -195,7 +196,7 @@ D1 :: { name : Str }.{
 
 		## `getBookmark`, sync: `NotFound` before the first query of the session.
 		bookmark! : D1.Session => Try(Str, [NotFound])
-		bookmark! = |s| match Io.call!([Call(Ref(s.ref), "getBookmark", [])]) {
+		bookmark! = |s| match Js.call!([Call(Ref(s.ref), "getBookmark", [])]) {
 			Ok(Text(b)) => Ok(b)
 			Ok(Null) => Err(NotFound)
 			Ok(other) => crash "D1.Session.bookmark!: getBookmark gave ${Str.inspect(other)}"

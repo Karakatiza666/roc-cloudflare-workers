@@ -103,7 +103,7 @@ import pf.Cache
 import pf.Ctx
 fetch! : Request => Try(Response, _)
 fetch! = |req| {
-	res = Response.from_body(200, "text/plain", req.body)
+	res = Response.from_body(200, "text/plain", req.body())
 	cache = Cache.default'
 fetch_footer='	Ok(res)
 }
@@ -120,11 +120,11 @@ trap 'rm -f "$tmp" "$dir/_id64_case.roc"' EXIT
 cases=(
   'control: put! result kept|fetch|\t_ = cache.put!("https://x/a", res)?|-'
   'control: wait_until! of an Io({}, e)|fetch|\tCtx.wait_until!(cache.delete("https://x/b"))|-'
-  'control: after in a fetch! handler|fetch|\t_ = cache\n\t_ = res.after(|_| Ok({}))|-'
+  'control: after in a fetch! handler|fetch|\t_ = cache\n\t_ = res.after(|| Ok({}))|-'
   'control: a cron handler that gives {}|cron|scheduled! = |_s| Ok({})|-'
   'put! as a statement|fetch|\tcache.put!("https://x/a", res)?|must evaluate to {}'
   'wait_until! of cache.put|fetch|\tCtx.wait_until!(cache.put("https://x/b", res))|Io({}, e)'
-  'after in a cron handler|cron|scheduled! = |_s| Ok(Response.from_text(200, "x").after(|_| Ok({})))|Ok(Response)'
+  'after in a cron handler|cron|scheduled! = |_s| Ok(Response.from_text(200, "x").after(|| Ok({})))|Ok(Response)'
 )
 for c in "${cases[@]}"; do
   IFS='|' read -r name kind rest <<< "$c"

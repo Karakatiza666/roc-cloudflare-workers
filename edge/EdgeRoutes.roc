@@ -38,7 +38,7 @@ EdgeRoutes :: [].{
 		# API.md 10.2: `Response.after` with a whole body: `s` waits of 1 s, a log line after each.
 		["after"] => {
 			tag = Q.text(req, "tag")
-			work! = |_| {
+			work! = || {
 				var $i = 1.U64
 				while $i <= Q.num(req, "s") {
 					Time.sleep!(1000)
@@ -54,10 +54,10 @@ EdgeRoutes :: [].{
 		["writer"] => {
 			tag = Q.text(req, "tag")
 			s = Q.num(req, "s")
-			match Body.writer!({}) {
+			match Body.writer!() {
 				Err(e) => Response.from_text(500, "writer ${Str.inspect(e)}")
 				Ok({ body, writer }) => {
-					work! = |_| {
+					work! = || {
 						var $i = 1.U64
 						var $ok = Bool.True
 						while $ok and $i <= s {
@@ -132,10 +132,10 @@ EdgeRoutes :: [].{
 				Err(e) => Response.from_text(200, "connect ${Str.inspect(e)}")
 				Ok(s) => {
 					greeting = first_line(s.read!())
-					t0 = Time.now_ms!({})
+					t0 = Time.now_ms!()
 					Log.info!("edge tcpwait start", { host })
 					second = first_line(s.read!())
-					waited = Time.now_ms!({}) - t0
+					waited = Time.now_ms!() - t0
 					Log.info!("edge tcpwait end", { host, waited, second })
 					s.close!()
 					Response.from_text(200, "greeting=${greeting} second=${second} waited_ms=${waited.to_str()}")
@@ -149,9 +149,9 @@ EdgeRoutes :: [].{
 	## first. The cron `*/5` gives `Ok` (the control of the revert row of 11c).
 	scheduled! : Worker.Scheduled => Try({}, [CronFailed(Str), D1Err(Str)])
 	scheduled! = |s| {
-		cron = s.cron
-		time_ms = s.time_ms
-		now = Time.now_ms!({})
+		cron = s.cron()
+		time_ms = s.time_ms()
+		now = Time.now_ms!()
 		row = db.run!("INSERT INTO cron_runs (cron, time_ms, run_ms) VALUES (?, ?, ?)", (cron, time_ms, now))
 		match row {
 			Err(e) => Err(D1Err(Str.inspect(e)))

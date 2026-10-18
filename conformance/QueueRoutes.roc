@@ -51,14 +51,14 @@ QueueRoutes :: [].{
 
 	## The `queue!` of the app.
 	consume! : Queue.Batch => Try({}, [Boom])
-	consume! = |batch| match batch.queue {
+	consume! = |batch| match batch.queue() {
 		"jobs" => {
 			r = jobs.each!(batch, handle_job!)
 			Log.info!("jobs batch", { acked: r.acked, retried: r.retried })
 			Ok({})
 		}
 		"texts" => {
-			r = texts.each!(batch, |msg, s| Ok(Log.info!("text", { s, attempts: msg.attempts })))
+			r = texts.each!(batch, |msg, s| Ok(Log.info!("text", { s, attempts: msg.attempts() })))
 			Log.info!("texts batch", { acked: r.acked, retried: r.retried })
 			Ok({})
 		}
@@ -68,14 +68,14 @@ QueueRoutes :: [].{
 		}
 		# The low level: the functions of the batch and of the message.
 		"ack-second" => {
-			match batch.messages {
+			match batch.messages() {
 				[_, second, ..] => second.ack!()
 				_ => {}
 			}
 			Ok({})
 		}
 		"retry-second-with" => {
-			match batch.messages {
+			match batch.messages() {
 				[_, second, ..] => second.retry_with!({ delay_ms: 2_500 })
 				_ => {}
 			}
@@ -101,8 +101,8 @@ QueueRoutes :: [].{
 ## A job that logs its fields. A label that starts with `fail-once` fails at the first attempt.
 handle_job! : Queue.Message, Job => Try({}, [Failing(Str)])
 handle_job! = |msg, job| {
-	Log.info!("job", { n: job.n, label: job.label, attempts: msg.attempts })
-	if job.label.starts_with("fail-once") and msg.attempts == 1 Err(Failing(job.label)) else Ok({})
+	Log.info!("job", { n: job.n, label: job.label, attempts: msg.attempts() })
+	if job.label.starts_with("fail-once") and msg.attempts() == 1 Err(Failing(job.label)) else Ok({})
 }
 
 out : Try({}, e) -> Response

@@ -205,7 +205,7 @@ WebCrypto :: [].{
 		if a.len() != b.len() {
 			Bool.False
 		} else {
-			match Io.call!([Get(Root("global"), "crypto"), Get(Slot(0), "subtle"), Call(Slot(1), "timingSafeEqual", [Lit(Bytes(a)), Lit(Bytes(b))])]) {
+			match Js.call!([Get(Root("global"), "crypto"), Get(Slot(0), "subtle"), Call(Slot(1), "timingSafeEqual", [Lit(Bytes(a)), Lit(Bytes(b))])]) {
 				Ok(Bool(same)) => same
 				_ => Bool.False
 			}
@@ -215,7 +215,7 @@ WebCrypto :: [].{
 	random! : U64 => List(U8)
 	random! = |n| {
 		chunk = if n > 65_536 65_536 else n
-		got = match Io.call!([Get(Root("global"), "crypto"), New(Root("global"), "Uint8Array", [Lit(Int(chunk.to_i64_wrap()))]), Call(Slot(0), "getRandomValues", [Slot(1)])]) {
+		got = match Js.call!([Get(Root("global"), "crypto"), New(Root("global"), "Uint8Array", [Lit(Int(chunk.to_i64_wrap()))]), Call(Slot(0), "getRandomValues", [Slot(1)])]) {
 			Ok(Bytes(b)) => b
 			Ok(other) => crash "WebCrypto.random!: getRandomValues gave ${Str.inspect(other)}"
 			Err(t) => crash "WebCrypto.random!: ${t.name}: ${t.message}"
@@ -224,8 +224,8 @@ WebCrypto :: [].{
 	}
 
 	## `crypto.randomUUID`: one `call!`, no wait.
-	random_uuid! : {} => Str
-	random_uuid! = |{}| match Io.call!([Get(Root("global"), "crypto"), Call(Slot(0), "randomUUID", [])]) {
+	random_uuid! : () => Str
+	random_uuid! = || match Js.call!([Get(Root("global"), "crypto"), Call(Slot(0), "randomUUID", [])]) {
 		Ok(Text(s)) => s
 		Ok(other) => crash "WebCrypto.random_uuid!: randomUUID gave ${Str.inspect(other)}"
 		Err(t) => crash "WebCrypto.random_uuid!: ${t.name}: ${t.message}"

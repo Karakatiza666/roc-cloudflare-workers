@@ -61,16 +61,16 @@ Http :: [].{
 	## bytes). A `Stream` body (`open!`) is not read: `NotCloudflareError`.
 	cloudflare_error : Response -> Try(Http.CfError, [NotCloudflareError])
 	cloudflare_error = |res| {
-		text = match res.body {
+		text = match res.body() {
 			Text(t) => Ok(t)
 			Bytes(b) => if b.len() <= cf_error_max Str.from_utf8(b).map_err(|_| NotCloudflareError) else Err(NotCloudflareError)
 			Empty | Stream(_) => Err(NotCloudflareError)
 		}
-		if res.status < 400 {
+		if res.status() < 400 {
 			Err(NotCloudflareError)
 		} else {
 			match text {
-				Ok(t) => if t.count_utf8_bytes() <= cf_error_max cf_error_code(t).map_ok(|code| { status: res.status, code }) else Err(NotCloudflareError)
+				Ok(t) => if t.count_utf8_bytes() <= cf_error_max cf_error_code(t).map_ok(|code| { status: res.status(), code }) else Err(NotCloudflareError)
 				Err(e) => Err(e)
 			}
 		}
@@ -109,10 +109,10 @@ cf_error_code = |t| {
 ops : Request, [Read(U64), Keep], Try(U64, [MissingField]), Try(Js, [MissingField]) -> List(Js.Op)
 ops = |req, body_mode, timeout, cf| {
 	base = [
-		("method", Lit(Text(req.method.to_str()))),
-		("headers", Lit(Arr(req.headers.map(|h| Arr([Text(h.name), Text(h.value)]))))),
+		("method", Lit(Text(req.method().to_str()))),
+		("headers", Lit(Arr(req.headers().map(|h| Arr([Text(h.name), Text(h.value)]))))),
 	]
-	with_body = match req.body {
+	with_body = match req.body() {
 		Empty => base
 		Text(s) => base.append(("body", Lit(Text(s))))
 		Bytes(b) => base.append(("body", Lit(Bytes(b))))
@@ -132,7 +132,7 @@ ops = |req, body_mode, timeout, cf| {
 	}
 	n = signal_ops.len().to_u32_wrap()
 	f = n + 1
-	request_ops = signal_ops.concat([Record(init), Call(Root("global"), "fetch", [Lit(Text(req.url)), Slot(n)])])
+	request_ops = signal_ops.concat([Record(init), Call(Root("global"), "fetch", [Lit(Text(req.url())), Slot(n)])])
 	read_ops = match body_mode {
 		Read(max) => [
 			Get(Slot(f), "body"),
@@ -175,7 +175,7 @@ response_of = |v| match v {
 			Ref(r) => Stream(r)
 			other => crash "Http: the body is ${Str.inspect(other)}"
 		}
-		Response.{ status, headers, body }
+		Response.from_status(status).with_headers(headers).with_body(body)
 	}
 	other => crash "Http: the response is ${Str.inspect(other)}"
 }
@@ -190,8 +190,8 @@ expect Http.error({ name: "TypeError", message: "Invalid URL" }) == HttpErr({ na
 expect Http.error({ name: "Error", message: "Network connection lost." }) == Network({ name: "Error", message: "Network connection lost." })
 expect Http.error({ name: "TooLarge", message: "" }) == TooLarge
 
-expect Http.cloudflare_error({ status: 530, headers: [], body: Bytes("error code: 1016".to_utf8()) }) == Ok({ status: 530, code: 1016 })
-expect Http.cloudflare_error({ status: 403, headers: [], body: Text("error code: 1003\n") }) == Ok({ status: 403, code: 1003 })
-expect Http.cloudflare_error({ status: 200, headers: [], body: Text("error code: 1003") }) == Err(NotCloudflareError)
-expect Http.cloudflare_error({ status: 500, headers: [], body: Text("error code: 10x3") }) == Err(NotCloudflareError)
-expect Http.cloudflare_error({ status: 500, headers: [], body: Text("oops error code: 1003") }) == Err(NotCloudflareError)
+expect Http.cloudflare_error(Response.from_status(530).with_body(Bytes("error code: 1016".to_utf8()))) == Ok({ status: 530, code: 1016 })
+expect Http.cloudflare_error(Response.from_status(403).with_body(Text("error code: 1003\n"))) == Ok({ status: 403, code: 1003 })
+expect Http.cloudflare_error(Response.from_status(200).with_body(Text("error code: 1003"))) == Err(NotCloudflareError)
+expect Http.cloudflare_error(Response.from_status(500).with_body(Text("error code: 10x3"))) == Err(NotCloudflareError)
+expect Http.cloudflare_error(Response.from_status(500).with_body(Text("oops error code: 1003"))) == Err(NotCloudflareError)

@@ -2,7 +2,7 @@ app [event!] { pf: platform "platform/main.roc" }
 
 import pf.Worker
 import pf.Response
-import pf.Io
+import pf.Js
 
 ## One wait: the op `db` of the bench runner (`bench/core.js`).
 wait_ops = [Call(Root("ops"), "db", [Lit(Text("x"))])]
@@ -45,7 +45,7 @@ down_free = |n, salt, keep| {
 ## Request: "<depth>", "<depth> alloc" or "<depth> free". The first wait makes the call a task, as in the real handler.
 handle! : Str => Str
 handle! = |req| {
-	_w = Io.await!(wait_ops)
+	_w = Js.await!(wait_ops)
 	depth = U64.from_str(req.drop_suffix(" alloc").drop_suffix(" free")) ?? 10
 	r = if req.ends_with(" free") down_free(depth, 17, List.repeat(0, 100)) else down(depth, 17, req.ends_with(" alloc"))
 	"a=${r.a.to_str()} d=${r.d.to_str()} p=${r.p.to_str()}"
@@ -56,12 +56,12 @@ handle! = |req| {
 event! : Worker.Event => Worker.Outcome
 event! = |e| match e {
 	Fetch(req) => {
-		text = match req.body {
+		text = match req.body() {
 			Bytes(b) => Str.from_utf8(b) ?? ""
 			Text(s) => s
 			_ => ""
 		}
-		Respond(Response.{ status: 200, body: Text(handle!(text)) })
+		Respond(Response.from_status(200).with_body(Text(handle!(text))))
 	}
 	_ => Unhandled
 }

@@ -16,7 +16,7 @@ Remote :: [].{
 	fetch = |ops, target, req, err| {
 		n = ops.len().to_u32_wrap()
 		Io.new(
-			ops.concat([Record(init(req)), Call(Slot(target), "fetch", [Lit(Text(req.url)), Slot(n)]), Fields(Slot(n + 1), ["status", "headers", "body", "webSocket"])]),
+			ops.concat([Record(init(req)), Call(Slot(target), "fetch", [Lit(Text(req.url())), Slot(n)]), Fields(Slot(n + 1), ["status", "headers", "body", "webSocket"])]),
 			|r| match r {
 				Ok(v) => Ok(response_of(v))
 				Err(t) => Err(err(t))
@@ -44,7 +44,7 @@ Remote :: [].{
 	## `ws.send(data)` on a socket of `WebSocket` or `Object.Socket` (MODULES.md 12, "One API"), one `call!`. A throw (the
 	## socket is closed) is `Closed`.
 	socket_send! : Js.Ref, Js => Try({}, [Closed])
-	socket_send! = |ref, data| match Io.call!([Call(Ref(ref), "send", [Lit(data)])]) {
+	socket_send! = |ref, data| match Js.call!([Call(Ref(ref), "send", [Lit(data)])]) {
 		Ok(_) => Ok({})
 		Err(_) => Err(Closed)
 	}
@@ -52,7 +52,7 @@ Remote :: [].{
 	## `ws.close(code, reason)`, one `call!`. A throw (a code that the app cannot send, a closed socket) is dropped.
 	socket_close! : Js.Ref, U16, Str => {}
 	socket_close! = |ref, code, reason| {
-		_ = Io.call!([Call(Ref(ref), "close", [Lit(Int(code.to_i64())), Lit(Text(reason))])])
+		_ = Js.call!([Call(Ref(ref), "close", [Lit(Int(code.to_i64())), Lit(Text(reason))])])
 		{}
 	}
 
@@ -65,10 +65,10 @@ Remote :: [].{
 init : Request -> List((Str, Js.Arg))
 init = |req| {
 	base = [
-		("method", Lit(Text(req.method.to_str()))),
-		("headers", Lit(Arr(req.headers.map(|h| Arr([Text(h.name), Text(h.value)]))))),
+		("method", Lit(Text(req.method().to_str()))),
+		("headers", Lit(Arr(req.headers().map(|h| Arr([Text(h.name), Text(h.value)]))))),
 	]
-	match req.body {
+	match req.body() {
 		Empty => base
 		Text(s) => base.append(("body", Lit(Text(s))))
 		Bytes(b) => base.append(("body", Lit(Bytes(b))))
@@ -99,8 +99,8 @@ response_of = |v| match v {
 			other => crash "Remote: the body is ${Str.inspect(other)}"
 		}
 		match field(fields, "webSocket") {
-			Ref(ws) => Response.{ status, headers, body, web_socket: ws }
-			_ => Response.{ status, headers, body }
+			Ref(ws) => Response.from_status(status).with_headers(headers).with_body(body).with_web_socket(ws)
+			_ => Response.from_status(status).with_headers(headers).with_body(body)
 		}
 	}
 	other => crash "Remote: the response is ${Str.inspect(other)}"
@@ -115,4 +115,4 @@ field = |fields, name| match fields.find_first(|(k, _)| k == name) {
 expect init(Request.get("https://x.dev/a.txt")).len() == 2
 # A body goes into the init as it is (text, bytes or a stream).
 expect init(Request.post("https://x.dev/a", Text("abc"))).len() == 3
-expect response_of(Obj([("status", Int(404)), ("headers", Arr([])), ("body", Null)])).status == 404
+expect response_of(Obj([("status", Int(404)), ("headers", Arr([])), ("body", Null)])).status() == 404

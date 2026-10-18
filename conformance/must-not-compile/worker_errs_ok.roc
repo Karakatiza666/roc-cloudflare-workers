@@ -12,13 +12,13 @@ fetch! : Request => Try(Response, [])
 fetch! = |_req| Ok(Response.from_text(200, "x"))
 
 scheduled! : Worker.Scheduled => Try({}, [UnknownCron(Str)])
-scheduled! = |s| Err(UnknownCron(s.cron))
+scheduled! = |s| Err(UnknownCron(s.cron()))
 
 obj_init! : Object.Self => Try({}, [InitFailed])
 obj_init! = |_self| Err(InitFailed)
 
 obj_fetch! : Object.Self, Request => Try(Response, [NotFound(Str)])
-obj_fetch! = |_self, req| Err(NotFound(req.url))
+obj_fetch! = |_self, req| Err(NotFound(req.url()))
 
 obj_alarm! : Object.Self, { retry_count : U32, is_retry : Bool } => Try({}, [Retry(U32)])
 obj_alarm! = |_self, info| Err(Retry(info.retry_count))

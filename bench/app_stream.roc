@@ -33,15 +33,15 @@ import pf.Js
 ## | POST /started?key= | `wait_until!` of a wait of 100 ms, then `put(key, <the request body>)` (9c) |
 ## | GET /startthrow, /starterr | `wait_until!` of `boom()`, or of an `Io` whose reader gives `Err` |
 fetch! : Request => Try(Response, _)
-fetch! = |req| match (req.method, req.segments()) {
-	(POST, ["pipe"]) => Ok(Response.from_body(200, "application/octet-stream", req.body))
+fetch! = |req| match (req.method(), req.segments()) {
+	(POST, ["pipe"]) => Ok(Response.from_body(200, "application/octet-stream", req.body()))
 	(POST, ["chunk"]) => {
 		want = num(req, "n")
 		var $chunks = 0.U64
 		var $bytes = 0.U64
 		var $more = Bool.True
 		while $more and $bytes < want {
-			match req.body.chunk!()? {
+			match req.body().chunk!()? {
 				Chunk(b) => {
 					$chunks = $chunks + 1
 					$bytes = $bytes + b.len()
@@ -62,10 +62,10 @@ fetch! = |req| match (req.method, req.segments()) {
 		Ok(Response.from_text(200, text))
 	}
 	(POST, ["tee"]) => {
-		(a, b) = req.body.tee!()?
+		(a, b) = req.body().tee!()?
 		ba = a.bytes_with!({ max_bytes: 100_000_000 })?
 		bb = b.bytes_with!({ max_bytes: 100_000_000 })?
-		again = match req.body.bytes!() {
+		again = match req.body().bytes!() {
 			Ok(_) => "Ok"
 			Err(TooLarge) => "TooLarge"
 			Err(BodyErr(t)) => "BodyErr(${t.name})"
@@ -73,16 +73,16 @@ fetch! = |req| match (req.method, req.segments()) {
 		Ok(Response.from_text(200, "a=${ba.len().to_str()} b=${bb.len().to_str()} same=${Str.inspect(ba == bb)} again=${again}"))
 	}
 	(POST, ["sha"]) => {
-		body = if req.query("bytes") == Ok("1") Bytes(req.bytes_with!({ max_bytes: 100_000_000 })?) else req.body
+		body = if req.query("bytes") == Ok("1") Bytes(req.bytes_with!({ max_bytes: 100_000_000 })?) else req.body()
 		digest = body.sha256!()?
 		Ok(Response.from_text(200, hex(digest)))
 	}
-	(POST, ["compress"]) => Ok(Response.from_body(200, "application/octet-stream", req.body.compress!(format(req))?))
-	(POST, ["decompress"]) => Ok(Response.from_body(200, "application/octet-stream", req.body.decompress!(format(req))?))
+	(POST, ["compress"]) => Ok(Response.from_body(200, "application/octet-stream", req.body().compress!(format(req))?))
+	(POST, ["decompress"]) => Ok(Response.from_body(200, "application/octet-stream", req.body().decompress!(format(req))?))
 	(GET, ["ping"]) => Ok(Response.from_text(200, "pong"))
 	(GET, ["after"]) => Ok(
 		Response.from_text(200, "early").after(
-			|_| {
+			|| {
 				sleep!(100)
 				mark!(id(req), "after")
 				Ok({})
@@ -90,11 +90,11 @@ fetch! = |req| match (req.method, req.segments()) {
 		),
 	)
 	(GET, ["twice"]) => {
-		one! = |_| {
+		one! = || {
 			mark!(id(req), "one")
 			Ok({})
 		}
-		two! = |_| {
+		two! = || {
 			mark!(id(req), "two")
 			Ok({})
 		}
@@ -102,7 +102,7 @@ fetch! = |req| match (req.method, req.segments()) {
 	}
 	(GET, ["deadline"]) => Ok(
 		Response.from_bytes(200, "application/octet-stream", [1, 2, 3]).after(
-			|_| {
+			|| {
 				sleep!(num(req, "ms"))
 				mark!(id(req), "done")
 				Ok({})
@@ -110,8 +110,8 @@ fetch! = |req| match (req.method, req.segments()) {
 		),
 	)
 	(GET, ["stream"]) => {
-		{ body, writer } = Body.writer!({})?
-		work! = |_| {
+		{ body, writer } = Body.writer!()?
+		work! = || {
 			for i in 0.U64.until(num(req, "n")) {
 				writer.write_text!("chunk ${i.to_str()}\n")?
 				sleep!(num(req, "gap"))
@@ -124,8 +124,8 @@ fetch! = |req| match (req.method, req.segments()) {
 		Ok(Response.from_body(200, "text/plain", body).after(work!))
 	}
 	(GET, ["closed"]) => {
-		{ body, writer } = Body.writer!({})?
-		work! = |_| {
+		{ body, writer } = Body.writer!()?
+		work! = || {
 			writer.close!()
 			got = match writer.write!([1]) {
 				Ok({}) => "Ok"
@@ -137,7 +137,7 @@ fetch! = |req| match (req.method, req.segments()) {
 		Ok(Response.from_body(200, "text/plain", body).after(work!))
 	}
 	(POST, ["late"]) => {
-		work! = |_| {
+		work! = || {
 			sleep!(100)
 			bytes = req.bytes!()?
 			mark!(id(req), "read ${bytes.len().to_str()}")
@@ -146,11 +146,11 @@ fetch! = |req| match (req.method, req.segments()) {
 		Ok(Response.from_text(200, "early").after(work!))
 	}
 	(GET, ["pass"]) => {
-		Ctx.pass_through!({})?
+		Ctx.pass_through!()?
 		Err(Boom)
 	}
 	(GET, ["passcrash"]) => {
-		Ctx.pass_through!({})?
+		Ctx.pass_through!()?
 		crash "a crash after pass_through!"
 	}
 	(GET, ["waituntil"]) => {
@@ -159,7 +159,7 @@ fetch! = |req| match (req.method, req.segments()) {
 	}
 	(POST, ["started"]) => {
 		key = req.query("key") ?? "none"
-		body = match req.body {
+		body = match req.body() {
 			Stream(r) => Ref(r)
 			_ => Null
 		}
@@ -182,8 +182,8 @@ fetch! = |req| match (req.method, req.segments()) {
 ## Cron `pass`: `pass_through!` in a `Scheduled` event gives `InvalidState`.
 scheduled! : Worker.Scheduled => Try({}, _)
 scheduled! = |s| {
-	got = match s.cron {
-		"pass" => Ctx.pass_through!({})
+	got = match s.cron() {
+		"pass" => Ctx.pass_through!()
 		other => return Err(UnknownCron(other))
 	}
 	match got {
@@ -198,13 +198,13 @@ sleep_ops = |ms| [Keep(Root("signal")), Call(Root("ops"), "sleep", [Lit(Int(ms.t
 
 sleep! : U64 => {}
 sleep! = |ms| {
-	_ = Io.await!(sleep_ops(ms))
+	_ = Js.await!(sleep_ops(ms))
 	{}
 }
 
 mark! : Str, Str => {}
 mark! = |key, text| {
-	_ = Io.call!([Call(Root("ops"), "mark", [Lit(Text(key)), Lit(Text(text))])])
+	_ = Js.call!([Call(Root("ops"), "mark", [Lit(Text(key)), Lit(Text(text))])])
 	{}
 }
 

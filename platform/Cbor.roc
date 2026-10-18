@@ -25,6 +25,7 @@
 ## row : Try(Row, _)
 ## row = Cbor.parse(raw)
 ## ```
+## Typed data: the format, what a JS peer sees, and what survives a round trip are in MODULES.md 1, "Formats of typed data".
 import cbor.Cbor as CborPkg
 
 Cbor :: [].{

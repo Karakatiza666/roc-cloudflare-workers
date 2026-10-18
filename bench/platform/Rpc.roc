@@ -1,6 +1,7 @@
 ## RPC (MODULES.md 8): one constant names a method and its types. Both sides use it: the caller with `call!` on an
 ## `Object` or a `Service`, the callee with `on`. The argument and the reply cross as CBOR (MC5). The reply is one
 ## `Reply`: the `Ok` value or the `Err` tag of the method. A handler erases its types (CBOR in, CBOR out).
+## Typed data: the format, what a JS peer sees, and what survives a round trip are in MODULES.md 1, "Formats of typed data".
 import Request
 import Response
 import cbor.Cbor
@@ -15,7 +16,7 @@ Rpc(arg, ret, err) :: { name : Str }.{
 	name : Rpc(arg, ret, err) -> Str
 	name = |m| m.name
 
-	## The callee. `self` is `Object.Self` in a Durable Object and `{}` in a Worker entry point. The result of the
+	## The callee. `self` is `Object.Self` in a Durable Object (a Worker uses `on_worker`). The result of the
 	## handler is the reply (`Reply`), also an `Err`. A tag that is not in `err` does not compile. An argument that
 	## does not parse is a throw with the text `bad argument: <error>` (the caller gets `RpcErr`).
 	on : Rpc(arg, ret, err), (self, arg => Try(ret, err)) -> Rpc.Handler(self) where [arg.Cbor.Parseable([InvalidCbor(U64), ..errs]), ret.Cbor.Encodable([]), err.Cbor.Encodable([])]
@@ -29,6 +30,11 @@ Rpc(arg, ret, err) :: { name : Str }.{
 			Err(e) => Err("bad argument: ${Str.inspect(e)}")
 		},
 	}
+
+	## The callee in a Worker (the `rpc` of `Worker.new` and of `Rpc.entrypoint`): `on` with no `self`, as a Worker
+	## entry point has none.
+	on_worker : Rpc(arg, ret, err), (arg => Try(ret, err)) -> Rpc.Handler({}) where [arg.Cbor.Parseable([InvalidCbor(U64), ..errs]), ret.Cbor.Encodable([]), err.Cbor.Encodable([])]
+	on_worker = |m, f!| Rpc.on(m, |_, a| f!(a))
 
 	## The bytes of a reply as the result of `call!`: an `Err` of the callee is `Remote(err)`, a reply that does not fit
 	## is `BadData`.

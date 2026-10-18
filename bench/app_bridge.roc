@@ -110,19 +110,19 @@ fixtures = |r| [
 handle! : Str => Str
 handle! = |req| match req.split_on(" ") {
 	# A program of 4 ops with one wait: the value of the last op.
-	["four"] => shown(Io.await!([Get(Root("ops"), "db"), Call(Slot(0), "prepare", [Lit(Text("select ?"))]), Call(Slot(1), "bind", [Lit(Int(7))]), Call(Slot(2), "raw", [])]))
+	["four"] => shown(Js.await!([Get(Root("ops"), "db"), Call(Slot(0), "prepare", [Lit(Text("select ?"))]), Call(Slot(1), "bind", [Lit(Int(7))]), Call(Slot(2), "raw", [])]))
 	# RS1: two refs of one JS object are equal, of another object not.
 	["refs"] => {
-		a = Io.call!([Call(Root("ops"), "thing", [])])
-		b = Io.call!([Call(Root("ops"), "thing", [])])
-		c = Io.call!([Call(Root("ops"), "other", [])])
+		a = Js.call!([Call(Root("ops"), "thing", [])])
+		b = Js.call!([Call(Root("ops"), "thing", [])])
+		c = Js.call!([Call(Root("ops"), "other", [])])
 		match (a, b, c) {
 			(Ok(Ref(x)), Ok(Ref(y)), Ok(Ref(z))) => "same=${yes(x == y)} other=${yes(x == z)}"
 			_ => "bad ${shown(a)}"
 		}
 	}
 	# OP1: a promise in call! (status 2).
-	["promise"] => shown(Io.call!([Call(Root("ops"), "sleep", [Lit(Int(1)), Lit(Undefined)])]))
+	["promise"] => shown(Js.call!([Call(Root("ops"), "sleep", [Lit(Int(1)), Lit(Undefined)])]))
 	# OP6: two waits at the same time.
 	["both", ms] => match Io.both!(sleep(num(ms)), sleep(num(ms))) {
 		Ok((x, y)) => "ok ${show(x)} ${show(y)}"
@@ -150,21 +150,21 @@ handle! = |req| match req.split_on(" ") {
 	}
 	# OP7: Get and Fields on null and undefined give Undefined; Call on null throws.
 	["null"] => {
-		g = Io.call!([Array([Lit(Null)]), Get(Slot(0), "0"), Get(Slot(1), "x")])
-		gu = Io.call!([Get(Root("ops"), "missing"), Get(Slot(0), "x")])
-		f = Io.call!([Array([Lit(Null)]), Get(Slot(0), "0"), Fields(Slot(1), ["a", "b"])])
-		fu = Io.call!([Get(Root("ops"), "missing"), Fields(Slot(0), ["a"])])
-		c = Io.call!([Array([Lit(Null)]), Get(Slot(0), "0"), Call(Slot(1), "f", [])])
+		g = Js.call!([Array([Lit(Null)]), Get(Slot(0), "0"), Get(Slot(1), "x")])
+		gu = Js.call!([Get(Root("ops"), "missing"), Get(Slot(0), "x")])
+		f = Js.call!([Array([Lit(Null)]), Get(Slot(0), "0"), Fields(Slot(1), ["a", "b"])])
+		fu = Js.call!([Get(Root("ops"), "missing"), Fields(Slot(0), ["a"])])
+		c = Js.call!([Array([Lit(Null)]), Get(Slot(0), "0"), Call(Slot(1), "f", [])])
 		"get=${shown(g)} getu=${shown(gu)} fields=${shown(f)} fieldsu=${shown(fu)} call=${shown(c)}"
 	}
 	# RS2: a CryptoKey pinned by one task, used by a later task.
-	["pin", name] => shown(Io.await!([
+	["pin", name] => shown(Js.await!([
 		Get(Root("global"), "crypto"),
 		Get(Slot(0), "subtle"),
 		Call(Slot(1), "generateKey", [Lit(Obj([("name", Text("HMAC")), ("hash", Text("SHA-256"))])), Lit(Bool(Bool.False)), Lit(Arr([Text("sign"), Text("verify")]))]),
 		Call(Root("pf"), "pin", [Lit(Text(name)), Slot(2)]),
 	]))
-	["use", name] => shown(Io.await!([
+	["use", name] => shown(Js.await!([
 		Call(Root("pf"), "pinned", [Lit(Text(name))]),
 		Get(Root("global"), "crypto"),
 		Get(Slot(1), "subtle"),
@@ -174,12 +174,12 @@ handle! = |req| match req.split_on(" ") {
 		Array([Slot(3), Slot(4), Slot(5)]),
 	]))
 	# API.md 5.2: rows as one Packed value, read by Cbor.parse.
-	["pack", n] => match Io.await!([Call(Root("ops"), "rows", [Lit(Int(num(n).to_i64_wrap()))]), Call(Root("pf"), "pack", [Slot(0)])]) {
+	["pack", n] => match Js.await!([Call(Root("ops"), "rows", [Lit(Int(num(n).to_i64_wrap()))]), Call(Root("pf"), "pack", [Slot(0)])]) {
 		Ok(Packed(bytes)) => "packed ${rows_of(bytes)}"
 		other => "bad ${shown(other)}"
 	}
 	# 6.4: the field `results` of each item as Packed.
-	["packeach"] => match Io.await!([Call(Root("ops"), "batch", []), Call(Root("pf"), "packEach", [Slot(0), Lit(Text("results"))])]) {
+	["packeach"] => match Js.await!([Call(Root("ops"), "batch", []), Call(Root("pf"), "packEach", [Slot(0), Lit(Text("results"))])]) {
 		Ok(Arr(items)) => {
 			each = items.map(|item| match item {
 				Obj(fs) => match field(fs, "results") {
@@ -193,13 +193,13 @@ handle! = |req| match req.split_on(" ") {
 		other => "bad ${shown(other)}"
 	}
 	# 6.4: the item of an id, or undefined.
-	["find", id] => shown(Io.call!([Call(Root("ops"), "messages", []), Call(Root("pf"), "findById", [Slot(0), Lit(Text(id))])]))
+	["find", id] => shown(Js.call!([Call(Root("ops"), "messages", []), Call(Root("pf"), "findById", [Slot(0), Lit(Text(id))])]))
 	# HD3: Roc values to JS and back.
-	["hd3"] => match Io.call!([Call(Root("ops"), "thing", [])]) {
+	["hd3"] => match Js.call!([Call(Root("ops"), "thing", [])]) {
 		Ok(Ref(r)) => {
 			want = fixtures(r)
-			back = Io.call!([Array(want.map(|v| Lit(v)))])
-			packed = Io.call!([Array([Lit(Packed(Cbor.encode([1.U8, 2])))])])
+			back = Js.call!([Array(want.map(|v| Lit(v)))])
+			packed = Js.call!([Array([Lit(Packed(Cbor.encode([1.U8, 2])))])])
 			match back {
 				Ok(Arr(got)) => {
 					bad = want.map2(got, |w, g| if w == g "" else "${show(w)} != ${show(g)}").keep_if(|s| s != "")
@@ -211,12 +211,12 @@ handle! = |req| match req.split_on(" ") {
 		other => "bad ${shown(other)}"
 	}
 	# HD6: n decodes of the fixtures, each dropped.
-	["hd6", n] => match Io.call!([Call(Root("ops"), "thing", [])]) {
+	["hd6", n] => match Js.call!([Call(Root("ops"), "thing", [])]) {
 		Ok(Ref(r)) => {
 			fix = fixtures(r).map(|v| Lit(v))
 			var $ok = 0.U64
 			for _ in 0.U64.until(num(n)) {
-				match Io.call!([Array(fix)]) {
+				match Js.call!([Array(fix)]) {
 					Ok(Arr(got)) => {
 						$ok = $ok + (if got.len() == fix.len() 1 else 0)
 					}
@@ -229,11 +229,11 @@ handle! = |req| match req.split_on(" ") {
 	}
 	# 10c: a task with refs that ends, traps or is cancelled while it waits.
 	["objs", mode, n] => {
-		got = Io.call!([Call(Root("ops"), "objs", [Lit(Int(num(n).to_i64_wrap()))])])
-		_ = Io.await!([Keep(Root("signal")), Call(Root("ops"), "tick", [Slot(0)])])
+		got = Js.call!([Call(Root("ops"), "objs", [Lit(Int(num(n).to_i64_wrap()))])])
+		_ = Js.await!([Keep(Root("signal")), Call(Root("ops"), "tick", [Slot(0)])])
 		match mode {
 			"trap" => crash "trap after the refs"
-			"hang" => shown(Io.await!([Call(Root("ops"), "hang", [])]))
+			"hang" => shown(Js.await!([Call(Root("ops"), "hang", [])]))
 			_ => match got {
 				Ok(Arr(items)) => "objs ${items.len().to_str()}"
 				_ => "bad ${shown(got)}"
@@ -241,7 +241,7 @@ handle! = |req| match req.split_on(" ") {
 		}
 	}
 	# One op of `ops` with no argument, with one wait.
-	["op", name] => shown(Io.await!([Call(Root("ops"), name, [])]))
+	["op", name] => shown(Js.await!([Call(Root("ops"), name, [])]))
 	# 6.5: a started program runs after the task (it keeps the context of the task).
 	["start", ms] => {
 		_ = Io.start!(sleep(num(ms)))
@@ -255,12 +255,12 @@ handle! = |req| match req.split_on(" ") {
 event! : Worker.Event => Worker.Outcome
 event! = |e| match e {
 	Fetch(req) => {
-		text = match req.body {
+		text = match req.body() {
 			Bytes(b) => Str.from_utf8(b) ?? ""
 			Text(s) => s
 			_ => ""
 		}
-		Respond(Response.{ status: 200, body: Text(handle!(text)) })
+		Respond(Response.from_status(200).with_body(Text(handle!(text))))
 	}
 	_ => Unhandled
 }

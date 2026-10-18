@@ -2,6 +2,7 @@
 ## (MC6). `Kv.json` stores JSON text, so a JS Worker reads it with `get(key, "json")`; Roc parses the text itself, so an
 ## integer above 2^53 stays exact. A read goes through a stream and `pf.readMaybe`, to a limit (MC11): a value above it
 ## is `TooLarge` before any copy into wasm. Times are whole seconds in KV, so the module rounds up (MC10).
+## Typed data: the format, what a JS peer sees, and what survives a round trip are in MODULES.md 1, "Formats of typed data".
 import Io
 import Js
 import Time

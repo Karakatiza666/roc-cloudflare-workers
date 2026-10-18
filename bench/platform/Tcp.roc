@@ -74,7 +74,7 @@ Tcp := { ref : Js.Ref }.{
 	## `socket.close()`, one `call!` with no wait. A throw is dropped.
 	close! : Tcp => {}
 	close! = |tcp| {
-		_ = Io.call!([Call(Root("pf"), "tcpClose", [Lit(Ref(tcp.ref))])])
+		_ = Js.call!([Call(Root("pf"), "tcpClose", [Lit(Ref(tcp.ref))])])
 		{}
 	}
 

@@ -2,14 +2,14 @@ app [event!] { pf: platform "platform/main.roc" }
 
 import pf.Worker
 import pf.Response
-import pf.Io
+import pf.Js
 import pf.Native
 
 ## The PLAN.md 8e tests of `Native` (`bench/native-test.mjs`). Request: "<case> <args>". Body: the result as text.
 ## The data of research/native/data/ comes from the op `data` of the test (a file name gives its bytes).
 
 data! : Str => List(U8)
-data! = |name| match Io.await!([Call(Root("ops"), "data", [Lit(Text(name))])]) {
+data! = |name| match Js.await!([Call(Root("ops"), "data", [Lit(Text(name))])]) {
 	Ok(Bytes(b)) => b
 	_ => crash "no data ${name}"
 }
@@ -33,7 +33,7 @@ num = |s| U64.from_str(s) ?? 0
 ## SHA-256 of `bytes` in chunks, with a `Native.Sha256` handle.
 sha! : List(U8), U64 => Str
 sha! = |bytes, chunk| {
-	h = Native.Sha256.new!({}) ?? crash "sha new"
+	h = Native.Sha256.new!() ?? crash "sha new"
 	for c in bytes.chunks_of(chunk) {
 		Native.Sha256.update!(h, c) ?? crash "sha update"
 	}
@@ -42,7 +42,7 @@ sha! = |bytes, chunk| {
 
 b3! : List(U8), U64 => Str
 b3! = |bytes, chunk| {
-	h = Native.Blake3.new!({}) ?? crash "b3 new"
+	h = Native.Blake3.new!() ?? crash "b3 new"
 	for c in bytes.chunks_of(chunk) {
 		Native.Blake3.update!(h, c) ?? crash "b3 update"
 	}
@@ -53,9 +53,9 @@ b3! = |bytes, chunk| {
 open_n! : U64 => {}
 open_n! = |n| {
 	for _i in 0.U64..<n {
-		_h = Native.Blake3.new!({}) ?? crash "open_n"
+		_h = Native.Blake3.new!() ?? crash "open_n"
 	}
-	_s = Native.ZstdStream.open!({}) ?? crash "open_n stream"
+	_s = Native.ZstdStream.open!() ?? crash "open_n stream"
 	{}
 }
 
@@ -72,7 +72,7 @@ down! = |n, salt, name| {
 	if n == 0 {
 		x = if name == "-" 0 else {
 			out = Native.zstd_decode!(data!(name), 1_000_000_000) ?? crash "deep decode"
-			h = Native.Sha256.new!({}) ?? crash "deep sha"
+			h = Native.Sha256.new!() ?? crash "deep sha"
 			Native.Sha256.update!(h, out) ?? crash "deep update"
 			d = Native.Sha256.final!(h) ?? crash "deep final"
 			first4 = U32.from_le_bytes(d, 0) ?? 0
@@ -97,7 +97,7 @@ handle! = |req| match req.split_on(" ") {
 	}
 	["stream", name, chunk, push_limit] => {
 		bytes = data!(name)
-		opened = if push_limit == "0" Native.ZstdStream.open!({}) else Native.ZstdStream.open_with!({ push_limit_bytes: num(push_limit) })
+		opened = if push_limit == "0" Native.ZstdStream.open!() else Native.ZstdStream.open_with!({ push_limit_bytes: num(push_limit) })
 		match opened {
 			Err(e) => "open err ${Str.inspect(e)}"
 			Ok(s) => {
@@ -129,7 +129,7 @@ handle! = |req| match req.split_on(" ") {
 	}
 	# A handle used after its `final!` is `BadHandle`, and a closed stream too.
 	["twice"] => {
-		h = Native.Blake3.new!({}) ?? crash "twice"
+		h = Native.Blake3.new!() ?? crash "twice"
 		_d = Native.Blake3.final!(h) ?? crash "twice final"
 		a = Native.Blake3.final!(h)
 		b = Native.Blake3.update!(h, [1])
@@ -141,7 +141,7 @@ handle! = |req| match req.split_on(" ") {
 		var $err = ""
 		for _i in 0.U64..<20 {
 			if $err == "" {
-				match Native.Sha256.new!({}) {
+				match Native.Sha256.new!() {
 					Ok(_) => {
 						$n = $n + 1
 					}
@@ -169,22 +169,22 @@ handle! = |req| match req.split_on(" ") {
 	}
 	# Open a handle, wait on the op `gate` (the test controls it), then use the handle.
 	["wait", n] => {
-		h = Native.Blake3.new!({}) ?? crash "wait new"
+		h = Native.Blake3.new!() ?? crash "wait new"
 		open_n!(num(n))
-		_g = Io.await!([Call(Root("ops"), "gate", [])])
+		_g = Js.await!([Call(Root("ops"), "gate", [])])
 		r = Native.Blake3.update!(h, [1, 2, 3])
 		"after the wait: update=${Str.inspect(r)}"
 	}
 	# The allocations of two ops after the wait (the test fails one of them: a clean OOM trap, status 4 of the host).
 	["oom"] => {
-		_g = Io.await!([Call(Root("ops"), "gate", [])])
-		h = Native.Blake3.new!({}) ?? crash "oom new"
+		_g = Js.await!([Call(Root("ops"), "gate", [])])
+		h = Native.Blake3.new!() ?? crash "oom new"
 		d = Native.Blake3.final!(h) ?? crash "oom final"
 		"ok ${hex(d)}"
 	}
 	# Deep recursion, then `zstd_decode!` at the bottom. "<depth> <name>" (name "-": no decode).
 	["deep", depth, name] => {
-		_w = Io.await!([Call(Root("ops"), "gate", [])])
+		_w = Js.await!([Call(Root("ops"), "gate", [])])
 		r = down!(num(depth), 17, name)
 		"a=${r.a.to_str()} d=${r.d.to_str()} p=${r.p.to_str()}"
 	}
@@ -196,12 +196,12 @@ handle! = |req| match req.split_on(" ") {
 event! : Worker.Event => Worker.Outcome
 event! = |e| match e {
 	Fetch(req) => {
-		text = match req.body {
+		text = match req.body() {
 			Bytes(b) => Str.from_utf8(b) ?? ""
 			Text(s) => s
 			_ => ""
 		}
-		Respond(Response.{ status: 200, body: Text(handle!(text)) })
+		Respond(Response.from_status(200).with_body(Text(handle!(text))))
 	}
 	_ => Unhandled
 }

@@ -14,7 +14,7 @@ Item : { id : U64, name : Str, version : Str, summary : Str, tags : List(Str), d
 effect! : Str, List(Js.Arg) => Str
 effect! = |name, args| {
 	ops = [Keep(Root("env")), Keep(Root("ctx")), Keep(Root("event")), Call(Root("ops"), name, args.concat([Slot(0), Slot(1), Slot(2)]))]
-	match Io.await!(ops) {
+	match Js.await!(ops) {
 		Ok(Text(s)) => s
 		_ => ""
 	}
@@ -112,14 +112,14 @@ event! = |e| match e {
 		# of `makeHandler` is a stream (PLAN.md 10a): one wait more (`handler-test.mjs`, `context-test.mjs`).
 		text = match req.header("x-bench-text") {
 			Ok(t) => t
-			Err(_) => match req.body {
+			Err(_) => match req.body() {
 				Bytes(b) => Str.from_utf8(b) ?? ""
 				Text(s) => s
 				Stream(_) => req.text!() ?? ""
 				Empty => ""
 			}
 		}
-		Respond(Response.{ status: 200, body: Text(handle!(text)) })
+		Respond(Response.from_status(200).with_body(Text(handle!(text))))
 	}
 	_ => Unhandled
 }

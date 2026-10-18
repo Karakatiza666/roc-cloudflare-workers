@@ -10,6 +10,7 @@
 ## | JSON | A bare `Id64` does not compile (write or read). Use `Id64.Web`, `id.to_web()` and `Id64.from_web`: the U64 text, so a browser does not round it. |
 ##
 ## The backing is a record, not a bare I64: an opaque type over a bare number would get the codecs of the number.
+## Typed data: the format, what a JS peer sees, and what survives a round trip are in MODULES.md 1, "Formats of typed data".
 import Cbor
 
 Id64 :: { bits : I64 }.{

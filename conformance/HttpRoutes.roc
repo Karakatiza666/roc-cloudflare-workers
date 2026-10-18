@@ -37,7 +37,7 @@ HttpRoutes :: [].{
 				}
 			}
 			# A body of text, built here: `Text` is the other body that `cloudflare_error` reads.
-			["cf_error_text"] => Response.from_text(200, Str.inspect(Http.cloudflare_error({ status: Q.num(req, "status").to_u16_try() ?? 0, headers: [], body: Text(Q.text(req, "body")) })))
+			["cf_error_text"] => Response.from_text(200, Str.inspect(Http.cloudflare_error(Response.from_status(Q.num(req, "status").to_u16_try() ?? 0).with_body(Text(Q.text(req, "body"))))))
 			["get"] => show!(Http.get!(url))
 			["get_io"] => show!(Io.run!(Http.get(url)))
 			# The errors of `Http` join the errors of another module in one crossing (API.md 6.5).
@@ -54,7 +54,7 @@ HttpRoutes :: [].{
 show! : Try(Response, [Network(Io.Thrown), HttpErr(Io.Thrown), TooLarge]) => Response
 show! = |r| match r {
 	Ok(res) => match res.text!() {
-		Ok(text) => Response.from_text(200, "${res.status.to_str()} ${text}")
+		Ok(text) => Response.from_text(200, "${res.status().to_str()} ${text}")
 		Err(e) => Response.from_text(200, "body ${Str.inspect(e)}")
 	}
 	Err(e) => Response.from_text(200, error(e))
@@ -64,12 +64,12 @@ show! = |r| match r {
 show_open! : Try(Response, [Network(Io.Thrown), HttpErr(Io.Thrown)]) => Response
 show_open! = |r| match r {
 	Ok(res) => {
-		kind = match res.body {
+		kind = match res.body() {
 			Stream(_) => "stream"
 			_ => "not a stream"
 		}
 		match res.text!() {
-			Ok(text) => Response.from_text(200, "${res.status.to_str()} ${kind} ${text}")
+			Ok(text) => Response.from_text(200, "${res.status().to_str()} ${kind} ${text}")
 			Err(e) => Response.from_text(200, "body ${Str.inspect(e)}")
 		}
 	}

@@ -14,7 +14,7 @@ Analytics :: { name : Str }.{
 	## One data point. Workers allows 20 blobs, 20 doubles and 1 index (a text of 96 bytes at most): the limits are those of
 	## Workers, the module does not check them.
 	write! : Analytics, { blobs : List(Str), doubles : List(F64), indexes : List(Str) } => Try({}, [AnalyticsErr(Io.Thrown)])
-	write! = |a, point| match Io.call!(
+	write! = |a, point| match Js.call!(
 		[
 			Get(Root("env"), a.name),
 			Call(Slot(0), "writeDataPoint", [Lit(data_point(point))]),

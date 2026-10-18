@@ -26,7 +26,7 @@ EmailRoutes :: [].{
 
 	## The `email!` of the app.
 	handle! : Email.Mail => Try({}, _)
-	handle! = |mail| match mail.to {
+	handle! = |mail| match mail.to() {
 		"fwd@example.com" => mail.forward!("dest@example.com")
 		"fwd-io@example.com" => Io.run!(mail.forward("dest@example.com"))
 		"fwd-x@example.com" => mail.forward_with!("dest@example.com", { headers: [Header.{ name: "X-Test", value: "yes" }] })
@@ -52,8 +52,8 @@ EmailRoutes :: [].{
 		"reply-io@example.com" => Io.run!(mail.reply(reply_mail(mail)))
 		"err@example.com" => Err(Boom)
 		"raw@example.com" => {
-			body = mail.raw.text!()?
-			Log.info!("mail raw", { size: mail.raw_size_bytes, chars: body.count_utf8_bytes(), from: mail.from, can_forward: mail.can_be_forwarded })
+			body = mail.raw().text!()?
+			Log.info!("mail raw", { size: mail.raw_size_bytes(), chars: body.count_utf8_bytes(), from: mail.from(), can_forward: mail.can_be_forwarded() })
 			Ok({})
 		}
 		_ => Ok({})
@@ -67,7 +67,7 @@ raw_mail = |subject| "From: sender@example.com\r\nTo: dest@example.com\r\nSubjec
 reply_mail : Email.Mail -> Str
 reply_mail = |mail| {
 	id = mail.header("message-id") ?? "none"
-	"From: ${mail.to}\r\nTo: ${mail.from}\r\nSubject: Re: reply\r\nMessage-ID: <reply-1@example.com>\r\nIn-Reply-To: ${id}\r\nReferences: ${id}\r\nDate: Thu, 15 Oct 2026 10:00:05 +0000\r\nContent-Type: text/plain\r\n\r\nthe reply\r\n"
+	"From: ${mail.to()}\r\nTo: ${mail.from()}\r\nSubject: Re: reply\r\nMessage-ID: <reply-1@example.com>\r\nIn-Reply-To: ${id}\r\nReferences: ${id}\r\nDate: Thu, 15 Oct 2026 10:00:05 +0000\r\nContent-Type: text/plain\r\n\r\nthe reply\r\n"
 }
 
 sent : Try({ message_id : Str }, e) -> Response

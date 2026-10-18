@@ -49,7 +49,7 @@ show! = |r| match r {
 			Ok(t) => t
 			Err(e) => "Err ${Str.inspect(e)}"
 		}
-		Response.from_text(200, "status=${res.status.to_str()} type=${type} body=${body}")
+		Response.from_text(200, "status=${res.status().to_str()} type=${type} body=${body}")
 	}
 	Err(AssetsErr(t)) => Response.from_text(200, "AssetsErr ${t.name}")
 }

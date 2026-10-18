@@ -132,13 +132,23 @@ Worker :: {
 	]
 
 	## The payload of a cron run (MODULES.md 3). `time_ms` is `controller.scheduledTime`, the planned time.
-	Scheduled := { cron : Str, time_ms : U64 }.{
+	Scheduled :: { cron : Str, time_ms : U64 }.{
+		## Plain data (MC13): a test can make one.
+		new : { cron : Str, time_ms : U64 } -> Worker.Scheduled
+		new = |r| Worker.Scheduled.{ cron: r.cron, time_ms: r.time_ms }
+
+		cron : Worker.Scheduled -> Str
+		cron = |x| x.cron
+
+		time_ms : Worker.Scheduled -> U64
+		time_ms = |x| x.time_ms
+
 
 		## `controller.noRetry()`, one `call!` with no wait. The shim never calls it by itself (MODULES.md 3).
 		## A throw is dropped: only a `Worker.Scheduled` of a `Scheduled` event has a controller.
 		no_retry! : Worker.Scheduled => {}
 		no_retry! = |_s| {
-			_ = Io.call!([Call(Root("event"), "noRetry", [])])
+			_ = Js.call!([Call(Root("event"), "noRetry", [])])
 			{}
 		}
 	}
@@ -146,7 +156,7 @@ Worker :: {
 	## One item of the batch of a Tail Worker (MODULES.md 3): plain data, read as CBOR (MC5, PLAN.md 8f).
 	## `parser_for : _`: a nominal type opts in to the derived parser (MODULES.md 15). The request headers are records of
 	## `name` and `value`, not `Header` of `roc-lang/http`: that type has no `parser_for` (PLAN.md 8b O1).
-	TraceItem := {
+	TraceItem :: {
 		script_name : Try(Str, [Missing]),
 		outcome : Str,
 		event_timestamp_ms : Try(U64, [Missing]),
@@ -155,6 +165,24 @@ Worker :: {
 		exceptions : List({ timestamp_ms : U64, name : Str, message : Str }),
 	}.{
 		parser_for : _
+
+		script_name : Worker.TraceItem -> Try(Str, [Missing])
+		script_name = |x| x.script_name
+
+		outcome : Worker.TraceItem -> Str
+		outcome = |x| x.outcome
+
+		event_timestamp_ms : Worker.TraceItem -> Try(U64, [Missing])
+		event_timestamp_ms = |x| x.event_timestamp_ms
+
+		event : Worker.TraceItem -> Try({ request : { method : Str, url : Str, headers : List({ name : Str, value : Str }), cf : Try(Request.Cf, [Missing]) }, response : Try({ status : U16 }, [Missing]) }, [Missing])
+		event = |x| x.event
+
+		logs : Worker.TraceItem -> List({ timestamp_ms : U64, level : Str, message : Str })
+		logs = |x| x.logs
+
+		exceptions : Worker.TraceItem -> List({ timestamp_ms : U64, name : Str, message : Str })
+		exceptions = |x| x.exceptions
 	}
 
 	## The one entry, made from the handlers that the app gives (`event! = |e| worker.event!(e)`).

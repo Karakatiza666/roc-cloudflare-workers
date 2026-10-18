@@ -1,12 +1,13 @@
 platform ""
 	requires { event! : Worker.Event => Worker.Outcome }
-	exposes [Cbor, Id64, Js, Io, Native, Worker, Request, Response, Body, Ctx, Queue, Email, Object, WebSocket, Tcp, Http, Env, Secret, Time, Log, RateLimit, WebCrypto, R2, Cache, Sql, D1, Memo, Kv, Ai, Vectorize, Analytics, Hyperdrive, Workflows, Assets, Version, SecretsStore, Rpc, Service]
+	# The app modules first. Last, the low level (MODULES.md 1, "Modules"): `Cbor`, `Native`, `Io`, then `Js` (the escape hatch).
+	exposes [Worker, Request, Response, Body, Http, Ctx, Time, Log, Env, Secret, D1, Sql, Id64, Kv, R2, Cache, Memo, Queue, Object, Rpc, Service, WebSocket, Tcp, Email, WebCrypto, RateLimit, Ai, Vectorize, Analytics, Hyperdrive, Workflows, Assets, Version, SecretsStore, Cbor, Native, Io, Js]
 	packages {
 		http: "https://github.com/roc-lang/http/releases/download/2.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
 		cbor: "https://github.com/Karakatiza666/roc-cbor/releases/download/0.1.0/9QL2dCyq7bcmvAEZfDFwi8kBvWLCZpEMS4WQYnZisezw.tar.zst",
 	}
 	provides { "roc_event": event_for_host! }
-	hosted { "roc_await": Host.await!, "roc_call": Host.call!, "roc_native": Host.native! }
+	hosted { "roc_await": Js.host_await!, "roc_call": Js.host_call!, "roc_native": Host.native! }
 	targets: {
 		inputs_dir: "targets/",
 		wasm32: {
