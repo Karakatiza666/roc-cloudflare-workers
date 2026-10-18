@@ -17,4 +17,15 @@ for kind in log cbor; do
   if [ $? -eq 0 ]; then echo "PASS secret_${kind}_ok.roc compiles"
   else echo "FAIL secret_${kind}_ok.roc: the control does not compile"; echo "$out" | head -20; rc=1; fi
 done
+# PLAN.md 8h item 3: SQL parameters. A U128 parameter fails with a missing `encode_u128`, a bare `[]` with "type not determined"
+# for `encoder_for`. Each `_ok` file is the same call with an allowed type (a U64, `Sql.none`).
+for pair in 'u128:encode_u128' 'empty:encoder_for'; do
+  kind=${pair%%:*}; word=${pair#*:}
+  out=$("$ROC" check "$dir/sql_${kind}_bad.roc" 2>&1)
+  if [ $? -eq 1 ] && grep -q "$word" <<< "$out"; then echo "PASS sql_${kind}_bad.roc does not compile (an error names $word)"
+  else echo "FAIL sql_${kind}_bad.roc: it compiles, or the error does not name $word"; echo "$out" | head -20; rc=1; fi
+  out=$("$ROC" check "$dir/sql_${kind}_ok.roc" 2>&1)
+  if [ $? -eq 0 ]; then echo "PASS sql_${kind}_ok.roc compiles"
+  else echo "FAIL sql_${kind}_ok.roc: the control does not compile"; echo "$out" | head -20; rc=1; fi
+done
 exit "$rc"

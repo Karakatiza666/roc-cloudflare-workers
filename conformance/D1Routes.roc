@@ -69,6 +69,8 @@ D1Routes :: [].{
 			["batch_count"] => batch_count!(Q.text(req, "grp"))
 			# The rows of the last statement of a batch, typed by `?type=` with `D1.Result.first` and `all`.
 			["batch_first"] => batch_first!(ty, sql)
+			# PLAN.md 8h item 3: parameters as an `Encodable` tuple or list (`params!`).
+			["params", case] => params!(case)
 			["session"] => session!(Q.text(req, "k"))
 			["session_after"] => session_after!(Q.text(req, "b"), Q.text(req, "k"))
 			_ => Response.from_text(404, "no route")
@@ -325,3 +327,122 @@ session_after! = |b, k| match db.with_session!(After(b)) {
 	}
 	Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
 }
+
+## The columns of `pt` as `typeof()` and as values.
+Typed : { ta : Str, tb : Str, tc : Str, td : Str, a : Str, b : I64, c : F64, hd : Str }
+## The columns of `pt` that hold NULL or a value.
+Nulls : { an : I64, b : I64, cn : I64, tb : Str }
+## A value of `pi` as text, and its `typeof()`.
+Stored : { v : Str, t : Str }
+
+typed! : Str => Response
+typed! = |k| {
+	r : Try(List(Typed), _)
+	r = db.all!("SELECT typeof(a) AS ta, typeof(b) AS tb, typeof(c) AS tc, typeof(d) AS td, a, b, c, hex(d) AS hd FROM pt WHERE k = ?", [k])
+	out(r)
+}
+
+stored! : Str, Try(Sql.Info, e) => Response
+stored! = |k, wrote| match wrote {
+	Ok(_) => {
+		r : Try(List(Stored), _)
+		r = db.all!("SELECT CAST(v AS TEXT) AS v, typeof(v) AS t FROM pi WHERE k = ?", [k])
+		out(r)
+	}
+	Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+}
+
+## PLAN.md 8h item 3: each `?case` writes with parameters of one form and reads the result back.
+params! : Str => Response
+params! = |case| match case {
+	# A tuple of (Str, I64, F64, a blob): the types of the columns in SQL.
+	"tuple" => {
+		_ = db.run!("INSERT INTO pt (k, a, b, c, d) VALUES (?, ?, ?, ?, ?)", ("tuple", "héllo", 42.I64, 1.5.F64, Sql.blob([1, 2, 3])))
+		typed!("tuple")
+	}
+	"tuple_io" => {
+		_ = Io.run!(db.run("INSERT INTO pt (k, a, b, c, d) VALUES (?, ?, ?, ?, ?)", ("tuple_io", "x", 7.I64, 2.5.F64, Sql.blob([255]))))
+		typed!("tuple_io")
+	}
+	"null" => {
+		present : Try(I64, [Nope])
+		present = Ok(7)
+		_ = db.run!("INSERT INTO pt (k, a, b, c) VALUES (?, ?, ?, ?)", ("null", Sql.null, Sql.or_null(present), Sql.or_null(present)))
+		_ = db.run!("INSERT INTO pt (k, a, b, c) VALUES (?, ?, ?, ?)", ("null_err", Sql.null, Sql.or_null(missing), Sql.or_null(missing)))
+		a : Try(List(Nulls), _)
+		a = db.all!("SELECT a IS NULL AS an, b, c IS NULL AS cn, typeof(b) AS tb FROM pt WHERE k = ?", ["null"])
+		b : Try(List(Nulls), _)
+		b = db.all!("SELECT a IS NULL AS an, ifnull(b, -1) AS b, c IS NULL AS cn, typeof(b) AS tb FROM pt WHERE k = ?", ["null_err"])
+		Response.from_text(200, "ok=${Str.inspect(a)} err=${Str.inspect(b)}")
+	}
+	"u64max" => stored!("u64max", db.run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("u64max", 9_223_372_036_854_775_807.U64)))
+	"u64over" => stored!("u64over", db.run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("u64over", 9_223_372_036_854_775_808.U64)))
+	# 2^53 + 1 as an I64 and as a U64: text binds, an INTEGER column gives the exact integer.
+	"p53" => stored!("p53", db.run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("p53", 9_007_199_254_740_993.I64)))
+	"p53_u64" => stored!("p53_u64", db.run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("p53_u64", 9_007_199_254_740_993.U64)))
+	"i64min" => stored!("i64min", db.run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("i64min", -9_223_372_036_854_775_808.I64)))
+	"record" => out(db.run!("INSERT INTO pi (k, v) VALUES (?, ?)", { k: "record", v: 1.I64 }))
+	"empty_record" => out(db.run!("SELECT 1", {}))
+	"err_null" => {
+		bare : Try(I64, [Null])
+		bare = Err(Null)
+		out(db.run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("err_null", bare)))
+	}
+	# A tag with a payload encodes as a map, so the item is refused. (`Err(Null)` of a `Try(a, [Null])` encodes as CBOR null; `Err(e)` of another `Try` has no encoder.)
+	"tag_item" => {
+		bare : [Hit(I64), Miss]
+		bare = Hit(3)
+		out(db.run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("tag_item", bare)))
+	}
+	"bool" => out(db.run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("bool", Bool.True)))
+	"bad_session" => match db.with_session!(Primary) {
+		Ok(s) => out(s.run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("bad_session", Bool.False)))
+		Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+	}
+	"bad_batch" => batch(db.batch!([Sql.stmt("INSERT INTO pi (k, v) VALUES (?, ?)", ("bad_batch", Bool.True))]))
+	"none" => {
+		r : Try(List(IdRow), _)
+		r = db.all!("SELECT 1 AS id", Sql.none)
+		out(r)
+	}
+	"single" => {
+		r : Try(List(TextRow), _)
+		r = db.all!("SELECT ? AS t", ["one"])
+		out(r)
+	}
+	# `Sql.stmt` with tuples of different types in one batch.
+	"stmt_batch" => match db.batch!([
+		Sql.stmt("INSERT INTO pi (k, v) VALUES (?, ?)", ("b1", 1.I64)),
+		Sql.stmt("INSERT INTO pt (k, a, b) VALUES (?, ?, ?)", ("b2", "two", Sql.null)),
+		Sql.stmt("SELECT count(*) AS n FROM pi WHERE k = ?", ["b1"]),
+		Sql.stmt("SELECT 1", Sql.none),
+	]) {
+		Ok([a, b, c, d]) => {
+			count : Try(Count, _)
+			count = c.first()
+			Response.from_text(200, "Ok changes=${a.info().changes.to_str()},${b.info().changes.to_str()},${d.info().changes.to_str()} count=${Str.inspect(count)}")
+		}
+		Ok(other) => Response.from_text(200, "Ok results=${other.len().to_str()}")
+		Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+	}
+	# A `List(Sql)` built at run time.
+	"runtime_list" => {
+		items : List(Sql)
+		items = ["rt", "text"].map(|t| Text(t)).append(Int(5)).append(Real(2.5)).append(Blob([9]))
+		_ = db.run!("INSERT INTO pt (k, a, b, c, d) VALUES (?, ?, ?, ?, ?)", items)
+		typed!("rt")
+	}
+	"session" => match db.with_session!(Primary) {
+		Ok(s) => {
+			_ = s.run!("INSERT INTO pt (k, a, b, c, d) VALUES (?, ?, ?, ?, ?)", ("session", "s", 3.I64, 0.5.F64, Sql.blob([4])))
+			r : Try(TextRow, _)
+			r = s.first!("SELECT a || typeof(d) AS t FROM pt WHERE k = ? AND b = ?", ("session", 3.I64))
+			out(r)
+		}
+		Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+	}
+	_ => Response.from_text(404, "no case")
+}
+
+missing : Try(I64, [Nope])
+missing = Err(Nope)
