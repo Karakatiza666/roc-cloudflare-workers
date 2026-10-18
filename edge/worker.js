@@ -167,11 +167,11 @@ export default class extends Handler {
     return out;
   }
   // 8f: JS callees of the RPC checks. MC5: the JS kinds of the fields of the argument (a `Cbor.Bytes` field is a
-  // `Uint8Array`, a `List(U8)` field an `Array`). The RPC limit: a text of `n` bytes.
+  // `Uint8Array`, a `List(U8)` field an `Array`). The RPC limit: a text of `n` bytes. A reply is a `Reply` of `Rpc.roc`: `{ Ok: value }`.
   inspect(arg) {
-    return { data: kind(arg?.data), list: kind(arg?.list) };
+    return { Ok: { data: kind(arg?.data), list: kind(arg?.list) } };
   }
   big(arg) {
-    return 'x'.repeat(Number(arg.n));
+    return { Ok: 'x'.repeat(Number(arg.n)) };
   }
 }

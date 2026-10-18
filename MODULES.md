@@ -114,7 +114,7 @@ queue! = |batch| {
 	Ok({})
 }
 
-worker = Worker.{ fetch!, queue! }
+worker = Worker.new({ fetch!, queue! })
 
 event! = |e| worker.event!(e)
 ```
@@ -122,18 +122,19 @@ event! = |e| worker.event!(e)
 ## 3. Entry: `Worker`
 
 ```roc
-Worker(e) := {
-	fetch! ?: Request => Try(Response, e),
-	scheduled! ?: Worker.Scheduled => Try({}, e),
-	queue! ?: Queue.Batch => Try({}, e),
-	email! ?: Email.Mail => Try({}, e),
-	tail! ?: List(Worker.TraceItem) => Try({}, e),
-	other! ?: Str, Js => Try(Js, e),
-	rpc ?: List(Rpc.Handler({})),         # methods of the default entry point
-	entrypoints ?: List(Rpc.Entrypoint),  # named WorkerEntrypoint classes
-	objects ?: List(Object.Class),        # Durable Object classes
-}.{
-	event! : Worker(e), Worker.Event => Worker.Outcome
+Worker :: { handlers : List(Str), own! : Worker.Event => Worker.Outcome, rpc : ..., entrypoints : ..., objects : ... }.{
+	new : {
+		fetch! ?: Request => Try(Response, e1),
+		scheduled! ?: Worker.Scheduled => Try({}, e2),
+		queue! ?: Queue.Batch => Try({}, e3),
+		email! ?: Email.Mail => Try({}, e4),
+		tail! ?: List(Worker.TraceItem) => Try({}, e5),
+		other! ?: Str, Js => Try(Js, e6),
+		rpc ?: List(Rpc.Handler({})),         # methods of the default entry point
+		entrypoints ?: List(Rpc.Entrypoint),  # named WorkerEntrypoint classes
+		objects ?: List(Object.Class),        # Durable Object classes
+	} -> Worker
+	event! : Worker, Worker.Event => Worker.Outcome
 
 	## The payload of a cron run. The same type is in `Worker.Event` (`API.md` 10.1).
 	Scheduled := { cron : Str, time_ms : U64 }.{
@@ -154,7 +155,7 @@ Worker(e) := {
 }
 ```
 
-Each handler gives the result of its own kind, so a handler cannot give a wrong outcome. `e` is one error type for all handlers: their tag unions join. `Worker.Event` and `Worker.Outcome` are the types of `API.md` 10.1. `Worker.Scheduled` is in the `.{ }` block of `Worker`, because a type at the top level of a type module is private (section 15).
+Each handler gives the result of its own kind, so a handler cannot give a wrong outcome. Each handler has its own error type: `Worker.new` turns an `Err(e)` into text (`Str.inspect(e)`) when it makes the `Worker`, so `Worker` has no type parameter. A `fetch!` with `Try(Response, [])` and a `scheduled!` with `Try({}, [UnknownCron(Str)])` go in one `Worker`. `Worker.Event` and `Worker.Outcome` are the types of `API.md` 10.1. `Worker.Scheduled` is in the `.{ }` block of `Worker`, because a type at the top level of a type module is private (section 15).
 
 | Field | Workers entry | `Ok` gives | `Err(e)` gives | A missing field gives |
 | --- | --- | --- | --- | --- |
@@ -174,7 +175,7 @@ Cron rules (`scheduled!`):
 | Item | Rule |
 | --- | --- |
 | Payload | `cron` is `controller.cron`, the cron expression that started the run. `time_ms` is `controller.scheduledTime`, the planned time of the run, not the start time. |
-| Annotation | A `scheduled!` that calls `no_retry!` needs the annotation `Worker.Scheduled => Try({}, e)`: the type of the argument does not come from the later use in `Worker.{ ... }`, and `Try({}, _)` gives a closed `[]` that does not join the other handlers (15). |
+| Annotation | A `scheduled!` that calls `no_retry!` needs the annotation `Worker.Scheduled => Try({}, _)`: the type of the argument does not come from the later use in `Worker.new({ ... })` (15). |
 | Retry | The shim never calls `noRetry` by itself, also not for `Err` or a missing field. `Err(e)` is a failed run (outcome `exception`). Edge, 2026-10-17 (`PLAN.md` 11c, E13, settles `API.md` AQ12): production does not retry a failed cron run. In 1 hour, each planned time of a cron that gave `Err` had exactly 1 run, with and without `no_retry!`. So `no_retry!` has no effect today; it stays, because workerd keeps the flag. The next run of a cron is its next planned time. |
 | Time | A cron run can last 15 min (Cloudflare docs). The deadlines of the task: `API.md` 10.2. |
 | Local test | `wrangler dev` and Miniflare serve `GET /cdn-cgi/local/scheduled?cron=<cron>&time=<ms>&format=json` (Cloudflare docs, and the Miniflare source). It runs `scheduled` with that `cron` and `scheduledTime`, and answers `{ "outcome": ..., "noRetry": ... }`, status 200 for the outcome `ok` and 500 for the others. The conformance app and the registry handler tests use it (`API.md` 11). |
@@ -229,7 +230,8 @@ As built in `PLAN.md` 8f, part 1 (`platform/Worker.roc`, `js/index.js`, `js/runn
 | Order in the entry file | The `objectClass` and `entrypointClass` lines come before `export default makeHandler(...)`. `makeHandler` checks both directions: a class of the manifest with no export, and an export with no class. An `objectClass` line after `makeHandler` is checked against the manifest at once, but a missing export is found only by `makeHandler`. | An ES module runs its lines in order, and `makeHandler` cannot see the exports of the module |
 | Event names | `Rpc` of the default export has the entry point `"default"`. A class named `default` is a throw at load. | `default` is the name of the default export |
 | Method names | The manifest refuses a method twice in a class, a name that is not a JS name, and the names of handlers: `fetch`, `scheduled`, `queue`, `email`, `tail`, `alarm`, `constructor`, `webSocketMessage`, `webSocketClose`, `webSocketError`, `then` (a stub with `then` is a thenable). A default method with the name of an `other` handler is a throw too. | The JS method of a handler and of an RPC method is the same property |
-| `rpc` methods | A method on the prototype of the class (default export, object, entry point): `Reply` gives the value; `Failed(text)` is a log line `<class>.<method>: failed: <text>` and `throw new Error(text)`, so the caller gets `RpcErr({ name: "Error", message: text })`; `Unhandled` and a trap are a log line and a throw | MODULES.md 8, "Errors" |
+| `rpc` methods | A method on the prototype of the class (default export, object, entry point): `Reply` gives the value, a `Reply` of `Rpc.roc` (`{ Ok: value }` or `{ Err: tag }`), also for an `Err` of the handler; `Failed(text)` (an argument that does not parse) is a log line `<class>.<method>: failed: <text>` and `throw new Error(text)`, so the caller gets `RpcErr({ name: "Error", message: text })`; `Unhandled` and a trap are a log line and a throw | MODULES.md 8, "Errors" |
+| `Worker.new`, not `Worker.{ ... }` | A function that takes the record of handlers. The literal `Worker.{ ... }` must match the backing type, so the backing type would need a type variable for each error. The function turns each error into text first, and the backing type has no variables. One field needs `Worker.new({ fetch!: fetch! })`: `{ fetch! }` with one field is a block, not a record (`research/e1-errors/one_field.roc`). | Step 8h |
 
 ## 4. HTTP: `Request`, `Response`, `Body`, `Http`
 
@@ -619,7 +621,7 @@ Object :: { ... }.{
 	Jurisdiction : [Eu, Us, Fedramp]                                     # "eu", "us", "fedramp"
 	Location : [Wnam, Enam, Sam, Weur, Eeur, Apac, ApacNe, ApacSe, Oc, Afr, Me]   # "apac-ne" for ApacNe
 	fetch! : Object, Request => Try(Response, [ObjectErr(Thrown)])
-	call! : Object, Rpc(arg, ret), arg => Try(ret, [RpcErr(Thrown), BadData(Str)]) where [arg.Encodable, ret.Parseable]
+	call! : Object, Rpc(arg, ret, err), arg => Try(ret, [RpcErr(Thrown), BadData(Str), Remote(err)]) where [arg.Encodable, ret.Parseable, err.Parseable]
 	id! : Object => Try(Str, [ObjectErr(Thrown)])         # one call!: idFromName(name).toString() for a named object
 }
 ```
@@ -685,7 +687,7 @@ Inside: a class is a record of handlers, all optional, as for `Worker`.
 
 ```roc
 counters = Object.namespace("COUNTERS")
-increment : Rpc({ by : I64 }, I64)
+increment : Rpc({ by : I64 }, I64, [StorageErr(Thrown)])
 increment = Rpc.method("increment")
 count : Object.Cell(I64)
 count = Object.cell("count")
@@ -720,7 +722,7 @@ n = counters.named("global").call!(increment, { by: 1 })?
 | Transactions | Between two waits, an object runs one event at a time, and Workers commits the writes of that time together (input and output gates, Cloudflare docs "Rules of Durable Objects"). So a handler that makes all its storage calls with no wait between them is atomic. A wait (`Http.send!`, R2, a call to another object) lets other events in. `sql!` reads all rows before it returns, so no cursor stays open across a wait. |
 | WebSockets | The hibernation API: section 12. |
 | Class names | Only in `Object.class("Counter", ...)` and the Wrangler config. The JS entry file exports the class with one line, and a missing or extra export stops the load (3, `API.md` AQ10). |
-| Errors | Each class can have its own error type: `Object.class` turns errors into log text. |
+| Errors | Each handler of a class has its own error type: `Object.class` turns errors into log text. An RPC method gives its `Err` to the caller (8). |
 
 As built in `PLAN.md` 8f, part 1 (`platform/Object.roc`, `platform/Remote.roc`, `platform/SqlRules.roc`, `js/index.js`), where the code differs from the text above or adds to it. The facts of local workerd are in `research/objects-probe/out.txt`.
 
@@ -738,27 +740,43 @@ As built in `PLAN.md` 8f, part 1 (`platform/Object.roc`, `platform/Remote.roc`, 
 | `list!` | `storage.kv.list(options)`, then the new helper `pf.keys(entries, max)`: the keys as a `Js` tree with the limit of MC11 (`TooLarge`). The values stay in JS. Options: `prefix`, `start`, `startAfter`, `end`, `limit`, `reverse`. | OP4: a program has no loop |
 | `Object.Cell` | `get! : Object.Cell(a), Object.Self => Try(a, [NotFound, BadData(Str), StorageErr(Thrown)])`, `set! : Object.Cell(a), Object.Self, a => Try({}, [StorageErr(Thrown)])`, `delete! : Object.Cell(a), Object.Self => Try({}, [StorageErr(Thrown)])` (a key with no value is `Ok`). The value is CBOR bytes (`kv.put(key, Uint8Array)`). | The design gives only the names (9) |
 | `class` | The fields `init!`, `fetch!`, `rpc`, `alarm!`, and since `PLAN.md` 8f part 3 `web_socket_message!`, `web_socket_close!`, `web_socket_error!` (12.4). `Object.Class` is `{ name, handlers, methods, run! : Str, Object.Event => Outcome }`: `run!` takes the id, so only `Object` makes a `Self`. | |
-| The handlers of one class | One error type `e` for all handlers of a class, as in `Worker(e)`. A handler that gives only `Ok` needs `Try(_, e)` in its annotation, not `Try(_, [])`, to join the others. | The record of `class` has one `e` |
+| The handlers of one class | Each handler has its own error type (`e1` to `e6` in the record of `class`), so a handler that gives only `Ok` can have `Try(_, [])`. | Step 8h |
 | SQLite check | The constructor reads `ctx.storage.sql.databaseSize`. On a throw it throws `Durable Object class <name>: the platform needs a SQLite-backed class: put "<name>" in new_sqlite_classes ...`, with the text of Workers after it. Local workerd already names `new_sqlite_classes`, but not the class. | 7, "SQLite only" |
 | `init!` | `ctx.blockConcurrencyWhile` of the task `<class>.init` (the event `Init`). A timer of the constructor sweeps the task table at `initMs` + 50 ms (shim option, default 30 s), so the cancel names the task: the caller gets `ObjectErr` with `<class>.init: cancelled: deadline`. An `Err`: a log line and the throw `<class>.init: failed: <error>`. | The sweep of `PLAN.md` 3b runs only at a new request, and no other event of the object comes in `blockConcurrencyWhile` |
 | `alarm!` | `retry_count` is `alarmInfo.retryCount`, `is_retry` is `alarmInfo.isRetry` (0 and false with no `alarmInfo`). Locally the retries come after 2 s and 4 s. | 7, "alarm!" |
 | `fetch!` | As the `fetch` of a Worker, with the `respond` hook of `Ctx.respond!` and no `waitUntil` after it (API.md 10.2). `pass_through!` is `InvalidState`. | |
 
 
-One constant names a method and its types. Both sides use it: the caller with `call!`, the callee with `on`.
+One constant names a method and its types, also the errors that the callee can give. Both sides use it: the caller with `call!`, the callee with `on`.
 
 ```roc
-Rpc(arg, ret) :: { name : Str }.{
-	method : Str -> Rpc(arg, ret)
-	on : Rpc(arg, ret), (self, arg => Try(ret, e)) -> Rpc.Handler(self) where [arg.Parseable, ret.Encodable]
+Rpc(arg, ret, err) :: { name : Str }.{
+	method : Str -> Rpc(arg, ret, err)
+	on : Rpc(arg, ret, err), (self, arg => Try(ret, err)) -> Rpc.Handler(self) where [arg.Parseable, ret.Encodable, err.Encodable]
 	entrypoint : Str, { fetch! ?: Request => Try(Response, e), rpc ?: List(Rpc.Handler({})) } -> Rpc.Entrypoint
+	reply_of : List(U8) -> Try(ret, [BadData(Str), Remote(err)]) where [ret.Parseable, err.Parseable]
+	NoErr := []                                               # the err of a method with no errors, with its own codec
 	Handler(self) : { ... }                                  # types erased: CBOR in, CBOR out
 }
+
+Reply(ret, err) := [Ok(ret), Err(err)]                       # the wire form (private): {"Ok": value} or {"Err": tag}
 
 Service :: { name : Str }.{
 	binding : Str -> Service
 	fetch! : Service, Request => Try(Response, [ServiceErr(Thrown)])
-	call! : Service, Rpc(arg, ret), arg => Try(ret, [RpcErr(Thrown), BadData(Str)]) where [arg.Encodable, ret.Parseable]
+	call! : Service, Rpc(arg, ret, err), arg => Try(ret, [RpcErr(Thrown), BadData(Str), Remote(err)]) where [arg.Encodable, ret.Parseable, err.Parseable]
+}
+```
+
+```roc
+close_out : Rpc({ id : U64 }, { total : U64 }, [StillOpen, NotFound])
+close_out = Rpc.method("close_out")
+
+close_out! : Object.Self, { id : U64 } => Try({ total : U64 }, [StillOpen, NotFound])   # the callee
+match auctions.named("a").call!(close_out, { id: 7 }) {                                 # the caller
+	Ok({ total }) => ...
+	Err(Remote(StillOpen)) => ...
+	Err(Remote(NotFound)) | Err(RpcErr(_)) | Err(BadData(_)) => ...
 }
 ```
 
@@ -766,7 +784,7 @@ Service :: { name : Str }.{
 | --- | --- |
 | Interface | A package of `Rpc` constants is the interface of a service. The caller and the callee import the same package, so their types agree. |
 | On the wire | One argument. The module sends it as CBOR, and JS gives the callee the JS value, so a JS callee gets a plain object (a `BigInt` above 2^53, a `Uint8Array` for a `Cbor.Bytes` field, an `Array` of numbers for a `List(U8)` field, MC5). JS sends the reply of a JS callee back as CBOR. |
-| Errors | An `Err(e)` of the callee is a throw with the text `Str.inspect(e)`. The caller gets `RpcErr(Thrown)`. A bad argument is a throw with "bad argument". |
+| Errors | `err` is a tag union that the callee can give: a handler that gives another tag does not compile. An `Err(e)` of the callee is a normal reply, and the caller gets `Remote(e)`, the same tag. A method with no errors has `err` `Rpc.NoErr`: `[]` has no derived codec (`research/e1-errors/rpc_empty.roc`). A throw (a crash, a JS throw, a bad argument with "bad argument", a missing method) is `RpcErr(Thrown)`. A reply that does not fit `ret` or `err` is `BadData`. |
 | A JS method with many arguments | `Js` (`API.md` 6.4) |
 | `self` | `Object.Self` in a Durable Object, `{}` in a Worker entry point |
 | The default entry point | The `rpc` field of `Worker` (3). `makeHandler` gives a subclass of `WorkerEntrypoint`, because Workers sends RPC only to a class that extends it (Cloudflare docs, service bindings RPC). |
@@ -776,22 +794,24 @@ Limits: Workers RPC can carry more than this module. The module keeps to typed d
 
 | Workers RPC can carry | This module | Why |
 | --- | --- | --- |
-| Structured clone values, many arguments | One argument and one reply, as CBOR data (MC5). A record holds many values. | One type on both sides (`Rpc(arg, ret)`) |
+| Structured clone values, many arguments | One argument and one reply, as CBOR data (MC5). A record holds many values. | One type on both sides (`Rpc(arg, ret, err)`) |
 | Stubs: a function, an `RpcTarget`, a Durable Object stub, a service binding | No. Send the name of the object or the binding, and make the stub on the other side (`named`, `Service.binding`). | A stub is a ref, and a ref is good for one task (MC13). A Roc function cannot be a JS function (`API.md` AQ1). |
 | Callbacks to the caller (a function in the argument) | No | The same: a callback is a stub |
 | `ReadableStream`, `WritableStream`, `Request`, `Response` | No. Use `fetch!` of the `Object` or the `Service`: a `Body` stream passes with no copy. | CBOR has no stream |
 | Promise pipelining | No. Each `call!` is one wait. | A pipelined call needs a stub |
-| An error with its name, message and own properties (Cloudflare docs, RPC error handling) | Text only: the caller gets `RpcErr({ name, message })`. An `Err(e)` of a Roc callee is the message `Str.inspect(e)`. To give a typed error, put it in the reply type: `Rpc(arg, Try(ret, err))`. | A thrown error crosses as `Error(name, message)` (`API.md` 5, J6) |
+| An error with its name, message and own properties (Cloudflare docs, RPC error handling) | A throw is text only: the caller gets `RpcErr({ name, message })`. A typed error is the `Err` of the reply: `Remote(err)`. | A thrown error crosses as `Error(name, message)` (`API.md` 5, J6) |
 | 32 MiB for one call (Cloudflare docs) | The same limit. The reply is a read into wasm memory (MC11). | |
 
 As built in `PLAN.md` 8f, part 1 (`platform/Rpc.roc`, `platform/Service.roc`, `platform/Remote.roc`, `js/index.js`, `js/events.js`):
 
 | Item | Built as | Why |
 | --- | --- | --- |
-| `Rpc.name` | Public: `Rpc(arg, ret) -> Str`, the method name | `Object` and `Service` build the call in `Remote` (not exposed), and `Rpc` is opaque |
-| `Handler(self)` | `{ name : Str, run! : self, List(U8) => Try(List(U8), Str) }`: `run!` parses the argument with `Cbor.parse`, a parse error is `Err("bad argument: <error>")`, an `Err(e)` is `Err(Str.inspect(e))` | The prototype (15) |
+| `Rpc.name` | Public: `Rpc(arg, ret, err) -> Str`, the method name | `Object` and `Service` build the call in `Remote` (not exposed), and `Rpc` is opaque |
+| `Handler(self)` | `{ name : Str, run! : self, List(U8) => Try(List(U8), Str) }`: `run!` parses the argument with `Cbor.parse`, a parse error is `Err("bad argument: <error>")`. `Ok(r)` and `Err(e)` of the handler are both `Ok(bytes)`: the CBOR of `{"Ok": r}` or `{"Err": e}` | The prototype (15) |
+| The reply on the wire | `Reply(ret, err) := [Ok(ret), Err(err)]` with the derived codec, private in `Rpc.roc`. `call!` parses it with `Rpc.reply_of`. `on` writes the first bytes (`{"Ok":` and `{"Err":`, a map of one entry and its key) by hand, then `Cbor.encode` of the value: `Cbor.encode(Reply.Ok(r))` in `on` crashes the compiler when a type module of the app uses `on`, with `Reply` nested in `Rpc` or not (`research/e1-errors/mod`). In JS the reply is a plain object `{ Ok: value }` or `{ Err: tag }` (a tag with no payload is text, `{ Err: "StillOpen" }`), so it passes through to the caller as any reply. A JS callee gives the same shape. | `research/rpc-err-sql-params` (form B) |
+| `Rpc.NoErr` | `NoErr := []` with its own `encoder_for` (writes nothing: it has no values) and `parser_for` (always `InvalidCbor(0)`, so a reply `{"Err": ...}` is `BadData`). | The compiler derives no codec for `[]` |
 | `Entrypoint` | `{ name, handlers : List(Str), rpc, fetch! : Request => [Respond(Response), Failed(Str), Unhandled] }` | The manifest needs the handlers |
-| `call!` | One `await!`: the stub or the binding, `Call(target, name, [Lit(Packed(Cbor.encode(arg)))])` (JS gives the callee the plain value), then `pf.pack` of the reply with the limit 32 MiB. A reply that does not fit `ret` is `BadData(Str.inspect(error))`. A throw (of the callee, of Workers, `TooLarge` of `pf.pack`) is `RpcErr`. Twins `call` and `fetch` (MC3). | Locally Workers stops a reply above 32 MiB first: "Serialized RPC arguments or return values are limited to 32MiB, but the size of this value was: 33554440 bytes." |
+| `call!` | One `await!`: the stub or the binding, `Call(target, name, [Lit(Packed(Cbor.encode(arg)))])` (JS gives the callee the plain value), then `pf.pack` of the reply with the limit 32 MiB. `{"Err": e}` is `Remote(e)`. A reply that does not fit `ret` or `err` is `BadData(Str.inspect(error))`. A throw (of the callee, of Workers, `TooLarge` of `pf.pack`) is `RpcErr`. Twins `call` and `fetch` (MC3). | Locally Workers stops a reply above 32 MiB first: "Serialized RPC arguments or return values are limited to 32MiB, but the size of this value was: 33554440 bytes." |
 | `fetch!` | `target.fetch(url, init)` with the method, the headers and the body (a stream is its ref), then `Fields` of `status`, `headers`, `body` and `webSocket` (a 101 keeps its socket). A throw is `ObjectErr` or `ServiceErr`. | The same `RequestInit` as `Http` |
 | Typed bytes (MC5) | A `Cbor.Bytes` field reaches a JS callee as a `Uint8Array`, a `List(U8)` field as an `Array` | `checks/rpc.mjs` |
 
@@ -1267,7 +1287,7 @@ Lessons from the compiler (nightlies 10-09 and 10-12):
 | The tags of the nominal `Method` of `roc-lang/http` match in a tuple with a list pattern, from another module | Routing by `match (req.method, req.segments())` |
 | A phantom type variable on an opaque type (`Rpc(arg, ret) :: { name : Str }`) fixes the types of both sides | Typed RPC with one constant |
 | An optional field of a structural record can hold an effectful function with an error type variable | `Object.class` takes a plain record |
-| `Str.inspect` works on the type variable `e` of `Worker(e)` | `Err(e)` becomes a log line |
+| `Str.inspect` works on the type variable `e` of `Worker(e)` (now of each handler in `Worker.new`) | `Err(e)` becomes a log line |
 | An opaque type over a bare `Str` (`Secret :: Str`) gets the codecs of `Str`: `Json.to_str` and `Cbor.encode` write the hidden text. A hand-written `encoder_for` does not compile (type mismatch on `encode_str`). With a record backing (`Secret :: { text : Str }`), an encode is a compile error, as the Roc docs say for nominal types. The bug is only in the encoder, for a nominal type over `Str` or a number type in a record, a tuple or a tag; a bare value is rejected. Over `Bool`, the same encode crashes the compiler. Repro: `research/roc-bugs/` (also on nightly 10-14). | `Secret` has a record backing. Reported: roc-lang/roc#12309. |
 | A one-field record pun needs a comma: `{ binding, }` | none |
 | A record with one field written as a pun is a block: `{ id }` is the value of `id`, not a record. A call `f(x, { id })` gives the type of `id`. | Write `{ id: id }` (a record with one field, or an optional field `{ id ?: Str }` of an option record) |
@@ -1286,7 +1306,7 @@ Lessons from the compiler (nightlies 10-09 and 10-12):
 | `?` on a field of the type `Try(a, [Missing])` (`Kv.Key.metadata`, the fields of `Request.Cf` and `Worker.TraceItem`) does not compile in a function whose error union is larger: the `[Missing]` of a type annotation is closed, and `?` cannot add its tags to another union. `(key.metadata ? \|_\| Missing).parse()?` compiles: it makes a new tag. | Done: the example of 5.2. The other `Try(_, [Missing])` fields have the same rule. |
 | A nominal record (`Worker.TraceItem := { ... }`) has no derived parser until its block has `parser_for : _` ("missing method parser_for") | Done: `TraceItem` has `.{ parser_for : _ }` in 3 |
 | An opaque type over a bare `U32` (`Js.Ref :: U32`) gets the codecs of `U32`, as `Secret :: Str` gets the codecs of `Str`: `Cbor.encode` writes a ref as a number, so a ref can go into typed data (against MC13). With a record backing (`Js.Ref :: { id : U32 }`), the encode is a compile error (`ref_cbor.roc`), and the derived `is_eq` still works (`peer == socket`). | Done: `Js.Ref :: { id : U32 }` in `API.md` 5. The same compiler bug: roc-lang/roc#12309. |
-| A handler that calls a method of its argument (`job.no_retry!()`, `batch.retry_all_with!(...)`) needs an annotation: the type of the argument does not come from the later use in `Worker.{ ... }`. A handler that gives only `Ok`, annotated `Try({}, _)`, gets the closed `[]`, which does not join the errors of the other handlers in `Worker(e)`: `Try({}, e)` compiles. | Done: the row "Annotation" of the cron rules (3) |
+| A handler that calls a method of its argument (`job.no_retry!()`, `batch.retry_all_with!(...)`) needs an annotation: the type of the argument does not come from the later use in `Worker.new({ ... })`. Before step 8h, a handler that gave only `Ok`, annotated `Try({}, _)`, got the closed `[]`, which did not join the errors of the other handlers in `Worker(e)`. Since step 8h each handler has its own error type. | Done: the row "Annotation" of the cron rules (3) |
 | The derived CBOR parser reads a record with optional fields when keys are absent (`R2.Meta.http`, `checksums`), and a `Try(a, [Missing])` field from the tag form (`{"Ok": v}`, `{"Err": "Missing"}`) | `R2.Meta` and `Worker.TraceItem` are typed data. The shim writes each `Try` field in the tag form, not as `null` (3, "Crossing"; also `Request.Cf`, 4). |
 | These compile and run as written: a nested opaque type with methods in an opaque type (`D1.Session`), a constant of a record type with optional fields (`R2.absent : R2.Cond`), `opts.?only_if` then `cond.?etag_matches`, a nested record of optional fields as an option (`http ?: R2.Http`), optional fields in `unique_with!`, a field and a method with the same name (`Object.Self.id` and `self.id()`), `metadata ?: m` with the caller that gives it, a nominal record of a nested block in a handler argument (`Queue.Message`), and `Reply(Js)` with a `Packed` value | none |
 | A type module has no `echo!`. `dbg` works in a type module and writes to stderr in order with stdout. `roc check` exits with 2 on a warning, and a `match` on a value that the compiler can evaluate (a parse of a constant) is the warning "unconditional condition". | Prototype only: the fake JS side writes visible ops with `dbg`, and its fake data comes from `Io.cross`, not from constants of the app |

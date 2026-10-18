@@ -214,7 +214,7 @@ hex = |bytes| {
 	Str.from_utf8(out) ?? ""
 }
 
-worker = Worker.{ fetch!, scheduled! }
+worker = Worker.new({ fetch!, scheduled! })
 
 event! : Worker.Event => Worker.Outcome
 event! = |e| worker.event!(e)

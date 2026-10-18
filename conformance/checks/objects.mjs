@@ -143,8 +143,8 @@ export const checks = [
   ['objects pass_through! in the Fetch of an object is InvalidState', async (t) => answer(await counter(t, 'pass_through', 'pt'), 'Err(InvalidState)')],
   // RPC on a stub (MODULES.md 8).
   ['objects rpc: call! and its twin with an Rpc constant on a stub', async (t) => answer(await t.get('/objects/rpc/increment?name=inc'), 'Ok(2) Ok(5)')],
-  ['objects rpc: a callee that gives Err(Nope(3)): RpcErr with the message Nope(3)', async (t) =>
-    answer(await t.get('/objects/rpc/boom?name=b'), 'Err(RpcErr({ message: "Nope(3)", name: "Error" }))')],
+  ['objects rpc: a callee that gives Err(Nope(3)): the caller gets Err(Remote(Nope(3)))', async (t) =>
+    answer(await t.get('/objects/rpc/boom?name=b'), 'Err(Remote(Nope(3)))')],
   ['objects rpc: an unknown method throws (RpcErr)', async (t) =>
     answer(await t.get('/objects/rpc/nothere?name=b'), 'Err(RpcErr({ message: "The RPC receiver does not implement the method \\"nothere\\".", name: "TypeError" }))')],
   ['objects rpc: a U64 of 2^60 in an argument and a reply comes back exact', async (t) => answer(await t.get('/objects/rpc/echo?name=b'), 'Ok({ big: 1152921504606846976 })')],

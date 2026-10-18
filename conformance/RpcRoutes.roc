@@ -55,14 +55,14 @@ RpcRoutes :: [].{
 
 show = |r| Response.from_text(200, Str.inspect(r))
 
-default_ping! : {}, { n : I64 } => Try(Str, [])
+default_ping! : {}, { n : I64 } => Try(Str, Rpc.NoErr)
 default_ping! = |{}, { n }| Ok("default ping ${n.to_str()}")
 
-default_hello! : {}, {} => Try(Str, [])
+default_hello! : {}, {} => Try(Str, Rpc.NoErr)
 default_hello! = |{}, {}| Ok("default hello")
 
 admin_fetch! : Request => Try(Response, [])
 admin_fetch! = |req| Ok(Response.from_text(200, "admin fetch ${req.url}"))
 
-purge! : {}, { prefix : Str } => Try(Str, [])
+purge! : {}, { prefix : Str } => Try(Str, Rpc.NoErr)
 purge! = |{}, { prefix }| Ok("purged ${prefix}")

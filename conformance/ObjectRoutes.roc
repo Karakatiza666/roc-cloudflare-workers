@@ -4,6 +4,7 @@
 import pf.Request
 import pf.Response
 import pf.Object
+import pf.Rpc
 import pf.Sql
 import pf.Io
 import pf.Time
@@ -261,16 +262,16 @@ increment! = |self, { by }| {
 	Ok(n)
 }
 
-object_ping! : Object.Self, { n : I64 } => Try(Str, [])
+object_ping! : Object.Self, { n : I64 } => Try(Str, Rpc.NoErr)
 object_ping! = |_self, { n }| Ok("object ping ${n.to_str()}")
 
-object_hello! : Object.Self, {} => Try(Str, [])
+object_hello! : Object.Self, {} => Try(Str, Rpc.NoErr)
 object_hello! = |_self, {}| Ok("object hello")
 
 boom! : Object.Self, { n : I64 } => Try(I64, [Nope(I64)])
 boom! = |_self, { n }| Err(Nope(n))
 
-echo! : Object.Self, { big : U64 } => Try({ big : U64 }, [])
+echo! : Object.Self, { big : U64 } => Try({ big : U64 }, Rpc.NoErr)
 echo! = |_self, v| Ok(v)
 
 # Store: `init!` waits 100 ms, then makes a table (PLAN.md 8f). No `alarm!`: `set_alarm!` gives `StorageErr`.
