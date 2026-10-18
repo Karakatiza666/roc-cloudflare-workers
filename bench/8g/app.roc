@@ -175,7 +175,7 @@ d1_all! = |n, rows| {
 	var $i = 0.U64
 	while $i < n {
 		got : Try(List(Row), _)
-		got = db.all!(sql, [rows.to_i64_wrap()])
+		got = db.all!(sql, [rows])
 		match got {
 			Ok(list) => {
 				$acc = $acc + list.len() + sum_rows(list)
@@ -194,7 +194,7 @@ d1_all_tuples! = |n, rows| {
 	var $i = 0.U64
 	while $i < n {
 		got : Try(List(RowT), _)
-		got = db.all_tuples!(sql, [rows.to_i64_wrap()])
+		got = db.all_tuples!(sql, [rows])
 		match got {
 			Ok(list) => {
 				$acc = $acc + list.len() + sum_tuples(list)
@@ -211,7 +211,7 @@ d1_rows! = |n, rows| {
 	var $acc = 0.U64
 	var $i = 0.U64
 	while $i < n {
-		match db.rows!(sql, [rows.to_i64_wrap()]) {
+		match db.rows!(sql, [rows]) {
 			Ok(r) => {
 				$acc = $acc + r.rows.len() + r.columns.len()
 			}
