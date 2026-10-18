@@ -19,11 +19,24 @@ import cbor.Cbor
 
 Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)], location_hint : Str }.{
 
-	namespace : Str -> Object.Namespace
-	namespace = |binding| Object.Namespace.{ binding, jurisdiction: "" }
+	## A namespace: the binding name and the class of its objects (`class_name` in the Wrangler config). `script`: the
+	## Worker that has the class (`script_name`), when it is not this Worker.
+	namespace : Str, { class : Str, script ?: Str } -> Object.Namespace
+	namespace = |binding, opts| Object.Namespace.{ binding, jurisdiction: "", class: opts.class, script: opts.?script ?? "" }
 
-	## A namespace: the binding name and its jurisdiction ("" for none). Data.
-	Namespace := { binding : Str, jurisdiction : Str }.{
+	## A namespace: the binding name, its jurisdiction ("" for none), its class and the Worker of the class ("" for
+	## this Worker). Data.
+	Namespace := { binding : Str, jurisdiction : Str, class : Str, script : Str }.{
+
+		## The binding for the manifest (`Worker.new({ bindings: [...] })`, MODULES.md 3): the kind `object`, with
+		## `class`, and `script` when the class is in another Worker. With no `script`, the shim checks at load that
+		## the class is in `objects`.
+		declare : Object.Namespace -> { name : Str, kind : Str, props : List((Str, Str)) }
+		declare = |ns| {
+			props = [("class", ns.class), ("script", ns.script)].keep_if(|(_, v)| v != "")
+			{ name: ns.binding, kind: "object", props }
+		}
+
 		## A stub of the object with this name: `getByName(name)` runs in the program of each call.
 		named : Object.Namespace, Str -> Object
 		named = |ns, name| stub(ns, Named(name), Err(MissingField))
@@ -148,23 +161,6 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 			Err(t) => crash "Object.Socket.tags!: ${t.name}: ${t.message}"
 		}
 
-		## `ws.serializeAttachment(bytes)`: the value as CBOR bytes (MC5). It stays while the object sleeps. Workers
-		## refuses more than 16,384 bytes: `TooLarge`.
-		attach! : Object.Socket, a => Try({}, [TooLarge]) where [a.Cbor.Encodable([])]
-		attach! = |sock, value| match Io.call!([Call(Ref(sock.ref), "serializeAttachment", [Lit(Bytes(Cbor.encode(value)))])]) {
-			Ok(_) => Ok({})
-			Err(_) => Err(TooLarge)
-		}
-
-		## `ws.deserializeAttachment()` into the type of the call. `NotFound` when there is none.
-		attachment! : Object.Socket => Try(a, [NotFound, BadData(Str)]) where [a.Cbor.Parseable([InvalidCbor(U64), ..errs])]
-		attachment! = |sock| match Io.call!([Call(Ref(sock.ref), "deserializeAttachment", [])]) {
-			Ok(Bytes(bytes)) => Cbor.parse(bytes).map_err(|e| BadData(Str.inspect(e)))
-			Ok(Null) | Ok(Undefined) => Err(NotFound)
-			Ok(other) => Err(BadData("the attachment is ${Str.inspect(other)}, not CBOR bytes"))
-			Err(t) => Err(BadData("${t.name}: ${t.message}"))
-		}
-
 		## `ctx.getWebSocketAutoResponseTimestamp(ws)`: the time of the last auto response, or `NotFound`.
 		auto_response_ms! : Object.Socket => Try(U64, [NotFound])
 		auto_response_ms! = |sock| match Io.call!([Call(Root("ctx"), "getWebSocketAutoResponseTimestamp", [Lit(Ref(sock.ref))])]) {
@@ -211,18 +207,30 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 		sql_rows_with! : Object.Self, Str, params, { max_bytes : U64 } => Try(Sql.Rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), TooLarge]) where [params.Cbor.Encodable([])]
 		sql_rows_with! = |self, sql, params, opts| sql_raw!(self, sql, Cbor.encode(params), opts.max_bytes)
 
-		## `storage.setAlarm(time_ms)`: a promise, one wait. A class with no `alarm!` has no `alarm` method in JS, so
-		## Workers throws: `StorageErr`.
-		set_alarm : Object.Self, U64 -> Io({}, [StorageErr(Io.Thrown)])
-		set_alarm = |_self, time_ms| Io.new(
-			[Get(Root("ctx"), "storage"), Call(Slot(0), "setAlarm", [Lit(Int(time_ms.to_i64_try() ?? I64.highest))])],
+		## `storage.setAlarm(epoch_ms)`: a promise, one wait. `epoch_ms` is a time of the clock (`Time.now_ms!`), not a
+		## delay: use `set_alarm_in!` for a delay. A class with no `alarm!` has no `alarm` method in JS, so Workers
+		## throws: `StorageErr`.
+		set_alarm_at : Object.Self, U64 -> Io({}, [StorageErr(Io.Thrown)])
+		set_alarm_at = |_self, epoch_ms| Io.new(
+			[Get(Root("ctx"), "storage"), Call(Slot(0), "setAlarm", [Lit(Int(epoch_ms.to_i64_try() ?? I64.highest))])],
 			|r| r.map_ok(|_| {}).map_err(|t| StorageErr(t)),
 		)
 
-		set_alarm! : Object.Self, U64 => Try({}, [StorageErr(Io.Thrown)])
-		set_alarm! = |self, time_ms| Io.run!(set_alarm(self, time_ms))
+		set_alarm_at! : Object.Self, U64 => Try({}, [StorageErr(Io.Thrown)])
+		set_alarm_at! = |self, epoch_ms| Io.run!(set_alarm_at(self, epoch_ms))
 
-		## `storage.getAlarm()`: the time in ms, or `NotFound`.
+		## `storage.setAlarm(Date.now() + delay_ms)`: the alarm fires `delay_ms` after the call. `pf.alarmIn` reads the
+		## clock in the same program.
+		set_alarm_in : Object.Self, U64 -> Io({}, [StorageErr(Io.Thrown)])
+		set_alarm_in = |_self, delay_ms| Io.new(
+			[Get(Root("ctx"), "storage"), Call(Root("pf"), "alarmIn", [Slot(0), Lit(Int(delay_ms.to_i64_try() ?? I64.highest))])],
+			|r| r.map_ok(|_| {}).map_err(|t| StorageErr(t)),
+		)
+
+		set_alarm_in! : Object.Self, U64 => Try({}, [StorageErr(Io.Thrown)])
+		set_alarm_in! = |self, delay_ms| Io.run!(set_alarm_in(self, delay_ms))
+
+		## `storage.getAlarm()`: the time in ms (absolute, like `set_alarm_at!`), or `NotFound`.
 		get_alarm : Object.Self -> Io(U64, [NotFound, StorageErr(Io.Thrown)])
 		get_alarm = |_self| Io.new(
 			[Get(Root("ctx"), "storage"), Call(Slot(0), "getAlarm", [])],
@@ -455,6 +463,37 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 		## `storage.kv.delete(key)`. A key with no value is `Ok` too.
 		delete! : Object.Cell(a), Object.Self => Try({}, [StorageErr(Io.Thrown)])
 		delete! = |c, _self| Io.call!(kv_ops("delete", [Lit(Text(c.key))])).map_ok(|_| {}).map_err(|t| StorageErr(t))
+	}
+
+	## A typed attachment of a socket (MODULES.md 12.1): CBOR bytes in `ws.serializeAttachment`. A constant (WR1), like
+	## `Object.Cell`: the same constant writes and reads, so the stored type and the read type are one. A socket has one
+	## attachment slot: two constants on one socket share it. `name` shows in the `BadData` text only.
+	attachment : Str -> Object.Attachment(a) where [a.Cbor.Encodable([]), a.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+	attachment = |name| Object.Attachment.{ name, write: |v| Cbor.encode(v), read: |bytes| Cbor.parse(bytes).map_err(|e| Str.inspect(e)) }
+
+	Attachment(a) :: { name : Str, write : a -> List(U8), read : List(U8) -> Try(a, Str) }.{
+		## `ws.serializeAttachment(bytes)`: it stays while the object sleeps. Workers refuses more than 16,384 bytes:
+		## `TooLarge`.
+		set! : Object.Attachment(a), Object.Socket, a => Try({}, [TooLarge])
+		set! = |att, sock, value| {
+			write = att.write
+			match Io.call!([Call(Ref(sock.ref), "serializeAttachment", [Lit(Bytes(write(value)))])]) {
+				Ok(_) => Ok({})
+				Err(_) => Err(TooLarge)
+			}
+		}
+
+		## `ws.deserializeAttachment()`. `NotFound` when there is none.
+		get! : Object.Attachment(a), Object.Socket => Try(a, [NotFound, BadData(Str)])
+		get! = |att, sock| {
+			read = att.read
+			match Io.call!([Call(Ref(sock.ref), "deserializeAttachment", [])]) {
+				Ok(Bytes(bytes)) => read(bytes).map_err(|m| BadData("the attachment ${att.name}: ${m}"))
+				Ok(Null) | Ok(Undefined) => Err(NotFound)
+				Ok(other) => Err(BadData("the attachment ${att.name} is ${Str.inspect(other)}, not CBOR bytes"))
+				Err(t) => Err(BadData("${t.name}: ${t.message}"))
+			}
+		}
 	}
 }
 

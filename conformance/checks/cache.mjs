@@ -32,6 +32,23 @@ export const checks = [
     answer(await t.get(`/cache/put_stream?url=${key('s')}&from=${q(`${t.server}/hello`)}`), 'Ok put');
     answer(await t.get(`/cache/get?url=${key('s')}`), 'Ok 200 cc=max-age=60 text=hello');
   }],
+  // 8h wave B: `put!` tees the stream and gives the response to send: the client gets the whole body, and the cache holds it.
+  ['cache put! of a stream body gives the response to send: the client body is complete and the cache holds it', async (t) => {
+    const r = await t.get(`/cache/put_send?url=${key('ps')}&from=${q(`${t.server}/ten`)}`);
+    answer(r, '0123456789');
+    answer(await t.get(`/cache/get?url=${key('ps')}`), 'Ok 200 cc=max-age=60 text=0123456789');
+  }],
+  ['cache put_after! of a stream body: the client body is complete and the cache holds it', async (t) => {
+    const r = await t.get(`/cache/put_after?url=${key('pa')}&from=${q(`${t.server}/ten`)}`);
+    answer(r, '0123456789');
+    let got;
+    for (let i = 0; i < 60; i++) {
+      got = await t.get(`/cache/get?url=${key('pa')}`);
+      if (got.body !== 'Err NotFound') break;
+      await new Promise((res) => setTimeout(res, 50));
+    }
+    answer(got, 'Ok 200 cc=max-age=60 text=0123456789');
+  }],
   ['cache delete!', async (t) => {
     await put(t, 'd');
     answer(await t.get(`/cache/delete?url=${key('d')}`), 'Ok deleted');

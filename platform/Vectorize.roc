@@ -14,6 +14,10 @@ Vectorize(meta) := { name : Str, write : meta -> Try(Str, Str), read : Str -> Tr
 	json : Str -> Vectorize(meta) where [meta.Json.Encodable(enc), meta.Json.Parseable([InvalidJson(Str), ..errs])]
 	json = |name| Vectorize.{ name, write: |m| Json.to_str_try(m).map_err(|e| Str.inspect(e)), read: |text| Json.parse(text).map_err(|e| Str.inspect(e)) }
 
+	## The binding for the manifest (`Worker.new({ bindings: [...] })`, MODULES.md 3): the kind `vectorize`.
+	declare : Vectorize(meta) -> { name : Str, kind : Str, props : List((Str, Str)) }
+	declare = |b| { name: b.name, kind: "vectorize", props: [] }
+
 	## A vector to write: `namespace` and `metadata` are optional.
 	Vector(m) : { id : Str, values : List(F64), namespace ?: Str, metadata ?: m }
 

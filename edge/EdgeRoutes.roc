@@ -3,7 +3,6 @@
 import pf.Request
 import pf.Response
 import pf.Body
-import pf.Ctx
 import pf.Time
 import pf.Log
 import pf.D1
@@ -36,18 +35,20 @@ EdgeRoutes :: [].{
 			last = big.get(size - 1) ?? 0
 			Response.from_text(200, "grew mb=${Q.num(req, "mb").to_str()} len=${big.len().to_str()} last=${last.to_str()}")
 		}
-		# API.md 10.2: `respond!` with a whole body, then `s` waits of 1 s, a log line after each.
+		# API.md 10.2: `Response.after` with a whole body: `s` waits of 1 s, a log line after each.
 		["after"] => {
 			tag = Q.text(req, "tag")
-			_ = Ctx.respond!(Response.from_text(200, "early ${tag}"))
-			var $i = 1.U64
-			while $i <= Q.num(req, "s") {
-				Time.sleep!(1000)
-				Log.info!("edge after", { tag, i: $i })
-				$i = $i + 1
+			work! = |_| {
+				var $i = 1.U64
+				while $i <= Q.num(req, "s") {
+					Time.sleep!(1000)
+					Log.info!("edge after", { tag, i: $i })
+					$i = $i + 1
+				}
+				Log.info!("edge after done", { tag })
+				Ok({})
 			}
-			Log.info!("edge after done", { tag })
-			Response.from_text(200, "not sent")
+			Response.from_text(200, "early ${tag}").after(work!)
 		}
 		# API.md 10.2: a `Body.writer!` stream of `s` lines, one each second, then `close!`.
 		["writer"] => {
@@ -56,25 +57,27 @@ EdgeRoutes :: [].{
 			match Body.writer!({}) {
 				Err(e) => Response.from_text(500, "writer ${Str.inspect(e)}")
 				Ok({ body, writer }) => {
-					_ = Ctx.respond!(Response.from_body(200, "text/plain", body))
-					var $i = 1.U64
-					var $ok = Bool.True
-					while $ok and $i <= s {
-						match writer.write_text!("tick ${$i.to_str()}\n") {
-							Ok({}) => {
-								Log.info!("edge writer", { tag, i: $i })
-								Time.sleep!(1000)
-								$i = $i + 1
-							}
-							Err(e) => {
-								Log.warn!("edge writer failed", { tag, i: $i, error: Str.inspect(e) })
-								$ok = Bool.False
+					work! = |_| {
+						var $i = 1.U64
+						var $ok = Bool.True
+						while $ok and $i <= s {
+							match writer.write_text!("tick ${$i.to_str()}\n") {
+								Ok({}) => {
+									Log.info!("edge writer", { tag, i: $i })
+									Time.sleep!(1000)
+									$i = $i + 1
+								}
+								Err(e) => {
+									Log.warn!("edge writer failed", { tag, i: $i, error: Str.inspect(e) })
+									$ok = Bool.False
+								}
 							}
 						}
+						writer.close!()
+						Log.info!("edge writer done", { tag, ok: $ok })
+						Ok({})
 					}
-					writer.close!()
-					Log.info!("edge writer done", { tag, ok: $ok })
-					Response.from_text(200, "not sent")
+					Response.from_body(200, "text/plain", body).after(work!)
 				}
 			}
 		}

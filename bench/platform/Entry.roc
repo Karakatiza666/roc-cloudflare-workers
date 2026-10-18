@@ -17,6 +17,7 @@
 ## | cf | `undefined`, or an object with each field of `Request.Cf` as `{ Ok: v }` or `{ Err: "Missing" }` |
 ## | Outcome | `{ outcome: "respond", status, headers, body, webSocket? }`, `{ outcome: "reply", value }`, `{ outcome: "done" }`, `{ outcome: "failed", message }`, `{ outcome: "unhandled" }` |
 import Js
+import Io
 import Body
 import Request
 import Response
@@ -48,6 +49,28 @@ Entry :: [].{
 			Text("manifest") => Manifest
 			other => crash "Entry.event: unknown kind ${Str.inspect(other)}"
 		}
+	}
+
+	## The outcome for JS (`main.roc`). A `Respond` with `after_work!` (`Response.after`, API.md 10.2): the response goes
+	## to the `respond` hook of the entry now (`pf.respond`), then the work runs in the same task, and its result is the
+	## outcome (`Done`, or `Failed` with the text of the error).
+	finish! : Worker.Outcome => Js
+	finish! = |o| match o {
+		Respond(res) => match res.?after_work! {
+			Ok(work!) => {
+				match Io.call!([Call(Root("pf"), "respond", [Lit(Entry.outcome(o))])]) {
+					Ok(_) => {}
+					# No hook (a `Respond` for an event that is not a fetch) or a response that Workers refuses: a bug of the app.
+					Err(t) => crash "Response.after: respond: ${t.name}: ${t.message}"
+				}
+				match work!({}) {
+					Ok({}) => Entry.outcome(Done)
+					Err(why) => Entry.outcome(Failed(why))
+				}
+			}
+			Err(_) => Entry.outcome(o)
+		}
+		_ => Entry.outcome(o)
 	}
 
 	outcome : Worker.Outcome -> Js

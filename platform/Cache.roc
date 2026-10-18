@@ -36,36 +36,65 @@ Cache :: { which : [Default, Named(Str)] }.{
 	get! : Cache, Str => Try(Response, [NotFound, CacheErr(Io.Thrown)])
 	get! = |cache, url| Io.run!(get(cache, url))
 
-	## `cache.put(url, response)`. A 206 response or a response with `Vary: *` is `CacheErr` (a throw). A response
-	## that is not cached (`Set-Cookie`, `no-store`, too large) is `Ok`: `put` does not say it (Cloudflare docs).
-	## A `Stream` body is read by the put.
-	put : Cache, Str, Response -> Io({}, [CacheErr(Io.Thrown)])
+	## `cache.put(url, response)`, then the response to send. A `Stream` body is read by the put, so the program tees it
+	## first (`ReadableStream.tee()`): one branch goes to the cache, and the response that `put` gives has the other.
+	## Send that response, not the one given. The put reads its branch to the end, so the branch of the response holds the
+	## whole body in JS until it is sent: for a large stream use `put_after!`. Other bodies: the same response.
+	## A 206 response or a response with `Vary: *` is `CacheErr` (a throw). A response that is not cached
+	## (`Set-Cookie`, `no-store`, too large) is `Ok`: `put` does not say it (Cloudflare docs).
+	put : Cache, Str, Response -> Io(Response, [CacheErr(Io.Thrown)])
 	put = |cache, url, res| {
-		body = match res.body {
-			Empty => Null
-			Text(s) => Text(s)
-			Bytes(b) => Bytes(b)
-			Stream(r) => Ref(r)
-		}
-		init = [
+		init = Record([
 			("status", Lit(Int(res.status.to_i64()))),
 			("headers", Lit(Arr(res.headers.map(|h| Arr([Text(h.name), Text(h.value)]))))),
-		]
-		Io.new(
-			cache_ops(cache).concat([
-				Record(init),
-				New(Root("global"), "Response", [Lit(body), Slot(2)]),
-				Call(Slot(1), "put", [Lit(Text(url)), Slot(3)]),
-			]),
-			|r| match r {
-				Ok(_) => Ok({})
-				Err(t) => Err(CacheErr(t))
-			},
-		)
+		])
+		match res.body {
+			Stream(r) => Io.new(
+				# Slot 2: [a, b]. Slot 3: a. Slot 4: the init. Slot 5: the put. Slot 6 (the result): b.
+				cache_ops(cache).concat([
+					Call(Ref(r), "tee", []),
+					Get(Slot(2), "0"),
+					init,
+					New(Root("global"), "Response", [Slot(3), Slot(4)]),
+					Call(Slot(1), "put", [Lit(Text(url)), Slot(5)]),
+					Get(Slot(2), "1"),
+				]),
+				|got| match got {
+					Ok(Ref(b)) => Ok({ ..res, body: Stream(b) })
+					Ok(other) => crash "Cache.put: the branch of the tee is ${Str.inspect(other)}"
+					Err(t) => Err(CacheErr(t))
+				},
+			)
+			body => {
+				arg = match body {
+					Text(s) => Text(s)
+					Bytes(b) => Bytes(b)
+					_ => Null
+				}
+				Io.new(
+					cache_ops(cache).concat([init, New(Root("global"), "Response", [Lit(arg), Slot(2)]), Call(Slot(1), "put", [Lit(Text(url)), Slot(3)])]),
+					|got| match got {
+						Ok(_) => Ok(res)
+						Err(t) => Err(CacheErr(t))
+					},
+				)
+			}
+		}
 	}
 
-	put! : Cache, Str, Response => Try({}, [CacheErr(Io.Thrown)])
+	put! : Cache, Str, Response => Try(Response, [CacheErr(Io.Thrown)])
 	put! = |cache, url, res| Io.run!(put(cache, url, res))
+
+	## Put after the response (API.md 10.2): tee a `Stream` body now (one `call!`, no wait), and give the response to
+	## send, with `Response.after` work that puts the other branch. The client and the cache read at the same time, so
+	## the tee holds only the bytes that one reads before the other. An `Err` of the put is the log line
+	## `fetch: after respond: failed: ...`. Only for the response of a `fetch!` handler: elsewhere the work does not run.
+	put_after! : Cache, Str, Response => Try(Response, [CacheErr(Io.Thrown)])
+	put_after! = |cache, url, res| {
+		(mine, theirs) = res.body.tee!() ? |BodyErr(t)| CacheErr(t)
+		copy = { ..res, body: theirs }
+		Ok({ ..res, body: mine }.after(|_| cache.put!(url, copy).map_ok(|_| {})))
+	}
 
 	## `cache.delete(url)`: `false` is `NotFound`.
 	delete : Cache, Str -> Io({}, [NotFound, CacheErr(Io.Thrown)])

@@ -50,7 +50,7 @@ const cf = {
   httpProtocol: 'HTTP/1.1', requestPriority: 'weight=192;exclusive=0', tlsCipher: 'AEAD-AES128-GCM-SHA256', tlsVersion: 'TLSv1.3',
 };
 
-// A local HTTP server for the `Http` checks: `/hello` (text), `/ten` (10 bytes), `/slow` (answers after 2 s), `/echo` (the
+// A local HTTP server for the `Http` checks: `/hello` (text), `/ten` (10 bytes), `/slow` (answers after 2 s), `/broken` (6 MiB, then a broken connection), `/echo` (the
 // method, the header `x-test` and the body), `/status/<n>` (that status, no body).
 const server = createServer((req, res) => {
   const chunks = [];
@@ -60,8 +60,19 @@ const server = createServer((req, res) => {
     if (path === '/hello') return res.end('hello');
     if (path === '/ten') return res.end('0123456789');
     if (path === '/slow') return setTimeout(() => res.end('late'), 2000);
+    // 6 MiB in chunks (no content-length), then the connection breaks: a stream that errors in the middle.
+    if (path === '/broken') {
+      res.write(Buffer.alloc(6 * 1024 * 1024, 66));
+      return setTimeout(() => res.destroy(), 100);
+    }
     if (path === '/echo_json') return res.end(`${req.method} ${req.headers['content-type'] ?? '-'} ${Buffer.concat(chunks).toString()}`);
     if (path === '/echo') return res.end(`${req.method} ${req.headers['x-test'] ?? '-'} ${Buffer.concat(chunks).toString()}`);
+    // Cloudflare error pages for `Http.cloudflare_error`: the status and the body `error code: <n>` (`/cf64`: 64 bytes, `/cflong`: 76).
+    if (path === '/cf530') return ((res.statusCode = 530), res.end('error code: 1016'));
+    if (path === '/cf403') return ((res.statusCode = 403), res.end('error code: 1003'));
+    if (path === '/cf200') return res.end('error code: 1003');
+    if (path === '/cf64') return ((res.statusCode = 403), res.end(`error code: 1003${' '.repeat(48)}`));
+    if (path === '/cflong') return ((res.statusCode = 403), res.end(`error code: 1003${' '.repeat(60)}`));
     if (path.startsWith('/status/')) {
       res.statusCode = Number(path.slice(8));
       return res.end();
@@ -155,7 +166,12 @@ async function runChecks() {
     // PLAN.md 8f: another Miniflare with the same modules and `opts` (no options of the check files): `entry`, when given,
     // is the text of worker.js (`t.entry` is the real one). The check awaits `ready` and calls `dispose`.
     entry: readFileSync(join(here, 'worker.js'), 'utf8'),
+    // The app declares bindings (`Worker.new bindings`, conformance/app.roc) that the shim checks: `start` adds them
+    // (DB, KV, COUNTERS) to the options. `startBare` does not (the checks of the load, checks/bindings.mjs).
     start(opts = {}, entry = undefined) {
+      return t.startBare({ ...opts, d1Databases: [...new Set(['DB', ...(opts.d1Databases ?? [])])], kvNamespaces: [...new Set(['KV', ...(opts.kvNamespaces ?? [])])], durableObjects: { COUNTERS: { className: 'Counter', useSQLite: true }, ...opts.durableObjects } }, entry);
+    },
+    startBare(opts = {}, entry = undefined) {
       const mods = entry === undefined ? modules : [{ ...modules[0], contents: entry }, ...modules.slice(1)];
       return track(new Miniflare(convertV4MiniflareOptions({ modules: mods, modulesRoot: here, compatibilityDate: '2026-10-01', compatibilityFlags: ['enable_request_signal'], port: 0, cf, ...opts })));
     },

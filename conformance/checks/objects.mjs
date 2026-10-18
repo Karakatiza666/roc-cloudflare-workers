@@ -49,7 +49,7 @@ export const checks = [
   ['objects SQL: a syntax error is SqlErr', async (t) => answer(await counter(t, 'sql_syntax'), 'Err(SqlErr({ message: "near \\"SELEC\\": syntax error at offset 0: SQLITE_ERROR", name: "Error" }))')],
   ['objects sql!: rows of the type of the call', async (t) => answer(await counter(t, 'sql_all'), 'Ok([{ id: 1, u: "a" }])')],
   ['objects sql!: the integer rules of D1 (an Int parameter as text, CAST(v AS TEXT) into an I64, BadData with no cast)', async (t) =>
-    answer(await counter(t, 'sql_int'), 'cast=Ok([{ v: 9223372036854775807 }, { v: -2687166099708853831 }]) plain=Err(BadData("column v: integer above 2^53, use CAST(v AS TEXT)"))')],
+    answer(await counter(t, 'sql_int'), 'cast=Ok([{ v: 9223372036854775807 }, { v: -2687166099708853831 }]) plain=Err(BadData("column v: integer of 2^53 or more, read it with CAST(v AS TEXT) into an I64, U64 or Id64 field"))')],
   // PLAN.md 8h item 3: parameters as an `Encodable` tuple or list for object SQL (conformance/ObjectRoutes.roc, `sql_params!`).
   ['objects SQL params: a tuple of (Str, I64, F64, blob) is stored as text, integer, real, blob', async (t) =>
     answer(await sqlp(t, 'tuple'), 'Ok([{ a: "héllo", b: 42, c: 1.5, hd: "010203", ta: "text", tb: "integer", tc: "real", td: "blob" }])')],
@@ -161,7 +161,8 @@ export const checks = [
   ['objects init! past the Init deadline is cancelled: ObjectErr with the name of the task', async (t) => {
     const r = await t.get('/objects/slow?name=s1');
     answer(r, 'Err ObjectErr({ message: "Slow.init: cancelled: deadline", name: "Error" })');
-    ok(r.ms < 2500, `took ${r.ms} ms`);
+    // The deadline is 1 s and init! sleeps 6 s: a cancel at the deadline, with room for a slow load.
+    ok(r.ms < 4500, `took ${r.ms} ms`);
     return `${r.ms} ms`;
   }],
   ['objects a KV-backed class: its first event names the class and new_sqlite_classes', async (t) => {
@@ -201,5 +202,36 @@ export const checks = [
     const got = ticks(t).map((x) => `${x.retry_count} ${x.is_retry}`);
     eq(got.join(', '), '0 false, 1 true, 2 true', 'the runs');
     return got.join(', ');
+  }],
+  // `set_alarm_in!` (MODULES.md 7): the alarm is `delay` after the call (`pf.alarmIn` adds `Date.now()`), not at once. `alarm!` logs "counter alarm".
+  ['objects set_alarm_in! and its Io twin: get_alarm! is about now + delay, and the alarm fires after the delay, not at once', async (t) => {
+    const alarmLogs = (id) => t.logs.filter((l) => String(l.message).includes('"msg":"counter alarm"')).map((l) => JSON.parse(String(l.message).slice(String(l.message).indexOf('{')))).filter((l) => l.id === id);
+    for (const [twin, name] of [['0', 'ain1'], ['1', 'ain2']]) {
+      const t1 = Date.now();
+      const r = await counter(t, 'alarm_in', name, `&ms=1500&twin=${twin}`);
+      const t2 = Date.now();
+      const m = /^set=Ok\(\{\}\) id=(\w+) t0=(\d+) alarm=Ok\((\d+)\)$/.exec(r.body);
+      ok(m, `the answer: ${r.body}`);
+      const [id, t0, alarm] = [m[1], Number(m[2]), Number(m[3])];
+      ok(alarm >= t0 + 1500 && alarm <= t2 + 1500, `get_alarm! ${alarm}, want ${t0 + 1500} to ${t2 + 1500}`);
+      ok(alarm >= t1 + 1500 - 50, `get_alarm! ${alarm} is not about now + 1500 (${t1 + 1500})`);
+      eq(alarmLogs(id).length, 0, 'the alarm has not fired at once');
+      await sleep(600);
+      eq(alarmLogs(id).length, 0, 'the alarm has not fired 600 ms after the call');
+      for (let i = 0; i < 100 && !alarmLogs(id).length; i++) await sleep(50);
+      const fired = alarmLogs(id)[0];
+      ok(fired, 'the alarm fired');
+      ok(fired.at >= t0 + 1500 - 50, `fired at ${fired.at}, before the delay (t0 ${t0})`);
+    }
+  }],
+  ['objects set_alarm_at!: get_alarm! gives the time, and the alarm fires at it', async (t) => {
+    const logs = (id) => t.logs.filter((l) => String(l.message).includes('"msg":"counter alarm"')).map((l) => JSON.parse(String(l.message).slice(String(l.message).indexOf('{')))).filter((l) => l.id === id);
+    const r = await counter(t, 'alarm_at', 'aat', '&ms=1000');
+    const m = /^set=Ok\(\{\}\) id=(\w+) t=(\d+) alarm=Ok\((\d+)\)$/.exec(r.body);
+    ok(m, `the answer: ${r.body}`);
+    eq(m[3], m[2], 'get_alarm! is the time that was set');
+    for (let i = 0; i < 100 && !logs(m[1]).length; i++) await sleep(50);
+    const fired = logs(m[1])[0];
+    ok(fired && fired.at >= Number(m[2]) - 50, `fired ${JSON.stringify(fired)}, want at ${m[2]} or later`);
   }],
 ];

@@ -47,6 +47,82 @@ function r2pair(o) {
   for (const k of R2_SUMS) checksums[k] = o.checksums?.[k];
   return { meta, checksums };
 }
+// `pf.r2put` (MODULES.md 5.3): a put of a stream that may have no known length. R2 takes a stream only with a known
+// length ("Provided readable stream must have a known length", a TypeError before any read), so on that error the
+// stream goes as bytes: up to `R2_PART_BYTES` it is one put of the bytes, with each option. Past it, it is a multipart
+// upload of parts of `R2_PART_BYTES` (the last one smaller), one part in memory at a time; an error aborts the upload.
+export const R2_PART_BYTES = 5 * 1024 * 1024;
+const R2_SUM_KEYS = ['md5', 'sha1', 'sha256', 'sha384', 'sha512'];
+async function r2put(bucket, key, stream, options, signal) {
+  options = options ?? undefined;
+  try {
+    return await bucket.put(key, stream, options);
+  } catch (e) {
+    if (!(e instanceof TypeError) || !/known length/.test(String(e.message)) || stream.locked) throw e;
+  }
+  const reader = stream.getReader();
+  const part = new Uint8Array(R2_PART_BYTES);
+  let n = 0, rest = null, done = false;
+  // Fill `part` to `R2_PART_BYTES`, or to the end of the stream. A chunk past the part waits in `rest`.
+  const fill = async () => {
+    while (n < R2_PART_BYTES) {
+      let v = rest;
+      rest = null;
+      if (!v) {
+        const r = await reader.read();
+        if (r.done) return void (done = true);
+        v = bytesOf(r.value);
+      }
+      const take = Math.min(v.byteLength, R2_PART_BYTES - n);
+      part.set(v.subarray(0, take), n);
+      n += take;
+      if (take < v.byteLength) rest = v.subarray(take);
+    }
+    // A full part: read on to the next bytes, so a stream of exactly one part is one put.
+    while (!rest) {
+      const r = await reader.read();
+      if (r.done) return void (done = true);
+      const v = bytesOf(r.value);
+      if (v.byteLength) rest = v;
+    }
+  };
+  try {
+    await fill();
+  } catch (e) {
+    reader.cancel(e).catch(() => {});
+    throw e;
+  }
+  if (done) return bucket.put(key, part.subarray(0, n), options);
+  if (options?.onlyIf || R2_SUM_KEYS.some((k) => options?.[k] !== undefined)) {
+    const e = new TypeError('R2 put: a stream with no known length over 5 MiB is a multipart upload, which takes no only_if and no checksum: give length_bytes');
+    reader.cancel(e).catch(() => {});
+    throw e;
+  }
+  const upload = await bucket.createMultipartUpload(key, { httpMetadata: options?.httpMetadata, customMetadata: options?.customMetadata });
+  try {
+    const parts = [];
+    for (;;) {
+      signal?.throwIfAborted();
+      parts.push(await upload.uploadPart(parts.length + 1, part.subarray(0, n)));
+      if (done) break;
+      n = 0;
+      await fill();
+      if (n === 0) break;
+    }
+    const o = await upload.complete(parts);
+    // The edge gives no `httpMetadata` and `customMetadata` in the result of `complete` (PLAN.md 11c, E28): the ones of the call.
+    const meta = {};
+    for (const k of R2_META) meta[k] = o[k];
+    if (options?.httpMetadata) meta.httpMetadata = options.httpMetadata;
+    if (options?.customMetadata) meta.customMetadata = options.customMetadata;
+    meta.checksums = o.checksums;
+    return meta;
+  } catch (e) {
+    reader.cancel(e).catch(() => {});
+    await upload.abort().catch(() => {});
+    throw e;
+  }
+}
 // The writers of `pf.writer` by their readable side and by their writer (`close`, `respond`).
 const writerOfStream = new WeakMap();
 const writerOf = new WeakMap();
@@ -200,6 +276,10 @@ export function makeHelpers(t, c, shim, tasks) {
       for (const [k] of entries) out.push(k);
       return new Limited(out, maxBytes ?? Infinity);
     },
+    // `Object.Self.set_alarm_in!`: `storage.setAlarm(Date.now() + delayMs)`, so the delay needs no clock crossing.
+    alarmIn(storage, delayMs) {
+      return storage.setAlarm(Date.now() + delayMs);
+    },
     // The item whose `id` is `id`, else undefined (OP7). `Queue.Message.ack!` finds its message with it.
     findById(array, id) {
       if (!Array.isArray(array)) throw new TypeError('findById: the first argument must be an array');
@@ -223,6 +303,11 @@ export function makeHelpers(t, c, shim, tasks) {
     // data: a program has no loop (OP4), and a class instance for each object would be a ref each.
     r2list(res) {
       return { objects: res.objects.map(r2pair), prefixes: [...(res.delimitedPrefixes ?? [])], truncated: Boolean(res.truncated), cursor: res.cursor };
+    },
+    // `R2.put!`, `put_with!` of a stream with no `length_bytes` (MODULES.md 5.3): the put, or the bytes or a multipart
+    // upload for a stream with no known length. The signal of the program stops a multipart upload between parts.
+    r2put(bucket, key, stream, options) {
+      return r2put(bucket, key, stream, options, c?.signal);
     },
     // `Kv.get!`: the stream of `get(key, { type: "stream" })` to `max` bytes, or undefined for a key that is not there
     // (`null`). `readUpTo(null)` is no bytes, so a missing key needs its own helper.
@@ -471,16 +556,16 @@ export function makeHelpers(t, c, shim, tasks) {
       if (t) (t.writers ??= new Set()).add(s);
       return { readable: ts.readable, writer };
     },
-    // `Body.Writer.close!`: no wait. The body is complete now when it is the response of `respond!` (API.md 10.2).
+    // `Body.Writer.close!`: no wait. The body is complete now when it is the response of `Response.after` (API.md 10.2).
     close(writer) {
       const s = writerOf.get(writer);
       if (!s) throw new TypeError('close: not a writer of Body.writer!');
       s.finish(true);
       if (t && t.responseWriter === s && t.response === 'open') tasks.bodyComplete(t);
     },
-    // `Ctx.respond!` (API.md 10.2): the outcome `Respond` (the shape of `platform/Entry.roc`) as a `Response` for
+    // `Response.after` (API.md 10.2, `Entry.finish!`): the outcome `Respond` (the shape of `platform/Entry.roc`) as a `Response` for
     // Workers now. The task goes on. Only in an event whose entry gave a `respond` hook (the `fetch` of a Worker, of a
-    // named entry point and of a Durable Object), once: else an InvalidStateError (status 1, `InvalidState`).
+    // named entry point and of a Durable Object), once: else an InvalidStateError (a crash of `Entry.finish!`).
     respond(o) {
       const h = t?.hooks;
       if (!h?.respond) throw new DOMException(`respond: not in a Fetch (${t?.kind ?? 'no task'})`, 'InvalidStateError');

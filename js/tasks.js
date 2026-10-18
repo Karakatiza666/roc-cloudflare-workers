@@ -7,13 +7,13 @@
 // aborts its signal, or when its last started program settles (`spawnStart`, `spawnEnd`, API.md RS1, PLAN.md 10c),
 // or at the `waitUntil` limit: `afterRespondMs` after the response is complete (9c, `sweep`).
 // `hooks`: what the entry of the task gives to the platform helpers (`js/index.js`): `kind`, `ctx`, `respond` (only
-// the `fetch` of a Worker: `Ctx.respond!`), and the flags that the helpers set (`response`, `passThrough`).
+// the `fetch` of a Worker: `Response.after`), and the flags that the helpers set (`response`, `passThrough`).
 
 import { Refs } from './values.js';
 
 // Deadlines of API.md 10.2. Shim options: a test can make them smaller.
 export const DEADLINES = {
-  taskDeadlineMs: 120_000, // each wait of a Fetch task before respond!, and of a kind with no limit
+  taskDeadlineMs: 120_000, // each wait of a Fetch task before the response, and of a kind with no limit
   wallMs: 15 * 60_000, // the whole task: Scheduled, Queue, Alarm
   initMs: 30_000, // the whole task: Init of an object
   afterRespondMs: 30_000, // after the response body is complete (the waitUntil limit)
@@ -23,7 +23,7 @@ export const DEADLINES = {
 const WALL = new Set(['Scheduled', 'Queue', 'Alarm']);
 
 // The time at which task `t` must be cancelled, or Infinity (API.md 10.2). Pure.
-// response: 'none' (no respond! yet), 'open' (respond! with a Body.writer! stream that
+// response: 'none' (no response yet), 'open' (a response with a Body.writer! stream that
 // is not closed, or a 101 with an open socket), 'complete' (at `completeAt`).
 export function deadlineOf(t, d = DEADLINES) {
   if (t.waiting && t.socketWait) return Infinity;
@@ -35,7 +35,7 @@ export function deadlineOf(t, d = DEADLINES) {
 }
 
 // The time at which the context of an ended task `t` is freed, although a started program still runs: the `waitUntil`
-// limit, `afterRespondMs` after the response is complete. A task that ended with no complete response (no `respond!`, or
+// limit, `afterRespondMs` after the response is complete. A task that ended with no complete response (no early response, or
 // a writer that the end closed) has it complete at its end. Pure.
 export function lingerUntil(t, d = DEADLINES) {
   return (t.response === 'complete' ? Math.min(t.completeAt, t.endedAt) : t.endedAt) + d.afterRespondMs;
@@ -167,7 +167,7 @@ export function makeTaskTable(opts = {}) {
       t.socketWait = false;
       t.wake = null;
     },
-    // Response state (8b): respond! with a body that is complete now, or open (a writer, a 101).
+    // Response state (8b): the early response with a body that is complete now, or open (a writer, a 101).
     respond(t, open = false) {
       t.response = open ? 'open' : 'complete';
       if (!open) t.completeAt = now();

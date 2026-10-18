@@ -9,6 +9,10 @@ Hyperdrive :: { name : Str }.{
 	binding : Str -> Hyperdrive
 	binding = |name| Hyperdrive.{ name }
 
+	## The binding for the manifest (`Worker.new({ bindings: [...] })`, MODULES.md 3): the kind `hyperdrive`.
+	declare : Hyperdrive -> { name : Str, kind : Str, props : List((Str, Str)) }
+	declare = |b| { name: b.name, kind: "hyperdrive", props: [] }
+
 	## What Workers gives for a database: the connection string and its parts. The two secrets do not show in a log line.
 	Config : { connection_string : Secret, host : Str, port : U16, user : Str, password : Secret, database : Str }
 

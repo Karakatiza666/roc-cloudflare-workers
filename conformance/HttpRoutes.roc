@@ -28,6 +28,16 @@ HttpRoutes :: [].{
 			}
 			["open"] => show_open!(Http.open!(Request.get(url)))
 			["open_io"] => show_open!(Io.run!(Http.open(Request.get(url))))
+			# `Http.cloudflare_error` of the response of `send!` (a body of bytes), or of `open!` (a stream, `open=1`).
+			["cf_error"] => {
+				got = if Q.text(req, "open") == "1" Http.open!(Request.get(url)).map_err(|_| Failed) else Http.send!(Request.get(url)).map_err(|_| Failed)
+				match got {
+					Ok(res) => Response.from_text(200, Str.inspect(Http.cloudflare_error(res)))
+					Err(Failed) => Response.from_text(200, "request failed")
+				}
+			}
+			# A body of text, built here: `Text` is the other body that `cloudflare_error` reads.
+			["cf_error_text"] => Response.from_text(200, Str.inspect(Http.cloudflare_error({ status: Q.num(req, "status").to_u16_try() ?? 0, headers: [], body: Text(Q.text(req, "body")) })))
 			["get"] => show!(Http.get!(url))
 			["get_io"] => show!(Io.run!(Http.get(url)))
 			# The errors of `Http` join the errors of another module in one crossing (API.md 6.5).

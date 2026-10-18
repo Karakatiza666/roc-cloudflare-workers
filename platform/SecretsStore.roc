@@ -8,6 +8,10 @@ SecretsStore :: { name : Str }.{
 	binding : Str -> SecretsStore
 	binding = |name| SecretsStore.{ name }
 
+	## The binding for the manifest (`Worker.new({ bindings: [...] })`, MODULES.md 3): the kind `secrets_store`.
+	declare : SecretsStore -> { name : Str, kind : Str, props : List((Str, Str)) }
+	declare = |b| { name: b.name, kind: "secrets_store", props: [] }
+
 	get : SecretsStore -> Io(Secret, [SecretsStoreErr(Io.Thrown)])
 	get = |s| Io.new(
 		[Get(Root("env"), s.name), Call(Slot(0), "get", [])],

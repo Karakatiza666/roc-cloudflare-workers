@@ -77,11 +77,13 @@ for pair in 'u128:encode_u128' 'empty:encoder_for'; do
   if [ $? -eq 0 ]; then echo "PASS sql_${kind}_ok.roc compiles"
   else echo "FAIL sql_${kind}_ok.roc: the control does not compile"; echo "$out" | head -20; rc=1; fi
 done
+# 8h: a `set!` of a typed socket attachment with a value of another type (attachment_bad.roc).
 # 8h: `<name>_bad.roc` must fail with an error that has the text `want`; `control` must compile.
 pair() {
   local bad=$1 want=$2 control=$3
   out=$("$ROC" check "$dir/$bad" 2>&1)
-  if [ $? -eq 1 ] && grep -qF -- "$want" <<< "$out"; then echo "PASS $bad does not compile (an error has \"$want\")"
+  # The compiler wraps a long type over lines: the text is matched with each run of spaces and line ends as one space.
+  if [ $? -eq 1 ] && tr -s ' \n' '  ' <<< "$out" | grep -qF -- "$want"; then echo "PASS $bad does not compile (an error has \"$want\")"
   else echo "FAIL $bad: it compiles, or the error does not have \"$want\""; echo "$out" | head -20; rc=1; fi
   out=$("$ROC" check "$dir/$control" 2>&1)
   if [ $? -eq 0 ]; then echo "PASS $control compiles"
@@ -89,4 +91,50 @@ pair() {
 }
 pair rpc_tag_bad.roc 'Err([Busy])' rpc_tag_ok.roc
 pair worker_field_bad.roc 'fetch! ?: Str => Try(Response, [])' worker_errs_ok.roc
+pair attachment_bad.roc 'slot.set!(socket, { name: 5 })' attachment_ok.roc
+# 8h wave B (MODULES.md 4, 5.4): `cache.put!` gives the response to send, so a statement that drops it does not compile, and
+# `Ctx.wait_until!` takes `Io({}, e)`, not the `Io(Response, e)` of `cache.put`. `Response.after` gives a `Response`, so a cron
+# handler (its result is `Try({}, e)`) cannot give it. One body (or one handler) after a header; the controls must compile.
+fetch_header='app [event!] { pf: platform "../../bench/platform/main.roc" }
+import pf.Worker
+import pf.Request
+import pf.Response
+import pf.Cache
+import pf.Ctx
+fetch! : Request => Try(Response, _)
+fetch! = |req| {
+	res = Response.from_body(200, "text/plain", req.body)
+	cache = Cache.default'
+fetch_footer='	Ok(res)
+}
+worker = Worker.new({ fetch!: fetch! })
+event! = |e| worker.event!(e)'
+cron_header='app [event!] { pf: platform "../../bench/platform/main.roc" }
+import pf.Worker
+import pf.Response'
+cron_footer='worker = Worker.new({ scheduled!: scheduled! })
+event! = |e| worker.event!(e)'
+tmp=$dir/_after_case.roc
+trap 'rm -f "$tmp" "$dir/_id64_case.roc"' EXIT
+# name | kind | lines | expected error text ("-" for a control)
+cases=(
+  'control: put! result kept|fetch|\t_ = cache.put!("https://x/a", res)?|-'
+  'control: wait_until! of an Io({}, e)|fetch|\tCtx.wait_until!(cache.delete("https://x/b"))|-'
+  'control: after in a fetch! handler|fetch|\t_ = cache\n\t_ = res.after(|_| Ok({}))|-'
+  'control: a cron handler that gives {}|cron|scheduled! = |_s| Ok({})|-'
+  'put! as a statement|fetch|\tcache.put!("https://x/a", res)?|must evaluate to {}'
+  'wait_until! of cache.put|fetch|\tCtx.wait_until!(cache.put("https://x/b", res))|Io({}, e)'
+  'after in a cron handler|cron|scheduled! = |_s| Ok(Response.from_text(200, "x").after(|_| Ok({})))|Ok(Response)'
+)
+for c in "${cases[@]}"; do
+  IFS='|' read -r name kind rest <<< "$c"
+  want=${rest##*|}; line=${rest%|*}
+  if [ "$kind" = fetch ]; then printf '%s\n%b\n%s\n' "$fetch_header" "$line" "$fetch_footer" > "$tmp"
+  else printf '%s\n%b\n%s\n' "$cron_header" "$line" "$cron_footer" > "$tmp"; fi
+  out=$("$ROC" check "$tmp" 2>&1); code=$?
+  if [ "$want" = "-" ]; then
+    if [ $code -eq 0 ]; then echo "PASS after/put $name"; else echo "FAIL after/put $name: the control does not compile"; echo "$out" | head -12; rc=1; fi
+  elif [ $code -eq 1 ] && grep -qF -- "$want" <<< "$out"; then echo "PASS after/put $name does not compile ($want)"
+  else echo "FAIL after/put $name: it compiles, or the error has no '$want'"; echo "$out" | head -12; rc=1; fi
+done
 exit "$rc"

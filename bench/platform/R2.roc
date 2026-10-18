@@ -14,6 +14,10 @@ R2 :: { name : Str }.{
 	binding : Str -> R2
 	binding = |name| R2.{ name }
 
+	## The binding for the manifest (`Worker.new({ bindings: [...] })`, MODULES.md 3): the kind `r2`.
+	declare : R2 -> { name : Str, kind : Str, props : List((Str, Str)) }
+	declare = |b| { name: b.name, kind: "r2", props: [] }
+
 	## The object and its body (a stream). `get` of a key that is not there: `NotFound`.
 	get : R2, Str -> Io(R2.Object, [NotFound, R2Err(Io.Thrown)])
 	get = |bucket, key| {
@@ -121,10 +125,12 @@ R2 :: { name : Str }.{
 	head! : R2, Str => Try(R2.Meta, [NotFound, R2Err(Io.Thrown)])
 	head! = |bucket, key| Io.run!(head(bucket, key))
 
+	## A body of any kind. A stream with no known length (`Body.writer!`, `compress!`) goes through `pf.r2put`: up to
+	## 5 MiB it is one put of the bytes, past it a multipart upload of 5 MiB parts (MODULES.md 5.3).
 	put : R2, Str, Body -> Io(R2.Meta, [R2Err(Io.Thrown)])
 	put = |bucket, key, body| {
 		given = body_ops(body, Err(MissingField), 1)
-		ops = read_ops(call_ops(bucket, "put", [Lit(Text(key)), given.arg], given.ops))
+		ops = read_ops(put_ops(bucket, key, body, Err(MissingField), given, Lit(Null), []))
 		Io.new(
 			ops,
 			|r| match r {
@@ -141,13 +147,14 @@ R2 :: { name : Str }.{
 	put! = |bucket, key, body| Io.run!(put(bucket, key, body))
 
 	## `only_if` makes it a compare and swap: a failed condition is `PreconditionFailed` (R2 gives `null`).
-	## `length_bytes`: a stream that the app makes (`Body.writer!`) has no known length, so it goes through a
-	## `FixedLengthStream` of this length. A stream of another length is `R2Err`.
+	## A stream with no known length: as in `put`. Past 5 MiB it is a multipart upload, which takes no `only_if` and no
+	## `checksum` (`R2Err`). `length_bytes`: the stream goes through a `FixedLengthStream` of this length, so it is one
+	## put with each option. A stream of another length is `R2Err`.
 	put_with : R2, Str, Body, { only_if ?: R2.Cond, http ?: R2.Http, custom ?: List((Str, Str)), checksum ?: R2.Checksum, length_bytes ?: U64 } -> Io(R2.Meta, [PreconditionFailed, R2Err(Io.Thrown)])
 	put_with = |bucket, key, body, opts| {
 		given = body_ops(body, opts.?length_bytes, 1)
 		built = put_options(opts, 1 + given.ops.len().to_u32_wrap())
-		ops = read_ops(call_ops(bucket, "put", [Lit(Text(key)), given.arg, Slot(built.slot)], given.ops.concat(built.ops)))
+		ops = read_ops(put_ops(bucket, key, body, opts.?length_bytes, given, Slot(built.slot), built.ops))
 		Io.new(
 			ops,
 			|r| match r {
@@ -503,6 +510,17 @@ part_io = |up, number, body, length| {
 			Err(t) => Err(R2Err(t))
 		},
 	)
+}
+
+## The ops of a put: `bucket.put(key, body, options)`, or `pf.r2put` with the same arguments and the bucket first for a
+## stream with no `length_bytes` (R2 takes a stream only with a known length: the helper tries the put, then buffers).
+put_ops : R2, Str, Body, Try(U64, [MissingField]), { ops : List(Js.Op), arg : Js.Arg }, Js.Arg, List(Js.Op) -> List(Js.Op)
+put_ops = |bucket, key, body, length, given, options, after| {
+	before = given.ops.concat(after)
+	match (body, length) {
+		(Stream(_), Err(_)) => [Get(Root("env"), bucket.name)].concat(before).append(Call(Root("pf"), "r2put", [Slot(0), Lit(Text(key)), given.arg, options]))
+		_ => call_ops(bucket, "put", [Lit(Text(key)), given.arg, options], before)
+	}
 }
 
 ## The body as an argument. A stream with a `length_bytes` goes through a `FixedLengthStream` first (R2 takes a stream only

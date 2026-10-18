@@ -1,11 +1,12 @@
 ## An HTTP response (MODULES.md 4). One type for the response of a handler and of `Http.send!`.
-## `web_socket`: the client end of a WebSocket in a 101 response, as a ref (MC13).
+## `web_socket`: the client end of a WebSocket in a 101 response, as a ref (MC13). `after_work!`: the work that runs after
+## the response is sent (`after`), with its error as text.
 import Body
 import Io
 import Js
 import http.Header
 
-Response := { status : U16, headers : List(Header) ?? [], body : Body ?? Empty, web_socket ?: Js.Ref }.{
+Response := { status : U16, headers : List(Header) ?? [], body : Body ?? Empty, web_socket ?: Js.Ref, after_work! ?: {} => Try({}, Str) }.{
 	from_status : U16 -> Response
 	from_status = |status| Response.{ status }
 
@@ -33,6 +34,24 @@ Response := { status : U16, headers : List(Header) ?? [], body : Body ?? Empty, 
 
 	with_header : Response, Str, Str -> Response
 	with_header = |r, name, value| { ..r, headers: r.headers.append(Header.{ name, value }) }
+
+	## Respond now, work after (API.md 10.2): when a `fetch!` handler gives this response, the platform sends it, and
+	## then runs `work!` in the same task. An `Err(e)` of `work!` is the log line `fetch: after respond: failed: <e>`.
+	## A second `after` runs after the first. Only the response of a `fetch!` handler runs its work.
+	after : Response, ({} => Try({}, e)) -> Response
+	after = |r, work!| {
+		erased! = |_| work!({}).map_err(|e| Str.inspect(e))
+		match r.?after_work! {
+			Ok(first!) => {
+				both! = |_| {
+					first!({})?
+					erased!({})
+				}
+				{ ..r, after_work!: both! }
+			}
+			Err(_) => { ..r, after_work!: erased! }
+		}
+	}
 
 	## The value of a header. The name is caseless.
 	header : Response, Str -> Try(Str, [NotFound])

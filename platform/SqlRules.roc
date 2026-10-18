@@ -86,7 +86,7 @@ bad_data = |bytes, pos| {
 		Err(NotFound) => Err(NotFound)
 	}
 	match column {
-		Ok(c) => if rounded_at(bytes, pos) "column ${c}: integer above 2^53, use CAST(${c} AS TEXT)" else "column ${c}: the value does not fit the type"
+		Ok(c) => if rounded_at(bytes, pos) "column ${c}: integer of 2^53 or more, read it with CAST(${c} AS TEXT) into an I64, U64 or Id64 field" else "column ${c}: the value does not fit the type"
 		Err(_) => "the value at byte ${pos.to_str()} does not fit the type"
 	}
 }
@@ -96,7 +96,7 @@ bad_tuple_data : List(U8), U64 -> Str
 bad_tuple_data = |bytes, pos| match Cbor.path_at(bytes, pos) {
 	Ok([Index(_), Index(c), ..]) =>
 		if rounded_at(bytes, pos) {
-			"column ${c.to_str()} (from 0): integer above 2^53, use CAST(... AS TEXT)"
+			"column ${c.to_str()} (from 0): integer of 2^53 or more, read it with CAST(... AS TEXT) into an I64, U64 or Id64 field"
 		} else {
 			"column ${c.to_str()} (from 0): the value does not fit the type"
 		}
@@ -150,7 +150,7 @@ expect missing("MissingRequiredField(\"id\")") == "column id: missing"
 expect missing("Other") == "Other"
 
 # 5.1, "Integers in rows": [{"id": 2^53 as f64}] is the text with CAST, [{"id": 1.5}] is "does not fit".
-expect bad_data([0x81, 0xa1, 0x62, 0x69, 0x64, 0xfb, 0x43, 0x40, 0, 0, 0, 0, 0, 0], 5) == "column id: integer above 2^53, use CAST(id AS TEXT)"
+expect bad_data([0x81, 0xa1, 0x62, 0x69, 0x64, 0xfb, 0x43, 0x40, 0, 0, 0, 0, 0, 0], 5) == "column id: integer of 2^53 or more, read it with CAST(id AS TEXT) into an I64, U64 or Id64 field"
 expect bad_data([0x81, 0xa1, 0x62, 0x69, 0x64, 0xfb, 0x3f, 0xf8, 0, 0, 0, 0, 0, 0], 5) == "column id: the value does not fit the type"
 
 # PLAN.md 8g P1: rows as arrays (`D1.all_tuples!`) with the integer rules of 5.1. Each row is a CBOR array of two items.
@@ -162,8 +162,8 @@ expect tuples2([0x80]) == Ok([])
 # CAST(x AS TEXT): canonical decimal text of 2^63 - 1 goes into the I64 item.
 expect tuples2([0x81, 0x82, 0x01, 0x73].concat("9223372036854775807".to_utf8())) == Ok([(1, 9_223_372_036_854_775_807)])
 # 2^53 as an f64 (D1 rounded an id): the column is named by its index, 1.
-expect tuples2([0x81, 0x82, 0x01, 0xfb, 0x43, 0x40, 0, 0, 0, 0, 0, 0]) == Err(BadData("column 1 (from 0): integer above 2^53, use CAST(... AS TEXT)"))
-expect tuples2([0x82, 0x82, 0x01, 0x02, 0x82, 0xfb, 0xc3, 0x40, 0, 0, 0, 0, 0, 0, 0x02]) == Err(BadData("column 0 (from 0): integer above 2^53, use CAST(... AS TEXT)"))
+expect tuples2([0x81, 0x82, 0x01, 0xfb, 0x43, 0x40, 0, 0, 0, 0, 0, 0]) == Err(BadData("column 1 (from 0): integer of 2^53 or more, read it with CAST(... AS TEXT) into an I64, U64 or Id64 field"))
+expect tuples2([0x82, 0x82, 0x01, 0x02, 0x82, 0xfb, 0xc3, 0x40, 0, 0, 0, 0, 0, 0, 0x02]) == Err(BadData("column 0 (from 0): integer of 2^53 or more, read it with CAST(... AS TEXT) into an I64, U64 or Id64 field"))
 # 1.5 and the text "01" do not fit.
 expect tuples2([0x81, 0x82, 0x01, 0xfb, 0x3f, 0xf8, 0, 0, 0, 0, 0, 0]) == Err(BadData("column 1 (from 0): the value does not fit the type"))
 expect tuples2([0x81, 0x82, 0x01, 0x62, 0x30, 0x31]) == Err(BadData("column 1 (from 0): the value does not fit the type"))

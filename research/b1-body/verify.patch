@@ -1,0 +1,130 @@
+diff --git a/conformance/CacheRoutes.roc b/conformance/CacheRoutes.roc
+index 3dc4d19..8bc53de 100644
+--- a/conformance/CacheRoutes.roc
++++ b/conformance/CacheRoutes.roc
+@@ -22,6 +22,20 @@ CacheRoutes :: [].{
+ 				Ok(res) => show(cache.put!(url, res.with_header("cache-control", "max-age=60")), |_| "put")
+ 				Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+ 			}
++			["vput_send"] => match Http.open!(Request.get(Q.text(req, "from"))) {
++				Ok(res) => match cache.put!(url, res.with_header("cache-control", "max-age=60")) {
++					Ok(sent) => sent
++					Err(e) => Response.from_text(500, "Err ${Str.inspect(e)}")
++				}
++				Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
++			}
++			["vput_after"] => match Http.open!(Request.get(Q.text(req, "from"))) {
++				Ok(res) => match cache.put_after!(url, res.with_header("cache-control", "max-age=60")) {
++					Ok(sent) => sent
++					Err(e) => Response.from_text(500, "Err ${Str.inspect(e)}")
++				}
++				Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
++			}
+ 			["delete"] => show(cache.delete!(url), |_| "deleted")
+ 			["delete_io"] => show(Io.run!(cache.delete(url)), |_| "deleted")
+ 			_ => Response.from_text(404, "no route")
+diff --git a/conformance/checks/cache.mjs b/conformance/checks/cache.mjs
+index 4422ca1..605da31 100644
+--- a/conformance/checks/cache.mjs
++++ b/conformance/checks/cache.mjs
+@@ -32,6 +32,17 @@ export const checks = [
+     answer(await t.get(`/cache/put_stream?url=${key('s')}&from=${q(`${t.server}/hello`)}`), 'Ok put');
+     answer(await t.get(`/cache/get?url=${key('s')}`), 'Ok 200 cc=max-age=60 text=hello');
+   }],
++  ['VERIFY cache put! gives the response to send', async (t) => {
++    const r = await t.get(`/cache/vput_send?url=${key('vs')}&from=${q(`${t.server}/hello`)}`);
++    eq(r.body, 'hello', 'sent body');
++    answer(await t.get(`/cache/get?url=${key('vs')}`), 'Ok 200 cc=max-age=60 text=hello');
++  }],
++  ['VERIFY cache put_after!', async (t) => {
++    const r = await t.get(`/cache/vput_after?url=${key('va')}&from=${q(`${t.server}/hello`)}`);
++    eq(r.body, 'hello', 'sent body');
++    await new Promise((res) => setTimeout(res, 300));
++    answer(await t.get(`/cache/get?url=${key('va')}`), 'Ok 200 cc=max-age=60 text=hello');
++  }],
+   ['cache delete!', async (t) => {
+     await put(t, 'd');
+     answer(await t.get(`/cache/delete?url=${key('d')}`), 'Ok deleted');
+diff --git a/conformance/R2Routes.roc b/conformance/R2Routes.roc
+index e5250f4..b0cb3fc 100644
+--- a/conformance/R2Routes.roc
++++ b/conformance/R2Routes.roc
+@@ -15,6 +15,7 @@ R2Routes :: [].{
+ 		key = Q.text(req, "key")
+ 		match path {
+ 			["put"] => out(bucket.put!(key, Text(Q.text(req, "text"))), show_meta)
++			["vput_big"] => vput_big!(key, Q.num(req, "mb"))
+ 			["put_io"] => out(Io.run!(bucket.put(key, Text(Q.text(req, "text")))), show_meta)
+ 			["get"] => out!(bucket.get!(key), show_object!)
+ 			["get_io"] => out!(Io.run!(bucket.get(key)), show_object!)
+@@ -241,22 +242,37 @@ list_options = |req| {
+ 
+ # ---- A stream that the app makes ----
+ 
+-## A stream that the app makes: R2 needs a known length. With no `len`, the put of a `Body.writer!` stream fails at
+-## once. With `len`, `length_bytes` pipes the stream through a `FixedLengthStream`. The writes and the close come
++## A stream that the app makes, with no known length. With no `len`, the put buffers it in JS (`pf.r2put`, MODULES.md
++## 5.3). With `len`, `length_bytes` pipes the stream through a `FixedLengthStream`. The writes and the close come
+ ## before the put, with the public API: `Io.start!` of the `write` and `write_text` twins queues the chunks (a write
+ ## waits until the put reads it), then `close!` queues the end, then `put_with!` reads all of it.
+ put_stream! : Str, Str => Response
+ put_stream! = |key, len| match Body.writer!({}) {
+ 	Err(BodyErr(t)) => Response.from_text(200, "writer ${t.name}")
+-	Ok({ body, writer }) =>
++	Ok({ body, writer }) => {
++		_ = Io.start!(writer.write("hello ".to_utf8()))
++		_ = Io.start!(writer.write_text("world"))
++		writer.close!()
+ 		if len == "" {
+ 			out(bucket.put_with!(key, body, {}), show_meta)
+ 		} else {
+-			_ = Io.start!(writer.write("hello ".to_utf8()))
+-			_ = Io.start!(writer.write_text("world"))
+-			writer.close!()
+ 			out(bucket.put_with!(key, body, { length_bytes: U64.from_str(len) ?? 0 }), show_meta)
+ 		}
++	}
++}
++
++## VERIFY: `mb` MiB and 100 bytes from a writer with no length: a multipart upload.
++vput_big! : Str, U64 => Response
++vput_big! = |key, mb| match Body.writer!({}) {
++	Err(BodyErr(t)) => Response.from_text(200, "writer ${t.name}")
++	Ok({ body, writer }) => {
++		for i in 0.U64.until(mb) {
++			_ = Io.start!(writer.write(List.repeat(65 + i.to_u8_wrap(), 1_048_576)))
++		}
++		_ = Io.start!(writer.write(List.repeat(90, 100)))
++		writer.close!()
++		out(bucket.put_with!(key, body, { http: { content_type: "text/x-big" } }), show_meta)
++	}
+ }
+ 
+ # ---- Multipart ----
+diff --git a/conformance/checks/r2.mjs b/conformance/checks/r2.mjs
+index bfd05b6..307e8a1 100644
+--- a/conformance/checks/r2.mjs
++++ b/conformance/checks/r2.mjs
+@@ -227,9 +227,19 @@ export const checks = [
+     // Only the four conditional headers go to R2: other headers change nothing.
+     answer(await t.get('/r2/get_cond?key=cond1', { headers: { 'x-other': '1', range: 'bytes=0-1' } }), 'Ok size=11 range=none text=hello world');
+   }],
+-  ['r2 put_with! of a Body.writer! stream is R2Err with "known length"', async (t) => {
++  ['r2 put_with! of a Body.writer! stream with no length_bytes stores the bytes', async (t) => {
+     const r = await t.get('/r2/put_stream?key=ws1');
+-    ok(r.body.startsWith('Err R2Err(') && r.body.includes('known length'), `got ${r.body}`);
++    ok(r.body.startsWith('Ok key=ws1 size=11 '), `got ${r.body}`);
++    eq(await (await (await t.mf.getR2Bucket('BUCKET')).get('ws1')).text(), 'hello world', 'the stored bytes');
++  }],
++  ['VERIFY r2 multipart of a stream with no length', async (t) => {
++    const r = await t.get('/r2/vput_big?key=vbig&mb=11');
++    ok(r.body.startsWith('Ok key=vbig size=11534436 '), `got ${r.body}`);
++    const o = await (await t.mf.getR2Bucket('BUCKET')).get('vbig');
++    const b = new Uint8Array(await o.arrayBuffer());
++    eq(b.length, 11534436, 'len'); eq(b[0], 65, 'first'); eq(b[5 * 1048576], 70, 'part 2'); eq(b[b.length - 1], 90, 'last');
++    eq(o.httpMetadata.contentType, 'text/x-big', 'ct');
++    return r.body;
+   }],
+   ['r2 put_with! of a stream with length_bytes stores the bytes', async (t) => {
+     const r = await t.get('/r2/put_stream?key=ws2&len=11');
+

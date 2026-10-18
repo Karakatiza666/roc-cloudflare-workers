@@ -6,6 +6,10 @@ RateLimit :: { name : Str }.{
 	binding : Str -> RateLimit
 	binding = |name| RateLimit.{ name }
 
+	## The binding for the manifest (`Worker.new({ bindings: [...] })`, MODULES.md 3): the kind `ratelimit`.
+	declare : RateLimit -> { name : Str, kind : Str, props : List((Str, Str)) }
+	declare = |b| { name: b.name, kind: "ratelimit", props: [] }
+
 	## `Ok({})` when the key is under the limit, else `RateLimited`, so `limiter.limit!(ip)?` stops the handler.
 	limit : RateLimit, Str -> Io({}, [RateLimited, LimitErr(Io.Thrown)])
 	limit = |rl, key| Io.new(

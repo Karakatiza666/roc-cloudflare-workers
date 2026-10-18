@@ -98,7 +98,26 @@ const WORKFLOW = {
 };
 
 const stubs = { STUB_AI: AI, STUB_VECTORIZE: VECTORIZE, STUB_STATS: STATS, STUB_VERSION: VERSION, STUB_WORKFLOW: WORKFLOW };
-export const withStubs = (env) => new Proxy(env, { get: (t, k) => (typeof k === 'string' && k in stubs ? stubs[k] : Reflect.get(t, k)) });
+// The R2 bucket `TRACE` (checks/r2.mjs) with a record of its multipart calls (8h wave B: the upload of `pf.r2put`): each
+// `createMultipartUpload`, and each `uploadPart`, `complete` and `abort` of its uploads, in `/__stub_calls`.
+const traceUpload = (u) => new Proxy(u, {
+  get(t, k) {
+    const v = t[k];
+    if (typeof v !== 'function') return v;
+    if (k === 'uploadPart') return async (n, data, ...r) => (rec('TRACE', 'uploadPart', [n, data.byteLength]), t.uploadPart(n, data, ...r));
+    if (k === 'complete' || k === 'abort') return async (...a) => (rec('TRACE', k, []), t[k](...a));
+    return v.bind(t);
+  },
+});
+const traceBucket = (b) => new Proxy(b, {
+  get(t, k) {
+    const v = t[k];
+    if (typeof v !== 'function') return v;
+    if (k === 'createMultipartUpload') return async (...a) => (rec('TRACE', 'createMultipartUpload', [a[0]]), traceUpload(await t.createMultipartUpload(...a)));
+    return v.bind(t);
+  },
+});
+export const withStubs = (env) => new Proxy(env, { get: (t, k) => (typeof k === 'string' && k in stubs ? stubs[k] : k === 'TRACE' ? traceBucket(Reflect.get(t, k)) : Reflect.get(t, k)) });
 
 // `/__stub_calls`: the calls so far, as JSON. `/__stub_reset`: clear them and the Vectorize store. Null for any other path.
 export function stubRoute(path) {

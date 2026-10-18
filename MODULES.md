@@ -51,7 +51,7 @@ Exceptions to MC10 and MC12 (each other name is the Workers name in snake_case, 
 | `Object.Self.accept!`, `accept_with!` | `new WebSocketPair()`, `acceptWebSocket`, a 101 `Response` | One `call!` does three Workers steps and gives a socket and a response |
 | `sockets!`, `sockets_with!`, `Socket.tags!`, `D1.Session.bookmark!` | `getWebSockets()`, `getWebSockets(tag)`, `getTags()`, `getBookmark()` | A reader with no argument has no `get`: Roc names a function that reads by its result, as the builtins do (`List.len`, `Dict.keys`). `sockets_with!` is MC4: the tag is an option. |
 | `Socket.auto_response_ms!` | `getWebSocketAutoResponseTimestamp` | The reader rule above, and MC10 (a time ends in `_ms`) |
-| `Socket.attach!`, `attachment!` | `serializeAttachment`, `deserializeAttachment` | The module serializes (CBOR, MC5): the app gives and gets a typed value, so the name says what the app sees |
+| `Object.Attachment`: `set!`, `get!` | `serializeAttachment`, `deserializeAttachment` | The module serializes (CBOR, MC5). A constant `Object.attachment(name)` has the type, like `Object.Cell`: one constant writes and reads, so the stored type and the read type are one |
 | `set_auto_response!`, `clear_auto_response!` | `setWebSocketAutoResponse(pair)`, `setWebSocketAutoResponse()` | Roc has no optional argument, so the call with no argument has its own name. The pair is a record `{ request, response }`. `Object.Self` has no other auto response, so the name has no `web_socket`. |
 | `Email.Mail.raw_size_bytes` | `rawSize` | MC10 |
 | `D1.all_tuples!` (and `all_tuples_with!`, the twins, the `D1.Session` forms) | `raw()` | Two functions read one D1 call with two result shapes, and `rows!` already has `raw({ columnNames: true })`: the name says what the app gets (all rows, as tuples), as `Http.send!` and `open!` do for `fetch` |
@@ -122,7 +122,7 @@ event! = |e| worker.event!(e)
 ## 3. Entry: `Worker`
 
 ```roc
-Worker :: { handlers : List(Str), own! : Worker.Event => Worker.Outcome, rpc : ..., entrypoints : ..., objects : ... }.{
+Worker :: { handlers : List(Str), own! : Worker.Event => Worker.Outcome, rpc : ..., entrypoints : ..., objects : ..., bindings : ..., crons : List(Str) }.{
 	new : {
 		fetch! ?: Request => Try(Response, e1),
 		scheduled! ?: Worker.Scheduled => Try({}, e2),
@@ -133,8 +133,14 @@ Worker :: { handlers : List(Str), own! : Worker.Event => Worker.Outcome, rpc : .
 		rpc ?: List(Rpc.Handler({})),         # methods of the default entry point
 		entrypoints ?: List(Rpc.Entrypoint),  # named WorkerEntrypoint classes
 		objects ?: List(Object.Class),        # Durable Object classes
+		bindings ?: List(Worker.Binding),     # the bindings that the app uses: db.declare(), ... (manifest only)
+		crons ?: List(Worker.Cron),           # a handler for each cron expression
 	} -> Worker
 	event! : Worker, Worker.Event => Worker.Outcome
+
+	cron : Str, (Worker.Scheduled => Try({}, e)) -> Worker.Cron
+	Cron : { cron : Str, run! : Worker.Scheduled => Worker.Outcome }
+	Binding : { name : Str, kind : Str, props : List((Str, Str)) }
 
 	## The payload of a cron run. The same type is in `Worker.Event` (`API.md` 10.1).
 	Scheduled := { cron : Str, time_ms : U64 }.{
@@ -167,6 +173,8 @@ Each handler gives the result of its own kind, so a handler cannot give a wrong 
 | `other!` | A kind with no field (`makeHandler(module, { other: [...] })`) | The value for JS (the outcome `Reply`) | A throw | A throw |
 | `rpc`, `entrypoints` | `WorkerEntrypoint` methods (8). For `entrypoints`, also the `fetch` of a named entry point (a service binding with `entrypoint`). | The reply, or the response of the `fetch!` of the entry point | A throw on the caller side. For `fetch!`, as for the `fetch!` of the Worker. | "no method" throw. A named entry point with no `fetch!` has no `fetch` method in JS. |
 | `objects` | Durable Object classes (7) | as the field of the class | | `Unhandled` |
+| `crons` | `scheduled`, for a run whose `controller.cron` is the expression of a `Worker.cron` | as `scheduled!` | as `scheduled!` | A run of another cron goes to `scheduled!` |
+| `bindings` | None: the manifest only (bindings below) | | | No check of `env` |
 
 A new Workers kind is a new optional field, so it does not break an app (`API.md` 10.1).
 
@@ -191,23 +199,54 @@ Tail rules (`tail!`):
 | Not typed | `workerd` also gives `entrypoint`, `scriptVersion`, `scriptTags`, `dispatchNamespace`, `cpuTime`, `wallTime` and `truncated`. The docs do not list them, so `TraceItem` does not have them. A field added later is a change of the payload type, so a major release (`API.md` 10.1). |
 | Crossing | The shim maps each item to these fields in JS and sends the batch as one `Packed` value (`API.md` 5.2). The derived parser of `roc-cbor` 0.1.0 reads a `Try(a, [Missing])` field as the value, and as `Err(Missing)` when the key is absent, so the shim writes the value, or no key (never `null`, never `{"Ok": v}`: `research/f2-queue/try_shape.roc`). The batch has the limit of MC11 (1 MiB, the shim option `tailMaxBytes`). Past it, the shim drops log lines, from the last line back and over all items, and writes one warning (`console.warn`) in the Tail Worker with the count of dropped lines. Local workerd cuts the logs of one trace to about 200 kB before the shim sees them, so the 1 MiB limit is tested with a smaller `tailMaxBytes` (`PLAN.md` 8f). A tail handler has no `Err` path for its input, so `TooLarge` would lose the whole batch. |
 
+Bindings and crons (`bindings`, `crons`, step 8h wave B): the names that must match the Wrangler config are in the manifest, so the shim and the command `roc-cloudflare-workers sync` (README.md "Use it") check them.
+
+```roc
+db = D1.binding("DB")
+rooms = Object.namespace("ROOMS", { class: "Room" })
+
+worker = Worker.new({
+	fetch!: fetch!,
+	objects: [room],
+	bindings: [db.declare(), rooms.declare()],
+	crons: [Worker.cron("*/5 * * * *", settle!)],
+})
+```
+
+| Item | Rule |
+| --- | --- |
+| `declare` | Each binding type has `declare : T -> Worker.Binding`: `D1`, `Kv`, `R2`, `Object.Namespace`, `Service`, `Queue`, `Email`, `Workflows`, `Vectorize`, `Ai`, `Analytics`, `Assets`, `Hyperdrive`, `RateLimit`, `Version`, `SecretsStore`. The kind is the module (`d1`, `kv`, `r2`, `object`, `service`, `queue`, `email`, `workflows`, `vectorize`, `ai`, `analytics`, `assets`, `hyperdrive`, `ratelimit`, `version`, `secrets_store`). `props`: `class` and `script` of an object namespace (7), `service` and `entrypoint` of `Service.binding_with` (8). |
+| Optional | An app with no `bindings` field is as before: no check of `env`. The list is one line, and it is the only place where the app names its bindings for the config. A binding that is not in the list is not checked. |
+| Check at load | `makeHandler` refuses a binding name twice, an unknown kind, and an object namespace with no `script` whose `class` is not in `objects`. Then it checks `env`: each binding must be there, with the functions of its kind (`prepare` and `batch` of D1, `idFromName` of a namespace, ...; `js/bindings.js`). It uses the `env` of `cloudflare:workers` at global scope, so the load fails (as for a class with no export). With no such `env` (the Node tests), the check runs at the first event of each `env`, and the event throws the same error. |
+| Message | `makeHandler: the bindings of the app (Worker.new bindings) are not in env:` and one line for each binding: `DB (d1): env has no DB. Add [[d1_databases]] with binding = "DB" to the Wrangler config.` or `DB (d1): env.DB is not a D1 database (it has no prepare).` |
+| Limit of the kind check | A service binding, an assets binding and a local `send_email` binding are RPC stubs: they have a function for each name, so they pass the check of each kind. The check finds each missing binding, and a binding of another kind for the other kinds (`research/b3-sync/kinds`). |
+| `crons` | `Worker.cron(expr, f!)`: the run of `scheduled` with `controller.cron == expr` goes to `f!`. A run of another cron goes to `scheduled!`, and with no `scheduled!` it is `Unhandled` (a failed run). The handler has its own error type, as each field. `scheduled!` stays for an app that wants one handler. |
+| Manifest | `bindings: [{ name, kind, class?, script?, service?, entrypoint? }]` and `crons: [expr, ...]`. `handlers` of the default export has `scheduled` only for a `scheduled!` (the shim always defines `scheduled`). |
+
 Names of classes and methods come from Roc only (`API.md` AQ10). At load, the shim sends the event `Manifest`, and `Worker` answers with the names of its `objects`, `entrypoints` and their `Rpc` methods, the `rpc` methods of the default entry point, and the handlers that each class has (for the default export: the fields `fetch!`, `scheduled!`, `queue!`, `email!` and `tail!` that the app gives):
 
 ```js
 { default: { handlers: ["fetch", "queue"], methods: ["status"] },
   objects: { Room: { handlers: ["init", "fetch", "alarm", "webSocketMessage"], methods: ["increment"] } },
-  entrypoints: { Admin: { handlers: ["fetch"], methods: ["purge"] } } }
+  entrypoints: { Admin: { handlers: ["fetch"], methods: ["purge"] } },
+  bindings: [{ name: "DB", kind: "d1" }, { name: "ROOMS", kind: "object", class: "Room" }],
+  crons: ["*/5 * * * *"] }
 ```
 
-The shim defines a JS method only for a handler in the list, so a class with no `alarm!` has no `alarm` method (7), and a default export with no `queue!` has no `queue` method (the same for `email` and `tail`; `fetch` and `scheduled` are always there). The JS entry file has one line for each class, because Workers needs a named export:
+The shim defines a JS method only for a handler in the list, so a class with no `alarm!` has no `alarm` method (7), and a default export with no `queue!` has no `queue` method (the same for `email` and `tail`; `fetch` and `scheduled` are always there). The JS entry file has one line for each class, because Workers needs a named export. `roc-cloudflare-workers sync` writes it from the manifest:
 
 ```js
-import app from "./app.wasm";
-import { makeHandler, objectClass, entrypointClass } from "cloudflare-workers-roc";
-export const Room = objectClass("Room");          // a Durable Object class of Object.class("Room", ...)
-export const Admin = entrypointClass("Admin");    // a WorkerEntrypoint of Rpc.entrypoint("Admin", ...)
-export default makeHandler(app, {});
+// Made by roc-cloudflare-workers sync from the manifest of the app. Run it again after a change of the classes in Roc.
+import app from './app.wasm';
+import { makeHandler, objectClass, entrypointClass } from 'roc-cloudflare-workers';
+
+export const Room = objectClass('Room');          // a Durable Object class of Object.class("Room", ...)
+export const Admin = entrypointClass('Admin');    // a WorkerEntrypoint of Rpc.entrypoint("Admin", ...)
+
+export default makeHandler(app);
 ```
+
+An app with options (`makeHandler(app, { ops })`) writes its own entry file: `sync` does not write over a file that it did not make (the first line), and prints the lines to put in it.
 
 `makeHandler` gives a subclass of `WorkerEntrypoint` (`cloudflare:workers`), not a plain object, because Workers sends RPC to the default export only when it extends `WorkerEntrypoint` (Cloudflare docs, service bindings RPC). Its `fetch`, `scheduled`, `queue`, `email` and `tail` methods (the last three only when the manifest has the handler; an app with a raw `event!` answers `Unhandled` to `Manifest` and keeps all three, `PLAN.md` 8f part 3) send the events of `API.md` 10.1, with `this.env` and `this.ctx` as the roots `env` and `ctx`. `makeHandler` puts the `default` methods of the manifest on its prototype, and the methods of the manifest on each class. A class in Roc with no export, or an export with no class in Roc, is a throw at load, so `wrangler deploy` fails with the name. The Wrangler config names the classes too (Workers needs it), and workerd checks it against the exports.
 
@@ -232,6 +271,8 @@ As built in `PLAN.md` 8f, part 1 (`platform/Worker.roc`, `js/index.js`, `js/runn
 | Method names | The manifest refuses a method twice in a class, a name that is not a JS name, and the names of handlers: `fetch`, `scheduled`, `queue`, `email`, `tail`, `alarm`, `constructor`, `webSocketMessage`, `webSocketClose`, `webSocketError`, `then` (a stub with `then` is a thenable). A default method with the name of an `other` handler is a throw too. | The JS method of a handler and of an RPC method is the same property |
 | `rpc` methods | A method on the prototype of the class (default export, object, entry point): `Reply` gives the value, a `Reply` of `Rpc.roc` (`{ Ok: value }` or `{ Err: tag }`), also for an `Err` of the handler; `Failed(text)` (an argument that does not parse) is a log line `<class>.<method>: failed: <text>` and `throw new Error(text)`, so the caller gets `RpcErr({ name: "Error", message: text })`; `Unhandled` and a trap are a log line and a throw | MODULES.md 8, "Errors" |
 | `Worker.new`, not `Worker.{ ... }` | A function that takes the record of handlers. The literal `Worker.{ ... }` must match the backing type, so the backing type would need a type variable for each error. The function turns each error into text first, and the backing type has no variables. One field needs `Worker.new({ fetch!: fetch! })`: `{ fetch! }` with one field is a block, not a record (`research/e1-errors/one_field.roc`). | Step 8h |
+| `bindings`, `crons` | `Worker.Binding` and `Worker.Cron` are structural records, so each module gives its `declare` with no import of `Worker` (`Queue`, `Email` and `Object` are imported by `Worker`). `own!` finds the cron handler by `s.cron` first, then `scheduled!`. The manifest has `bindings` and `crons`; `js/manifest.js` checks them, `js/bindings.js` has the kinds. | Step 8h wave B |
+| `roc-cloudflare-workers` | `js/cli.mjs`, the `bin` of the shim package. `sync`: loads `app.wasm` in Node (`manifestOf`, no workerd), writes `worker.js`, reads `wrangler.json`, `wrangler.jsonc` or `wrangler.toml` (this order, as Wrangler) and checks `main`, the date, the flags, the migrations (`new_sqlite_classes`, not `new_classes`), `durable_objects.bindings` (`class_name`, `script_name`), each declared binding, `triggers.crons`. Exit 1 with the config parts to add. A config part of a binding that the app does not declare is a note. `--check`: write nothing (the test of `scripts/test_example.sh`). `init`: the four files of `examples/hello` (`template/` in the package), with the URLs of `release.json` (`scripts/bundle.sh`). `.mjs`, so the module lists of the tests (`*.js`) do not take it. Only the top-level tables of the config: not the `[env.<name>]` parts. | Step 8h wave B |
 
 ## 4. HTTP: `Request`, `Response`, `Body`, `Http`
 
@@ -270,7 +311,7 @@ Request := {
 	bytes_with! : Request, { max_bytes : U64 } => Try(List(U8), [TooLarge, BodyErr(Thrown)])
 }
 
-Response := { status : U16, headers : List(Header) ?? [], body : Body ?? Empty, web_socket ?: Js.Ref }.{
+Response := { status : U16, headers : List(Header) ?? [], body : Body ?? Empty, web_socket ?: Js.Ref, after_work! ?: {} => Try({}, Str) }.{
 	from_status : U16 -> Response
 	from_text : U16, Str -> Response                  # text/plain; charset=utf-8
 	from_json : U16, a -> Response where [a.JsonEncodable]
@@ -278,6 +319,7 @@ Response := { status : U16, headers : List(Header) ?? [], body : Body ?? Empty, 
 	from_body : U16, Str, Body -> Response            # a stream: an R2 body, a fetch body
 	redirect : U16, Str -> Response
 	with_header : Response, Str, Str -> Response
+	after : Response, ({} => Try({}, e)) -> Response  # respond now, then run the work (API.md 10.2)
 	header : Response, Str -> Try(Str, [NotFound])
 	text!, json!, bytes!, bytes_with!                 # as for Request
 
@@ -318,15 +360,16 @@ Http :: [].{
 | --- | --- |
 | Routing | `match (req.method, req.segments())` with list patterns: `(GET, ["v1", "pkg", owner, name])`. No router module. A router is a package. |
 | `Http.send!` | Reads the body in the same crossing, to 1 MiB (one wait, AG4). So `res.json!()` after it needs no wait. `open!` keeps the body a stream. |
-| Status codes | `send!` gives `Ok` for each status. The handler looks at `res.status`. Only a throw of `fetch` is an `Err`. On the edge a DNS failure and a blocked address are no throw but a status: 530 with the body `error code: 1016` (a host that does not exist), 403 with `error code: 1003` (a closed port of `127.0.0.1`, a private address). So `send!` gives `Ok` for them, not `Network` (1, "Named error tags", `Http` row; `PLAN.md` 11c, EP1). An app that must tell these from an answer of the origin checks the status and the body. There is no helper for it. |
+| Status codes | `send!` gives `Ok` for each status. The handler looks at `res.status`. Only a throw of `fetch` is an `Err`. On the edge a DNS failure and a blocked address are no throw but a status: 530 with the body `error code: 1016` (a host that does not exist), 403 with `error code: 1003` (a closed port of `127.0.0.1`, a private address). So `send!` gives `Ok` for them, not `Network` (1, "Named error tags", `Http` row; `PLAN.md` 11c, EP1). `Http.cloudflare_error(res)` tells these from an answer of the origin: `Ok({ status, code })` for a status of 400 or more with a body of the form `error code: <digits>` (also 1042, 1102 and the other pages of this form), else `Err(NotCloudflareError)`. It is a pure function on the `Response`. It reads the body of `send!` (always bytes) or a `Text` body, and only when the body is 64 bytes or less: a body that is longer, an HTML page, or a `Stream` body of `open!` is `NotCloudflareError` (the stream stays unread, so the app can still pass it on). |
 | Errors (MC9) | A `TypeError` from `fetch` is a bad request: `HttpErr(Thrown)` ("Invalid URL", "Fetch API cannot load" for a scheme that is not http or https, "Invalid header name.", "Invalid header value.": workerd source, `api/http.c++`, `api/headers.c++`). Each other throw is `Network(Thrown)`: the request did not get a response. In workerd, a refused or reset connection is `Error: Network connection lost.`, and a DNS failure is `Error: internal error` (workerd source, `jsg/util.c++`). The docs give only "Network connection lost", so `PLAN.md` 8d tests the map locally and on the edge. Local only: on the edge a DNS failure and a blocked address are not a throw but a status (530 `error code: 1016`, 403 `error code: 1003`), so they are `Ok`, not `Network`. `Network` there is a reset connection or `TimeoutError`. |
 | `cf` | `Request.Cf` is the incoming `request.cf`, read in the same crossing as the event. A field that the docs mark "if known", null or undefined is `Err(Missing)`. The shim writes it in the tag form `{"Err": "Missing"}`, which the derived parser reads (15). `is_eu_country` is `True` only for `"1"` (Cloudflare docs: "otherwise omitted or false"). `latitude` and `longitude` are text in Workers, so they stay `Str`. `client_tcp_rtt_ms` is absent for QUIC. Other fields (`botManagement`, `tlsClientAuth`, `hostMetadata`) are not typed: read them with `Js` (`API.md` 6.4). A request that the app builds has no `cf`. The cf options of an outgoing `fetch` (`cacheTtl`, `cacheEverything`) are the `cf` option of `send_with!`: a `Js` object that the app builds, so it has no null to check. |
 | A `Stream` body | Can be read once (RS3). `tee!` gives two. |
 | Build | A nominal record with defaults: `Request.{ method: PUT, url, body: Bytes(b) }` is also a request. |
 | `web_socket` | The client end of a WebSocket, in a 101 response (`webSocket` of the Workers `Response`), as a ref (MC13). A response from `Object.fetch!` or `Service.fetch!` keeps it, so a Worker can give the 101 response of a Durable Object to the client (12). It is a ref and not a `WebSocket`, because `WebSocket.accept!` gives a `Response`, and two modules cannot import each other. The app does not read it: `accept!` sets it. |
 | Response of an R2 object | `R2.to_response(obj)` and `R2.respond!(bucket, key, req)` (5.3). `Response` has no `from_r2`: it would import `R2`, and `R2` imports `Response`. |
-| Request body and `respond!` | Read the request body before `Ctx.respond!`. workerd ends the request body when the response is sent, so a later `text!`, `json!` or `bytes!` gives `BodyErr` (`API.md` 10.2). |
-| `Body.writer!` | A stream that the task writes after `respond!`: `Response.from_body(200, "text/event-stream", body)`, then `writer.write!` for each chunk, then `writer.close!()`. The task stays while the stream is open, and the 30 s limit after the response starts at `close!` (`API.md` 10.2). When the client stops reading, Workers cancels the stream, and the shim cancels the task. A `write!` after `close!` gives `BodyErr`. |
+| Respond now, work after | `Ok(res.after(work!))`: the platform sends `res`, then runs `work! : {} => Try({}, e)` in the same task (`API.md` 10.2). The order is in the types: the handler gives one result, and the work is its argument. Two `after` calls run both works, in order. An `Err(e)` of the work is the log line `fetch: after respond: failed: <e>`. Only the result of a `fetch!` (of a Worker, a named entry point, an object) runs its work. `after_work!` is the field that `after` sets: the app does not set it. |
+| Request body and `after` | Read the request body in the handler, not in the work. workerd ends the request body when the response is sent, so a `text!`, `json!` or `bytes!` in the work gives `BodyErr` (`API.md` 10.2). A closure can use `req`, so the types do not stop it: give the work the value that it needs. |
+| `Body.writer!` | A stream that the task writes after the response: `Response.from_body(200, "text/event-stream", body).after(work!)`, and the work calls `writer.write!` for each chunk, then `writer.close!()`. The task stays while the stream is open, and the 30 s limit after the response starts at `close!` (`API.md` 10.2). When the client stops reading, Workers cancels the stream, and the shim cancels the task. A `write!` after `close!` gives `BodyErr`. |
 | `compress!`, `decompress!` | `CompressionStream` and `DecompressionStream` of Workers: `Gzip` (`"gzip"`) and `Deflate` (`"deflate"`). A `Text` or `Bytes` body becomes a stream first. The result is a `Stream` body, so the bytes stay in JS. zstd is not in Workers: `Native` (`API.md` 8). Set `Content-Encoding` on the response by hand. |
 | The client goes away | The shim cancels the task at its next wait (`request.signal`, `API.md` 10.2). That is the abort signal of the app: there is no `aborted!`. While Roc runs, the JS event loop does not run, so a sync read of `request.signal.aborted` cannot change between two waits. |
 
@@ -339,7 +382,7 @@ As built in `PLAN.md` 8b (first half and second half) (`platform/Request.roc`, `
 | `chunk!` | The next chunk as JS gives it, cut to `default_max` (the rest comes at the next call). `Empty` is `End`, and `Text` and `Bytes` are one `Chunk` with no crossing. `chunk!` and a later `bytes!` of the same stream share one reader: `bytes!` gives the rest. | MC11: each read into wasm has a limit. The table above gives no limit for `chunk!`, and a JS chunk can be large (a stream made from one big array). |
 | A second read | A stream that a read took to its end, or that `tee!` or another reader holds, gives `BodyErr` (`TypeError`) | RS3 |
 | `sha256!` | A stream: `crypto.DigestStream` (one wait, no byte in wasm). Where it is missing (Node tests), the chunks in JS and `crypto.subtle.digest`. `Empty`, `Text`, `Bytes`: the builtin `Crypto.SHA256` in wasm, no crossing. | No crossing for bytes that are in wasm already |
-| `writer!` | `pf.writer()` gives the readable side and the writer (`getWriter()`) of a `TransformStream`. `Body.Writer :: { writer : Js.Ref }`. `write!` waits on `writer.write(chunk)`: it settles when the reader takes the chunk, so a `write!` before `respond!` waits for the response. `write_text!` sends UTF-8 bytes. `close!` is `pf.close` (no wait). The twins `write` and `write_text` give an `Io` (MC3, `PLAN.md` 8c RO1). A `write` is queued in JS at once and settles when the reader takes the chunk, so `Io.start!` of writes, then `close!`, then a read in the same task (`R2.put_with!` with `length_bytes`) feeds a stream with the public API. A branch of `Io.both!` or `Io.race!` with a `write` cannot also `close!`: a branch has no sequence of two `Io` values. | A response stream of Workers takes bytes only |
+| `writer!` | `pf.writer()` gives the readable side and the writer (`getWriter()`) of a `TransformStream`. `Body.Writer :: { writer : Js.Ref }`. `write!` waits on `writer.write(chunk)`: it settles when the reader takes the chunk, so a `write!` in the handler waits to the task deadline: the client reads only after the handler gives its result. Write in the work of `after`, or queue the writes with `Io.start!` (below). `write_text!` sends UTF-8 bytes. `close!` is `pf.close` (no wait). The twins `write` and `write_text` give an `Io` (MC3, `PLAN.md` 8c RO1). A `write` is queued in JS at once and settles when the reader takes the chunk, so `Io.start!` of writes, then `close!`, then a read in the same task (`R2.put_with!` with `length_bytes`) feeds a stream with the public API. A branch of `Io.both!` or `Io.race!` with a `write` cannot also `close!`: a branch has no sequence of two `Io` values. | A response stream of Workers takes bytes only |
 | An open writer at the end of the task | Closed when the task returned, aborted after a trap or a cancel | The client sees the end of the body. The table above does not say. |
 | `compress!`, `decompress!` | `pf.transform(body, kind, format)`. The output of a writer stream counts as a stream of that writer, so a response with it is complete at `close!`. | API.md 10.2 |
 | Limits | `text!`, `json!`, `bytes!` apply `default_max` to `Text` and `Bytes` too: `TooLarge` over it | MC11, one rule for each body |
@@ -357,6 +400,15 @@ As built in `PLAN.md` 8c, wave 1 (`platform/Http.roc`):
 | The task signal | Not given to `fetch` | The stream of `open!` can be the body of the response, which Workers reads after the task ends |
 | `timeout_ms` | `AbortSignal.timeout`: a timeout is `Network(TimeoutError)` | It is a throw that is not a `TypeError` |
 | An empty body | `send!` gives `Empty` | |
+
+As built in `PLAN.md` 8h, wave B (`platform/Response.roc`, `platform/Entry.roc`, `platform/main.roc`, `js/index.js`):
+
+| Item | Built as | Why |
+| --- | --- | --- |
+| `Response.after` | Sets the optional field `after_work! : {} => Try({}, Str)`, with the error of the work as `Str.inspect(e)` (as `Worker.new`). A second call keeps the first work and runs it first; an `Err` of the first stops the second. | The handler type stays `Request => Try(Response, e)`, so no app changes its `fetch!` signature |
+| `Entry.finish!` | `main.roc` gives each outcome of `event!` to it. A `Respond` with `after_work!`: one `call!` of `pf.respond` with the response, then the work, and the outcome is `Done` or `Failed(text)`. A throw of `pf.respond` (no hook, a response that Workers refuses) is a `crash`. Other outcomes: as before. | One place for the `fetch!` of a Worker, of an entry point and of an object: `Worker`, `Rpc` and `Object` give `Respond(res)` as they are |
+| After the response | The shim logs each outcome that is not `Done` (`fetch: after respond: ...`, `<class>.fetch: after respond: ...`) | `Done` is the outcome of a work that gave `Ok` |
+| `Ctx.respond!` | Removed | Its order was not in the types: a body read after it, and a return value after it that the shim ignored |
 
 ## 5. Data: `D1`, `Sql`, `Kv`, `R2`, `Cache`
 
@@ -405,7 +457,7 @@ Sql := [Null, Int(I64), Real(F64), Text(Str), Blob(List(U8))].{   # the value of
 | Item | Rule |
 | --- | --- |
 | `all!`, `first!` | D1 `all()`, rows as objects. JS sends them as CBOR in the same crossing, and `Cbor.parse` reads them into the type of the call (MC7). A `where` clause cannot name `List(a)`, so `all!` takes the type of the whole result: the caller writes `List(Pkg)` (section 15). |
-| Integers in rows | D1 gives each number as a JS `Number`. So an INTEGER of size 2^53 or more comes back rounded, with no error: 2^53 + 1 and -(2^53 + 1) come back as 2^53 and -2^53, and `meta.last_row_id` is rounded too (Talon `research/d1-int-keys/` K3 and K10, local D1 2026-10-16). `pf.pack` writes each `Number` that is not a safe integer as an f64 (`js/values.js:63`). The typed reads (`all!`, `first!`, `D1.Result.all`, `D1.Result.first`, `Object.Self.sql!`) parse with `Cbor.parse_with(bytes, { fields: Snake, int_from_text: Bool.True })` of `roc-cbor`. (1) An integer field reads a float only when it has no fraction and a size of 2^53 - 1 or less (the default of `roc-cbor`), so a rounded value is an error. (2) An integer field also reads text that is a canonical decimal integer in the range of its type, so `CAST(x AS TEXT)` goes straight into an `I64` field. The module turns `InvalidCbor(pos)` into `BadData`, with the column name from `Cbor.path_at(bytes, pos)`: `BadData("column x: integer above 2^53, use CAST(x AS TEXT)")` when the item at `pos` is an f64 with no fraction and a size of 2^53 or more, else `BadData("column x: the value does not fit the type")`. `MissingRequiredField(x)` is `BadData("column x: missing")`. So a 64-bit id is a plain `I64` field, read with `CAST(id AS TEXT)`. A read with no cast is `BadData` for each id of size 2^53 or more, and an id below that is exact. `rows!` (no types) gives such a value as `Real(F64)`. `Info.last_row_id` is `Err(Rounded)` when `meta.last_row_id` has a size of 2^53 or more: the module reads `meta` with `last_row_id : F64` and makes the `I64` itself (decision 2026-10-16). |
+| Integers in rows | D1 gives each number as a JS `Number`. So an INTEGER of size 2^53 or more comes back rounded, with no error: 2^53 + 1 and -(2^53 + 1) come back as 2^53 and -2^53, and `meta.last_row_id` is rounded too (Talon `research/d1-int-keys/` K3 and K10, local D1 2026-10-16). `pf.pack` writes each `Number` that is not a safe integer as an f64 (`js/values.js:63`). The typed reads (`all!`, `first!`, `D1.Result.all`, `D1.Result.first`, `Object.Self.sql!`) parse with `Cbor.parse_with(bytes, { fields: Snake, int_from_text: Bool.True })` of `roc-cbor`. (1) An integer field reads a float only when it has no fraction and a size of 2^53 - 1 or less (the default of `roc-cbor`), so a rounded value is an error. (2) An integer field also reads text that is a canonical decimal integer in the range of its type, so `CAST(x AS TEXT)` goes straight into an `I64` field. The module turns `InvalidCbor(pos)` into `BadData`, with the column name from `Cbor.path_at(bytes, pos)`: `BadData("column x: integer of 2^53 or more, read it with CAST(x AS TEXT) into an I64, U64 or Id64 field")` when the item at `pos` is an f64 with no fraction and a size of 2^53 or more, else `BadData("column x: the value does not fit the type")`. `MissingRequiredField(x)` is `BadData("column x: missing")`. So a 64-bit id is a plain `I64` field, read with `CAST(id AS TEXT)`. A read with no cast is `BadData` for each id of size 2^53 or more, and an id below that is exact. `rows!` (no types) gives such a value as `Real(F64)`. `Info.last_row_id` is `Err(Rounded)` when `meta.last_row_id` has a size of 2^53 or more: the module reads `meta` with `last_row_id : F64` and makes the `I64` itself (decision 2026-10-16). |
 | Objects, not arrays (`API.md` AQ9) | Rows as arrays with one list of column names (`raw()`) were measured (`research/api-probe/cbor/`): 198 µs in total into the same records (JS 52, Roc 146), against 216 µs as objects (JS 79, Roc 137). The Roc side is not faster: its cost is in the record matching, not in the keys. The 8 % gain is in JS only, and it needs a column mode in the format in which a row value must be a scalar. So the typed functions read objects, except `all_tuples!` (8g, P1), which reads arrays into tuples and has no column mode: `raw()` sends no names. |
 | `all_tuples!` | PLAN.md 8g, P1 (2026-10-17). D1 `raw()` (rows as arrays, no column names), `pf.pack`, then `Cbor.parse_with` into the tuple type of the call: `rows : List((Str, I64))`, one tuple item for each column of the SELECT, in its order. The rows type must be a list of tuples: a record type is `BadData("row 0: the row does not fit the type")`. Same limit (MC11, `all_tuples_with!`), same errors, and the same integer rules as `all!` (`int_from_text`, a float above 2^53 - 1 into an integer item is `BadData`). The column has no name in an array, so the text names its index from 0: `BadData("column 1 (from 0): integer above 2^53, use CAST(... AS TEXT)")` and `"column 1 (from 0): the value does not fit the type"`. A row of another length is `BadData("row 0: the row does not fit the type")`. Measured in the platform, 200 rows: 91.4 against 196 us for `all!` in Node (2.14 times), 102.3 against 231.7 us in workerd (2.26 times), and cheaper than `rows!` (`bench/README.md` "Step 8g", `PLAN.md` 8g P1). No `first_tuple!` (D1 `first()` gives an object, so a tuple read of one row is `all_tuples!` with `LIMIT 1`) and no `D1.Result` form (`batch()` gives the rows as objects, and `raw()` has no batch form). The record form `all!` stays the default: it keeps the names in the type. |
 | `rows!` | D1 `raw({ columnNames: true })` as `Sql` values, with no types. For columns that are not known at compile time: an admin tool, a SQL console, a generic export. |
@@ -551,7 +603,7 @@ Kv(a) :: { ... }.{
 | --- | --- |
 | Format | Picked by the declaration (MC6). `Kv.json` stores JSON text, so a JS Worker reads it with `get(key, "json")`. The module reads the text and parses it in Roc, so an integer above 2^53 stays exact. `Kv.text` and `Kv.bytes` store the value as it is. |
 | Consistency | Eventual: a write can take 60 s or more to show in other places (Cloudflare docs). |
-| `ttl_ms` | KV takes 60 s or more. Less is `KvErr`. |
+| `ttl_ms` | KV takes 60 s or more and throws `KvErr` for less. The platform raises a `ttl_ms` under 60,000 to 60,000 (`Kv.put_with!`, `Kv.Cell.set_with!` and the `Io` twins), so the call is `Ok`. `expires_ms` and `cache_ttl_ms` are not changed. The doc comment of each signature says it. |
 | Seconds (MC10) | KV takes whole seconds. The module rounds `ttl_ms`, `expires_ms` and `cache_ttl_ms` up to the next whole second. `cache_ttl_ms` is 30 s or more (Cloudflare docs, KV limits), else `KvErr`. |
 | Size (MC11) | A KV value can be 25 MiB (Cloudflare docs, KV limits). `get!` reads at most 1 MiB: JS reads the value as a stream (`type: "stream"`) with `pf.readUpTo`, so a larger value is `TooLarge` with no copy into wasm memory. `get_with!` takes `max_bytes`. |
 | Metadata | `getWithMetadata` and the `metadata` of `put`, typed. The type of `get_with_metadata!` comes from the annotation at the call (MC7). A key with no metadata gives `Err(Missing)` in the `metadata` field, not an error of the call. `list!` cannot take a type: a type variable that only a `where` clause names, with no annotation at the call, is a compile error ("type not determined", checked on nightly 10-12). So a `Kv.Key` holds the metadata as CBOR, and `(key.metadata ? |_| Missing).parse()?` reads it with the type of the use (a bare `?` on a `Try(_, [Missing])` field does not compile, section 15). Metadata crosses as CBOR (MC5), and KV stores it as JSON, 1,024 bytes or less (Cloudflare docs), else `KvErr`. An integer above 2^53 in metadata is a `BigInt` that `JSON.stringify` cannot write, so it is `KvErr`. |
@@ -568,7 +620,7 @@ R2 :: { name : Str }.{
 	respond! : R2, Str, Request => Try(Response, [R2Err(Thrown)])   # a GET request answered: 200, 206, 304, 404, 412, 416
 	to_response : R2.Object -> Response                           # 200, the body, the HTTP metadata and etag
 	head! : R2, Str => Try(R2.Meta, [NotFound, R2Err(Thrown)])
-	put! : R2, Str, Body => Try(R2.Meta, [R2Err(Thrown)])
+	put! : R2, Str, Body => Try(R2.Meta, [R2Err(Thrown)])          # any body: a stream of unknown length too (Known length)
 	put_with! : R2, Str, Body, { only_if ?: R2.Cond, http ?: R2.Http, custom ?: List((Str, Str)), checksum ?: R2.Checksum, length_bytes ?: U64 } => Try(R2.Meta, [PreconditionFailed, R2Err(Thrown)])
 	delete! : R2, List(Str) => Try({}, [R2Err(Thrown)])
 	list! : R2, { prefix ?: Str, cursor ?: Str, limit ?: U32, delimiter ?: Str, start_after ?: Str, include ?: List([Http, Custom]) } => Try({ objects : List(R2.Meta), prefixes : List(Str), next : [More(Str), Done] }, [R2Err(Thrown)])
@@ -609,7 +661,9 @@ R2 :: { name : Str }.{
 | Conditions of a request | `only_if: R2.from_headers(req.headers)` gives the request headers to R2 as a `Headers` object (`onlyIf` of Workers takes one). R2 reads If-Match, If-None-Match, If-Modified-Since and If-Unmodified-Since as HTTP headers, so a quoted etag is fine and the app does not cut the quotes. A weak etag (`W/"..."`) is fine only in If-None-Match (weak comparison). If-Match uses strong comparison: a weak etag there does not match. Only these four headers are sent. When `headers` is in a `Cond`, its other fields are not used. `Cond` is the same record with one more optional field, so the old calls work. |
 | `R2.to_response`, `R2.respond!` | These are in `R2` and not in `Response`: `Response` cannot import `R2` when `R2` imports `Response` (4, "Two modules cannot import each other"). `to_response(obj)`: status 200, `content-type`, `content-language`, `content-disposition`, `content-encoding`, `cache-control`, `expires` (from `cache_expiry_ms`, as an HTTP date) and `etag` (`http_etag`) of the object, and its body. A header that the object does not have is not set. `respond!(key, req)` is the whole GET: 200 (with `accept-ranges: bytes`), 304 for a failed If-None-Match or If-Modified-Since (with `etag`, `cache-control`, `expires`), 412 for a failed If-Match or If-Unmodified-Since, 404 with the text `Not found`, 206 with `content-range` for one `Range` (`bytes=a-b`, `bytes=a-`, `bytes=-n`), 416 for a range after the end. `Err` is only `R2Err`. Not in scope: a `Range` with more than one range (the whole object is sent), `If-Range` (a request with it gets the whole object), the method (the app sends GET and HEAD to it, and Workers drops the body of a HEAD), and a 412 when both If-Match and If-None-Match are in the request (it is 304 if the request has If-None-Match or If-Modified-Since). The app that needs more uses `get_with!` and `to_response`. |
 | HTTP metadata | `R2.Http` is `R2HTTPMetadata` (Cloudflare docs), each field optional. A field that the object does not have is absent, so `meta.http.?content_type` gives an `Err`, not an empty text (MC8). |
-| Known length | R2 takes a stream body only with a known length: "Provided readable stream must have a known length (request/response body or readable half of FixedLengthStream)" (workerd source, `api/r2-rpc.c++`; the R2 docs do not say). A `Text` or `Bytes` body, and the body of a request or a response, have one. A stream that the app makes (`Body.writer!`, `compress!`) does not: `put_with!` and `upload_part_with!` with `length_bytes` pipe it through `new FixedLengthStream(length_bytes)`. A stream of another length is `R2Err`. |
+| Known length | R2 takes a stream body only with a known length: "Provided readable stream must have a known length (request/response body or readable half of FixedLengthStream)" (workerd source, `api/r2-rpc.c++`; the R2 docs do not say). A `Text` or `Bytes` body, and the body of a request or a response, have one. A stream that the app makes (`Body.writer!`, `compress!`) does not. Since `PLAN.md` 8h wave B, `put!` and `put_with!` take it: the helper `pf.r2put` (`API.md` 6.4) tries the put, and on that error reads the stream in JS. Up to 5 MiB: one put of the bytes, with each option. Past 5 MiB: a multipart upload with parts of 5 MiB (the last one smaller), one part in memory at a time, then `complete`; any error aborts the upload. |
+| Cost of a stream with no length | Memory: one part (5 MiB) and one chunk in JS, no byte in wasm. Time: the parts go one after the other (no overlap of reading and upload), and a multipart upload is 2 more R2 calls (`createMultipartUpload`, `complete`) and one call for each part. Limits: 10,000 parts, so 48.8 GiB; R2 counts each call as a class A operation. A multipart object has no MD5 (5.3, "Multipart, edge"), and its etag ends in `-<parts>`. |
+| Options and a multipart upload | A multipart upload takes `http` and `custom`. `only_if` and `checksum` with a stream of unknown length past 5 MiB are `R2Err` (`TypeError`): give `length_bytes`, which pipes the stream through `new FixedLengthStream(length_bytes)`, so it is one put with each option. A stream of another length is `R2Err`. The `R2.Meta` of a multipart put has the `http` and `custom` of the call (the edge gives none from `complete`, E28). `upload_part!` of a stream with no length is still `R2Err`: `upload_part_with!` takes `length_bytes`. |
 | Miniflare | Miniflare differs from the edge in these places, which `PLAN.md` 8c lists for 11c: a right `etag_matches` makes `uploaded_before_ms` pass (the HTTP rule of `If-Match`: `_testR2Conditional` in its `bucket.worker.js`), so a right etag with a time in the past is `Ok`, and a right etag with `uploaded_after_ms` in the future is `PreconditionFailed`. It gives each hash (MD5, SHA-1, SHA-256, SHA-384, SHA-512) for an object, and the edge gives MD5 and the hash that the put got. |
 | Checksums | `checksum` sends one hash for R2 to check: the docs allow "only a single hashing algorithm" at once, so the option is one tag. A wrong hash is `R2Err`. `meta.checksums` has MD5 for each object that is not multipart, and the hash that the put gave (Cloudflare docs). |
 | Built (`PLAN.md` 8c) | Each function has its twin (MC3): `get`, `get_with`, `head`, `put`, `put_with`, `delete`, `list`, `create_multipart_upload`, `create_multipart_upload_with`, and on `R2.Upload` `upload_part`, `upload_part_with`, `complete`, `abort`. `list` takes its options record, with no `_with` form, as above. The platform reads each result as a `Js` tree and decodes `R2.Meta` in Roc (no `Cbor` module in the platform yet), and the list with the helper `pf.r2list` (API.md 6.4). A failed condition of `put_with!` is the `null` result, and of `get_with!` an object with no body: both are `PreconditionFailed`. |
@@ -625,7 +679,8 @@ Cache :: { ... }.{
 	default : Cache
 	named : Str -> Cache                                     # caches.open, in the same crossing as the op
 	get! : Cache, Str => Try(Response, [NotFound, CacheErr(Thrown)])   # cache.match
-	put! : Cache, Str, Response => Try({}, [CacheErr(Thrown)])
+	put! : Cache, Str, Response => Try(Response, [CacheErr(Thrown)])   # the put now; gives the response to send
+	put_after! : Cache, Str, Response => Try(Response, [CacheErr(Thrown)])   # the put in the work of Response.after
 	delete! : Cache, Str => Try({}, [NotFound, CacheErr(Thrown)])   # false from delete: NotFound
 }
 ```
@@ -633,10 +688,11 @@ Cache :: { ... }.{
 | Item | Rule |
 | --- | --- |
 | Key | A URL. Workers caches only GET. The module makes the key a GET request for the URL, so `match` and `delete` need no `ignoreMethod` (it makes a request of another method count as GET): `get!` and `delete!` have no `_with` form (MC4). |
-| `put!` | A 206 response or a response with `Vary: *` is `CacheErr` (a throw, Cloudflare docs). A response with `Set-Cookie` is not cached and gives `Ok`, and a response that is too large or has `Cache-Control: no-store` also gives `Ok`: `put` resolves "regardless of whether the cache successfully stored the response" (Cloudflare docs). |
+| `put!` | Gives the response to send. A `Stream` body can be read once, so `put!` tees it (`ReadableStream.tee()`) in the same program: one branch goes to the cache, the response that `put!` gives has the other. For `Empty`, `Text` and `Bytes` it is the same response. The result is not `{}`, so `cache.put!(url, res)?` as a statement does not compile, and `Ctx.wait_until!(cache.put(url, res))` does not either (`wait_until!` takes `Io({}, e)`). The put reads its branch to the end before `put!` gives its result, so the other branch keeps the whole body in JS until it is sent: for a large stream use `put_after!`. A 206 response or a response with `Vary: *` is `CacheErr` (a throw, Cloudflare docs). A response with `Set-Cookie` is not cached and gives `Ok`, and a response that is too large or has `Cache-Control: no-store` also gives `Ok`: `put` resolves "regardless of whether the cache successfully stored the response" (Cloudflare docs). |
 | Scope | One data center (RF1). |
 | Built (`PLAN.md` 8c) | `Cache :: { which : [Default, Named(Str)] }`. The key is the URL as a string (the Cache API takes it as a `GET` request). `get!` gives a `Response` with a `Stream` body, so `res.text!()` is a second wait. Each function has its twin (`get`, `put`, `delete`). Locally a response with no `cache-control` is not cached (`match` gives `undefined`). |
-| Put after the response | `Ctx.wait_until!(cache.put(url, res))`: no wait in the handler. A `Stream` body is read by the put, so give it a `tee!` copy or a `Bytes` body. |
+| Put after the response | `Ok(cache.put_after!(url, res)?)`: no wait in the handler. It tees a `Stream` body now (one `call!`), and gives the response with one branch and `Response.after` work that runs `put!` of the other branch. The client and the cache read at the same time, so the tee keeps only the bytes that one has read and the other has not. An `Err` of the put is the log line `fetch: after respond: failed: ...`. Only for the result of a `fetch!` handler: elsewhere the work does not run (`API.md` 10.2). A tee error is `CacheErr`. |
+| As built (`PLAN.md` 8h wave B) | `put` is one program: `tee`, `new Response(branch 0, init)`, `cache.put`, then `Get` of branch 1 as the result (a ref). `put_after!` is `Body.tee!`, then `Response.after` with `put!`. No twin for `put_after!`: it does not wait (MC3). | The tee is part of the function, so the response that follows has its body |
 
 ## 6. Messages: `Queue`
 
@@ -677,8 +733,9 @@ Outside: a stub is plain data, like a binding.
 
 ```roc
 Object :: { ... }.{
-	namespace : Str -> Object.Namespace
+	namespace : Str, { class : Str, script ?: Str } -> Object.Namespace   # the binding, its class_name and script_name
 	Namespace := { ... }.{
+		declare : Object.Namespace -> Worker.Binding         # for Worker.new bindings (3): kind object, class, script
 		named : Object.Namespace, Str -> Object             # data: getByName runs in the program of each call
 		named_with : Object.Namespace, Str, { location_hint ?: Object.Location } -> Object
 		from_id : Object.Namespace, Str -> Object
@@ -722,7 +779,8 @@ Inside: a class is a record of handlers, all optional, as for `Worker`.
 		sql_run! : Object.Self, Str, params => Try(Object.SqlInfo, [SqlErr(Thrown), Constraint(Sql.Constraint)]) where [params.Encodable([])]
 		sql_rows! : Object.Self, Str, params => Try(Sql.Rows, [SqlErr(Thrown), Constraint(Sql.Constraint), TooLarge]) where [params.Encodable([])]
 		sql_rows_with! : Object.Self, Str, params, { max_bytes : U64 } => Try(Sql.Rows, [SqlErr(Thrown), Constraint(Sql.Constraint), TooLarge]) where [params.Encodable([])]
-		set_alarm! : Object.Self, U64 => Try({}, [StorageErr(Thrown)])                 # setAlarm: a promise, one wait
+		set_alarm_at! : Object.Self, U64 => Try({}, [StorageErr(Thrown)])              # setAlarm(epoch_ms): a time of the clock, one wait
+		set_alarm_in! : Object.Self, U64 => Try({}, [StorageErr(Thrown)])              # setAlarm(Date.now() + delay_ms), one wait
 		get_alarm! : Object.Self => Try(U64, [NotFound, StorageErr(Thrown)])           # getAlarm: a promise, one wait
 		delete_alarm! : Object.Self => Try({}, [StorageErr(Thrown)])                   # deleteAlarm: a promise, one wait
 		list! : Object.Self => Try(List(Str), [TooLarge, StorageErr(Thrown)])          # kv.list(): the keys, sync
@@ -750,14 +808,15 @@ Inside: a class is a record of handlers, all optional, as for `Worker`.
 		send_json! : Object.Socket, a => Try({}, [Closed, BadData(Str)]) where [a.JsonEncodable]
 		close! : Object.Socket, U16, Str => {}
 		tags! : Object.Socket => List(Str)                                          # getTags
-		attach! : Object.Socket, a => Try({}, [TooLarge]) where [a.Encodable]       # serializeAttachment: CBOR bytes
-		attachment! : Object.Socket => Try(a, [NotFound, BadData(Str)]) where [a.Parseable]
+		# Object.attachment : Str -> Object.Attachment(a) where [a.Encodable, a.Parseable]   (a constant, like Object.cell)
+		Attachment.set! : Object.Attachment(a), Object.Socket, a => Try({}, [TooLarge])   # serializeAttachment: CBOR bytes
+		Attachment.get! : Object.Attachment(a), Object.Socket => Try(a, [NotFound, BadData(Str)])
 		auto_response_ms! : Object.Socket => Try(U64, [NotFound])                   # getWebSocketAutoResponseTimestamp
 	}
 ```
 
 ```roc
-counters = Object.namespace("COUNTERS")
+counters = Object.namespace("COUNTERS", { class: "Counter" })
 increment : Rpc({ by : I64 }, I64, [StorageErr(Thrown)])
 increment = Rpc.method("increment")
 count : Object.Cell(I64)
@@ -780,12 +839,12 @@ n = counters.named("global").call!(increment, { by: 1 })?
 | Item | Rule |
 | --- | --- |
 | Storage is sync | SQL (`ctx.storage.sql`), cells and `list!` (the sync KV API, `ctx.storage.kv`), `sockets!` and the socket calls use `call!`: no JSPI wait (AQ3). |
-| Calls that wait | `set_alarm!`, `get_alarm!`, `delete_alarm!` and `delete_all!` give promises (Cloudflare docs, Storage API), so each uses `await!`: one wait. Each has an `Io` twin (MC3). The input gate stays closed during a storage operation (Cloudflare docs, Rules of Durable Objects), so these waits do not let other events in. |
+| Calls that wait | `set_alarm_at!`, `set_alarm_in!`, `get_alarm!`, `delete_alarm!` and `delete_all!` give promises (Cloudflare docs, Storage API), so each uses `await!`: one wait. Each has an `Io` twin (MC3). The input gate stays closed during a storage operation (Cloudflare docs, Rules of Durable Objects), so these waits do not let other events in. |
 | SQLite only | Cells and `list!` need the sync KV API, which only a SQLite-backed object has (Cloudflare docs, Storage API). So each class must be SQLite-backed: `new_sqlite_classes` in the migration of the Wrangler config. On a KV-backed class, workerd throws at the first use of `ctx.storage.sql` or `ctx.storage.kv`. The shim reads `ctx.storage.sql.databaseSize` in the constructor, and on a throw it throws an error that names the class and `new_sqlite_classes`. |
 | `init!` | The constructor of the class runs `init!` as the event `Init` (`API.md` 10.1) inside `ctx.blockConcurrencyWhile`, so no other event of the object runs before it ends. It is a new task that calls `roc_event`, not a Roc callback, so it does not need `API.md` AQ1. It can wait. It runs each time the object starts: the first event, and the first event after Workers evicts the object or after a hibernation. So it must be idempotent: `create table if not exists`, or a schema version in a cell. A class with no `init!` has no `blockConcurrencyWhile`. |
 | `init!` fails | `Err(e)` gives a log line, and the callback of `blockConcurrencyWhile` throws. Workers then terminates and resets the object (Cloudflare docs, State API). The event that started the object fails: the caller of `fetch!` or `call!` gets `ObjectErr` or `RpcErr`. The next event runs the constructor and `init!` again. Workers also resets the object when the callback takes more than 30 s (Cloudflare docs, State API). The deadlines of the task: `API.md` 10.2. |
-| `alarm!` | The event `Alarm` carries `retryCount` and `isRetry` of the `alarmInfo` of Workers (0 and false when Workers gives none). `Ok` ends the alarm. `Err(e)` gives a log line and a throw, and Workers runs the alarm again: up to 6 retries, with a backoff that starts at 2 s and doubles (Cloudflare docs, Alarms). Only the alarm of the last `set_alarm!` is retried. To stop the retries, the handler gives `Ok`, for example when `retry_count` is 3. `delete_alarm!` in the handler stops a retry only on a best-effort basis (Cloudflare docs). In the handler, `get_alarm!` gives `NotFound` unless the handler called `set_alarm!` (Cloudflare docs). The deadlines: `API.md` 10.2. |
-| A class with no `alarm!` | It has no `alarm` method in JS (the manifest, 3). If the shim always defined one, an alarm with no handler would give `Unhandled`, a throw, and 6 retries. With no method, `set_alarm!` gives `StorageErr` (`TypeError`: "Your Durable Object class must have an alarm() handler in order to call setAlarm()", workerd source `io/worker.c++`), except in `init!`: workerd does not check in the constructor, and the alarm then runs with no handler and no retry. |
+| `alarm!` | The event `Alarm` carries `retryCount` and `isRetry` of the `alarmInfo` of Workers (0 and false when Workers gives none). `Ok` ends the alarm. `Err(e)` gives a log line and a throw, and Workers runs the alarm again: up to 6 retries, with a backoff that starts at 2 s and doubles (Cloudflare docs, Alarms). Only the alarm of the last `set_alarm_at!` or `set_alarm_in!` is retried. To stop the retries, the handler gives `Ok`, for example when `retry_count` is 3. `delete_alarm!` in the handler stops a retry only on a best-effort basis (Cloudflare docs). In the handler, `get_alarm!` gives `NotFound` unless the handler called `set_alarm_at!` or `set_alarm_in!` (Cloudflare docs). The deadlines: `API.md` 10.2. |
+| A class with no `alarm!` | It has no `alarm` method in JS (the manifest, 3). If the shim always defined one, an alarm with no handler would give `Unhandled`, a throw, and 6 retries. With no method, `set_alarm_at!` and `set_alarm_in!` give `StorageErr` (`TypeError`: "Your Durable Object class must have an alarm() handler in order to call setAlarm()", workerd source `io/worker.c++`), except in `init!`: workerd does not check in the constructor, and the alarm then runs with no handler and no retry. |
 | `list!` | The keys of the sync KV storage (the cells), in UTF-8 order. The values stay in JS: read one with its cell, a `call!` with no wait. `list_with!` takes the options of `kv.list` (Cloudflare docs). A list with no `limit` reads all keys, so the read limit of MC11 applies: `TooLarge` past it. A `pf` helper takes the keys from the iterator (a loop, `API.md` 6.4). |
 | `delete_all!` | Deletes all storage of the object: the SQL tables, the cells and the alarm. One program calls `deleteAlarm`, then `deleteAll`. Since the compatibility date 2026-02-24, `deleteAll` also deletes the alarm (Cloudflare docs), but with an earlier date it does not, so the module calls `deleteAlarm` too. On a SQLite-backed object `deleteAll` is atomic. |
 | SQL size (MC11) | `sql!` and `sql_rows!` read at most 1 MiB of rows, as `D1.all!` (5.1): `pf.pack` stops at the limit, so a larger result is `TooLarge` with no copy into wasm memory. `sql_with!` and `sql_rows_with!` name the limit. `sql_run!` reads no rows. |
@@ -799,8 +858,9 @@ As built in `PLAN.md` 8f, part 1 (`platform/Object.roc`, `platform/Remote.roc`, 
 
 | Item | Built as | Why |
 | --- | --- | --- |
-| Backing | `Object :: { namespace, jurisdiction, target : [Named(Str), Id(Str)], location_hint }`, `Namespace := { binding, jurisdiction }` (`""` for none), `Self :: { class, id }` | Data only (MC1) |
-| Twins | `fetch`, `call` (stubs) and `set_alarm`, `get_alarm`, `delete_alarm`, `delete_all` (`Self`) give an `Io`. SQL, cells, `list!` and `id!` do not wait: no twin. | MC3 |
+| Backing | `Object :: { namespace, jurisdiction, target : [Named(Str), Id(Str)], location_hint }`, `Namespace := { binding, jurisdiction, class, script }` (`""` for none; `class` and `script` are for the manifest only, 3), `Self :: { class, id }` | Data only (MC1) |
+| Namespace and class (step 8h wave B) | `Object.namespace(binding, { class, script? })`: the class is in the manifest (3), so the shim and `sync` check the Wrangler config against `objects`. The types do not tie a namespace to its class: an `Rpc` of another class compiles and gives `RpcErr` ("does not implement the method") at the call. A phantom class type (`Object.Namespace(cls)`, `Rpc(cls, arg, ret, err)`) would add one type argument to each `Rpc` and `Object` annotation, a type for each class, and an annotation for each namespace; an `Rpc` used on a service and on an object (`conformance/RpcMethods.roc`) would need a free class variable and get no check. Not built. | Cost against gain |
+| Twins | `fetch`, `call` (stubs) and `set_alarm_at`, `set_alarm_in`, `get_alarm`, `delete_alarm`, `delete_all` (`Self`) give an `Io`. SQL, cells, `list!` and `id!` do not wait: no twin. | MC3 |
 | `unique!` | A throw of `newUniqueId` is a crash | The type has no error |
 | `id!` | `idFromName(name).toString()` with `call!`. A stub of an id gives its id with no crossing. | |
 | `jurisdiction` | Local workerd throws "Jurisdiction restrictions are not implemented in workerd." at `jurisdiction(j)`, so `id!`, `fetch!` and `call!` of such a stub give `ObjectErr`/`RpcErr` locally | `PLAN.md` 11c checks the edge |
@@ -815,7 +875,7 @@ As built in `PLAN.md` 8f, part 1 (`platform/Object.roc`, `platform/Remote.roc`, 
 | SQLite check | The constructor reads `ctx.storage.sql.databaseSize`. On a throw it throws `Durable Object class <name>: the platform needs a SQLite-backed class: put "<name>" in new_sqlite_classes ...`, with the text of Workers after it. Local workerd already names `new_sqlite_classes`, but not the class. | 7, "SQLite only" |
 | `init!` | `ctx.blockConcurrencyWhile` of the task `<class>.init` (the event `Init`). A timer of the constructor sweeps the task table at `initMs` + 50 ms (shim option, default 30 s), so the cancel names the task: the caller gets `ObjectErr` with `<class>.init: cancelled: deadline`. An `Err`: a log line and the throw `<class>.init: failed: <error>`. | The sweep of `PLAN.md` 3b runs only at a new request, and no other event of the object comes in `blockConcurrencyWhile` |
 | `alarm!` | `retry_count` is `alarmInfo.retryCount`, `is_retry` is `alarmInfo.isRetry` (0 and false with no `alarmInfo`). Locally the retries come after 2 s and 4 s. | 7, "alarm!" |
-| `fetch!` | As the `fetch` of a Worker, with the `respond` hook of `Ctx.respond!` and no `waitUntil` after it (API.md 10.2). `pass_through!` is `InvalidState`. | |
+| `fetch!` | As the `fetch` of a Worker, with the `respond` hook of `Response.after` and no `waitUntil` after it (API.md 10.2). `pass_through!` is `InvalidState`. | |
 
 
 One constant names a method and its types, also the errors that the callee can give. Both sides use it: the caller with `call!`, the callee with `on`.
@@ -832,8 +892,10 @@ Rpc(arg, ret, err) :: { name : Str }.{
 
 Reply(ret, err) := [Ok(ret), Err(err)]                       # the wire form (private): {"Ok": value} or {"Err": tag}
 
-Service :: { name : Str }.{
+Service :: { name : Str, service : Str, entrypoint : Str }.{
 	binding : Str -> Service
+	binding_with : Str, { service ?: Str, entrypoint ?: Str } -> Service   # the Worker and entry point, for the manifest only
+	declare : Service -> Worker.Binding                                   # for Worker.new bindings (3): kind service
 	fetch! : Service, Request => Try(Response, [ServiceErr(Thrown)])
 	call! : Service, Rpc(arg, ret, err), arg => Try(ret, [RpcErr(Thrown), BadData(Str), Remote(err)]) where [arg.Encodable, ret.Parseable, err.Parseable]
 }
@@ -890,7 +952,7 @@ As built in `PLAN.md` 8f, part 1 (`platform/Rpc.roc`, `platform/Service.roc`, `p
 
 Three declarations of a typed value with the same shape: a name and a type at the top of a module, then `get!` and `set!`.
 
-`Kv.Cell` and `Object.Cell` also have `get_or!(default)` (`get_or!(self, default)` for `Object.Cell`): the same errors as `get!` without `NotFound`, so a cell that has no value gives the default and no `match` lists the other errors again. `Kv` has `get_or!(key, default)` and an `Io` twin `get_or` (also on `Kv.Cell`). `Memo` has nothing to add: its `load!` is the default.
+`Kv.Cell` and `Object.Cell` also have `get_or!(default)` (`get_or!(self, default)` for `Object.Cell`): the same errors as `get!` without `NotFound`, so a cell that has no value gives the default and no `match` lists the other errors again. `Kv` has `get_or!(key, default)` and an `Io` twin `get_or` (also on `Kv.Cell`). `Memo` has nothing to add: its `load!` is the default. `Memo` across deploys already holds: a pinned value that does not parse as the new type (an older type with the same name) is dropped and `load!` runs again (`Memo.get!`, `platform/Memo.roc`). `Object.Attachment` and `Object.Cell` have no such fallback: a value of an old type that does not parse is `BadData`, and a value of an old type that still parses (a record with more fields) loads. `Object.Attachment` has one slot for each socket: two constants on one socket share it, and the name only shows in the text of `BadData`.
 
 | Wrapper | Where the value is | Readers | Consistency | Cost of `get!` | Lost when |
 | --- | --- | --- | --- | --- | --- |
@@ -1017,8 +1079,7 @@ So `Crypto` is useful on Workers, and `WebCrypto` is not a replacement for it. T
 
 ```roc
 Ctx :: [].{
-	respond! : Response => Try({}, [InvalidState])   # API.md 10.2
-	wait_until! : Io(a, e) => {}                      # starts the operation now; a JS throw goes to the log, a Roc Err is not seen
+	wait_until! : Io({}, e) => {}                     # starts the operation now; a JS throw goes to the log, a Roc Err is not seen
 	pass_through! : {} => Try({}, [InvalidState])     # only in the Fetch of a Worker
 }
 
@@ -1038,8 +1099,8 @@ Log :: [].{
 
 | Item | Rule |
 | --- | --- |
-| `respond!` | In the `Fetch` of a Worker or of a Durable Object. Elsewhere, and on a second call, `InvalidState`. The deadlines after it and the rule for the request body are in `API.md` 10.2. |
-| `wait_until!` | `Io.start!` and `ctx.waitUntil` in one `call!`, with no wait. The Roc reader of the `Io` does not run, so a Roc-level `Err` (`PreconditionFailed`, `BadData`) is not seen. Only a JS throw goes to the log. The context of the task (refs and roots) stays until the operation settles, or until the 30 s limit of `waitUntil` (`API.md` 6.5, RS1). Work whose result matters (a write that can fail, a check) runs in the task after `respond!`. |
+| Respond now, work after | Not in `Ctx`: a `fetch!` handler gives `Ok(res.after(work!))` (`Response.after`, 4, `API.md` 10.2). The deadlines after the response and the rule for the request body are in `API.md` 10.2. |
+| `wait_until!` | `Io.start!` and `ctx.waitUntil` in one `call!`, with no wait. The Roc reader of the `Io` does not run, so a Roc-level `Err` (`PreconditionFailed`, `BadData`) is not seen. Only a JS throw goes to the log. The context of the task (refs and roots) stays until the operation settles, or until the 30 s limit of `waitUntil` (`API.md` 6.5, RS1). Only an `Io({}, e)` fits: the result is dropped, so an operation with a result is a type error (`wait_until!(cache.put(url, res))` would drop the response to send, 5.4; use `cache.put_after!`). Work whose result matters (a write that can fail, a check) runs in the work of `Response.after`. |
 | `pass_through!` | `ctx.passThroughOnException()`. Only in the `Fetch` of a Worker. Elsewhere the shim gives status 1, and the function gives `InvalidState`. After it, an `Err` of `fetch!` makes the shim throw, and Workers sends the request to the origin (`API.md` 10.1). Workers cannot send a request body that the handler already read (Cloudflare docs, Context API). |
 | `Io.timeout` | `io.timeout(ms)` gives `Io(a, [TimedOut, ..e])`: the operation, or `Err(TimedOut)` when `ms` pass first. It is a `Race` of the operation and the sleep of `Time.sleep` in one program, so the loser is aborted as in `Io.race!`. `ws.receive().timeout(5_000).run!()` replaces `Io.race!([ws.receive().map(Got), Time.sleep(5_000).map(\|_\| TimedOut)])` and its `match`. No `receive_within!`: the call above has the same length and works for each `Io` (a `Tcp` read, a fetch). |
 | `sleep!`, `sleep` | `scheduler.wait(ms)`. On the edge, a timer does not move during CPU work, only at I/O (Cloudflare docs, scheduler). A sleep is a wait, so the deadlines of `API.md` 10.2 apply. A timeout is `Io.timeout` (`op.timeout(ms)`, `API.md` 6.5). |
@@ -1048,11 +1109,10 @@ As built in `PLAN.md` 8b (second half) and 9c (`platform/Ctx.roc`, `js/helpers.j
 
 | Item | Built as | Why |
 | --- | --- | --- |
-| `respond!` | One `call!` of `pf.respond` with the outcome `Respond` of the response (the shape of `Entry`). The shim makes the Workers `Response` at once and gives it to the `fetch` handler, which returns it and gives the rest of the task to `ctx.waitUntil`. Since `PLAN.md` 8f (part 1) the `fetch` of a named entry point gives the hook too (with `ctx.waitUntil`), and the `fetch` of a Durable Object (no `ctx.waitUntil`: the object finishes its work, API.md 10.2). | API.md 10.2 |
-| Errors of `respond!` | `InvalidStateError` (no hook, a second call) is `InvalidState`. Any other throw (a status or a header that Workers refuses) is a `crash`, as the same response from `event!` is a 500. | The type has only `InvalidState` |
-| After `respond!` | The outcome of `event!` is ignored. `Failed` and `Unhandled` give the log line `fetch: after respond: <reason>`, a trap gives its trap line. | Something must show an error that no client sees |
+| `respond!` | Removed in `PLAN.md` 8h wave B: `Response.after` and `Entry.finish!` (4, "As built in 8h, wave B") call `pf.respond`. The hooks of the `fetch` of a named entry point and of a Durable Object are as built in `PLAN.md` 8f (part 1). | API.md 10.2 |
+| After the response | The outcome of `event!` is the outcome of the work: `Done`, or `Failed` with the log line `fetch: after respond: failed: <reason>`. A trap gives its trap line. | Something must show an error that no client sees |
 | `pass_through!` | `pf.passThrough`: `ctx.passThroughOnException()` in the `fetch` of a Worker, else `InvalidState`. After it, `Failed` and a trap make the `fetch` handler throw. A shed and a cancel keep their 503. | A trap is an exception of the handler too |
-| `wait_until!` | One `call!`: `Start` of `pf.spawn` with the ops of the `Io`, then `ctx.waitUntil` of that promise. A failed call is a `crash` (a platform bug). | MC3: no wait |
+| `wait_until!` | One `call!`: `Start` of `pf.spawn` with the ops of the `Io`, then `ctx.waitUntil` of that promise. A failed call is a `crash` (a platform bug). Since `PLAN.md` 8h wave B the type is `Io({}, e)`. | MC3: no wait. A dropped result is a type error. |
 | The context of a started program | The task table keeps it after the task ends, until the last started program settles. The `waitUntil` limit: `afterRespondMs` (30 s) after the response is complete, or after the end of the task when the response was complete then. The deadline sweep of each new request checks it (no timer, `PLAN.md` 3b), frees the context, and writes the log line `task context freed at the waitUntil limit: ...`. The signal of the program aborts then. | RS1, API.md 6.5 |
 
 
@@ -1096,10 +1156,13 @@ sequenceDiagram
 ```
 
 ```roc
-rooms = Object.namespace("ROOMS")
+rooms = Object.namespace("ROOMS", { class: "Room" })
 
 User : { name : Str }
 Said : { text : Str }
+
+user_slot : Object.Attachment(User)
+user_slot = Object.attachment("user")
 
 # The Worker: give the upgrade request to the object, and its 101 response to the client.
 fetch! = |req| match (req.method, req.segments()) {
@@ -1114,12 +1177,12 @@ room = Object.class("Room", {
 		{ socket, response } = self.accept!(req)?
 		user : User
 		user = { name: req.query("user") ?? "anon" }
-		socket.attach!(user)?                                  # kept while the object sleeps
+		user_slot.set!(socket, user)?                          # kept while the object sleeps
 		Ok(response)
 	},
 	web_socket_message!: |self, socket, msg| {
 		user : User
-		user = socket.attachment!()?
+		user = user_slot.get!(socket)?
 		said : Said
 		said = msg.json()?
 		for peer in self.sockets!() {
@@ -1136,7 +1199,7 @@ room = Object.class("Room", {
 
 | Item | Rule |
 | --- | --- |
-| Hibernation | Workers can take the object out of memory while its sockets are open, and wakes it for the next message. Roc keeps no state across events, so nothing is lost. State that a socket needs is in its attachment (`attach!`, CBOR, 16,384 bytes or less) or in the storage of the object. A wake runs the constructor, so `init!` runs before the message (7). |
+| Hibernation | Workers can take the object out of memory while its sockets are open, and wakes it for the next message. Roc keeps no state across events, so nothing is lost. State that a socket needs is in its attachment (`Object.Attachment`, CBOR, 16,384 bytes or less) or in the storage of the object. A wake runs the constructor, so `init!` runs before the message (7). |
 | The Worker | Gives the request to the object with `fetch!` and the 101 response back with no change: `Response.web_socket` carries the client end (4). It checks `WebSocket.is_upgrade(req)` first and answers 426, as in the Cloudflare example. An RPC call cannot carry the socket: use `fetch!`. |
 | `accept!` | `new WebSocketPair()`, `ctx.acceptWebSocket(server, tags)` and a 101 response with the client end, in one `call!`. `NotUpgrade` when the request has no `Upgrade: websocket`. |
 | Tags | `accept_with!(req, { tags })`: 10 tags or less, 256 characters or less each, else `TooLarge`. `sockets_with!(self, { tag })` finds the sockets of a tag, for example of one user. |
@@ -1170,21 +1233,23 @@ WebSocket :: { ... }.{
 # A Worker that answers each message, for the life of the socket.
 fetch! = |req| {
 	{ socket, response } = WebSocket.accept!(req)?
-	Ctx.respond!(response)?
-	while Bool.True {
-		match socket.receive!() {
-			Ok(Text(t)) => socket.send!(Text("echo ${t}")) ?? {}
-			Ok(Bytes(_)) => {}
-			Err(Closed(_)) => break
+	serve! = |_| {
+		while Bool.True {
+			match socket.receive!() {
+				Ok(Text(t)) => socket.send!(Text("echo ${t}")) ?? {}
+				Ok(Bytes(_)) => {}
+				Err(Closed(_)) => break
+			}
 		}
+		Ok({})
 	}
-	Ok(response)                                              # ignored after respond!
+	Ok(response.after(serve!))                                # the 101 now, then the loop
 }
 ```
 
 | Item | Rule |
 | --- | --- |
-| A Worker | `accept!`, `Ctx.respond!(response)`, then a loop of `receive!`. Each `receive!` is one wait: JS keeps the messages that come before it in a queue. A 101 response keeps the task until the socket closes: the 30 s limit of `API.md` 10.2 does not apply. The docs do not say if the CPU limit of the request counts over the whole connection, and a runtime update gives a connection 20 minutes to finish (Cloudflare docs, limits). So a socket that lives long goes in a Durable Object (12.1). |
+| A Worker | `accept!`, then `Ok(response.after(serve!))`: the 101 response now, then a loop of `receive!` in the work. Each `receive!` is one wait: JS keeps the messages that come before it in a queue. A 101 response keeps the task until the socket closes: the 30 s limit of `API.md` 10.2 does not apply. The docs do not say if the CPU limit of the request counts over the whole connection, and a runtime update gives a connection 20 minutes to finish (Cloudflare docs, limits). So a socket that lives long goes in a Durable Object (12.1). |
 | A client | `connect!(url)`: a `fetch` with `Upgrade: websocket`, then `accept()` of the `webSocket` of the response: one wait for the `fetch`, then one `call!` with no wait for `accept()` (`API.md` OP7). `NotUpgrade` when the server does not answer 101. It counts as an outbound connection (6 at the same time). In an object, a client socket keeps the object in memory: it has no hibernation. |
 | One API | `Object.Socket` and `WebSocket` have the same `send!`, `send_json!` and `close!`, so a function with a `where` clause on `send!` takes both. Only `WebSocket` has `receive!`: an object gets messages as events. |
 | Text or bytes | `Message` is the frame. `msg.json()` parses a text frame as JSON, the format of most WebSocket clients. |
@@ -1240,12 +1305,12 @@ The code follows 12.1 to 12.3 with these differences and additions, each with it
 | `send!`, `send_json!` | `Try({}, [Closed])`, and `send_json!` also `BadData(Str)` | Each throw of `send` is `Closed`. A value that JSON cannot show (`NaN` in an `F64`) is `BadData`, and nothing is sent | `send!` has one tag. Local text: "Can't call WebSocket send() after close()." |
 | `close!` | `{}` | A throw is dropped (a code that the app cannot send, as 1005) | The type has no error |
 | `receive!` | One wait | One wait with no deadline (`API.md` 10.2): the helper marks the wait as a socket wait. After the close each call gives `Closed`. | |
-| A 101 response of `WebSocket.accept!` after `Ctx.respond!` | The task stays until the socket closes, then the task ends | The response is open while the socket is open (no deadline), and complete at the close (30 s more, `afterRespondMs`). No cancel at the close: the task ends when the handler returns (decided 2026-10-17). | A close that cut the handler short would lose its cleanup work, and a cancel would win against the `Closed` of the `receive!` that waits (`API.md` 10.2) |
+| A 101 response of `WebSocket.accept!` with `Response.after` (8h wave B; built with `Ctx.respond!`) | The task stays until the socket closes, then the task ends | The response is open while the socket is open (no deadline), and complete at the close (30 s more, `afterRespondMs`). No cancel at the close: the task ends when the handler returns (decided 2026-10-17). | A close that cut the handler short would lose its cleanup work, and a cancel would win against the `Closed` of the `receive!` that waits (`API.md` 10.2) |
 | `Message` | `[Text(Str), Bytes(List(U8))]` with `json` | Also `is_eq`. `json` of a bytes frame is `BadData` | "`msg.json()` parses a text frame" |
 | `WebSocket`, `Object.Socket` | `==` on sockets | `WebSocket :: { ref }` with the derived `is_eq`. `Object.Socket := { ref }` (`:=` as in 7) with `is_eq` that compares the refs. | `Entry` makes an `Object.Socket` from the socket of an event, so its backing must be visible. A ref is good for one task (MC13), and the ref table gives one id to one JS object (RS1): `getWebSockets()` gives the same JS object as the event (probe: `same: true`, also after a hibernation). |
 | `Tcp` | `Tcp :: { ... }` | `Tcp := { ref : Js.Ref }`, `Tcp.Tls : [Off, On, StartTls]` | `Hyperdrive.connect!` makes a `Tcp` from the socket of its binding |
-| `accept_with!` tags, `set_auto_response!`, `attach!` | 10 tags, 256 characters, 2,048 characters, 16,384 bytes | No check in Roc: a throw of Workers is `TooLarge`. `accept!` with no tags crashes on a throw. | Workers checks the limits (local: "a Hibernatable WebSocket cannot have more than 10 tags", "A WebSocket 'attachment' cannot be larger than 16384 bytes."). The size of an attachment is its structured clone, not its CBOR bytes. |
-| `attachment!` | `Try(a, [NotFound, BadData(Str)])` | `null` is `NotFound`. A throw is `BadData` with the text. | The type has no other tag |
+| `accept_with!` tags, `set_auto_response!`, `Attachment.set!` | 10 tags, 256 characters, 2,048 characters, 16,384 bytes | No check in Roc: a throw of Workers is `TooLarge`. `accept!` with no tags crashes on a throw. | Workers checks the limits (local: "a Hibernatable WebSocket cannot have more than 10 tags", "A WebSocket 'attachment' cannot be larger than 16384 bytes."). The size of an attachment is its structured clone, not its CBOR bytes. |
+| `Attachment.get!` | `Try(a, [NotFound, BadData(Str)])` | `null` is `NotFound`. A throw is `BadData` with the text. | The type has no other tag |
 | `auto_response_ms!` | `getWebSocketAutoResponseTimestamp` | A `Date` (J4) in ms, `null` is `NotFound` | |
 | `broadcast!`, `broadcast_with!` | not given | `Object.Self`, `{ tag }` for the second (MC4 form of `sockets_with!`), a `WebSocket.Message`. Each is `getWebSockets(...)` and a `send!` for each socket. Gives the count of sockets that got the message. | The app loop dropped the errors and could not count. `sockets_with!` and the auto responses (`set_auto_response!`, `clear_auto_response!`, `auto_response_ms!`) were built in 8f, part 3. |
 | The socket events | An `Err` of a handler is a log line | `Err`, `Unhandled` and a trap are a log line `<class>.<handler>: ...`, with no throw | 12.1, "Errors" |

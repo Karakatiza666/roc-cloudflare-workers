@@ -5,10 +5,19 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { answer, eq, ok } from '../assert.mjs';
 
-export const options = { r2Buckets: ['BUCKET'] };
+export const options = { r2Buckets: ['BUCKET', 'TRACE'] };
 
 const q = encodeURIComponent;
 const MiB = 1024 * 1024;
+// The multipart calls that the bucket `TRACE` recorded (conformance/bindings.js), as text.
+const calls = async (t) => (await (await t.mf.dispatchFetch('http://localhost/__stub_calls')).json()).filter((c) => c.binding === 'TRACE');
+const show = (c) => [c.method, ...c.args.filter((a) => typeof a === 'number')].join(' ');
+// A writer stream of `bytes` bytes put on `TRACE`: the answer, and the multipart calls of this put.
+const gen = async (t, key, bytes, extra = '') => {
+  const n = (await calls(t)).length;
+  const r = await t.get(`/r2/put_gen?key=${key}&bytes=${bytes}&trace=1${extra}`);
+  return { r, calls: (await calls(t)).slice(n).map(show) };
+};
 // The etag of a key, from the route `head`.
 async function etagOf(t, key) {
   const r = await t.get(`/r2/head?key=${key}`);
@@ -227,9 +236,71 @@ export const checks = [
     // Only the four conditional headers go to R2: other headers change nothing.
     answer(await t.get('/r2/get_cond?key=cond1', { headers: { 'x-other': '1', range: 'bytes=0-1' } }), 'Ok size=11 range=none text=hello world');
   }],
-  ['r2 put_with! of a Body.writer! stream is R2Err with "known length"', async (t) => {
+  ['r2 put_with! of a Body.writer! stream with no length_bytes stores the bytes', async (t) => {
     const r = await t.get('/r2/put_stream?key=ws1');
-    ok(r.body.startsWith('Err R2Err(') && r.body.includes('known length'), `got ${r.body}`);
+    ok(r.body.startsWith('Ok key=ws1 size=11 '), `got ${r.body}`);
+    eq(await (await (await t.mf.getR2Bucket('BUCKET')).get('ws1')).text(), 'hello world', 'the stored bytes');
+  }],
+  // ---- 8h wave B: a writer stream with no length (`pf.r2put`, MODULES.md 5.3). The bucket `TRACE` records its multipart calls. ----
+  ['r2 put! of a writer stream of 1 KiB with no length is one put (no multipart upload), content type kept', async (t) => {
+    const { r, calls } = await gen(t, 'g1k', 1024);
+    ok(r.body.startsWith('Ok key=g1k size=1024 '), `got ${r.body}`);
+    ok(!/etag=\S*-\d/.test(r.body), `the etag is of a multipart upload: ${r.body}`);
+    ok(r.body.includes(' type=text/x-big '), `got ${r.body}`);
+    eq(JSON.stringify(calls), '[]', 'the multipart calls');
+    const o = await (await t.mf.getR2Bucket('TRACE')).get('g1k');
+    eq(o.size, 1024, 'size');
+    eq(o.httpMetadata.contentType, 'text/x-big', 'content type');
+  }],
+  ['r2 put! of a writer stream of exactly 5 MiB with no length is one put', async (t) => {
+    const { r, calls } = await gen(t, 'g5m', 5 * MiB);
+    ok(r.body.startsWith(`Ok key=g5m size=${5 * MiB} `), `got ${r.body}`);
+    eq(JSON.stringify(calls), '[]', 'the multipart calls');
+  }],
+  ['r2 put! of a writer stream of 11 MiB with no length is a multipart upload of 3 parts: size exact, content type kept', async (t) => {
+    const { r, calls } = await gen(t, 'g11m', 11 * MiB);
+    ok(r.body.startsWith(`Ok key=g11m size=${11 * MiB} `), `got ${r.body}`);
+    ok(/etag=\S+-3 /.test(r.body), `the etag does not end in -3: ${r.body}`);
+    ok(r.body.includes(' type=text/x-big '), `the content type of the result: ${r.body}`);
+    eq(JSON.stringify(calls), JSON.stringify([
+      'createMultipartUpload', 'uploadPart 1 5242880', 'uploadPart 2 5242880', 'uploadPart 3 1048576', 'complete',
+    ]), 'the multipart calls');
+    const o = await (await t.mf.getR2Bucket('TRACE')).get('g11m');
+    const b = new Uint8Array(await o.arrayBuffer());
+    eq(b.length, 11 * MiB, 'the stored size');
+    eq(o.httpMetadata.contentType, 'text/x-big', 'the content type of the object');
+    // The bytes of each 1 MiB chunk: `A` + its number. A part border in the wrong place or a lost chunk moves them.
+    for (let i = 0; i < 11; i++) eq(b[i * MiB] === 65 + i && b[(i + 1) * MiB - 1] === 65 + i, true, `chunk ${i}`);
+  }],
+  ['r2 put! of a writer stream of 5 MiB and 1 byte is two parts (5 MiB, 1 byte)', async (t) => {
+    const { r, calls } = await gen(t, 'g5m1', 5 * MiB + 1);
+    ok(r.body.startsWith(`Ok key=g5m1 size=${5 * MiB + 1} `) && /etag=\S+-2 /.test(r.body), `got ${r.body}`);
+    eq(JSON.stringify(calls), JSON.stringify(['createMultipartUpload', 'uploadPart 1 5242880', 'uploadPart 2 1', 'complete']), 'the multipart calls');
+  }],
+  ['r2 put! of a stream that errors in the middle aborts the upload: no object, no complete', async (t) => {
+    const n = (await calls(t)).length;
+    const r = await t.get(`/r2/put_broken?key=gbroken&from=${q(`${t.server}/broken`)}`);
+    ok(r.body.startsWith('Err R2Err('), `got ${r.body}`);
+    eq(await (await t.mf.getR2Bucket('TRACE')).get('gbroken'), null, 'the object');
+    let got = [];
+    for (let i = 0; i < 40; i++) {
+      got = (await calls(t)).slice(n).map(show);
+      if (got.includes('abort')) break;
+      await new Promise((res) => setTimeout(res, 50));
+    }
+    eq(JSON.stringify(got), JSON.stringify(['createMultipartUpload', 'uploadPart 1 5242880', 'abort']), 'the multipart calls');
+  }],
+  ['r2 put_with! only_if with a stream of unknown length over 5 MiB is R2Err (no upload, no object)', async (t) => {
+    const { r, calls: c } = await gen(t, 'gcond', 6 * MiB, '&etag=anything');
+    ok(r.body.startsWith('Err R2Err(') && r.body.includes('only_if'), `got ${r.body}`);
+    eq(JSON.stringify(c), '[]', 'the multipart calls');
+    eq(await (await t.mf.getR2Bucket('TRACE')).get('gcond'), null, 'the object');
+  }],
+  ['r2 put_with! only_if with a stream of unknown length up to 5 MiB is one put with the condition', async (t) => {
+    const { r } = await gen(t, 'gcond2', 1024, '&absent=1');
+    ok(r.body.startsWith('Ok key=gcond2 size=1024 '), `got ${r.body}`);
+    const again = await gen(t, 'gcond2', 1024, '&absent=1');
+    ok(again.r.body.startsWith('Err PreconditionFailed'), `the second put: ${again.r.body}`);
   }],
   ['r2 put_with! of a stream with length_bytes stores the bytes', async (t) => {
     const r = await t.get('/r2/put_stream?key=ws2&len=11');

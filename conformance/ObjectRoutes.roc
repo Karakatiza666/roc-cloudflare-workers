@@ -14,12 +14,12 @@ import RpcMethods
 import RpcErrRoutes
 import Q
 
-counters = Object.namespace("COUNTERS")
-stores = Object.namespace("STORES")
-flakies = Object.namespace("FLAKY")
-slows = Object.namespace("SLOW")
-tickers = Object.namespace("TICKERS")
-kv_only = Object.namespace("KVONLY")
+counters = Object.namespace("COUNTERS", { class: "Counter" })
+stores = Object.namespace("STORES", { class: "Store" })
+flakies = Object.namespace("FLAKY", { class: "Flaky" })
+slows = Object.namespace("SLOW", { class: "Slow" })
+tickers = Object.namespace("TICKERS", { class: "Ticker" })
+kv_only = Object.namespace("KVONLY", { class: "KvOnly" })
 
 count : Object.Cell(I64)
 count = Object.cell("count")
@@ -127,7 +127,7 @@ text! = |r| match r {
 answer : Str -> Try(Response, e)
 answer = |t| Ok(Response.from_text(200, t))
 
-# Counter: object SQL, cells, `list!`, alarms, `delete_all!`, `respond!`, and RPC methods.
+# Counter: object SQL, cells, `list!`, alarms, `delete_all!`, `Response.after`, and RPC methods.
 
 counter_fetch! : Object.Self, Request => Try(Response, e)
 counter_fetch! = |self, req| match req.segments() {
@@ -246,34 +246,51 @@ counter_fetch! = |self, req| match req.segments() {
 		after = count.get!(self)
 		answer("before=${Str.inspect(before)} set=${Str.inspect(set)} got=${Str.inspect(got)} del=${Str.inspect(del)} after=${Str.inspect(after)}")
 	}
-	# `get_alarm!` after `set_alarm!(t)` gives `t` (and the twins), `delete_alarm!` removes it.
+	# `get_alarm!` after `set_alarm_at!(t)` gives `t` (and the twins), `delete_alarm!` removes it.
 	["alarm"] => {
 		t = Time.now_ms!({}) + 3_600_000
-		set = self.set_alarm!(t)
+		set = self.set_alarm_at!(t)
 		got = self.get_alarm!()
 		twin = Io.run!(self.get_alarm())
 		del = Io.run!(self.delete_alarm())
 		after = self.get_alarm!()
-		set2 = Io.run!(self.set_alarm(t))
+		set2 = Io.run!(self.set_alarm_at(t))
 		del2 = self.delete_alarm!()
 		answer("set=${Str.inspect(set)} same=${Str.inspect(got == Ok(t))} twin=${Str.inspect(twin == Ok(t))} del=${Str.inspect(del)} after=${Str.inspect(after)} set2=${Str.inspect(set2)} del2=${Str.inspect(del2)}")
+	}
+	# `set_alarm_in!(ms)` (or its Io twin): the alarm is `ms` after the call, not now. The answer has the clock before and
+	# after, and `get_alarm!`. `alarm!` logs "counter alarm" with the id and the time.
+	["alarm_in"] => {
+		delay = Q.num(req, "ms")
+		t0 = Time.now_ms!({})
+		set = if Q.text(req, "twin") == "1" Io.run!(self.set_alarm_in(delay)) else self.set_alarm_in!(delay)
+		got = self.get_alarm!()
+		answer("set=${Str.inspect(set)} id=${self.id()} t0=${t0.to_str()} alarm=${Str.inspect(got)}")
+	}
+	# `set_alarm_at!(now + ms)`: the alarm is at that time.
+	["alarm_at"] => {
+		t = Time.now_ms!({}) + Q.num(req, "ms")
+		set = self.set_alarm_at!(t)
+		got = self.get_alarm!()
+		answer("set=${Str.inspect(set)} id=${self.id()} t=${t.to_str()} alarm=${Str.inspect(got)}")
 	}
 	# A table, a cell and an alarm, then `delete_all!`: all three are gone.
 	["delete_all"] => {
 		_ = self.sql_run!("CREATE TABLE IF NOT EXISTS gone (a)", Sql.none)
 		_ = count.set!(self, 5)
-		_ = self.set_alarm!(Time.now_ms!({}) + 3_600_000)
+		_ = self.set_alarm_at!(Time.now_ms!({}) + 3_600_000)
 		del = if Q.text(req, "twin") == "1" Io.run!(self.delete_all()) else self.delete_all!()
 		table : Try(List({ a : I64 }), _)
 		table = self.sql!("SELECT a FROM gone", Sql.none)
 		answer("del=${Str.inspect(del)} table=${Str.inspect(table.is_ok())} cell=${Str.inspect(count.get!(self))} alarm=${Str.inspect(self.get_alarm!())}")
 	}
-	# API.md 10.2: `respond!` in the `Fetch` of an object, then work after it.
+	# API.md 10.2: `Response.after` in the `Fetch` of an object: the response, then the work.
 	["respond"] => {
-		first = Ctx.respond!(Response.from_text(200, "early"))
-		Time.sleep!(300)
-		_ = late.set!(self, "written")
-		answer("not sent: respond! gave ${Str.inspect(first)}")
+		work! = |_| {
+			Time.sleep!(300)
+			late.set!(self, "written")
+		}
+		Ok(Response.from_text(200, "early").after(work!))
 	}
 	["late"] => answer(Str.inspect(late.get!(self)))
 	["pass_through"] => answer(Str.inspect(Ctx.pass_through!({})))
@@ -281,7 +298,10 @@ counter_fetch! = |self, req| match req.segments() {
 }
 
 counter_alarm! : Object.Self, { retry_count : U32, is_retry : Bool } => Try({}, [])
-counter_alarm! = |_self, _info| Ok({})
+counter_alarm! = |self, _info| {
+	Log.info!("counter alarm", { id: self.id(), at: Time.now_ms!({}) })
+	Ok({})
+}
 
 increment! : Object.Self, { by : I64 } => Try(I64, [StorageErr(Io.Thrown)])
 increment! = |self, { by }| {
@@ -302,7 +322,7 @@ boom! = |_self, { n }| Err(Nope(n))
 echo! : Object.Self, { big : U64 } => Try({ big : U64 }, Rpc.NoErr)
 echo! = |_self, v| Ok(v)
 
-# Store: `init!` waits 100 ms, then makes a table (PLAN.md 8f). No `alarm!`: `set_alarm!` gives `StorageErr`.
+# Store: `init!` waits 100 ms, then makes a table (PLAN.md 8f). No `alarm!`: `set_alarm_at!` gives `StorageErr`.
 
 store_init! : Object.Self => Try({}, [SqlErr(Io.Thrown), Constraint(Sql.Constraint)])
 store_init! = |self| {
@@ -313,7 +333,7 @@ store_init! = |self| {
 
 store_fetch! : Object.Self, Request => Try(Response, e)
 store_fetch! = |self, req| match req.segments() {
-	["set_alarm"] => answer(Str.inspect(self.set_alarm!(Time.now_ms!({}) + 60_000)))
+	["set_alarm"] => answer(Str.inspect(self.set_alarm_at!(Time.now_ms!({}) + 60_000)))
 	_ => {
 		n : Try(List({ n : U64 }), _)
 		n = self.sql!("SELECT count(*) AS n FROM items", Sql.none)
@@ -333,7 +353,7 @@ flaky_init! = |_self| match Io.await!([Get(Root("env"), "OBJFLAGS"), Call(Slot(0
 # Slow: `init!` waits longer than the `Init` deadline of the test (`initMs` in conformance/worker.js).
 slow_init! : Object.Self => Try({}, [])
 slow_init! = |_self| {
-	Time.sleep!(3_000)
+	Time.sleep!(6_000)
 	Ok({})
 }
 
@@ -342,7 +362,7 @@ plain_fetch! = |self, _req| answer("ok ${self.id()}")
 
 # Ticker: `alarm!` gives `Err` while `retry_count` is less than 2, and logs `retry_count` and `is_retry`.
 ticker_fetch! : Object.Self, Request => Try(Response, e)
-ticker_fetch! = |self, _req| answer(Str.inspect(self.set_alarm!(Time.now_ms!({}) + 10)))
+ticker_fetch! = |self, _req| answer(Str.inspect(self.set_alarm_at!(Time.now_ms!({}) + 10)))
 
 ticker_alarm! : Object.Self, { retry_count : U32, is_retry : Bool } => Try({}, [Retry(U32)])
 ticker_alarm! = |_self, info| {
