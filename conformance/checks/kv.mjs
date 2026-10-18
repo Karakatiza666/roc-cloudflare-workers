@@ -102,9 +102,12 @@ export const checks = [
     answer(await route(t, 'put_expires', e, `&v=a&expires=${when}`), 'Ok {}');
     const exp = (await kv.list({ prefix: e })).keys[0].expiration;
     eq(exp, Math.floor(when / 1000) + 1, 'expiration (rounded up)');
-    const bad = await route(t, 'put_ttl', `${k}-bad`, '&v=a&ttl=10000');
-    ok(bad.body.startsWith('Err KvErr('), `ttl of 10 s: ${bad.body}`);
-    return `expiration ${at(k)}; ttl of 10 s: ${bad.body.slice(0, 120)}`;
+    // A ttl under 60 s is raised to 60 s (the platform clamps it, MODULES.md 5.2): `Ok`, and an expiration of about 60 s.
+    const low = await route(t, 'put_ttl', `${k}-low`, '&v=a&ttl=10000');
+    answer(low, 'Ok {}');
+    const lowAt = (await kv.list({ prefix: `${k}-low` })).keys[0].expiration;
+    ok(lowAt >= before + 60 && lowAt <= after + 61, `ttl 10,000 ms: expiration ${lowAt}, want ${before + 60} to ${after + 61}`);
+    return `expiration ${at(k)}; ttl of 10 s: ${low.body}, expiration ${lowAt}`;
   }],
   // PLAN.md 8f: `list!` with metadata.
   ['kv list!: names, expires_ms and typed metadata', async (t) => {

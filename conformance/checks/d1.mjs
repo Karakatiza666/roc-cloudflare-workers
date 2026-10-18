@@ -110,12 +110,12 @@ export const checks = [
     eq(JSON.stringify(rows), JSON.stringify([['-2687166099708853831'], ['-9223372036854775807'], ['9223372036854775807']].map(([id]) => ({ id, ty: 'integer' }))), 'the stored ids');
   }],
   ['d1 all! with no cast: BadData with the column, for a positive and a negative id', async (t) => {
-    answer(await route(t, 'all', 'SELECT id FROM bigids WHERE k = 0', '', '&type=id'), 'Err BadData("column id: integer above 2^53, use CAST(id AS TEXT)")');
-    answer(await route(t, 'all', 'SELECT id FROM bigids WHERE k = 2', '', '&type=id'), 'Err BadData("column id: integer above 2^53, use CAST(id AS TEXT)")');
-    answer(await route(t, 'first', 'SELECT id FROM bigids WHERE k = 1', '', '&type=id'), 'Err BadData("column id: integer above 2^53, use CAST(id AS TEXT)")');
+    answer(await route(t, 'all', 'SELECT id FROM bigids WHERE k = 0', '', '&type=id'), 'Err BadData("column id: integer of 2^53 or more, read it with CAST(id AS TEXT) into an I64, U64 or Id64 field")');
+    answer(await route(t, 'all', 'SELECT id FROM bigids WHERE k = 2', '', '&type=id'), 'Err BadData("column id: integer of 2^53 or more, read it with CAST(id AS TEXT) into an I64, U64 or Id64 field")');
+    answer(await route(t, 'first', 'SELECT id FROM bigids WHERE k = 1', '', '&type=id'), 'Err BadData("column id: integer of 2^53 or more, read it with CAST(id AS TEXT) into an I64, U64 or Id64 field")');
   }],
   ['d1 D1.Result.first of a batch! with no cast: BadData with the column', async (t) => {
-    answer(await t.get(`/d1/batch_first?type=id&sql=${q('SELECT id FROM bigids WHERE k = 2')}`), 'Err BadData("column id: integer above 2^53, use CAST(id AS TEXT)")');
+    answer(await t.get(`/d1/batch_first?type=id&sql=${q('SELECT id FROM bigids WHERE k = 2')}`), 'Err BadData("column id: integer of 2^53 or more, read it with CAST(id AS TEXT) into an I64, U64 or Id64 field")');
     answer(await t.get(`/d1/batch_first?type=id&sql=${q('SELECT CAST(id AS TEXT) AS id FROM bigids WHERE k = 2')}`), 'Ok { id: -2687166099708853831 }');
   }],
   ["d1 the text '01' and '9223372036854775808' into an I64 field give BadData", async (t) => {
@@ -161,7 +161,7 @@ export const checks = [
       'Ok [(0, 9223372036854775807), (1, -9223372036854775807), (2, -2687166099708853831)]');
   }],
   ['d1 all_tuples! with no cast: BadData with the column index, for a positive and a negative id', async (t) => {
-    const bad = (c) => `Err BadData("column ${c} (from 0): integer above 2^53, use CAST(... AS TEXT)")`;
+    const bad = (c) => `Err BadData("column ${c} (from 0): integer of 2^53 or more, read it with CAST(... AS TEXT) into an I64, U64 or Id64 field")`;
     answer(await route(t, 'all_tuples', 'SELECT k, id FROM bigids WHERE k = 0', '', '&type=ids'), bad(1));
     answer(await route(t, 'all_tuples', 'SELECT k, id FROM bigids WHERE k = 2', '', '&type=ids'), bad(1));
     answer(await route(t, 'all_tuples', 'SELECT id, k FROM bigids WHERE k = 1', '', '&type=ids'), bad(0));

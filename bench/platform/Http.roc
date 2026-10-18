@@ -51,6 +51,31 @@ Http :: [].{
 	get! : Str => Try(Response, [Network(Io.Thrown), HttpErr(Io.Thrown), TooLarge])
 	get! = |url| Io.run!(get(url))
 
+	## What Cloudflare answers for a request that it cannot pass on (MODULES.md 4): the `status` and the `code` of the
+	## text `error code: <code>`.
+	CfError : { status : U16, code : U32 }
+
+	## Is this answer an error page of Cloudflare, not of the origin? `Http.send!` gives `Ok` for a DNS failure
+	## (530, `error code: 1016`) and a blocked address (403, `error code: 1003`). Pure: the status is 400 or more, and the
+	## body is a text or bytes of 64 bytes or less that reads `error code: ` and digits (the body of `send!` is always
+	## bytes). A `Stream` body (`open!`) is not read: `NotCloudflareError`.
+	cloudflare_error : Response -> Try(Http.CfError, [NotCloudflareError])
+	cloudflare_error = |res| {
+		text = match res.body {
+			Text(t) => Ok(t)
+			Bytes(b) => if b.len() <= cf_error_max Str.from_utf8(b).map_err(|_| NotCloudflareError) else Err(NotCloudflareError)
+			Empty | Stream(_) => Err(NotCloudflareError)
+		}
+		if res.status < 400 {
+			Err(NotCloudflareError)
+		} else {
+			match text {
+				Ok(t) => if t.count_utf8_bytes() <= cf_error_max cf_error_code(t).map_ok(|code| { status: res.status, code }) else Err(NotCloudflareError)
+				Err(e) => Err(e)
+			}
+		}
+	}
+
 	## MC9, table "Named error tags": a `TypeError` is a bad request (URL, scheme, header), each other throw of
 	## `fetch` is no response. The limit of `pf.readUpTo` is `TooLarge`.
 	error : Io.Thrown -> [Network(Io.Thrown), HttpErr(Io.Thrown), TooLarge]
@@ -62,6 +87,21 @@ Http :: [].{
 		} else {
 			Network(t)
 		}
+}
+
+## The most bytes of a body that `cloudflare_error` looks at.
+cf_error_max : U64
+cf_error_max = 64
+
+## The digits after `error code: ` (a final line end is allowed).
+cf_error_code : Str -> Try(U32, [NotCloudflareError])
+cf_error_code = |t| {
+	trimmed = t.trim()
+	if trimmed.starts_with("error code: ") {
+		U32.from_str(trimmed.drop_prefix("error code: ")).map_err(|_| NotCloudflareError)
+	} else {
+		Err(NotCloudflareError)
+	}
 }
 
 ## One program: the `RequestInit` (with `AbortSignal.timeout` when there is a timeout), `fetch`, then the body to the
@@ -149,3 +189,9 @@ field = |fields, name| match fields.find_first(|(k, _)| k == name) {
 expect Http.error({ name: "TypeError", message: "Invalid URL" }) == HttpErr({ name: "TypeError", message: "Invalid URL" })
 expect Http.error({ name: "Error", message: "Network connection lost." }) == Network({ name: "Error", message: "Network connection lost." })
 expect Http.error({ name: "TooLarge", message: "" }) == TooLarge
+
+expect Http.cloudflare_error({ status: 530, headers: [], body: Bytes("error code: 1016".to_utf8()) }) == Ok({ status: 530, code: 1016 })
+expect Http.cloudflare_error({ status: 403, headers: [], body: Text("error code: 1003\n") }) == Ok({ status: 403, code: 1003 })
+expect Http.cloudflare_error({ status: 200, headers: [], body: Text("error code: 1003") }) == Err(NotCloudflareError)
+expect Http.cloudflare_error({ status: 500, headers: [], body: Text("error code: 10x3") }) == Err(NotCloudflareError)
+expect Http.cloudflare_error({ status: 500, headers: [], body: Text("oops error code: 1003") }) == Err(NotCloudflareError)

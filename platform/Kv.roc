@@ -80,7 +80,7 @@ Kv(a) :: { name : Str, write : a -> Try(Js, Str), read : List(U8) -> Try(a, Str)
 	put! : Kv(a), Str, a => Try({}, [KvErr(Io.Thrown), BadData(Str)])
 	put! = |kv, key, v| Io.run!(kv.put(key, v))
 
-	## `ttl_ms`: 60 s or more (KV throws for less: `KvErr`). `expires_ms`: a time of the clock. `metadata`: made by
+	## `ttl_ms`: a value under 60 s is raised to 60 s (KV throws for less). `expires_ms`: a time of the clock. `metadata`: made by
 	## `Kv.Metadata.of(m)` (MC5), 1,024 bytes or less as JSON. It is not a type variable of the options: a call with no
 	## `metadata` would leave the type of `m` open, and that does not compile ("type not determined", MODULES.md 5.2).
 	put_with : Kv(a), Str, a, { ttl_ms ?: U64, expires_ms ?: U64, metadata ?: Kv.Metadata } -> Io({}, [KvErr(Io.Thrown), BadData(Str)])
@@ -175,7 +175,7 @@ Kv(a) :: { name : Str, write : a -> Try(Js, Str), read : List(U8) -> Try(a, Str)
 		set! : Kv.Cell(a), a => Try({}, [KvErr(Io.Thrown), BadData(Str)])
 		set! = |c, v| Io.run!(c.set(v))
 
-		## `ttl_ms`: 60 s or more. `expires_ms`: a time of the clock.
+		## `ttl_ms`: a value under 60 s is raised to 60 s (KV throws for less). `expires_ms`: a time of the clock.
 		set_with : Kv.Cell(a), a, { ttl_ms ?: U64, expires_ms ?: U64 } -> Io({}, [KvErr(Io.Thrown), BadData(Str)])
 		set_with = |c, v, opts| put_io(c.kv, c.key, v, expiry(opts.?ttl_ms, opts.?expires_ms))
 
@@ -261,7 +261,7 @@ put_io = |kv, key, v, options| {
 expiry : Try(U64, [MissingField]), Try(U64, [MissingField]) -> List((Str, Js))
 expiry = |ttl_ms, expires_ms| {
 	ttl = match ttl_ms {
-		Ok(ms) => [("expirationTtl", seconds(ms))]
+		Ok(ms) => [("expirationTtl", seconds(ms.max(min_ttl_ms)))]
 		Err(_) => []
 	}
 	at = match expires_ms {
@@ -276,6 +276,10 @@ read_options = |cache_ttl_ms| match cache_ttl_ms {
 	Ok(ms) => [("type", Text("stream")), ("cacheTtl", seconds(ms))]
 	Err(_) => [("type", Text("stream"))]
 }
+
+## KV throws for an `expirationTtl` under 60 s: `ttl_ms` is raised to this.
+min_ttl_ms : U64
+min_ttl_ms = 60_000
 
 ## MC10: KV takes whole seconds, so the module rounds up.
 seconds : U64 -> Js

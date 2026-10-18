@@ -17,6 +17,9 @@ rooms = Object.namespace("ROOMS")
 ## The attachment of a socket of `Room`: kept while the object sleeps.
 User : { name : Str }
 
+user_slot : Object.Attachment(User)
+user_slot = Object.attachment("user")
+
 ## The constructor runs of the object (`init!`), and the messages that reached `web_socket_message!`.
 starts : Object.Cell(U64)
 starts = Object.cell("starts")
@@ -251,7 +254,7 @@ room_fetch! = |self, req| match Q.text(req, "op") {
 		user = Q.text(req, "user")
 		match self.accept_with!(req, { tags: ["room", user] }) {
 			Ok({ socket, response }) => {
-				attached = socket.attach!({ name: user })
+				attached = user_slot.set!(socket, { name: user })
 				if attached.is_ok() Ok(response) else answer("attach! gave ${Str.inspect(attached)}")
 			}
 			Err(e) => answer(Str.inspect(e))
@@ -269,7 +272,7 @@ room_message! = |self, socket, msg| {
 	n = (events.get!(self) ?? 0) + 1
 	events.set!(self, n)?
 	user : Try(User, _)
-	user = socket.attachment!()
+	user = user_slot.get!(socket)
 	name = match user {
 		Ok(u) => u.name
 		Err(e) => Str.inspect(e)

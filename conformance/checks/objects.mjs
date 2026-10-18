@@ -49,7 +49,7 @@ export const checks = [
   ['objects SQL: a syntax error is SqlErr', async (t) => answer(await counter(t, 'sql_syntax'), 'Err(SqlErr({ message: "near \\"SELEC\\": syntax error at offset 0: SQLITE_ERROR", name: "Error" }))')],
   ['objects sql!: rows of the type of the call', async (t) => answer(await counter(t, 'sql_all'), 'Ok([{ id: 1, u: "a" }])')],
   ['objects sql!: the integer rules of D1 (an Int parameter as text, CAST(v AS TEXT) into an I64, BadData with no cast)', async (t) =>
-    answer(await counter(t, 'sql_int'), 'cast=Ok([{ v: 9223372036854775807 }, { v: -2687166099708853831 }]) plain=Err(BadData("column v: integer above 2^53, use CAST(v AS TEXT)"))')],
+    answer(await counter(t, 'sql_int'), 'cast=Ok([{ v: 9223372036854775807 }, { v: -2687166099708853831 }]) plain=Err(BadData("column v: integer of 2^53 or more, read it with CAST(v AS TEXT) into an I64, U64 or Id64 field"))')],
   // PLAN.md 8h item 3: parameters as an `Encodable` tuple or list for object SQL (conformance/ObjectRoutes.roc, `sql_params!`).
   ['objects SQL params: a tuple of (Str, I64, F64, blob) is stored as text, integer, real, blob', async (t) =>
     answer(await sqlp(t, 'tuple'), 'Ok([{ a: "héllo", b: 42, c: 1.5, hd: "010203", ta: "text", tb: "integer", tc: "real", td: "blob" }])')],
