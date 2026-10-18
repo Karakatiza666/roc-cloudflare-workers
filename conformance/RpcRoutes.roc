@@ -8,6 +8,7 @@ import pf.Service
 import pf.Io
 import pf.Cbor
 import RpcMethods
+import RpcErrRoutes
 
 self_service = Service.binding("SELF")
 admin_service = Service.binding("ADMIN")
@@ -16,11 +17,11 @@ RpcRoutes :: [].{
 
 	## The RPC methods of the default export.
 	rpc : List(Rpc.Handler({}))
-	rpc = [RpcMethods.ping.on(default_ping!), RpcMethods.hello.on(default_hello!)]
+	rpc = [RpcMethods.ping.on(default_ping!), RpcMethods.hello.on(default_hello!)].concat(RpcErrRoutes.service_handlers)
 
 	## The named entry points.
 	entrypoints : List(Rpc.Entrypoint)
-	entrypoints = [Rpc.entrypoint("Admin", { fetch!: admin_fetch!, rpc: [RpcMethods.purge.on(purge!)] })]
+	entrypoints = [Rpc.entrypoint("Admin", { fetch!: admin_fetch!, rpc: [RpcMethods.purge.on(purge!)].concat(RpcErrRoutes.service_handlers) })]
 
 	route! : Request, List(Str) => Response
 	route! = |_req, path| match path {

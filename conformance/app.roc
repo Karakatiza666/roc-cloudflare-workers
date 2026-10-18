@@ -36,12 +36,17 @@ import VersionRoutes
 import SecretsStoreRoutes
 import ObjectRoutes
 import RpcRoutes
+import RpcErrRoutes
 import CborRoutes
 import WebSocketRoutes
 import TcpRoutes
 
 fetch! : Request => Try(Response, _)
 fetch! = |req| {
+	# 8h item 1: an `Err` of `fetch!` has its own error type, here `FetchFail(Str)`.
+	if req.segments() == ["fail"] {
+		return Err(FetchFail("fetch"))
+	}
 	res = match req.segments() {
 		["http", .. as rest] => HttpRoutes.route!(req, rest)
 		["env", .. as rest] => EnvRoutes.route!(req, rest)
@@ -69,6 +74,7 @@ fetch! = |req| {
 		["secretsstore", .. as rest] => SecretsStoreRoutes.route!(req, rest)
 		["objects", .. as rest] => ObjectRoutes.route!(req, rest)
 		["rpc", .. as rest] => RpcRoutes.route!(req, rest)
+		["rpcerr", .. as rest] => RpcErrRoutes.route!(req, rest)
 		["cbor", .. as rest] => CborRoutes.route!(req, rest)
 		["websocket", .. as rest] => WebSocketRoutes.route!(req, rest)
 		["tcp", .. as rest] => TcpRoutes.route!(req, rest)
@@ -77,12 +83,16 @@ fetch! = |req| {
 	Ok(res)
 }
 
+# 8h item 1: `scheduled!` has the error type `[UnknownCron(Str)]`, `queue!` and `email!` have `[Boom]`, `fetch!` has `[FetchFail(Str)]`.
+scheduled! : Worker.Scheduled => Try({}, [UnknownCron(Str)])
+scheduled! = |s| if s.cron == "bad" Err(UnknownCron(s.cron)) else Ok({})
+
 queue! = |batch| QueueRoutes.consume!(batch)
 
 email! = |mail| EmailRoutes.handle!(mail)
 
 tail! = |items| TailRoutes.handle!(items)
 
-worker = Worker.new({ fetch!, queue!, email!, tail!, rpc: RpcRoutes.rpc, entrypoints: RpcRoutes.entrypoints, objects: ObjectRoutes.classes.concat(WebSocketRoutes.classes) })
+worker = Worker.new({ fetch!, scheduled!, queue!, email!, tail!, rpc: RpcRoutes.rpc, entrypoints: RpcRoutes.entrypoints, objects: ObjectRoutes.classes.concat(WebSocketRoutes.classes) })
 
 event! = |e| worker.event!(e)

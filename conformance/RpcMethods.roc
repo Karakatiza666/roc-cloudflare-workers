@@ -38,4 +38,33 @@ RpcMethods :: [].{
 	## No callee has it.
 	nothere : Rpc({ n : I64 }, I64, Rpc.NoErr)
 	nothere = Rpc.method("nothere")
+
+	## 8h item 2 (checks/rpcerr.mjs): a method with two error tags, one with a payload and one with none. The callee gives
+	## `Ok(2)` for n = 1, `Err(Busy("later"))` for n = 2 and `Err(StillOpen)` for other n. Three callees: the default
+	## export, the entry point `Admin` and the class `Counter` (RpcErrRoutes.roc).
+	busy : Rpc({ n : I64 }, I64, [Busy(Str), StillOpen])
+	busy = Rpc.method("busy")
+
+	## The same JS name with an argument type that the callee does not parse (`n` is a text): the caller gets `RpcErr`.
+	busy_badarg : Rpc({ n : Str }, I64, [Busy(Str), StillOpen])
+	busy_badarg = Rpc.method("busy")
+
+	## A JS callee (`conformance/worker.js`) that gives the plain objects `{ Ok }` and `{ Err }` of the wire form.
+	jsbusy : Rpc({ n : I64 }, I64, [Busy(Str), StillOpen])
+	jsbusy = Rpc.method("jsbusy")
+
+	## A JS callee that throws.
+	jsthrow : Rpc({ n : I64 }, I64, Rpc.NoErr)
+	jsthrow = Rpc.method("jsthrow")
+
+	## A Roc callee that crashes.
+	crashes : Rpc({ n : I64 }, I64, Rpc.NoErr)
+	crashes = Rpc.method("crashes")
+
+	## The callee has the error `[Surprise]`, the caller declares `Rpc.NoErr`: a reply `{"Err": "Surprise"}` is `BadData`.
+	mismatch : Rpc({ n : I64 }, I64, [Surprise])
+	mismatch = Rpc.method("mismatch")
+
+	mismatch_caller : Rpc({ n : I64 }, I64, Rpc.NoErr)
+	mismatch_caller = Rpc.method("mismatch")
 }

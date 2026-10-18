@@ -11,6 +11,7 @@ import pf.Time
 import pf.Log
 import pf.Ctx
 import RpcMethods
+import RpcErrRoutes
 import Q
 
 counters = Object.namespace("COUNTERS")
@@ -37,7 +38,7 @@ ObjectRoutes :: [].{
 	## The classes of the app: the manifest names them, and `conformance/worker.js` exports each one.
 	classes : List(Object.Class)
 	classes = [
-		Object.class("Counter", { fetch!: counter_fetch!, alarm!: counter_alarm!, rpc: [RpcMethods.increment.on(increment!), RpcMethods.ping.on(object_ping!), RpcMethods.boom.on(boom!), RpcMethods.echo.on(echo!), RpcMethods.hello.on(object_hello!)] }),
+		Object.class("Counter", { fetch!: counter_fetch!, alarm!: counter_alarm!, rpc: [RpcMethods.increment.on(increment!), RpcMethods.ping.on(object_ping!), RpcMethods.boom.on(boom!), RpcMethods.echo.on(echo!), RpcMethods.hello.on(object_hello!)].concat(RpcErrRoutes.object_handlers) }),
 		Object.class("Store", { init!: store_init!, fetch!: store_fetch! }),
 		Object.class("Flaky", { init!: flaky_init!, fetch!: plain_fetch! }),
 		Object.class("Slow", { init!: slow_init!, fetch!: plain_fetch! }),
