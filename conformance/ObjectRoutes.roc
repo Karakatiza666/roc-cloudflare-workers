@@ -4,12 +4,14 @@
 import pf.Request
 import pf.Response
 import pf.Object
+import pf.Rpc
 import pf.Sql
 import pf.Io
 import pf.Time
 import pf.Log
 import pf.Ctx
 import RpcMethods
+import RpcErrRoutes
 import Q
 
 counters = Object.namespace("COUNTERS")
@@ -36,7 +38,7 @@ ObjectRoutes :: [].{
 	## The classes of the app: the manifest names them, and `conformance/worker.js` exports each one.
 	classes : List(Object.Class)
 	classes = [
-		Object.class("Counter", { fetch!: counter_fetch!, alarm!: counter_alarm!, rpc: [RpcMethods.increment.on(increment!), RpcMethods.ping.on(object_ping!), RpcMethods.boom.on(boom!), RpcMethods.echo.on(echo!), RpcMethods.hello.on(object_hello!)] }),
+		Object.class("Counter", { fetch!: counter_fetch!, alarm!: counter_alarm!, rpc: [RpcMethods.increment.on(increment!), RpcMethods.ping.on(object_ping!), RpcMethods.boom.on(boom!), RpcMethods.echo.on(echo!), RpcMethods.hello.on(object_hello!)].concat(RpcErrRoutes.object_handlers) }),
 		Object.class("Store", { init!: store_init!, fetch!: store_fetch! }),
 		Object.class("Flaky", { init!: flaky_init!, fetch!: plain_fetch! }),
 		Object.class("Slow", { init!: slow_init!, fetch!: plain_fetch! }),
@@ -288,16 +290,16 @@ increment! = |self, { by }| {
 	Ok(n)
 }
 
-object_ping! : Object.Self, { n : I64 } => Try(Str, [])
+object_ping! : Object.Self, { n : I64 } => Try(Str, Rpc.NoErr)
 object_ping! = |_self, { n }| Ok("object ping ${n.to_str()}")
 
-object_hello! : Object.Self, {} => Try(Str, [])
+object_hello! : Object.Self, {} => Try(Str, Rpc.NoErr)
 object_hello! = |_self, {}| Ok("object hello")
 
 boom! : Object.Self, { n : I64 } => Try(I64, [Nope(I64)])
 boom! = |_self, { n }| Err(Nope(n))
 
-echo! : Object.Self, { big : U64 } => Try({ big : U64 }, [])
+echo! : Object.Self, { big : U64 } => Try({ big : U64 }, Rpc.NoErr)
 echo! = |_self, v| Ok(v)
 
 # Store: `init!` waits 100 ms, then makes a table (PLAN.md 8f). No `alarm!`: `set_alarm!` gives `StorageErr`.

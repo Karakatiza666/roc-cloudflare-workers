@@ -86,6 +86,6 @@ email! = |mail| EmailRoutes.handle!(mail)
 
 tail! = |items| TailRoutes.handle!(items)
 
-worker = Worker.{ fetch!, scheduled!: EdgeRoutes.scheduled!, queue!, email!, tail!, rpc: RpcRoutes.rpc, entrypoints: RpcRoutes.entrypoints, objects: ObjectRoutes.classes.concat(WebSocketRoutes.classes) }
+worker = Worker.new({ fetch!, scheduled!: EdgeRoutes.scheduled!, queue!, email!, tail!, rpc: RpcRoutes.rpc, entrypoints: RpcRoutes.entrypoints, objects: ObjectRoutes.classes.concat(WebSocketRoutes.classes) })
 
 event! = |e| worker.event!(e)

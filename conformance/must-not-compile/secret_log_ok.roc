@@ -15,6 +15,6 @@ fetch! = |_req| {
 	Ok(Response.from_status(204))
 }
 
-worker = Worker.{ fetch! }
+worker = Worker.new({ fetch!: fetch! })
 
 event! = |e| worker.event!(e)

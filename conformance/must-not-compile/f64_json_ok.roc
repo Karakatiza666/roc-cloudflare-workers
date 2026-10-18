@@ -22,6 +22,6 @@ fetch! = |_req| {
 	}
 }
 
-worker = Worker.{ fetch! }
+worker = Worker.new({ fetch!: fetch! })
 
 event! = |e| worker.event!(e)

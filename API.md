@@ -423,7 +423,7 @@ The full surface. Each module is pure Roc over `Js` (6) or `Native` (8). `MODULE
 | `Log` | `console.info`, `console.warn`, `console.error` (was `console.log`: the level of the line goes to Workers Logs, `PLAN.md` 8c) | `info!`, `warn!`, `error!` with a record of fields: one JSON line (11) | No | A |
 | `Js` | everything (6.4) | `await!`, `call!`, `Js` value helpers, `pin!`, `pinned!`, `unpin!` (9, RS2). As built: `await!`, `call!`, `pin!`, `pinned!` and `unpin!` are in `Io` (4: no import cycles). | per program | A |
 | `Io` | none: one operation as a value (6.5) | `new`, `sync`, `map`, `recover`, `timeout`, `run!`, `both!`, `all!`, `race!`, `start!` | per call | A |
-| `Worker` | none: a wrapper (7.1, 10.1) | `Worker.{ fetch!, scheduled!, ... }` with optional fields, each with its own result type, and `event!` (`MODULES.md` 3) | | A |
+| `Worker` | none: a wrapper (7.1, 10.1) | `Worker.new({ fetch!, scheduled!, ... })` with optional fields, each with its own result type and error type, and `event!` (`MODULES.md` 3) | | A |
 | `Memo` | none: a wrapper over the pin table | `new(name, { max_age_ms, load! })`, `get!`, `clear!`. The value is data, kept as CBOR bytes. (`MODULES.md` 9) | the first `get!` in an isolate runs `load!` | A |
 | `RateLimit` | Rate limiting binding | `limit!(key) => Try({}, [RateLimited, _])` (RN10) | Yes | A |
 | `Native` | none: Zig `std` in the host | `zstd_decode!`, `Blake3` and `Sha256` with state across chunks (8) | No | A (the registry hashes archives in chunks, RF5) |
@@ -464,11 +464,11 @@ Wrappers:
 
 | Wrapper | Declaration | Use | Under it | Phase |
 | --- | --- | --- | --- | --- |
-| `Worker` | `worker = Worker.{ fetch!, scheduled! }`, then `event! = \|e\| worker.event!(e)` | One field for each event kind, all optional, each with its own result type. A new kind is a new optional field, so it does not change the app (10.1). | `event!` | A |
+| `Worker` | `worker = Worker.new({ fetch!, scheduled! })`, then `event! = \|e\| worker.event!(e)` | One field for each event kind, all optional, each with its own result type and error type. A new kind is a new optional field, so it does not change the app (10.1). | `event!` | A |
 | `Memo` | `jwks = Memo.new("github-jwks", { max_age_ms: 3_600_000, load!: load_jwks! })` | `keys = jwks.get!()?`: a value kept in the isolate across requests (`MODULES.md` 9) | the pin table (RS2) | A |
 | `Kv.Cell` | `theme = prefs.cell("theme")`, where `prefs : Kv(Prefs)` | `theme.get!()`, `theme.set!(p)`: the `localStorage` wrapper, but shared by all isolates, and it stays | `Kv` | B |
 | `Object.Cell` | `count : Object.Cell(I64)`, `count = Object.cell("count")` | `count.get!(self)`, `count.set!(self, n)`: strong consistency, inside one object | `Object` | B |
-| `Rpc` | `increment : Rpc({ by : I64 }, I64)`, `increment = Rpc.method("increment")` | The caller: `stub.call!(increment, { by: 1 })`. The callee: `increment.on(\|self, { by }\| ...)`. One constant, so both sides have the same types. | `Object`, `Service` | B |
+| `Rpc` | `increment : Rpc({ by : I64 }, I64, [TooBig])`, `increment = Rpc.method("increment")` | The caller: `stub.call!(increment, { by: 1 })`, an `Err` of the callee is `Remote(TooBig)`. The callee: `increment.on(\|self, { by }\| ...)`. One constant, so both sides have the same types and errors. | `Object`, `Service` | B |
 
 ## 8. Native
 

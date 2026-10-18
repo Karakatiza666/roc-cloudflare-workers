@@ -13,7 +13,7 @@ header='app [event!] { pf: platform "../../platform/main.roc" }
 import pf.Worker
 import pf.Cbor
 import Id64
-worker = Worker.{ fetch!: |_req| crash "unused" }
+worker = Worker.new({ fetch!: |_req| crash "unused" })
 event! = |e| worker.event!(e)
 id = Id64.from_u64(5)'
 # case name | line | expected error text ("-" for the control, which must compile)

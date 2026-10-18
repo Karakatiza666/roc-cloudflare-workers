@@ -58,6 +58,6 @@ fetch_url! = |url| match Http.get!(url) {
 	Err(e) => Response.from_text(502, "Err ${Str.inspect(e)}")
 }
 
-worker = Worker.{ fetch! }
+worker = Worker.new({ fetch!: fetch! })
 
 event! = |e| worker.event!(e)

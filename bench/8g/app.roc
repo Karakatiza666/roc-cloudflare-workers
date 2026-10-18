@@ -66,7 +66,7 @@ fetch! = |req| {
 	Ok(Response.from_text(200, text))
 }
 
-worker = Worker.{ fetch! }
+worker = Worker.new({ fetch!: fetch! })
 
 event! = |e| worker.event!(e)
 

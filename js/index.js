@@ -187,8 +187,9 @@ export function makeHandler(module, opts = {}) {
   // A JS method on the prototype, where Workers finds a handler and an RPC method (an own property gives "The RPC
   // receiver does not implement the method").
   const method = (C, name, fn) => Object.defineProperty(C.prototype, name, { configurable: true, writable: true, value: fn });
-  // `Reply` gives its value to the caller. `Failed`: a log line and a throw with the text of the error, so the caller
-  // gets `RpcErr` with it (MODULES.md 8). Each other outcome and a trap: a log line and a throw.
+  // `Reply` gives its value to the caller: a `Reply` of `Rpc.roc`, `{ Ok: value }` or `{ Err: tag }`, so an `Err` of the handler
+  // is a normal reply (MODULES.md 8). `Failed` (an argument that does not parse): a log line and a throw with the text,
+  // so the caller gets `RpcErr` with it. Each other outcome and a trap: a log line and a throw.
   const reply = (tag, r) => {
     if (r.trap) throw new Error(`${tag}: ${r.cancelled ? `cancelled: ${r.cancelled}` : `trap ${r.trap}`}`);
     if (r.outcome.outcome === 'reply') return r.outcome.value;

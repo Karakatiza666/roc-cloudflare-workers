@@ -78,14 +78,15 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 	fetch! : Object, Request => Try(Response, [ObjectErr(Io.Thrown)])
 	fetch! = |obj, req| Io.run!(fetch(obj, req))
 
-	## `stub[method](arg)` with an `Rpc` constant: the reply is read to the RPC limit of Workers (32 MiB).
-	call : Object, Rpc(arg, ret), arg -> Io(ret, [RpcErr(Io.Thrown), BadData(Str)]) where [arg.Cbor.Encodable([]), ret.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+	## `stub[method](arg)` with an `Rpc` constant: the reply is read to the RPC limit of Workers (32 MiB). An `Err` of
+	## the callee is `Remote(err)`.
+	call : Object, Rpc(arg, ret, err), arg -> Io(ret, [RpcErr(Io.Thrown), BadData(Str), Remote(err)]) where [arg.Cbor.Encodable([]), ret.Cbor.Parseable([InvalidCbor(U64), ..e1]), err.Cbor.Parseable([InvalidCbor(U64), ..e2])]
 	call = |obj, m, a| {
 		s = stub_ops(obj)
 		Remote.call(s.ops, s.slot, m, a, Remote.rpc_max)
 	}
 
-	call! : Object, Rpc(arg, ret), arg => Try(ret, [RpcErr(Io.Thrown), BadData(Str)]) where [arg.Cbor.Encodable([]), ret.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+	call! : Object, Rpc(arg, ret, err), arg => Try(ret, [RpcErr(Io.Thrown), BadData(Str), Remote(err)]) where [arg.Cbor.Encodable([]), ret.Cbor.Parseable([InvalidCbor(U64), ..e1]), err.Cbor.Parseable([InvalidCbor(U64), ..e2])]
 	call! = |obj, m, a| Io.run!(call(obj, m, a))
 
 	## The id of the object (`id.toString()`). The runtime makes the id of a named object from the name and the namespace
@@ -344,17 +345,17 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 	## What a SQL cursor of a Durable Object gives (rowsRead, rowsWritten). D1 also gives changes and last_row_id (Sql.Info).
 	SqlInfo : { rows_read : U64, rows_written : U64 }
 
-	## A class of Durable Objects: a record of handlers, all optional (MODULES.md 7). Each class can have its own error
+	## A class of Durable Objects: a record of handlers, all optional (MODULES.md 7). Each handler has its own error
 	## type: an `Err(e)` becomes a log line with `Str.inspect(e)` (the outcome `Failed`). The name is the name of the JS
 	## export (`export const Counter = objectClass("Counter")`) and of the Wrangler config.
 	class : Str, {
-		init! ?: Object.Self => Try({}, e),
-		fetch! ?: Object.Self, Request => Try(Response, e),
+		init! ?: Object.Self => Try({}, e1),
+		fetch! ?: Object.Self, Request => Try(Response, e2),
 		rpc ?: List(Rpc.Handler(Object.Self)),
-		alarm! ?: Object.Self, { retry_count : U32, is_retry : Bool } => Try({}, e),
-		web_socket_message! ?: Object.Self, Object.Socket, WebSocket.Message => Try({}, e),
-		web_socket_close! ?: Object.Self, Object.Socket, WebSocket.Closed => Try({}, e),
-		web_socket_error! ?: Object.Self, Object.Socket, Io.Thrown => Try({}, e),
+		alarm! ?: Object.Self, { retry_count : U32, is_retry : Bool } => Try({}, e3),
+		web_socket_message! ?: Object.Self, Object.Socket, WebSocket.Message => Try({}, e4),
+		web_socket_close! ?: Object.Self, Object.Socket, WebSocket.Closed => Try({}, e5),
+		web_socket_error! ?: Object.Self, Object.Socket, Io.Thrown => Try({}, e6),
 	} -> Object.Class
 	class = |name, h| {
 		name,

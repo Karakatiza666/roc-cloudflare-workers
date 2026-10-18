@@ -6,7 +6,7 @@ import pf.Cbor
 import pf.Sql
 import Id64
 
-worker = Worker.{ fetch!: |_req| crash "unused" }
+worker = Worker.new({ fetch!: |_req| crash "unused" })
 
 event! = |e| worker.event!(e)
 
