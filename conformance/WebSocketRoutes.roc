@@ -239,6 +239,16 @@ room_message! = |self, socket, msg| {
 			_ = socket.send!(Text(text))
 			{}
 		}
+		Text("bcast") => {
+			sent = self.broadcast!(Text("all from ${name}"))
+			_ = socket.send!(Text("sent=${sent.to_str()}"))
+			{}
+		}
+		Text("bcast_tag") => {
+			sent = self.broadcast_with!({ tag: name }, Text("tag from ${name}"))
+			_ = socket.send!(Text("sent=${sent.to_str()}"))
+			{}
+		}
 		Text("json") => {
 			_ = socket.send_json!({ user: name, n })
 			{}
