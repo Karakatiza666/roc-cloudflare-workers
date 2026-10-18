@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run examples/hello in a copy, with the shim package that a release has (PLAN.md 11b):
-# npm install of the .tgz, `wrangler dev --local` and 6 requests, then `wrangler deploy --dry-run`. No deploy.
+# npm install of the .tgz, `roc-cloudflare-workers sync --check`, `wrangler dev --local` and 6 requests, then `wrangler deploy --dry-run`. No deploy.
 # Usage: scripts/test_example.sh <app.wasm> <shim .tgz file or URL>. Needs `wrangler` and `npm` on PATH.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -18,6 +18,9 @@ echo "local site" > "$run/site/hello.txt"
 export WRANGLER_SEND_METRICS=false CI=1 WRANGLER_LOG_PATH=$run/wrangler-logs XDG_CONFIG_HOME=$run/xdg-config
 (cd "$run/project" && npm install --no-audit --no-fund --silent "$shim")
 node -e 'const p=require(process.argv[1]); if(!p.dependencies["roc-cloudflare-workers"]) process.exit(1)' "$run/project/package.json"
+# The command of the package (its `bin`): worker.js of the example is the file that `sync` writes, and wrangler.toml has
+# the parts of the manifest (the D1 binding of `Worker.new bindings`).
+(cd "$run/project" && ./node_modules/.bin/roc-cloudflare-workers sync --check)
 
 pids=()
 cleanup() { for p in "${pids[@]}"; do kill -- "-$p" 2>/dev/null || true; done; }

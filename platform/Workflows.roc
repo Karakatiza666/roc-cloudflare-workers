@@ -13,6 +13,10 @@ Workflows(a) := { name : Str, write : a -> Try(Str, Str) }.{
 	json : Str -> Workflows(a) where [a.Json.Encodable(enc)]
 	json = |name| Workflows.{ name, write: |v| Json.to_str_try(v).map_err(|e| Str.inspect(e)) }
 
+	## The binding for the manifest (`Worker.new({ bindings: [...] })`, MODULES.md 3): the kind `workflows`.
+	declare : Workflows(a) -> { name : Str, kind : Str, props : List((Str, Str)) }
+	declare = |b| { name: b.name, kind: "workflows", props: [] }
+
 	## `create({ params })`: a new instance with a new id. Gives the `Instance` (its id is `instance.id`).
 	create : Workflows(a), a -> Io(Workflows.Instance, [WorkflowsErr(Io.Thrown), AlreadyExists, BadData(Str)])
 	create = |w, params| create_io(w, params, Err(NoId))

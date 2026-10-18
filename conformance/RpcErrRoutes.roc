@@ -12,7 +12,7 @@ import Q
 
 self_service = Service.binding("SELF")
 admin_service = Service.binding("ADMIN")
-counters = Object.namespace("COUNTERS")
+counters = Object.namespace("COUNTERS", { class: "Counter" })
 
 RpcErrRoutes :: [].{
 

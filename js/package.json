@@ -1,7 +1,7 @@
 {
   "name": "roc-cloudflare-workers",
   "version": "0.0.0-dev",
-  "description": "The JS shim of the Roc platform for Cloudflare Workers: makeHandler(module, opts), objectClass, entrypointClass.",
+  "description": "The JS shim of the Roc platform for Cloudflare Workers: makeHandler(module, opts), objectClass, entrypointClass, and the command roc-cloudflare-workers (sync, init).",
   "type": "module",
   "license": "UPL-1.0",
   "repository": {
@@ -12,8 +12,14 @@
   "exports": {
     ".": "./index.js"
   },
+  "bin": {
+    "roc-cloudflare-workers": "./cli.mjs"
+  },
   "files": [
     "*.js",
+    "*.mjs",
+    "template/",
+    "release.json",
     "LICENSE"
   ],
   "sideEffects": false

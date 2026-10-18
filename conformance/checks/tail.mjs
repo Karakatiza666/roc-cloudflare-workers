@@ -40,7 +40,7 @@ export const checks = [
       workers: [
         { name: 'producer', modules: true, script: producer, tails: ['tail'] },
         // Each worker of a multi-worker config needs its own date, flags and modules root.
-        { name: 'tail', modules: t.modules, modulesRoot: fileURLToPath(new URL('..', import.meta.url)), compatibilityDate: '2026-10-01', compatibilityFlags: ['enable_request_signal'] },
+        { name: 'tail', modules: t.modules, modulesRoot: fileURLToPath(new URL('..', import.meta.url)), compatibilityDate: '2026-10-01', compatibilityFlags: ['enable_request_signal'], d1Databases: ['DB'], kvNamespaces: ['KV'], durableObjects: { COUNTERS: { className: 'Counter', useSQLite: true } } },
       ],
       unsafeTriggerHandlers: true,
       handleStructuredLogs: (l) => logs.push(l),

@@ -12,6 +12,10 @@ Ai :: { name : Str }.{
 	binding : Str -> Ai
 	binding = |name| Ai.{ name }
 
+	## The binding for the manifest (`Worker.new({ bindings: [...] })`, MODULES.md 3): the kind `ai`.
+	declare : Ai -> { name : Str, kind : Str, props : List((Str, Str)) }
+	declare = |b| { name: b.name, kind: "ai", props: [] }
+
 	## `run(model, input)`: the output as the type of the call (MC7).
 	run : Ai, Str, input -> Io(out, [AiErr(Io.Thrown), BadData(Str), TooLarge]) where [input.Cbor.Encodable([]), out.Cbor.Parseable([InvalidCbor(U64), ..errs])]
 	run = |ai, model, input| run_io(ai, model, input, { gateway: Err(NoGateway), max_bytes: Body.default_max })

@@ -18,13 +18,30 @@ Each release (tag `X.Y.Z`) has 2 files. They have the same version and are used 
 | File | Use |
 | --- | --- |
 | `<hash>.tar.zst` | The platform bundle. It goes in the header of the app. It has the Roc modules, `LICENSE` and the production host `targets/wasm32/host.wasm`. The packages `http` (roc-lang/http 2.0.0) and `cbor` (roc-cbor 0.1.0) stay URLs in the platform header: Roc downloads them. |
-| `roc-cloudflare-workers-X.Y.Z.tgz` | The JS shim, as an npm package (`makeHandler`, `objectClass`, `entrypointClass`). `npm install <file or URL>` takes it. |
+| `roc-cloudflare-workers-X.Y.Z.tgz` | The JS shim, as an npm package (`makeHandler`, `objectClass`, `entrypointClass`), and the command `roc-cloudflare-workers` (`init`, `sync`). `npm install <file or URL>` takes it. |
 
 The release notes have both URLs. The package is not on the npm registry: the version of the shim must be the version of the platform, so the shim comes from the same release.
 
 Needs: a Roc nightly (the release notes name it, `compat/last-stack-first-nightly` is the one that the release was built with), Node and `wrangler` (the tests use Node 26 and Wrangler 4).
 
 ## Use it
+
+A project has four files: `app.roc`, `worker.js`, `wrangler.toml`, `package.json`. The command `roc-cloudflare-workers` of the shim package makes them:
+
+| Command | What it does |
+| --- | --- |
+| `roc-cloudflare-workers init [dir]` | Writes the four files of a new project (`examples/hello`), with the URLs of the release of the package. |
+| `roc-cloudflare-workers sync` | Reads the manifest of `app.wasm`, writes `worker.js` (one export line for each class, then `makeHandler`), and checks `wrangler.toml`: `main`, the compatibility date and flags, `durable_objects.bindings`, `migrations` (`new_sqlite_classes`), the bindings of `Worker.new({ bindings })`, `triggers.crons` of `Worker.new({ crons })`. It prints the parts to add and gives exit 1 when one is missing or wrong. `--check`: write nothing (for CI). |
+
+```sh
+npx --yes --package=https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/X.Y.Z/roc-cloudflare-workers-X.Y.Z.tgz roc-cloudflare-workers init my-worker
+cd my-worker
+npm install
+npm run build     # roc build, then roc-cloudflare-workers sync
+npm run dev       # wrangler dev --local
+```
+
+The steps below say what each file has.
 
 1. The app (`examples/hello/app.roc`). The header has the platform and nothing else. The platform brings `Http`, `Cbor` and the types of `roc-lang/http`: the app has no `http` and no `cbor` entry.
 
@@ -47,7 +64,9 @@ event! = |e| worker.event!(e)
 | --- | --- |
 | `app [event!]` | The one function that takes every event (`API.md` 10.1). |
 | `Worker.new({ fetch!, scheduled!, queue!, ... })` | A record with the handlers that the app has, each with its own error type. One field: `Worker.new({ fetch!: fetch! })` (`{ fetch! }` alone is a block). `worker.event!` sends each event to its handler. A kind with no handler is `Unhandled`. |
-| `import pf.D1`, `pf.R2`, `pf.Kv`, ... | The modules of `MODULES.md`. A binding is `D1.binding("DB")`: the name is the name in the Wrangler config. |
+| `import pf.D1`, `pf.R2`, `pf.Kv`, ... | The modules of `MODULES.md`. A binding is `D1.binding("DB")`: the name is the name in the Wrangler config. A Durable Object namespace names its class: `Object.namespace("ROOMS", { class: "Room" })`. |
+| `Worker.new({ ..., bindings: [db.declare(), rooms.declare()] })` | The bindings that the app uses, in the manifest (`MODULES.md` 3). The shim checks at load that `env` has each one with its kind, and `sync` checks the Wrangler config. Optional. |
+| `Worker.new({ ..., crons: [Worker.cron("*/5 * * * *", settle!)] })` | A handler for each cron expression, in place of one `scheduled!` that matches `s.cron`. `sync` checks `triggers.crons`. `scheduled!` stays: it gets the runs of the other crons. |
 | `import pf.Cbor` | Typed data as CBOR. It wraps roc-cbor, so no `cbor` entry. An app may add the same roc-cbor URL: the types are the same. |
 
 2. Build the app. `--no-cache` is needed: a warm build cache gave other code in the same build (`PLAN.md` "Status of steps 11a, 11b").
@@ -56,16 +75,17 @@ event! = |e| worker.event!(e)
 roc build --target=wasm32 --no-cache --output=app.wasm app.roc
 ```
 
-3. The shim. `npm install https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/X.Y.Z/roc-cloudflare-workers-X.Y.Z.tgz`. The entry of the Worker (`examples/hello/worker.js`):
+3. The shim. `npm install https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/X.Y.Z/roc-cloudflare-workers-X.Y.Z.tgz`. The entry of the Worker (`examples/hello/worker.js`) is the file that `roc-cloudflare-workers sync` writes:
 
 ```js
+// Made by roc-cloudflare-workers sync from the manifest of the app. Run it again after a change of the classes in Roc.
 import app from './app.wasm';
 import { makeHandler } from 'roc-cloudflare-workers';
 
 export default makeHandler(app);
 ```
 
-`makeHandler(module, opts)` throws at load for a bad option or a module that is not stack-first. The options are in `js/options.js`. A Durable Object class or a named entry point of the app is one export line before the default export (`objectClass("Room")`, `entrypointClass("Admin")`, `API.md` AQ10).
+`makeHandler(module, opts)` throws at load for a bad option, a module that is not stack-first, a class with no export line, and a binding of `Worker.new({ bindings })` that is not in `env` with its kind. The options are in `js/options.js`. A Durable Object class or a named entry point of the app is one export line before the default export (`objectClass("Room")`, `entrypointClass("Admin")`, `API.md` AQ10): `sync` writes these lines. An app with options writes its own entry file: `sync` does not write over a file that it did not make, and prints the lines.
 
 4. The Wrangler config (`examples/hello/wrangler.toml`):
 
@@ -75,8 +95,9 @@ export default makeHandler(app);
 | `compatibility_date` | `2026-10-01` or newer | The date of the tests (`conformance/run.mjs`). |
 | `compatibility_flags` | `["enable_request_signal"]` | Without it `request.signal` never fires: a task does not stop when the client goes away (`API.md` 10.2). |
 | `compatibility_flags` (the same list) | `"global_fetch_strictly_public"` too | Without it a `fetch` of another Worker of your account on workers.dev gives 404 `error code: 1042` on the edge (local runs do not show it). With it, `fetch` goes to the public internet. For a Worker of your account, a service binding is the other way. |
-| Bindings | Names that the app uses in `X.binding("NAME")` | One binding for each name. |
-| Durable Object classes | `new_sqlite_classes` in the migration | The platform needs SQLite-backed classes (`MODULES.md` 7). |
+| Bindings | Names that the app uses in `X.binding("NAME")` | One binding for each name. `sync` prints the part of each binding of `Worker.new({ bindings })` that is not in the config. |
+| Durable Object classes | `new_sqlite_classes` in the migration, and `durable_objects.bindings` with the `class_name` of `Object.namespace` | The platform needs SQLite-backed classes (`MODULES.md` 7). `sync` checks both. |
+| `triggers.crons` | The expressions of `Worker.cron` | `sync` checks them. A cron of the config with no `Worker.cron` needs a `scheduled!`. |
 
 5. Run and deploy:
 

@@ -11,7 +11,7 @@ import pf.Time
 import pf.Log
 import Q
 
-rooms = Object.namespace("ROOMS")
+rooms = Object.namespace("ROOMS", { class: "Room" })
 
 ## The attachment of a socket of `Room`: kept while the object sleeps.
 User : { name : Str }

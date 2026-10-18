@@ -166,7 +166,12 @@ async function runChecks() {
     // PLAN.md 8f: another Miniflare with the same modules and `opts` (no options of the check files): `entry`, when given,
     // is the text of worker.js (`t.entry` is the real one). The check awaits `ready` and calls `dispose`.
     entry: readFileSync(join(here, 'worker.js'), 'utf8'),
+    // The app declares bindings (`Worker.new bindings`, conformance/app.roc) that the shim checks: `start` adds them
+    // (DB, KV, COUNTERS) to the options. `startBare` does not (the checks of the load, checks/bindings.mjs).
     start(opts = {}, entry = undefined) {
+      return t.startBare({ ...opts, d1Databases: [...new Set(['DB', ...(opts.d1Databases ?? [])])], kvNamespaces: [...new Set(['KV', ...(opts.kvNamespaces ?? [])])], durableObjects: { COUNTERS: { className: 'Counter', useSQLite: true }, ...opts.durableObjects } }, entry);
+    },
+    startBare(opts = {}, entry = undefined) {
       const mods = entry === undefined ? modules : [{ ...modules[0], contents: entry }, ...modules.slice(1)];
       return track(new Miniflare(convertV4MiniflareOptions({ modules: mods, modulesRoot: here, compatibilityDate: '2026-10-01', compatibilityFlags: ['enable_request_signal'], port: 0, cf, ...opts })));
     },

@@ -12,9 +12,16 @@
 //   js/host.js     readers and constants of the host exports
 //   js/tasks.js    the task table and the context of each task
 //   js/budget.js   the memory budget of the isolate
+//   js/manifest.js the check of the manifest of the app
+//   js/bindings.js the binding kinds of the manifest: the check of `env`, the Wrangler config parts
+//   js/cli.js      the command `roc-cloudflare-workers` (sync, init)
 // `cloudflare:workers` resolves in workerd and in Wrangler. In Node, a test registers a resolve hook to a stand-in class
 // (`bench/cf-node.mjs`, `bench/cf-workers-stub.mjs`).
 import { WorkerEntrypoint, DurableObject } from 'cloudflare:workers';
+// `cf.env`: the env at global scope (workerd). The Node stand-in has none: the check of the bindings waits for an event.
+import * as cf from 'cloudflare:workers';
+import { bindingProblems } from './bindings.js';
+import { checkManifest, RESERVED } from './manifest.js';
 import { checkOptions } from './options.js';
 import { makeRunner, manifestOf, NOT_STACK_FIRST } from './runner.js';
 import { fetchEvent, scheduledEvent, queueEvent, emailEvent, tailEvent, otherEvent, responseOf, rpcEvent, entrypointFetchEvent, objectEvent, objectInit, objectFetch, objectAlarm, objectRpc, objectSocketMessage, objectSocketClose, objectSocketError, manifestEvent } from './events.js';
@@ -86,6 +93,7 @@ export function makeHandler(module, opts = {}) {
   // Run one event as a task. A trap gives `{ trap, status }`; its log line has the text of a Roc `crash` (8a O2).
   // `ro`: the task context (PLAN.md 9b, API.md 6.2 OP3): `kind`, `signal`, `env`, `ctx` and `event` (the root `event`).
   const run = async (name, ev, ro) => {
+    checkEnv(ro.env);
     const r = await runnerOf().run(ev, ro);
     if (r.trap && !r.shed && !r.cancelled) log(`${name}: trap: ${r.crash ?? r.trap}`);
     return r;
@@ -183,6 +191,24 @@ export function makeHandler(module, opts = {}) {
   // `undefined`: the module is not stack-first, so it is not run; each event of it throws (PLAN.md 1b).
   const got = manifestOf(module, manifestEvent());
   const manifest = checkManifest(got ?? { objects: {}, entrypoints: {} });
+  // MODULES.md 3: each binding of the manifest must be in `env` with its kind. At load when workerd gives `env` at
+  // global scope, else at the first event of each `env` (the error of the load, as a throw of the event).
+  const envChecked = new WeakSet();
+  const envError = (env) => {
+    const problems = bindingProblems(manifest.bindings, env);
+    return problems.length ? new Error(`makeHandler: the bindings of the app (Worker.new bindings) are not in env:\n  ${problems.join('\n  ')}\nnpx roc-cloudflare-workers sync prints the parts of the Wrangler config to add.`) : null;
+  };
+  const loadEnv = cf.env;
+  if (manifest.bindings.length && loadEnv && typeof loadEnv === 'object') {
+    const e = envError(loadEnv);
+    if (e) throw e;
+  }
+  function checkEnv(env) {
+    if (!manifest.bindings.length || !env || typeof env !== 'object' || envChecked.has(env)) return;
+    const e = envError(env);
+    if (e) throw e;
+    envChecked.add(env);
+  }
   const initMs = runnerOpts.initMs ?? DEADLINES.initMs;
   // A JS method on the prototype, where Workers finds a handler and an RPC method (an own property gives "The RPC
   // receiver does not implement the method").
@@ -304,29 +330,4 @@ export function makeHandler(module, opts = {}) {
   }
   classes.app = app;
   return Handler;
-}
-
-// Names that an RPC method cannot take: the handlers of the classes (`fetch`, `alarm`, ...) and `constructor`.
-const RESERVED = new Set(['fetch', 'scheduled', 'queue', 'email', 'tail', 'alarm', 'constructor', 'webSocketMessage', 'webSocketClose', 'webSocketError', 'then']);
-
-// The manifest must be `{ default: { handlers, methods }, objects: { Name: { handlers, methods } }, entrypoints: { ... } }`,
-// with JS names, no method twice in a class and no reserved name (a platform bug or an app with such a method name: a
-// throw). The result has the default methods as `default` and the handlers of the default export as `handlers`.
-function checkManifest(m) {
-  const isName = (n) => typeof n === 'string' && /^[A-Za-z_$][\w$]*$/.test(n);
-  const names = (list, what) => {
-    if (!Array.isArray(list) || !list.every(isName) || new Set(list).size !== list.length) throw new Error(`makeHandler: the manifest has bad ${what}: ${JSON.stringify(list)}`);
-    for (const n of list) if (RESERVED.has(n)) throw new Error(`makeHandler: the RPC method ${n} (${what}) has the name of a handler`);
-    return list;
-  };
-  const d = m.default ?? {};
-  const out = { default: names(d.methods ?? [], 'default methods'), handlers: d.handlers ?? [], objects: {}, entrypoints: {} };
-  for (const kind of ['objects', 'entrypoints']) {
-    for (const [name, c] of Object.entries(m[kind] ?? {})) {
-      if (!isName(name)) throw new Error(`makeHandler: the class name ${JSON.stringify(name)} is not a JS name`);
-      if (name === 'default') throw new Error('makeHandler: a class cannot have the name default');
-      out[kind][name] = { handlers: c.handlers ?? [], methods: names(c.methods ?? [], `methods of ${name}`) };
-    }
-  }
-  return out;
 }

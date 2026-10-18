@@ -1,6 +1,6 @@
 app [event!] {
-	pf: platform "../bench/platform/main.roc",
 	http: "https://github.com/roc-lang/http/releases/download/2.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
+	pf: platform "../bench/platform/main.roc",
 }
 
 ## The conformance app (PLAN.md 8c): one route for each function of a module and for its `Io` twin. `run.mjs` runs it
@@ -9,6 +9,10 @@ app [event!] {
 import pf.Worker
 import pf.Request
 import pf.Response
+import pf.D1
+import pf.Kv
+import pf.Object
+import pf.Log
 import HttpRoutes
 import EnvRoutes
 import TimeRoutes
@@ -95,6 +99,16 @@ email! = |mail| EmailRoutes.handle!(mail)
 
 tail! = |items| TailRoutes.handle!(items)
 
-worker = Worker.new({ fetch!, scheduled!, queue!, email!, tail!, rpc: RpcRoutes.rpc, entrypoints: RpcRoutes.entrypoints.concat(AfterRoutes.entrypoints), objects: ObjectRoutes.classes.concat(WebSocketRoutes.classes) })
+# Wave B issue 5: a cron with its own handler (checks/cron.mjs). A run of "bad" or "good" goes to `scheduled!` above.
+cron_a! : Worker.Scheduled => Try({}, [CronA])
+cron_a! = |s| {
+	Log.info!("cron handler", { cron: s.cron })
+	Ok({})
+}
+
+# Wave B issue 5: the bindings that the shim checks at load (checks/cron.mjs, checks/bindings.mjs): the options of `checks/d1.mjs`, `kv.mjs`, `objects.mjs`.
+bindings = [D1.binding("DB").declare(), Kv.text("KV").declare(), Object.namespace("COUNTERS", { class: "Counter" }).declare()]
+
+worker = Worker.new({ fetch!, scheduled!, queue!, email!, tail!, rpc: RpcRoutes.rpc, entrypoints: RpcRoutes.entrypoints.concat(AfterRoutes.entrypoints), objects: ObjectRoutes.classes.concat(WebSocketRoutes.classes), bindings, crons: [Worker.cron("cron-a", cron_a!)] })
 
 event! = |e| worker.event!(e)

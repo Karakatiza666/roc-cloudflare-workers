@@ -48,11 +48,18 @@ asset=$(echo dist/*.tar.zst)
 zstd -dc "$asset" | tar -t | grep -v '^[A-Z][A-Za-z0-9]*\.roc$' >&2
 if zstd -dc "$asset" | tar -t | grep -E '(^|/)(http|cbor)(/|$)|\.\./'; then echo "FAIL: the bundle has a copy of a package or a path out" >&2; exit 1; fi
 
-# 5. The js/ package, with the version of the release. The source file keeps 0.0.0-dev.
+# 5. The js/ package, with the version of the release. The source file keeps 0.0.0-dev. The command
+# `roc-cloudflare-workers` (js/cli.mjs) takes `init` from template/ (the files of examples/hello) and the URLs of this
+# release from release.json.
 pkg="$work/js"
-mkdir -p "$pkg"
-cp js/*.js js/package.json "$pkg/"
+mkdir -p "$pkg/template"
+cp js/*.js js/*.mjs js/package.json "$pkg/"
 cp LICENSE "$pkg/LICENSE"
+cp examples/hello/{app.roc,worker.js,wrangler.toml,package.json} "$pkg/template/"
+node -e '
+  const [file, version, platform, shim] = process.argv.slice(1);
+  require("fs").writeFileSync(file, JSON.stringify({ version, platform, shim }, null, 2) + "\n");
+' "$pkg/release.json" "$version" "https://github.com/$repo/releases/download/$version/$(basename "$asset")" "https://github.com/$repo/releases/download/$version/roc-cloudflare-workers-$version.tgz"
 node -e '
   const fs = require("fs");
   const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));

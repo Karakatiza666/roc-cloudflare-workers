@@ -19,6 +19,10 @@ Queue(a) :: { name : Str, content_type : Str, write : a -> Js, read : List(U8) -
 		read: |body| Cbor.parse(body).map_err(|e| Str.inspect(e)),
 	}
 
+	## The binding for the manifest (`Worker.new({ bindings: [...] })`, MODULES.md 3): the kind `queue`.
+	declare : Queue(a) -> { name : Str, kind : Str, props : List((Str, Str)) }
+	declare = |b| { name: b.name, kind: "queue", props: [] }
+
 	## The content type "v8" (the structured clone of Workers): also a `BigInt`, and a `Cbor.Bytes` field reaches a
 	## JS consumer as a `Uint8Array`.
 	v8 : Str -> Queue(a) where [a.Cbor.Encodable([]), a.Cbor.Parseable([InvalidCbor(U64), ..errs])]

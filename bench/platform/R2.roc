@@ -14,6 +14,10 @@ R2 :: { name : Str }.{
 	binding : Str -> R2
 	binding = |name| R2.{ name }
 
+	## The binding for the manifest (`Worker.new({ bindings: [...] })`, MODULES.md 3): the kind `r2`.
+	declare : R2 -> { name : Str, kind : Str, props : List((Str, Str)) }
+	declare = |b| { name: b.name, kind: "r2", props: [] }
+
 	## The object and its body (a stream). `get` of a key that is not there: `NotFound`.
 	get : R2, Str -> Io(R2.Object, [NotFound, R2Err(Io.Thrown)])
 	get = |bucket, key| {

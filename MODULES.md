@@ -122,7 +122,7 @@ event! = |e| worker.event!(e)
 ## 3. Entry: `Worker`
 
 ```roc
-Worker :: { handlers : List(Str), own! : Worker.Event => Worker.Outcome, rpc : ..., entrypoints : ..., objects : ... }.{
+Worker :: { handlers : List(Str), own! : Worker.Event => Worker.Outcome, rpc : ..., entrypoints : ..., objects : ..., bindings : ..., crons : List(Str) }.{
 	new : {
 		fetch! ?: Request => Try(Response, e1),
 		scheduled! ?: Worker.Scheduled => Try({}, e2),
@@ -133,8 +133,14 @@ Worker :: { handlers : List(Str), own! : Worker.Event => Worker.Outcome, rpc : .
 		rpc ?: List(Rpc.Handler({})),         # methods of the default entry point
 		entrypoints ?: List(Rpc.Entrypoint),  # named WorkerEntrypoint classes
 		objects ?: List(Object.Class),        # Durable Object classes
+		bindings ?: List(Worker.Binding),     # the bindings that the app uses: db.declare(), ... (manifest only)
+		crons ?: List(Worker.Cron),           # a handler for each cron expression
 	} -> Worker
 	event! : Worker, Worker.Event => Worker.Outcome
+
+	cron : Str, (Worker.Scheduled => Try({}, e)) -> Worker.Cron
+	Cron : { cron : Str, run! : Worker.Scheduled => Worker.Outcome }
+	Binding : { name : Str, kind : Str, props : List((Str, Str)) }
 
 	## The payload of a cron run. The same type is in `Worker.Event` (`API.md` 10.1).
 	Scheduled := { cron : Str, time_ms : U64 }.{
@@ -167,6 +173,8 @@ Each handler gives the result of its own kind, so a handler cannot give a wrong 
 | `other!` | A kind with no field (`makeHandler(module, { other: [...] })`) | The value for JS (the outcome `Reply`) | A throw | A throw |
 | `rpc`, `entrypoints` | `WorkerEntrypoint` methods (8). For `entrypoints`, also the `fetch` of a named entry point (a service binding with `entrypoint`). | The reply, or the response of the `fetch!` of the entry point | A throw on the caller side. For `fetch!`, as for the `fetch!` of the Worker. | "no method" throw. A named entry point with no `fetch!` has no `fetch` method in JS. |
 | `objects` | Durable Object classes (7) | as the field of the class | | `Unhandled` |
+| `crons` | `scheduled`, for a run whose `controller.cron` is the expression of a `Worker.cron` | as `scheduled!` | as `scheduled!` | A run of another cron goes to `scheduled!` |
+| `bindings` | None: the manifest only (bindings below) | | | No check of `env` |
 
 A new Workers kind is a new optional field, so it does not break an app (`API.md` 10.1).
 
@@ -191,23 +199,54 @@ Tail rules (`tail!`):
 | Not typed | `workerd` also gives `entrypoint`, `scriptVersion`, `scriptTags`, `dispatchNamespace`, `cpuTime`, `wallTime` and `truncated`. The docs do not list them, so `TraceItem` does not have them. A field added later is a change of the payload type, so a major release (`API.md` 10.1). |
 | Crossing | The shim maps each item to these fields in JS and sends the batch as one `Packed` value (`API.md` 5.2). The derived parser of `roc-cbor` 0.1.0 reads a `Try(a, [Missing])` field as the value, and as `Err(Missing)` when the key is absent, so the shim writes the value, or no key (never `null`, never `{"Ok": v}`: `research/f2-queue/try_shape.roc`). The batch has the limit of MC11 (1 MiB, the shim option `tailMaxBytes`). Past it, the shim drops log lines, from the last line back and over all items, and writes one warning (`console.warn`) in the Tail Worker with the count of dropped lines. Local workerd cuts the logs of one trace to about 200 kB before the shim sees them, so the 1 MiB limit is tested with a smaller `tailMaxBytes` (`PLAN.md` 8f). A tail handler has no `Err` path for its input, so `TooLarge` would lose the whole batch. |
 
+Bindings and crons (`bindings`, `crons`, step 8h wave B): the names that must match the Wrangler config are in the manifest, so the shim and the command `roc-cloudflare-workers sync` (README.md "Use it") check them.
+
+```roc
+db = D1.binding("DB")
+rooms = Object.namespace("ROOMS", { class: "Room" })
+
+worker = Worker.new({
+	fetch!: fetch!,
+	objects: [room],
+	bindings: [db.declare(), rooms.declare()],
+	crons: [Worker.cron("*/5 * * * *", settle!)],
+})
+```
+
+| Item | Rule |
+| --- | --- |
+| `declare` | Each binding type has `declare : T -> Worker.Binding`: `D1`, `Kv`, `R2`, `Object.Namespace`, `Service`, `Queue`, `Email`, `Workflows`, `Vectorize`, `Ai`, `Analytics`, `Assets`, `Hyperdrive`, `RateLimit`, `Version`, `SecretsStore`. The kind is the module (`d1`, `kv`, `r2`, `object`, `service`, `queue`, `email`, `workflows`, `vectorize`, `ai`, `analytics`, `assets`, `hyperdrive`, `ratelimit`, `version`, `secrets_store`). `props`: `class` and `script` of an object namespace (7), `service` and `entrypoint` of `Service.binding_with` (8). |
+| Optional | An app with no `bindings` field is as before: no check of `env`. The list is one line, and it is the only place where the app names its bindings for the config. A binding that is not in the list is not checked. |
+| Check at load | `makeHandler` refuses a binding name twice, an unknown kind, and an object namespace with no `script` whose `class` is not in `objects`. Then it checks `env`: each binding must be there, with the functions of its kind (`prepare` and `batch` of D1, `idFromName` of a namespace, ...; `js/bindings.js`). It uses the `env` of `cloudflare:workers` at global scope, so the load fails (as for a class with no export). With no such `env` (the Node tests), the check runs at the first event of each `env`, and the event throws the same error. |
+| Message | `makeHandler: the bindings of the app (Worker.new bindings) are not in env:` and one line for each binding: `DB (d1): env has no DB. Add [[d1_databases]] with binding = "DB" to the Wrangler config.` or `DB (d1): env.DB is not a D1 database (it has no prepare).` |
+| Limit of the kind check | A service binding, an assets binding and a local `send_email` binding are RPC stubs: they have a function for each name, so they pass the check of each kind. The check finds each missing binding, and a binding of another kind for the other kinds (`research/b3-sync/kinds`). |
+| `crons` | `Worker.cron(expr, f!)`: the run of `scheduled` with `controller.cron == expr` goes to `f!`. A run of another cron goes to `scheduled!`, and with no `scheduled!` it is `Unhandled` (a failed run). The handler has its own error type, as each field. `scheduled!` stays for an app that wants one handler. |
+| Manifest | `bindings: [{ name, kind, class?, script?, service?, entrypoint? }]` and `crons: [expr, ...]`. `handlers` of the default export has `scheduled` only for a `scheduled!` (the shim always defines `scheduled`). |
+
 Names of classes and methods come from Roc only (`API.md` AQ10). At load, the shim sends the event `Manifest`, and `Worker` answers with the names of its `objects`, `entrypoints` and their `Rpc` methods, the `rpc` methods of the default entry point, and the handlers that each class has (for the default export: the fields `fetch!`, `scheduled!`, `queue!`, `email!` and `tail!` that the app gives):
 
 ```js
 { default: { handlers: ["fetch", "queue"], methods: ["status"] },
   objects: { Room: { handlers: ["init", "fetch", "alarm", "webSocketMessage"], methods: ["increment"] } },
-  entrypoints: { Admin: { handlers: ["fetch"], methods: ["purge"] } } }
+  entrypoints: { Admin: { handlers: ["fetch"], methods: ["purge"] } },
+  bindings: [{ name: "DB", kind: "d1" }, { name: "ROOMS", kind: "object", class: "Room" }],
+  crons: ["*/5 * * * *"] }
 ```
 
-The shim defines a JS method only for a handler in the list, so a class with no `alarm!` has no `alarm` method (7), and a default export with no `queue!` has no `queue` method (the same for `email` and `tail`; `fetch` and `scheduled` are always there). The JS entry file has one line for each class, because Workers needs a named export:
+The shim defines a JS method only for a handler in the list, so a class with no `alarm!` has no `alarm` method (7), and a default export with no `queue!` has no `queue` method (the same for `email` and `tail`; `fetch` and `scheduled` are always there). The JS entry file has one line for each class, because Workers needs a named export. `roc-cloudflare-workers sync` writes it from the manifest:
 
 ```js
-import app from "./app.wasm";
-import { makeHandler, objectClass, entrypointClass } from "cloudflare-workers-roc";
-export const Room = objectClass("Room");          // a Durable Object class of Object.class("Room", ...)
-export const Admin = entrypointClass("Admin");    // a WorkerEntrypoint of Rpc.entrypoint("Admin", ...)
-export default makeHandler(app, {});
+// Made by roc-cloudflare-workers sync from the manifest of the app. Run it again after a change of the classes in Roc.
+import app from './app.wasm';
+import { makeHandler, objectClass, entrypointClass } from 'roc-cloudflare-workers';
+
+export const Room = objectClass('Room');          // a Durable Object class of Object.class("Room", ...)
+export const Admin = entrypointClass('Admin');    // a WorkerEntrypoint of Rpc.entrypoint("Admin", ...)
+
+export default makeHandler(app);
 ```
+
+An app with options (`makeHandler(app, { ops })`) writes its own entry file: `sync` does not write over a file that it did not make (the first line), and prints the lines to put in it.
 
 `makeHandler` gives a subclass of `WorkerEntrypoint` (`cloudflare:workers`), not a plain object, because Workers sends RPC to the default export only when it extends `WorkerEntrypoint` (Cloudflare docs, service bindings RPC). Its `fetch`, `scheduled`, `queue`, `email` and `tail` methods (the last three only when the manifest has the handler; an app with a raw `event!` answers `Unhandled` to `Manifest` and keeps all three, `PLAN.md` 8f part 3) send the events of `API.md` 10.1, with `this.env` and `this.ctx` as the roots `env` and `ctx`. `makeHandler` puts the `default` methods of the manifest on its prototype, and the methods of the manifest on each class. A class in Roc with no export, or an export with no class in Roc, is a throw at load, so `wrangler deploy` fails with the name. The Wrangler config names the classes too (Workers needs it), and workerd checks it against the exports.
 
@@ -232,6 +271,8 @@ As built in `PLAN.md` 8f, part 1 (`platform/Worker.roc`, `js/index.js`, `js/runn
 | Method names | The manifest refuses a method twice in a class, a name that is not a JS name, and the names of handlers: `fetch`, `scheduled`, `queue`, `email`, `tail`, `alarm`, `constructor`, `webSocketMessage`, `webSocketClose`, `webSocketError`, `then` (a stub with `then` is a thenable). A default method with the name of an `other` handler is a throw too. | The JS method of a handler and of an RPC method is the same property |
 | `rpc` methods | A method on the prototype of the class (default export, object, entry point): `Reply` gives the value, a `Reply` of `Rpc.roc` (`{ Ok: value }` or `{ Err: tag }`), also for an `Err` of the handler; `Failed(text)` (an argument that does not parse) is a log line `<class>.<method>: failed: <text>` and `throw new Error(text)`, so the caller gets `RpcErr({ name: "Error", message: text })`; `Unhandled` and a trap are a log line and a throw | MODULES.md 8, "Errors" |
 | `Worker.new`, not `Worker.{ ... }` | A function that takes the record of handlers. The literal `Worker.{ ... }` must match the backing type, so the backing type would need a type variable for each error. The function turns each error into text first, and the backing type has no variables. One field needs `Worker.new({ fetch!: fetch! })`: `{ fetch! }` with one field is a block, not a record (`research/e1-errors/one_field.roc`). | Step 8h |
+| `bindings`, `crons` | `Worker.Binding` and `Worker.Cron` are structural records, so each module gives its `declare` with no import of `Worker` (`Queue`, `Email` and `Object` are imported by `Worker`). `own!` finds the cron handler by `s.cron` first, then `scheduled!`. The manifest has `bindings` and `crons`; `js/manifest.js` checks them, `js/bindings.js` has the kinds. | Step 8h wave B |
+| `roc-cloudflare-workers` | `js/cli.mjs`, the `bin` of the shim package. `sync`: loads `app.wasm` in Node (`manifestOf`, no workerd), writes `worker.js`, reads `wrangler.json`, `wrangler.jsonc` or `wrangler.toml` (this order, as Wrangler) and checks `main`, the date, the flags, the migrations (`new_sqlite_classes`, not `new_classes`), `durable_objects.bindings` (`class_name`, `script_name`), each declared binding, `triggers.crons`. Exit 1 with the config parts to add. A config part of a binding that the app does not declare is a note. `--check`: write nothing (the test of `scripts/test_example.sh`). `init`: the four files of `examples/hello` (`template/` in the package), with the URLs of `release.json` (`scripts/bundle.sh`). `.mjs`, so the module lists of the tests (`*.js`) do not take it. Only the top-level tables of the config: not the `[env.<name>]` parts. | Step 8h wave B |
 
 ## 4. HTTP: `Request`, `Response`, `Body`, `Http`
 
@@ -692,8 +733,9 @@ Outside: a stub is plain data, like a binding.
 
 ```roc
 Object :: { ... }.{
-	namespace : Str -> Object.Namespace
+	namespace : Str, { class : Str, script ?: Str } -> Object.Namespace   # the binding, its class_name and script_name
 	Namespace := { ... }.{
+		declare : Object.Namespace -> Worker.Binding         # for Worker.new bindings (3): kind object, class, script
 		named : Object.Namespace, Str -> Object             # data: getByName runs in the program of each call
 		named_with : Object.Namespace, Str, { location_hint ?: Object.Location } -> Object
 		from_id : Object.Namespace, Str -> Object
@@ -774,7 +816,7 @@ Inside: a class is a record of handlers, all optional, as for `Worker`.
 ```
 
 ```roc
-counters = Object.namespace("COUNTERS")
+counters = Object.namespace("COUNTERS", { class: "Counter" })
 increment : Rpc({ by : I64 }, I64, [StorageErr(Thrown)])
 increment = Rpc.method("increment")
 count : Object.Cell(I64)
@@ -816,7 +858,8 @@ As built in `PLAN.md` 8f, part 1 (`platform/Object.roc`, `platform/Remote.roc`, 
 
 | Item | Built as | Why |
 | --- | --- | --- |
-| Backing | `Object :: { namespace, jurisdiction, target : [Named(Str), Id(Str)], location_hint }`, `Namespace := { binding, jurisdiction }` (`""` for none), `Self :: { class, id }` | Data only (MC1) |
+| Backing | `Object :: { namespace, jurisdiction, target : [Named(Str), Id(Str)], location_hint }`, `Namespace := { binding, jurisdiction, class, script }` (`""` for none; `class` and `script` are for the manifest only, 3), `Self :: { class, id }` | Data only (MC1) |
+| Namespace and class (step 8h wave B) | `Object.namespace(binding, { class, script? })`: the class is in the manifest (3), so the shim and `sync` check the Wrangler config against `objects`. The types do not tie a namespace to its class: an `Rpc` of another class compiles and gives `RpcErr` ("does not implement the method") at the call. A phantom class type (`Object.Namespace(cls)`, `Rpc(cls, arg, ret, err)`) would add one type argument to each `Rpc` and `Object` annotation, a type for each class, and an annotation for each namespace; an `Rpc` used on a service and on an object (`conformance/RpcMethods.roc`) would need a free class variable and get no check. Not built. | Cost against gain |
 | Twins | `fetch`, `call` (stubs) and `set_alarm_at`, `set_alarm_in`, `get_alarm`, `delete_alarm`, `delete_all` (`Self`) give an `Io`. SQL, cells, `list!` and `id!` do not wait: no twin. | MC3 |
 | `unique!` | A throw of `newUniqueId` is a crash | The type has no error |
 | `id!` | `idFromName(name).toString()` with `call!`. A stub of an id gives its id with no crossing. | |
@@ -849,8 +892,10 @@ Rpc(arg, ret, err) :: { name : Str }.{
 
 Reply(ret, err) := [Ok(ret), Err(err)]                       # the wire form (private): {"Ok": value} or {"Err": tag}
 
-Service :: { name : Str }.{
+Service :: { name : Str, service : Str, entrypoint : Str }.{
 	binding : Str -> Service
+	binding_with : Str, { service ?: Str, entrypoint ?: Str } -> Service   # the Worker and entry point, for the manifest only
+	declare : Service -> Worker.Binding                                   # for Worker.new bindings (3): kind service
 	fetch! : Service, Request => Try(Response, [ServiceErr(Thrown)])
 	call! : Service, Rpc(arg, ret, err), arg => Try(ret, [RpcErr(Thrown), BadData(Str), Remote(err)]) where [arg.Encodable, ret.Parseable, err.Parseable]
 }
@@ -1111,7 +1156,7 @@ sequenceDiagram
 ```
 
 ```roc
-rooms = Object.namespace("ROOMS")
+rooms = Object.namespace("ROOMS", { class: "Room" })
 
 User : { name : Str }
 Said : { text : Str }

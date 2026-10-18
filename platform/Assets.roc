@@ -11,6 +11,10 @@ Assets :: { name : Str }.{
 	binding : Str -> Assets
 	binding = |name| Assets.{ name }
 
+	## The binding for the manifest (`Worker.new({ bindings: [...] })`, MODULES.md 3): the kind `assets`.
+	declare : Assets -> { name : Str, kind : Str, props : List((Str, Str)) }
+	declare = |b| { name: b.name, kind: "assets", props: [] }
+
 	## Each status is `Ok` (a 404 is an answer of the assets): only a throw is `AssetsErr`.
 	fetch : Assets, Request -> Io(Response, [AssetsErr(Io.Thrown)])
 	fetch = |a, req| Remote.fetch([Get(Root("env"), a.name)], 0, req, |t| AssetsErr(t))
