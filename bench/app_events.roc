@@ -80,12 +80,12 @@ cf_text = |req| match req.?cf {
 queue! : Queue.Batch => Try({}, _)
 queue! = |batch| if batch.queue == "jobs" and batch.messages.len() == 1 Ok({}) else Err(WrongBatch(batch.queue))
 
-worker = Worker.{ fetch!, scheduled!, queue!, other! }
+worker = Worker.new({ fetch!, scheduled!, queue!, other! })
 
 ## For the tests of a missing handler.
-no_fetch = Worker.{ scheduled! }
+no_fetch = Worker.new({ scheduled!: scheduled! })
 
-no_scheduled = Worker.{ fetch! }
+no_scheduled = Worker.new({ fetch!: fetch! })
 
 event! : Worker.Event => Worker.Outcome
 event! = |e| match e {

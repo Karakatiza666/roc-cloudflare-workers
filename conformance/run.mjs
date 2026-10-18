@@ -60,6 +60,7 @@ const server = createServer((req, res) => {
     if (path === '/hello') return res.end('hello');
     if (path === '/ten') return res.end('0123456789');
     if (path === '/slow') return setTimeout(() => res.end('late'), 2000);
+    if (path === '/echo_json') return res.end(`${req.method} ${req.headers['content-type'] ?? '-'} ${Buffer.concat(chunks).toString()}`);
     if (path === '/echo') return res.end(`${req.method} ${req.headers['x-test'] ?? '-'} ${Buffer.concat(chunks).toString()}`);
     if (path.startsWith('/status/')) {
       res.statusCode = Number(path.slice(8));

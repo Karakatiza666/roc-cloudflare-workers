@@ -26,6 +26,8 @@ export const checks = [
       'CREATE TABLE kv (k TEXT PRIMARY KEY, v TEXT)',
       'CREATE TABLE blobs (x TEXT)',
       'CREATE TABLE rid (id INTEGER PRIMARY KEY, v TEXT)',
+      'CREATE TABLE pt (k TEXT, a, b INTEGER, c, d)',
+      'CREATE TABLE pi (k TEXT PRIMARY KEY, v INTEGER)',
       'CREATE TABLE p (id INTEGER PRIMARY KEY)',
       'CREATE TABLE t (id INTEGER PRIMARY KEY, u TEXT UNIQUE, n INTEGER NOT NULL, c INTEGER CHECK (c >= 0), p INTEGER REFERENCES p(id))',
       'CREATE TABLE s (id INTEGER PRIMARY KEY, v INTEGER) STRICT',
@@ -95,6 +97,17 @@ export const checks = [
   ['d1 all! of CAST(id AS TEXT) into { id : I64 } gives the exact ids', async (t) => {
     answer(await route(t, 'all', 'SELECT CAST(id AS TEXT) AS id FROM bigids ORDER BY k', '', '&type=id'),
       'Ok [{ id: 9223372036854775807 }, { id: -9223372036854775807 }, { id: -2687166099708853831 }]');
+  }],
+  // MODULES.md 5.1, "Ids: Id64": ids above 2^63 (as U64) read from CAST text, given back as SQL parameters (the CBOR encoder of
+  // `Id64` writes the I64 text, which binds as text), stored exact, shown as U64 text for JSON.
+  ['d1 Id64: CAST text into an Id64 field, written back with the Id64 as a SQL parameter (CBOR I64 text), JSON as U64 text', async (t) => {
+    answer(await t.get('/d1/id64?k=1'), 'Ok i64=-9223372036854775807 u64=9223372036854775809 same=True json={"id":"9223372036854775809"}');
+    answer(await t.get('/d1/id64?k=2'), 'Ok i64=-2687166099708853831 u64=15759577974000697785 same=True json={"id":"15759577974000697785"}');
+    answer(await t.get('/d1/id64?k=0'), 'Ok i64=9223372036854775807 u64=9223372036854775807 same=True json={"id":"9223372036854775807"}');
+    const db = await t.mf.getD1Database('DB');
+    // SQLite holds the exact integers (a U64 text would have become a REAL).
+    const rows = (await db.prepare("SELECT CAST(id AS TEXT) AS id, typeof(id) AS ty FROM rid WHERE v = 'id64' ORDER BY id").all()).results;
+    eq(JSON.stringify(rows), JSON.stringify([['-2687166099708853831'], ['-9223372036854775807'], ['9223372036854775807']].map(([id]) => ({ id, ty: 'integer' }))), 'the stored ids');
   }],
   ['d1 all! with no cast: BadData with the column, for a positive and a negative id', async (t) => {
     answer(await route(t, 'all', 'SELECT id FROM bigids WHERE k = 0', '', '&type=id'), 'Err BadData("column id: integer above 2^53, use CAST(id AS TEXT)")');
@@ -232,7 +245,64 @@ export const checks = [
   ['d1 a syntax error is D1Err', async (t) => {
     answer(await route(t, 'run', 'SELEC 1'), 'Err D1Err({ message: "D1_ERROR: near \\"SELEC\\": syntax error at offset 0: SQLITE_ERROR", name: "Error" })');
   }],
+  // PLAN.md 8h item 3: parameters are any value that encodes to a CBOR array (conformance/D1Routes.roc, `params!`).
+  ['d1 params: a tuple of (Str, I64, F64, blob) is stored as text, integer, real, blob (run!, and its Io twin)', async (t) => {
+    answer(await par(t, 'tuple'), 'Ok [{ a: "héllo", b: 42, c: 1.5, hd: "010203", ta: "text", tb: "integer", tc: "real", td: "blob" }]');
+    answer(await par(t, 'tuple_io'), 'Ok [{ a: "x", b: 7, c: 2.5, hd: "FF", ta: "text", tb: "integer", tc: "real", td: "blob" }]');
+  }],
+  ['d1 params: Sql.null and Sql.or_null(Err _) store NULL, Sql.or_null(Ok x) stores x', async (t) => {
+    answer(await par(t, 'null'), 'ok=Ok([{ an: 1, b: 7, cn: 0, tb: "integer" }]) err=Ok([{ an: 1, b: -1, cn: 1, tb: "null" }])');
+  }],
+  ['d1 params: a U64 of 2^63 - 1 is stored exact', async (t) => {
+    answer(await par(t, 'u64max'), 'Ok [{ t: "integer", v: "9223372036854775807" }]');
+  }],
+  ['d1 params: a U64 of 2^63 is BadParam, and no row (never a negative number) is stored', async (t) => {
+    const r = await par(t, 'u64over');
+    ok(r.body.startsWith('Err D1Err({ message: "SQL parameter 1: the integer 9223372036854775808 does not fit I64"') && r.body.includes('name: "BadParam"'), `got ${r.body}`);
+    const db = await t.mf.getD1Database('DB');
+    eq((await db.prepare("SELECT count(*) AS n FROM pi WHERE k = 'u64over' OR v < 0").first()).n, 0, 'rows of the failed insert, or negative');
+  }],
+  ['d1 params: 2^53 + 1 (I64 and U64) and I64 min bind as text and land as the exact integer', async (t) => {
+    answer(await par(t, 'p53'), 'Ok [{ t: "integer", v: "9007199254740993" }]');
+    answer(await par(t, 'p53_u64'), 'Ok [{ t: "integer", v: "9007199254740993" }]');
+    answer(await par(t, 'i64min'), 'Ok [{ t: "integer", v: "-9223372036854775808" }]');
+  }],
+  ['d1 params: a record and {} are BadParam (a list or a tuple is needed)', async (t) => {
+    for (const c of ['record', 'empty_record']) {
+      const r = await par(t, c);
+      ok(r.body.startsWith('Err D1Err({ message: "SQL parameters must be a list or a tuple, not a record or a tag') && r.body.includes('name: "BadParam"'), `${c}: got ${r.body}`);
+    }
+  }],
+  ['d1 params: a tag item is BadParam with the hint for Sql.or_null; a Bool item is BadParam', async (t) => {
+    const e = await par(t, 'tag_item');
+    ok(e.body.includes('name: "BadParam"') && e.body.includes('SQL parameter 1: a record or a tag is not a SQL value, tag values are not SQL values, use Sql.null or Sql.or_null for NULL'), `tag_item: got ${e.body}`);
+    const db = await t.mf.getD1Database('DB');
+    eq((await db.prepare("SELECT count(*) AS n FROM pi WHERE k = 'tag_item'").first()).n, 0, 'rows of the refused insert');
+    const b = await par(t, 'bool');
+    ok(b.body.includes('name: "BadParam"') && b.body.includes('SQL parameter 1: a Bool is not a SQL value, use 0 or 1'), `bool: got ${b.body}`);
+    // FINDING: `Err(Null)` of a `Try(a, [Null])` encodes as CBOR null (roc-cbor), so it binds NULL. MODULES.md 5.1 says it is a map.
+    await par(t, 'err_null');
+    eq((await db.prepare("SELECT typeof(v) AS t FROM pi WHERE k = 'err_null'").first()).t, 'null', 'Err(Null) of Try(a, [Null])');
+    // The same checks on a session and in a batch (Sql.stmt).
+    ok((await par(t, 'bad_session')).body.includes('name: "BadParam"'), 'session');
+    ok((await par(t, 'bad_batch')).body.includes('name: "BadParam"'), 'batch');
+  }],
+  ['d1 params: Sql.none and [x] are parameter lists', async (t) => {
+    answer(await par(t, 'none'), 'Ok [{ id: 1 }]');
+    answer(await par(t, 'single'), 'Ok [{ t: "one" }]');
+  }],
+  ['d1 params: batch! with Sql.stmt of different tuple types, and first() of a result', async (t) => {
+    answer(await par(t, 'stmt_batch'), 'Ok changes=1,1,0 count=Ok({ n: 1 })');
+    const db = await t.mf.getD1Database('DB');
+    eq((await db.prepare("SELECT typeof(b) AS t FROM pt WHERE k = 'b2'").first()).t, 'null', 'Sql.null in a batch');
+  }],
+  ['d1 params: a run-time List(Sql) still works, and a session takes a tuple', async (t) => {
+    answer(await par(t, 'runtime_list'), 'Ok [{ a: "text", b: 5, c: 2.5, hd: "09", ta: "text", tb: "integer", tc: "real", td: "blob" }]');
+    answer(await par(t, 'session'), 'Ok { t: "sblob" }');
+  }],
 ];
+
+const par = (t, c) => t.get(`/d1/params/${c}`);
 
 // The `name: message` that the binding throws for `sql` (one statement), or for a batch of `batch` (split at `;`).
 async function jsError(t, sql, batch) {

@@ -38,7 +38,7 @@ import pf.Response
 fetch! : Request => Try(Response, _)
 fetch! = |_req| Ok(Response.from_text(200, "hello from Roc"))
 
-worker = Worker.{ fetch! }
+worker = Worker.new({ fetch!: fetch! })
 
 event! = |e| worker.event!(e)
 ```
@@ -46,7 +46,7 @@ event! = |e| worker.event!(e)
 | What the app writes | Meaning |
 | --- | --- |
 | `app [event!]` | The one function that takes every event (`API.md` 10.1). |
-| `Worker.{ fetch!, scheduled!, queue!, ... }` | A record with the handlers that the app has. `worker.event!` sends each event to its handler. A kind with no handler is `Unhandled`. |
+| `Worker.new({ fetch!, scheduled!, queue!, ... })` | A record with the handlers that the app has, each with its own error type. One field: `Worker.new({ fetch!: fetch! })` (`{ fetch! }` alone is a block). `worker.event!` sends each event to its handler. A kind with no handler is `Unhandled`. |
 | `import pf.D1`, `pf.R2`, `pf.Kv`, ... | The modules of `MODULES.md`. A binding is `D1.binding("DB")`: the name is the name in the Wrangler config. |
 | `import pf.Cbor` | Typed data as CBOR. It wraps roc-cbor, so no `cbor` entry. An app may add the same roc-cbor URL: the types are the same. |
 

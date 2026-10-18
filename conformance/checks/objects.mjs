@@ -11,6 +11,7 @@ export const durableObjects = {
 export const options = { durableObjects, kvNamespaces: ['OBJFLAGS'] };
 
 const counter = (t, op, name = 'sql', extra = '') => t.get(`/objects/counter/${op}?name=${name}${extra}`);
+const sqlp = (t, c) => counter(t, `sql_params/${c}`);
 const has = (r, part) => ok(r.status === 200 && r.body.includes(part), `got ${r.status} ${JSON.stringify(r.body.slice(0, 400))}, want a text with ${JSON.stringify(part)}`);
 const ticks = (t) => t.logs.filter((l) => String(l.message).includes('"msg":"ticker alarm"')).map((l) => JSON.parse(String(l.message).slice(String(l.message).indexOf('{'))));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -49,6 +50,34 @@ export const checks = [
   ['objects sql!: rows of the type of the call', async (t) => answer(await counter(t, 'sql_all'), 'Ok([{ id: 1, u: "a" }])')],
   ['objects sql!: the integer rules of D1 (an Int parameter as text, CAST(v AS TEXT) into an I64, BadData with no cast)', async (t) =>
     answer(await counter(t, 'sql_int'), 'cast=Ok([{ v: 9223372036854775807 }, { v: -2687166099708853831 }]) plain=Err(BadData("column v: integer above 2^53, use CAST(v AS TEXT)"))')],
+  // PLAN.md 8h item 3: parameters as an `Encodable` tuple or list for object SQL (conformance/ObjectRoutes.roc, `sql_params!`).
+  ['objects SQL params: a tuple of (Str, I64, F64, blob) is stored as text, integer, real, blob', async (t) =>
+    answer(await sqlp(t, 'tuple'), 'Ok([{ a: "héllo", b: 42, c: 1.5, hd: "010203", ta: "text", tb: "integer", tc: "real", td: "blob" }])')],
+  ['objects SQL params: Sql.null and Sql.or_null(Err _) store NULL, Sql.or_null(Ok x) stores x', async (t) =>
+    answer(await sqlp(t, 'null'), 'ok=Ok([{ an: 1, b: 7, cn: 0, tb: "integer" }]) err=Ok([{ an: 1, b: -1, cn: 1, tb: "null" }])')],
+  ['objects SQL params: a U64 of 2^63 - 1 is stored exact, 2^63 is BadParam and stores no row', async (t) => {
+    answer(await sqlp(t, 'u64max'), 'Ok([{ t: "integer", v: "9223372036854775807" }])');
+    const r = await sqlp(t, 'u64over');
+    ok(r.body.includes('SqlErr') && r.body.includes('name: "BadParam"') && r.body.includes('the integer 9223372036854775808 does not fit I64'), `got ${r.body}`);
+    answer(await counter(t, 'sql_params/count', 'sql'), 'n=0');
+  }],
+  ['objects SQL params: 2^53 + 1 binds as text and lands as the exact integer', async (t) =>
+    answer(await sqlp(t, 'p53'), 'Ok([{ t: "integer", v: "9007199254740993" }])')],
+  ['objects SQL params: a record and {} are BadParam; a tag item is BadParam with the hint; a Bool item is BadParam', async (t) => {
+    for (const c of ['record', 'empty_record']) {
+      const r = await sqlp(t, c);
+      ok(r.body.includes('name: "BadParam"') && r.body.includes('SQL parameters must be a list or a tuple, not a record or a tag'), `${c}: got ${r.body}`);
+    }
+    has(await sqlp(t, 'tag_item'), 'SQL parameter 1: a record or a tag is not a SQL value, tag values are not SQL values, use Sql.null or Sql.or_null for NULL');
+    has(await sqlp(t, 'bool'), 'SQL parameter 1: a Bool is not a SQL value, use 0 or 1');
+    has(await sqlp(t, 'bool'), 'name: "BadParam"');
+  }],
+  ['objects SQL params: Sql.none and [x] are parameter lists', async (t) => {
+    answer(await sqlp(t, 'none'), 'Ok([{ id: 1 }])');
+    answer(await sqlp(t, 'single'), 'Ok([{ t: "one" }])');
+  }],
+  ['objects SQL params: a run-time List(Sql) still works', async (t) =>
+    answer(await sqlp(t, 'runtime_list'), 'Ok([{ a: "text", b: 5, c: 2.5, hd: "09", ta: "text", tb: "integer", tc: "real", td: "blob" }])')],
   ['objects sql_rows!, sql_rows_with!: columns and Sql values', async (t) => {
     answer(await counter(t, 'sql_rows'), 'Ok({ columns: ["id", "u", "b", "r", "z"], rows: [[Int(1), Text("a"), Blob([1, 2, 3]), Real(1.5), Null]] })');
     answer(await counter(t, 'sql_rows_with'), 'Err(TooLarge)');
@@ -59,6 +88,12 @@ export const checks = [
     answer(await counter(t, 'cells', 'cells'), 'prefix=Ok(["a1", "a2"]) all=Ok(["a1", "a2", "b1"]) after=Ok(["a2"])')],
   ['objects Object.Cell get!, set!, delete!', async (t) =>
     answer(await counter(t, 'cell', 'cell'), 'before=Err(NotFound) set=Ok({}) got=Ok(-9007199254740993) del=Ok({}) after=Err(NotFound)')],
+  ['objects Object.Cell get_or!: the default, then the value', async (t) =>
+    answer(await counter(t, 'cell_or', 'cell_or'), 'none=Ok(42) some=Ok(7)')],
+  ['objects Object.Cell get_or!: a value of another type is BadData, not the default', async (t) => {
+    const r = await counter(t, 'cell_or_bad', 'cell_or_bad');
+    ok(r.status === 200 && r.body.startsWith('Err(BadData('), `got ${r.status} ${r.body}`);
+  }],
   ['objects get_alarm! after set_alarm!(t) gives t (and the Io twins)', async (t) =>
     answer(await counter(t, 'alarm', 'alarm'), 'set=Ok({}) same=True twin=True del=Ok({}) after=Err(NotFound) set2=Ok({}) del2=Ok({})')],
   ['objects delete_all!: the table, the cell and the alarm are gone (and the twin)', async (t) => {
@@ -143,8 +178,8 @@ export const checks = [
   ['objects pass_through! in the Fetch of an object is InvalidState', async (t) => answer(await counter(t, 'pass_through', 'pt'), 'Err(InvalidState)')],
   // RPC on a stub (MODULES.md 8).
   ['objects rpc: call! and its twin with an Rpc constant on a stub', async (t) => answer(await t.get('/objects/rpc/increment?name=inc'), 'Ok(2) Ok(5)')],
-  ['objects rpc: a callee that gives Err(Nope(3)): RpcErr with the message Nope(3)', async (t) =>
-    answer(await t.get('/objects/rpc/boom?name=b'), 'Err(RpcErr({ message: "Nope(3)", name: "Error" }))')],
+  ['objects rpc: a callee that gives Err(Nope(3)): the caller gets Err(Remote(Nope(3)))', async (t) =>
+    answer(await t.get('/objects/rpc/boom?name=b'), 'Err(Remote(Nope(3)))')],
   ['objects rpc: an unknown method throws (RpcErr)', async (t) =>
     answer(await t.get('/objects/rpc/nothere?name=b'), 'Err(RpcErr({ message: "The RPC receiver does not implement the method \\"nothere\\".", name: "TypeError" }))')],
   ['objects rpc: a U64 of 2^60 in an argument and a reply comes back exact', async (t) => answer(await t.get('/objects/rpc/echo?name=b'), 'Ok({ big: 1152921504606846976 })')],

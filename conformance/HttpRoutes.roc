@@ -21,6 +21,11 @@ HttpRoutes :: [].{
 				out = Request.post(url, Bytes("a body".to_utf8())).with_header("x-test", "yes")
 				show!(Http.send!(out))
 			}
+			# `Request.post_json` is a `Try`: a `NaN` is `BadData` and nothing is sent.
+			["post_json"] => match Request.post_json(url, { name: Q.text(req, "v"), r: if Q.text(req, "v") == "nan" 0.0.F64 / 0.0.F64 else 0.5.F64 }) {
+				Ok(out) => show!(Http.send!(out))
+				Err(BadData(m)) => Response.from_text(200, "BadData ${m}")
+			}
 			["open"] => show_open!(Http.open!(Request.get(url)))
 			["open_io"] => show_open!(Io.run!(Http.open(Request.get(url))))
 			["get"] => show!(Http.get!(url))

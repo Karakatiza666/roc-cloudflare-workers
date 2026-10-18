@@ -8,13 +8,13 @@ import Time
 import Body
 import cbor.Cbor
 
-Kv(a) :: { name : Str, write : a -> Js, read : List(U8) -> Try(a, Str) }.{
+Kv(a) :: { name : Str, write : a -> Try(Js, Str), read : List(U8) -> Try(a, Str) }.{
 
-	## Values of the type `a`, as JSON text.
-	json : Str -> Kv(a) where [a.Json.Encodable([]), a.Json.Parseable([InvalidJson(Str), ..errs])]
+	## Values of the type `a`, as JSON text. A value that JSON cannot show (a `NaN` in an `F64`) is `BadData` of the put.
+	json : Str -> Kv(a) where [a.Json.Encodable(enc), a.Json.Parseable([InvalidJson(Str), ..errs])]
 	json = |name| Kv.{
 		name,
-		write: |v| Text(Json.to_str(v)),
+		write: |v| Json.to_str_try(v).map_ok(|text| Text(text)).map_err(|e| Str.inspect(e)),
 		read: |raw| match Str.from_utf8(raw) {
 			Ok(s) => Json.parse(s).map_err(|e| Str.inspect(e))
 			Err(_) => Err("the value is not UTF-8")
@@ -25,13 +25,13 @@ Kv(a) :: { name : Str, write : a -> Js, read : List(U8) -> Try(a, Str) }.{
 	text : Str -> Kv(Str)
 	text = |name| Kv.{
 		name,
-		write: |s| Text(s),
+		write: |s| Ok(Text(s)),
 		read: |raw| Str.from_utf8(raw).map_err(|_| "the value is not UTF-8"),
 	}
 
 	## Values that are bytes, as they are.
 	bytes : Str -> Kv(List(U8))
-	bytes = |name| Kv.{ name, write: |b| Bytes(b), read: |b| Ok(b) }
+	bytes = |name| Kv.{ name, write: |b| Ok(Bytes(b)), read: |b| Ok(b) }
 
 	## `get(key, { type: "stream" })` and the stream to `Body.default_max` bytes: one wait.
 	get : Kv(a), Str -> Io(a, [NotFound, KvErr(Io.Thrown), BadData(Str), TooLarge])
@@ -39,6 +39,18 @@ Kv(a) :: { name : Str, write : a -> Js, read : List(U8) -> Try(a, Str) }.{
 
 	get! : Kv(a), Str => Try(a, [NotFound, KvErr(Io.Thrown), BadData(Str), TooLarge])
 	get! = |kv, key| Io.run!(kv.get(key))
+
+	## `get`, and `default` for a key that is not there. The other errors stay.
+	get_or : Kv(a), Str, a -> Io(a, [KvErr(Io.Thrown), BadData(Str), TooLarge])
+	get_or = |kv, key, default| kv.get(key).recover(|e| match e {
+		NotFound => Ok(default)
+		KvErr(t) => Err(KvErr(t))
+		BadData(m) => Err(BadData(m))
+		TooLarge => Err(TooLarge)
+	})
+
+	get_or! : Kv(a), Str, a => Try(a, [KvErr(Io.Thrown), BadData(Str), TooLarge])
+	get_or! = |kv, key, default| Io.run!(kv.get_or(key, default))
 
 	## `cache_ttl_ms`: 30 s or more (KV throws for less: `KvErr`). `max_bytes`: the limit of the value.
 	get_with : Kv(a), Str, { cache_ttl_ms ?: U64, max_bytes ?: U64 } -> Io(a, [NotFound, KvErr(Io.Thrown), BadData(Str), TooLarge])
@@ -62,16 +74,16 @@ Kv(a) :: { name : Str, write : a -> Js, read : List(U8) -> Try(a, Str) }.{
 	get_with_metadata_with! = |kv, key, opts| Io.run!(kv.get_with_metadata_with(key, opts))
 
 	## `put(key, value)`: a value of 25 MiB or less (KV throws for more: `KvErr`).
-	put : Kv(a), Str, a -> Io({}, [KvErr(Io.Thrown)])
+	put : Kv(a), Str, a -> Io({}, [KvErr(Io.Thrown), BadData(Str)])
 	put = |kv, key, v| put_io(kv, key, v, [])
 
-	put! : Kv(a), Str, a => Try({}, [KvErr(Io.Thrown)])
+	put! : Kv(a), Str, a => Try({}, [KvErr(Io.Thrown), BadData(Str)])
 	put! = |kv, key, v| Io.run!(kv.put(key, v))
 
 	## `ttl_ms`: 60 s or more (KV throws for less: `KvErr`). `expires_ms`: a time of the clock. `metadata`: made by
 	## `Kv.Metadata.of(m)` (MC5), 1,024 bytes or less as JSON. It is not a type variable of the options: a call with no
 	## `metadata` would leave the type of `m` open, and that does not compile ("type not determined", MODULES.md 5.2).
-	put_with : Kv(a), Str, a, { ttl_ms ?: U64, expires_ms ?: U64, metadata ?: Kv.Metadata } -> Io({}, [KvErr(Io.Thrown)])
+	put_with : Kv(a), Str, a, { ttl_ms ?: U64, expires_ms ?: U64, metadata ?: Kv.Metadata } -> Io({}, [KvErr(Io.Thrown), BadData(Str)])
 	put_with = |kv, key, v, opts| {
 		meta = match opts.?metadata {
 			Ok(m) => [("metadata", Packed(m.cbor))]
@@ -80,7 +92,7 @@ Kv(a) :: { name : Str, write : a -> Js, read : List(U8) -> Try(a, Str) }.{
 		put_io(kv, key, v, expiry(opts.?ttl_ms, opts.?expires_ms).concat(meta))
 	}
 
-	put_with! : Kv(a), Str, a, { ttl_ms ?: U64, expires_ms ?: U64, metadata ?: Kv.Metadata } => Try({}, [KvErr(Io.Thrown)])
+	put_with! : Kv(a), Str, a, { ttl_ms ?: U64, expires_ms ?: U64, metadata ?: Kv.Metadata } => Try({}, [KvErr(Io.Thrown), BadData(Str)])
 	put_with! = |kv, key, v, opts| Io.run!(kv.put_with(key, v, opts))
 
 	delete : Kv(a), Str -> Io({}, [KvErr(Io.Thrown)])
@@ -150,17 +162,24 @@ Kv(a) :: { name : Str, write : a -> Js, read : List(U8) -> Try(a, Str) }.{
 		get! : Kv.Cell(a) => Try(a, [NotFound, KvErr(Io.Thrown), BadData(Str), TooLarge])
 		get! = |c| Io.run!(c.get())
 
-		set : Kv.Cell(a), a -> Io({}, [KvErr(Io.Thrown)])
+		## `get`, and `default` for a key that is not there.
+		get_or : Kv.Cell(a), a -> Io(a, [KvErr(Io.Thrown), BadData(Str), TooLarge])
+		get_or = |c, default| c.kv.get_or(c.key, default)
+
+		get_or! : Kv.Cell(a), a => Try(a, [KvErr(Io.Thrown), BadData(Str), TooLarge])
+		get_or! = |c, default| Io.run!(c.get_or(default))
+
+		set : Kv.Cell(a), a -> Io({}, [KvErr(Io.Thrown), BadData(Str)])
 		set = |c, v| c.kv.put(c.key, v)
 
-		set! : Kv.Cell(a), a => Try({}, [KvErr(Io.Thrown)])
+		set! : Kv.Cell(a), a => Try({}, [KvErr(Io.Thrown), BadData(Str)])
 		set! = |c, v| Io.run!(c.set(v))
 
 		## `ttl_ms`: 60 s or more. `expires_ms`: a time of the clock.
-		set_with : Kv.Cell(a), a, { ttl_ms ?: U64, expires_ms ?: U64 } -> Io({}, [KvErr(Io.Thrown)])
+		set_with : Kv.Cell(a), a, { ttl_ms ?: U64, expires_ms ?: U64 } -> Io({}, [KvErr(Io.Thrown), BadData(Str)])
 		set_with = |c, v, opts| put_io(c.kv, c.key, v, expiry(opts.?ttl_ms, opts.?expires_ms))
 
-		set_with! : Kv.Cell(a), a, { ttl_ms ?: U64, expires_ms ?: U64 } => Try({}, [KvErr(Io.Thrown)])
+		set_with! : Kv.Cell(a), a, { ttl_ms ?: U64, expires_ms ?: U64 } => Try({}, [KvErr(Io.Thrown), BadData(Str)])
 		set_with! = |c, v, opts| Io.run!(c.set_with(v, opts))
 
 		delete : Kv.Cell(a) -> Io({}, [KvErr(Io.Thrown)])
@@ -222,16 +241,20 @@ meta_io = |kv, key, cache_ttl_ms, max| {
 	)
 }
 
-put_io : Kv(a), Str, a, List((Str, Js)) -> Io({}, [KvErr(Io.Thrown)])
+put_io : Kv(a), Str, a, List((Str, Js)) -> Io({}, [KvErr(Io.Thrown), BadData(Str)])
 put_io = |kv, key, v, options| {
 	write = kv.write
-	Io.new(
-		[Get(Root("env"), kv.name), Call(Slot(0), "put", [Lit(Text(key)), Lit(write(v)), Lit(Obj(options))])],
-		|r| match r {
-			Ok(_) => Ok({})
-			Err(t) => Err(KvErr(t))
-		},
-	)
+	match write(v) {
+		Ok(js) => Io.new(
+			[Get(Root("env"), kv.name), Call(Slot(0), "put", [Lit(Text(key)), Lit(js), Lit(Obj(options))])],
+			|r| match r {
+				Ok(_) => Ok({})
+				Err(t) => Err(KvErr(t))
+			},
+		)
+		# A value that does not encode: no program, so nothing is sent.
+		Err(text) => Io.sync([], |_| Err(BadData("the value does not encode: ${text}")))
+	}
 }
 
 ## `expirationTtl` and `expiration` of `put`, in whole seconds.

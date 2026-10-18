@@ -1,6 +1,7 @@
-## The entry types (API.md 10.1) and the `Worker` wrapper (MODULES.md 3): a record of handlers, all optional,
-## each with the result type of its kind. `e` is one error type for all handlers: their tag unions join.
-## `rpc`, `entrypoints` and `objects` (PLAN.md 8f): their handlers erase their types, so each has its own error type.
+## The entry types (API.md 10.1) and the `Worker` wrapper (MODULES.md 3): `Worker.new` takes a record of handlers, all
+## optional, each with the result type of its kind and its own error type. It turns each `Err(e)` into text
+## (`Str.inspect(e)`), so the `Worker` has no type parameter. `rpc`, `entrypoints` and `objects` (PLAN.md 8f) erase their
+## types the same way.
 import Io
 import Rpc
 import Js
@@ -11,17 +12,70 @@ import Email
 import Object
 import cbor.Cbor
 
-Worker(e) := {
-	fetch! ?: Request => Try(Response, e),
-	scheduled! ?: Worker.Scheduled => Try({}, e),
-	queue! ?: Queue.Batch => Try({}, e),
-	email! ?: Email.Mail => Try({}, e),
-	tail! ?: List(Worker.TraceItem) => Try({}, e),
-	other! ?: Str, Js => Try(Js, e),
-	rpc ?: List(Rpc.Handler({})),
-	entrypoints ?: List(Rpc.Entrypoint),
-	objects ?: List(Object.Class),
+## `handlers`: the handlers of the default export that the app gives (the manifest). `own!`: runs the events of those
+## handlers (`Fetch`, `Scheduled`, `Queue`, `Email`, `Tail`, `Other`).
+Worker :: {
+	handlers : List(Str),
+	own! : Worker.Event => Worker.Outcome,
+	rpc : List(Rpc.Handler({})),
+	entrypoints : List(Rpc.Entrypoint),
+	objects : List(Object.Class),
 }.{
+
+	## The handlers of the app. A function, not a record literal: each handler keeps its own error type until here.
+	new : {
+		fetch! ?: Request => Try(Response, e1),
+		scheduled! ?: Worker.Scheduled => Try({}, e2),
+		queue! ?: Queue.Batch => Try({}, e3),
+		email! ?: Email.Mail => Try({}, e4),
+		tail! ?: List(Worker.TraceItem) => Try({}, e5),
+		other! ?: Str, Js => Try(Js, e6),
+		rpc ?: List(Rpc.Handler({})),
+		entrypoints ?: List(Rpc.Entrypoint),
+		objects ?: List(Object.Class),
+	} -> Worker
+	new = |h| {
+		given = [("fetch", h.?fetch!.is_ok()), ("scheduled", h.?scheduled!.is_ok()), ("queue", h.?queue!.is_ok()), ("email", h.?email!.is_ok()), ("tail", h.?tail!.is_ok())]
+		Worker.{
+			handlers: given.keep_oks(|(name, on)| if on Ok(name) else Err(NotGiven)),
+			own!: |ev| match ev {
+				Fetch(req) => match h.?fetch! {
+					Ok(f!) => match f!(req) {
+						Ok(res) => Respond(res)
+						Err(e) => Failed(Str.inspect(e))
+					}
+					Err(MissingField) => Unhandled
+				}
+				Scheduled(s) => match h.?scheduled! {
+					Ok(f!) => done(f!(s))
+					Err(MissingField) => Unhandled
+				}
+				Queue(batch) => match h.?queue! {
+					Ok(f!) => done(f!(batch))
+					Err(MissingField) => Unhandled
+				}
+				Email(mail) => match h.?email! {
+					Ok(f!) => done(f!(mail))
+					Err(MissingField) => Unhandled
+				}
+				Tail(items) => match h.?tail! {
+					Ok(f!) => done(f!(items))
+					Err(MissingField) => Unhandled
+				}
+				Other({ kind, payload }) => match h.?other! {
+					Ok(f!) => match f!(kind, payload) {
+						Ok(v) => Reply(v)
+						Err(e) => Failed(Str.inspect(e))
+					}
+					Err(MissingField) => Unhandled
+				}
+				_ => Unhandled
+			},
+			rpc: h.?rpc ?? [],
+			entrypoints: h.?entrypoints ?? [],
+			objects: h.?objects ?? [],
+		}
+	}
 
 	## One event of Workers (API.md 10.1). Phase A has all tags. The shim sends `Fetch`, `Scheduled`, `Other`, and since
 	## PLAN.md 8f `Rpc`, `EntrypointFetch`, `Object` and `Manifest`.
@@ -75,41 +129,15 @@ Worker(e) := {
 
 	## The one entry, made from the handlers that the app gives (`event! = |e| worker.event!(e)`).
 	## A missing handler gives `Unhandled`. An `Err(e)` gives `Failed` with `Str.inspect(e)`.
-	event! : Worker(e), Worker.Event => Worker.Outcome
+	event! : Worker, Worker.Event => Worker.Outcome
 	event! = |w, ev| match ev {
-		Fetch(req) => match w.?fetch! {
-			Ok(f!) => match f!(req) {
-				Ok(res) => Respond(res)
-				Err(e) => Failed(Str.inspect(e))
-			}
-			Err(MissingField) => Unhandled
-		}
-		Scheduled(s) => match w.?scheduled! {
-			Ok(f!) => done(f!(s))
-			Err(MissingField) => Unhandled
-		}
-		Queue(batch) => match w.?queue! {
-			Ok(f!) => done(f!(batch))
-			Err(MissingField) => Unhandled
-		}
-		Email(mail) => match w.?email! {
-			Ok(f!) => done(f!(mail))
-			Err(MissingField) => Unhandled
-		}
-		Tail(items) => match w.?tail! {
-			Ok(f!) => done(f!(items))
-			Err(MissingField) => Unhandled
-		}
-		Other({ kind, payload }) => match w.?other! {
-			Ok(f!) => match f!(kind, payload) {
-				Ok(v) => Reply(v)
-				Err(e) => Failed(Str.inspect(e))
-			}
-			Err(MissingField) => Unhandled
+		Fetch(_) | Scheduled(_) | Queue(_) | Email(_) | Tail(_) | Other(_) => {
+			own! = w.own!
+			own!(ev)
 		}
 		# RPC of the default entry point ("default") or of a named one: the handler of the method (MODULES.md 8).
 		Rpc({ entrypoint, method, arg }) => {
-			handlers = if entrypoint == "default" (w.?rpc ?? []) else match (w.?entrypoints ?? []).find_first(|ep| ep.name == entrypoint) {
+			handlers = if entrypoint == "default" w.rpc else match w.entrypoints.find_first(|ep| ep.name == entrypoint) {
 				Ok(ep) => ep.rpc
 				Err(_) => []
 			}
@@ -124,7 +152,7 @@ Worker(e) := {
 				Err(_) => Unhandled
 			}
 		}
-		EntrypointFetch({ entrypoint, request }) => match (w.?entrypoints ?? []).find_first(|ep| ep.name == entrypoint) {
+		EntrypointFetch({ entrypoint, request }) => match w.entrypoints.find_first(|ep| ep.name == entrypoint) {
 			Ok(ep) => {
 				f! = ep.fetch!
 				match f!(request) {
@@ -135,7 +163,7 @@ Worker(e) := {
 			}
 			Err(_) => Unhandled
 		}
-		Object({ class, id, event }) => match (w.?objects ?? []).find_first(|c| c.name == class) {
+		Object({ class, id, event }) => match w.objects.find_first(|c| c.name == class) {
 			Ok(c) => {
 				run! = c.run!
 				run!(id, event)
@@ -185,23 +213,20 @@ expect {
 ## The names of classes and methods (API.md AQ10): `{ default: { handlers, methods }, objects: { Name: { handlers,
 ## methods } }, entrypoints: { Name: { handlers, methods } } }`. The shim defines a JS method only for a name in it
 ## (MODULES.md 3). The handlers of the default export: the fields that the app gives (QO5 of PLAN.md 8f, part 2).
-manifest : Worker(e) -> Js
+manifest : Worker -> Js
 manifest = |w| {
 	texts = |names| Arr(names.map(|n| Text(n)))
 	class_of = |handlers, methods| Obj([("handlers", texts(handlers)), ("methods", texts(methods))])
-	given = [("fetch", w.?fetch!.is_ok()), ("scheduled", w.?scheduled!.is_ok()), ("queue", w.?queue!.is_ok()), ("email", w.?email!.is_ok()), ("tail", w.?tail!.is_ok())]
-	handlers = given.keep_oks(|(name, on)| if on Ok(name) else Err(NotGiven))
 	Obj([
-		("default", class_of(handlers, (w.?rpc ?? []).map(|h| h.name))),
-		("objects", Obj((w.?objects ?? []).map(|c| (c.name, class_of(c.handlers, c.methods))))),
-		("entrypoints", Obj((w.?entrypoints ?? []).map(|ep| (ep.name, class_of(ep.handlers, ep.rpc.map(|h| h.name)))))),
+		("default", class_of(w.handlers, w.rpc.map(|h| h.name))),
+		("objects", Obj(w.objects.map(|c| (c.name, class_of(c.handlers, c.methods))))),
+		("entrypoints", Obj(w.entrypoints.map(|ep| (ep.name, class_of(ep.handlers, ep.rpc.map(|h| h.name)))))),
 	])
 }
 
 ## QO5: the handlers of the default export are the fields that the app gives, so the shim defines `queue` only here.
 expect {
 	consume! = |_batch| Ok({})
-	w : Worker([])
-	w = Worker.{ queue!: consume! }
+	w = Worker.new({ queue!: consume! })
 	manifest(w) == Obj([("default", Obj([("handlers", Arr([Text("queue")])), ("methods", Arr([]))])), ("objects", Obj([])), ("entrypoints", Obj([]))])
 }

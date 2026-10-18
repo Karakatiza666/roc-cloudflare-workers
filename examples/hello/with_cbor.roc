@@ -31,6 +31,6 @@ fetch! = |_req| {
 	Ok(Response.from_text(200, "${Str.inspect(takes_pkg(a))} ${Str.inspect(takes_pf(b))} ${Str.inspect(back)} ${Str.inspect(both)}"))
 }
 
-worker = Worker.{ fetch! }
+worker = Worker.new({ fetch!: fetch! })
 
 event! = |e| worker.event!(e)

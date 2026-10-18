@@ -16,6 +16,17 @@ async function etagOf(t, key) {
   ok(m, `no etag in ${r.body}`);
   return m[1];
 }
+// A GET of a route with request headers: the status, the headers (a plain object, with no `mf-content-encoding` of Miniflare), the text.
+async function hit(t, path, headers = {}) {
+  const res = await t.mf.dispatchFetch(`http://localhost${path}`, { headers });
+  const text = new TextDecoder().decode(await res.arrayBuffer());
+  const out = {};
+  for (const [k, v] of [...res.headers].sort()) {
+    if (['mf-content-encoding', 'content-length', 'date', 'x-waits', 'x-awaits', 'x-calls', 'x-ms', 'transfer-encoding'].includes(k)) continue;
+    out[k] = v;
+  }
+  return { status: res.status, headers: out, text };
+}
 const put = (t, key, text) => t.get(`/r2/put?key=${key}&text=${q(text)}`);
 // PLAN.md EP10: a multipart upload that is not complete keeps a real bucket from a delete, and nothing else knows its id.
 // `uploads` runs `body(open)`; `open(upload)` notes an upload, and each noted upload is aborted at the end, also when a
@@ -96,6 +107,126 @@ export const checks = [
     answer(await t.get('/r2/get_with_io?key=get1&offset=2&len=3'), 'Ok size=5 range=from 2 len 3 text=llo');
   }],
   ['r2 get_with! range Suffix', async (t) => answer(await t.get('/r2/get_with?key=get1&suffix=2'), 'Ok size=5 range=from 3 len 2 text=lo')],
+  // ---- Conditional headers, to_response, respond! (MODULES.md 5.3) ----
+  // The object has all HTTP metadata, so each header of `to_response` shows. `hit` gives the status, the headers
+  // (without `mf-content-encoding` of Miniflare) and the bytes.
+  ['r2 to_response: 200, the metadata and etag, a missing metadata field is not set', async (t) => {
+    const bucket = await t.mf.getR2Bucket('BUCKET');
+    const expires = new Date('2030-01-02T03:04:05Z');
+    await bucket.put('cond1', 'hello world', { httpMetadata: { contentType: 'text/plain', contentLanguage: 'en', contentDisposition: 'inline', cacheControl: 'max-age=60', cacheExpiry: expires } });
+    const etag = await etagOf(t, 'cond1');
+    const full = await hit(t, '/r2/to_response?key=cond1');
+    eq(full.status, 200, 'status');
+    eq(full.text, 'hello world', 'body');
+    eq(JSON.stringify(full.headers), JSON.stringify({
+      'cache-control': 'max-age=60', 'content-disposition': 'inline', 'content-language': 'en', 'content-type': 'text/plain', etag: `"${etag}"`, expires: 'Wed, 02 Jan 2030 03:04:05 GMT',
+    }), 'headers');
+    // No metadata: only etag, and no content-type header from the object.
+    await bucket.put('cond2', 'x');
+    const bare = await hit(t, '/r2/to_response?key=cond2');
+    eq(bare.status, 200, 'bare status');
+    for (const name of ['cache-control', 'content-disposition', 'content-language', 'expires']) ok(!(name in bare.headers), `${name} is set: ${JSON.stringify(bare.headers)}`);
+    ok('etag' in bare.headers, 'etag');
+    const none = await t.get('/r2/to_response?key=missing-key');
+    ok(none.status === 404 && none.body === 'Err(NotFound)' || none.body.includes('NotFound'), `got ${none.status} ${none.body}`);
+  }],
+  ['r2 respond!: 200 with the metadata, etag and accept-ranges', async (t) => {
+    const etag = await etagOf(t, 'cond1');
+    for (const path of ['/r2/respond?key=cond1', '/r2/respond_io?key=cond1']) {
+      const r = await hit(t, path);
+      eq(r.status, 200, `${path} status`);
+      eq(r.text, 'hello world', `${path} body`);
+      eq(JSON.stringify(r.headers), JSON.stringify({
+        'accept-ranges': 'bytes', 'cache-control': 'max-age=60', 'content-disposition': 'inline', 'content-language': 'en', 'content-type': 'text/plain', etag: `"${etag}"`, expires: 'Wed, 02 Jan 2030 03:04:05 GMT',
+      }), `${path} headers`);
+    }
+  }],
+  ['r2 respond!: a key that is not there is 404 "Not found"', async (t) => {
+    const r = await hit(t, '/r2/respond?key=nothing-here');
+    eq(r.status, 404, 'status');
+    eq(r.text, 'Not found', 'body');
+  }],
+  ['r2 respond!: If-None-Match with the etag is 304 with etag, cache-control and expires, and no body', async (t) => {
+    const etag = await etagOf(t, 'cond1');
+    for (const value of [`"${etag}"`, `W/"${etag}"`, '*']) {
+      const r = await hit(t, '/r2/respond?key=cond1', { 'if-none-match': value });
+      eq(r.status, 304, `status for ${value}`);
+      eq(r.text, '', `body for ${value}`);
+      eq(JSON.stringify(r.headers), JSON.stringify({ 'cache-control': 'max-age=60', etag: `"${etag}"`, expires: 'Wed, 02 Jan 2030 03:04:05 GMT' }), `headers for ${value}`);
+    }
+    // Another etag is a normal 200.
+    eq((await hit(t, '/r2/respond?key=cond1', { 'if-none-match': '"other"' })).status, 200, 'another etag');
+  }],
+  ['r2 respond!: If-Modified-Since after the upload is 304, before it is 200', async (t) => {
+    const after = new Date(Date.now() + 3_600_000).toUTCString();
+    const before = new Date(Date.now() - 3_600_000).toUTCString();
+    eq((await hit(t, '/r2/respond?key=cond1', { 'if-modified-since': after })).status, 304, 'after');
+    eq((await hit(t, '/r2/respond?key=cond1', { 'if-modified-since': before })).status, 200, 'before');
+  }],
+  ['r2 respond!: If-Match with another etag is 412 (not 304), with the right etag is 200', async (t) => {
+    const etag = await etagOf(t, 'cond1');
+    const bad = await hit(t, '/r2/respond?key=cond1', { 'if-match': '"other"' });
+    eq(bad.status, 412, 'status');
+    eq(bad.text, '', 'body');
+    eq(JSON.stringify(bad.headers), JSON.stringify({ 'cache-control': 'max-age=60', etag: `"${etag}"`, expires: 'Wed, 02 Jan 2030 03:04:05 GMT' }), 'headers');
+    eq((await hit(t, '/r2/respond?key=cond1', { 'if-match': `"${etag}"` })).status, 200, 'the right etag');
+  }],
+  ['r2 respond!: If-Unmodified-Since before the upload is 412, after it is 200', async (t) => {
+    const after = new Date(Date.now() + 3_600_000).toUTCString();
+    const before = new Date(Date.now() - 3_600_000).toUTCString();
+    eq((await hit(t, '/r2/respond?key=cond1', { 'if-unmodified-since': before })).status, 412, 'before');
+    eq((await hit(t, '/r2/respond?key=cond1', { 'if-unmodified-since': after })).status, 200, 'after');
+  }],
+  ['r2 respond!: one range is 206 with content-range and the bytes (a-b, a-, -n, past the end)', async (t) => {
+    const etag = await etagOf(t, 'cond1');
+    const cases = [
+      ['bytes=2-4', 'bytes 2-4/11', 'llo'],
+      ['bytes=6-', 'bytes 6-10/11', 'world'],
+      ['bytes=-5', 'bytes 6-10/11', 'world'],
+      ['bytes=0-0', 'bytes 0-0/11', 'h'],
+      ['bytes=8-100', 'bytes 8-10/11', 'rld'],
+      ['bytes=-100', 'bytes 0-10/11', 'hello world'],
+    ];
+    for (const [range, cr, text] of cases) {
+      const r = await hit(t, '/r2/respond?key=cond1', { range });
+      eq(r.status, 206, `${range} status`);
+      eq(r.text, text, `${range} body`);
+      eq(r.headers['content-range'], cr, `${range} content-range`);
+      eq(r.headers['accept-ranges'], 'bytes', `${range} accept-ranges`);
+      eq(r.headers.etag, `"${etag}"`, `${range} etag`);
+    }
+    eq((await hit(t, '/r2/respond_io?key=cond1', { range: 'bytes=2-4' })).text, 'llo', 'the Io twin');
+  }],
+  ['r2 respond!: a range after the end is 416 (R2 error 10039)', async (t) => {
+    for (const range of ['bytes=11-', 'bytes=20-30']) {
+      const r = await hit(t, '/r2/respond?key=cond1', { range });
+      eq(r.status, 416, `${range} status`);
+      eq(r.headers['content-range'], 'bytes */11', `${range} content-range`);
+    }
+  }],
+  ['r2 respond!: more than one range, a wrong range and If-Range give 200 with the whole object', async (t) => {
+    for (const h of [{ range: 'bytes=0-1,4-5' }, { range: 'bytes=5-2' }, { range: 'items=0-1' }, { range: 'bytes=2-4', 'if-range': '"x"' }]) {
+      const r = await hit(t, '/r2/respond?key=cond1', h);
+      eq(r.status, 200, `${JSON.stringify(h)} status`);
+      eq(r.text, 'hello world', `${JSON.stringify(h)} body`);
+      ok(!('content-range' in r.headers), `${JSON.stringify(h)} has content-range`);
+    }
+  }],
+  ['r2 respond!: a range with a failed condition is 304, not 206', async (t) => {
+    const etag = await etagOf(t, 'cond1');
+    eq((await hit(t, '/r2/respond?key=cond1', { range: 'bytes=2-4', 'if-none-match': `"${etag}"` })).status, 304, 'status');
+  }],
+  ['r2 get_with! of R2.from_headers: a failed If-Match is PreconditionFailed, a right one and no header are Ok', async (t) => {
+    const etag = await etagOf(t, 'cond1');
+    answer(await t.get('/r2/get_cond?key=cond1', { headers: { 'if-match': '"other"' } }), 'Err PreconditionFailed');
+    answer(await t.get('/r2/get_cond?key=cond1', { headers: { 'if-none-match': `"${etag}"` } }), 'Err PreconditionFailed');
+    answer(await t.get('/r2/get_cond?key=cond1', { headers: { 'if-none-match': `W/"${etag}"` } }), 'Err PreconditionFailed');
+    answer(await t.get('/r2/get_cond?key=cond1', { headers: { 'if-match': `"${etag}"` } }), 'Ok size=11 range=none text=hello world');
+    // A weak etag in If-Match is PreconditionFailed in Miniflare (the strong comparison of HTTP): not checked, see the report.
+    answer(await t.get('/r2/get_cond?key=cond1'), 'Ok size=11 range=none text=hello world');
+    // Only the four conditional headers go to R2: other headers change nothing.
+    answer(await t.get('/r2/get_cond?key=cond1', { headers: { 'x-other': '1', range: 'bytes=0-1' } }), 'Ok size=11 range=none text=hello world');
+  }],
   ['r2 put_with! of a Body.writer! stream is R2Err with "known length"', async (t) => {
     const r = await t.get('/r2/put_stream?key=ws1');
     ok(r.body.startsWith('Err R2Err(') && r.body.includes('known length'), `got ${r.body}`);

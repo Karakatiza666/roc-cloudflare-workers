@@ -78,14 +78,15 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 	fetch! : Object, Request => Try(Response, [ObjectErr(Io.Thrown)])
 	fetch! = |obj, req| Io.run!(fetch(obj, req))
 
-	## `stub[method](arg)` with an `Rpc` constant: the reply is read to the RPC limit of Workers (32 MiB).
-	call : Object, Rpc(arg, ret), arg -> Io(ret, [RpcErr(Io.Thrown), BadData(Str)]) where [arg.Cbor.Encodable([]), ret.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+	## `stub[method](arg)` with an `Rpc` constant: the reply is read to the RPC limit of Workers (32 MiB). An `Err` of
+	## the callee is `Remote(err)`.
+	call : Object, Rpc(arg, ret, err), arg -> Io(ret, [RpcErr(Io.Thrown), BadData(Str), Remote(err)]) where [arg.Cbor.Encodable([]), ret.Cbor.Parseable([InvalidCbor(U64), ..e1]), err.Cbor.Parseable([InvalidCbor(U64), ..e2])]
 	call = |obj, m, a| {
 		s = stub_ops(obj)
 		Remote.call(s.ops, s.slot, m, a, Remote.rpc_max)
 	}
 
-	call! : Object, Rpc(arg, ret), arg => Try(ret, [RpcErr(Io.Thrown), BadData(Str)]) where [arg.Cbor.Encodable([]), ret.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+	call! : Object, Rpc(arg, ret, err), arg => Try(ret, [RpcErr(Io.Thrown), BadData(Str), Remote(err)]) where [arg.Cbor.Encodable([]), ret.Cbor.Parseable([InvalidCbor(U64), ..e1]), err.Cbor.Parseable([InvalidCbor(U64), ..e2])]
 	call! = |obj, m, a| Io.run!(call(obj, m, a))
 
 	## The id of the object (`id.toString()`). The runtime makes the id of a named object from the name and the namespace
@@ -126,8 +127,12 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 		send! : Object.Socket, WebSocket.Message => Try({}, [Closed])
 		send! = |sock, msg| Remote.socket_send!(sock.ref, frame(msg))
 
-		send_json! : Object.Socket, a => Try({}, [Closed]) where [a.Json.Encodable([])]
-		send_json! = |sock, value| Remote.socket_send!(sock.ref, Text(Json.to_str(value)))
+		## A value that JSON cannot show (a `NaN` in an `F64`) is `BadData`, and nothing is sent.
+		send_json! : Object.Socket, a => Try({}, [Closed, BadData(Str)]) where [a.Json.Encodable(enc)]
+		send_json! = |sock, value| match Json.to_str_try(value) {
+			Ok(text) => Remote.socket_send!(sock.ref, Text(text)).map_err(|_| Closed)
+			Err(e) => Err(BadData(Str.inspect(e)))
+		}
 
 		close! : Object.Socket, U16, Str => {}
 		close! = |sock, code, reason| Remote.socket_close!(sock.ref, code, reason)
@@ -178,15 +183,15 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 
 		## Rows as the type of the call (`rows : List(Row)`), to `Body.default_max` bytes of CBOR: `sql.exec(...).toArray()`,
 		## then `pf.pack`. The integer rules of `D1.all!` (MODULES.md 5.1): `CAST(x AS TEXT)` reads into an `I64`.
-		sql! : Object.Self, Str, List(Sql) => Try(rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
-		sql! = |self, sql, params| sql_typed!(self, sql, params, Body.default_max)
+		sql! : Object.Self, Str, params => Try(rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs]), params.Cbor.Encodable([])]
+		sql! = |self, sql, params| sql_typed!(self, sql, Cbor.encode(params), Body.default_max)
 
-		sql_with! : Object.Self, Str, List(Sql), { max_bytes : U64 } => Try(rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
-		sql_with! = |self, sql, params, opts| sql_typed!(self, sql, params, opts.max_bytes)
+		sql_with! : Object.Self, Str, params, { max_bytes : U64 } => Try(rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs]), params.Cbor.Encodable([])]
+		sql_with! = |self, sql, params, opts| sql_typed!(self, sql, Cbor.encode(params), opts.max_bytes)
 
 		## A write: `rowsRead` and `rowsWritten` of the cursor (an object cursor has no `changes` and no last row id).
-		sql_run! : Object.Self, Str, List(Sql) => Try(Object.SqlInfo, [SqlErr(Io.Thrown), Constraint(Sql.Constraint)])
-		sql_run! = |_self, sql, params| match Io.call!(sql_ops(sql, params).concat([Call(Slot(2), "toArray", []), Fields(Slot(2), ["rowsRead", "rowsWritten"])])) {
+		sql_run! : Object.Self, Str, params => Try(Object.SqlInfo, [SqlErr(Io.Thrown), Constraint(Sql.Constraint)]) where [params.Cbor.Encodable([])]
+		sql_run! = |_self, sql, params| match Io.call!(sql_ops(sql, Cbor.encode(params)).concat([Call(Slot(2), "toArray", []), Fields(Slot(2), ["rowsRead", "rowsWritten"])])) {
 			Ok(Obj(fields)) => match (field(fields, "rowsRead"), field(fields, "rowsWritten")) {
 				(Int(r), Int(w)) => Ok({ rows_read: r.to_u64_try() ?? 0, rows_written: w.to_u64_try() ?? 0 })
 				other => Err(SqlErr({ name: "BadData", message: "the cursor gave ${Str.inspect(other)}" }))
@@ -200,11 +205,11 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 		}
 
 		## Rows with no types: the column names, then the values (`raw()`), to `Body.default_max` bytes.
-		sql_rows! : Object.Self, Str, List(Sql) => Try(Sql.Rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), TooLarge])
-		sql_rows! = |self, sql, params| sql_raw!(self, sql, params, Body.default_max)
+		sql_rows! : Object.Self, Str, params => Try(Sql.Rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), TooLarge]) where [params.Cbor.Encodable([])]
+		sql_rows! = |self, sql, params| sql_raw!(self, sql, Cbor.encode(params), Body.default_max)
 
-		sql_rows_with! : Object.Self, Str, List(Sql), { max_bytes : U64 } => Try(Sql.Rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), TooLarge])
-		sql_rows_with! = |self, sql, params, opts| sql_raw!(self, sql, params, opts.max_bytes)
+		sql_rows_with! : Object.Self, Str, params, { max_bytes : U64 } => Try(Sql.Rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), TooLarge]) where [params.Cbor.Encodable([])]
+		sql_rows_with! = |self, sql, params, opts| sql_raw!(self, sql, Cbor.encode(params), opts.max_bytes)
 
 		## `storage.setAlarm(time_ms)`: a promise, one wait. A class with no `alarm!` has no `alarm` method in JS, so
 		## Workers throws: `StorageErr`.
@@ -311,6 +316,15 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 		sockets_with! : Object.Self, { tag : Str } => List(Object.Socket)
 		sockets_with! = |_self, opts| sockets_of!([Lit(Text(opts.tag))])
 
+		## Sends the message to each open socket of the object. A closed socket is skipped. Gives the number of sockets
+		## that got it.
+		broadcast! : Object.Self, WebSocket.Message => U64
+		broadcast! = |_self, msg| send_each!(sockets_of!([]), msg)
+
+		## `broadcast!` to the open sockets with the tag only.
+		broadcast_with! : Object.Self, { tag : Str }, WebSocket.Message => U64
+		broadcast_with! = |_self, opts, msg| send_each!(sockets_of!([Lit(Text(opts.tag))]), msg)
+
 		## `ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(request, response))`: Workers answers the text
 		## `request` with `response` and sends no event, so the object can stay asleep. 2,048 characters or less each
 		## (Workers), else `TooLarge`.
@@ -331,17 +345,17 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 	## What a SQL cursor of a Durable Object gives (rowsRead, rowsWritten). D1 also gives changes and last_row_id (Sql.Info).
 	SqlInfo : { rows_read : U64, rows_written : U64 }
 
-	## A class of Durable Objects: a record of handlers, all optional (MODULES.md 7). Each class can have its own error
+	## A class of Durable Objects: a record of handlers, all optional (MODULES.md 7). Each handler has its own error
 	## type: an `Err(e)` becomes a log line with `Str.inspect(e)` (the outcome `Failed`). The name is the name of the JS
 	## export (`export const Counter = objectClass("Counter")`) and of the Wrangler config.
 	class : Str, {
-		init! ?: Object.Self => Try({}, e),
-		fetch! ?: Object.Self, Request => Try(Response, e),
+		init! ?: Object.Self => Try({}, e1),
+		fetch! ?: Object.Self, Request => Try(Response, e2),
 		rpc ?: List(Rpc.Handler(Object.Self)),
-		alarm! ?: Object.Self, { retry_count : U32, is_retry : Bool } => Try({}, e),
-		web_socket_message! ?: Object.Self, Object.Socket, WebSocket.Message => Try({}, e),
-		web_socket_close! ?: Object.Self, Object.Socket, WebSocket.Closed => Try({}, e),
-		web_socket_error! ?: Object.Self, Object.Socket, Io.Thrown => Try({}, e),
+		alarm! ?: Object.Self, { retry_count : U32, is_retry : Bool } => Try({}, e3),
+		web_socket_message! ?: Object.Self, Object.Socket, WebSocket.Message => Try({}, e4),
+		web_socket_close! ?: Object.Self, Object.Socket, WebSocket.Closed => Try({}, e5),
+		web_socket_error! ?: Object.Self, Object.Socket, Io.Thrown => Try({}, e6),
 	} -> Object.Class
 	class = |name, h| {
 		name,
@@ -422,6 +436,15 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 			}
 		}
 
+		## `get!`, and `default` for a cell that has no value. The other errors stay.
+		get_or! : Object.Cell(a), Object.Self, a => Try(a, [BadData(Str), StorageErr(Io.Thrown)])
+		get_or! = |c, self, default| match c.get!(self) {
+			Ok(v) => Ok(v)
+			Err(NotFound) => Ok(default)
+			Err(BadData(m)) => Err(BadData(m))
+			Err(StorageErr(t)) => Err(StorageErr(t))
+		}
+
 		## `storage.kv.put(key, bytes)`.
 		set! : Object.Cell(a), Object.Self, a => Try({}, [StorageErr(Io.Thrown)])
 		set! = |c, _self, v| {
@@ -497,16 +520,17 @@ location_text = |l| match l {
 	Me => "me"
 }
 
-## `ctx.storage.sql.exec(sql, ...params)`: the cursor is in slot 2. A parameter follows the rule of D1 (MODULES.md 5.1):
-## object SQL takes no `BigInt` either ("Cannot convert a BigInt value to a number", PLAN.md 8f, part 1).
-sql_ops : Str, List(Sql) -> List(Js.Op)
+## `ctx.storage.sql.exec(sql, ...params)` as `pf.sqlExec(sql_api, sql, params)` (js/helpers.js): the cursor is in slot 2.
+## `params` is the CBOR of an array, checked as for D1 (MODULES.md 5.1): object SQL takes no `BigInt` either
+## ("Cannot convert a BigInt value to a number", PLAN.md 8f, part 1).
+sql_ops : Str, List(U8) -> List(Js.Op)
 sql_ops = |sql, params| [
 	Get(Root("ctx"), "storage"),
 	Get(Slot(0), "sql"),
-	Call(Slot(1), "exec", [Lit(Text(sql))].concat(params.map(|p| Lit(SqlRules.param(p))))),
+	Call(Root("pf"), "sqlExec", [Slot(1), Lit(Text(sql)), Lit(Packed(params))]),
 ]
 
-sql_typed! : Object.Self, Str, List(Sql), U64 => Try(rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+sql_typed! : Object.Self, Str, List(U8), U64 => Try(rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
 sql_typed! = |_self, sql, params, max| match Io.call!(sql_ops(sql, params).concat([Call(Slot(2), "toArray", []), Call(Root("pf"), "pack", [Slot(3), Lit(Int(limit(max)))])])) {
 	Ok(Packed(bytes)) => match SqlRules.typed(bytes) {
 		Ok(v) => Ok(v)
@@ -520,7 +544,7 @@ sql_typed! = |_self, sql, params, max| match Io.call!(sql_ops(sql, params).conca
 	}
 }
 
-sql_raw! : Object.Self, Str, List(Sql), U64 => Try(Sql.Rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), TooLarge])
+sql_raw! : Object.Self, Str, List(U8), U64 => Try(Sql.Rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), TooLarge])
 sql_raw! = |_self, sql, params, max| {
 	ops = sql_ops(sql, params).concat([
 		Get(Slot(2), "columnNames"),
@@ -613,4 +637,19 @@ sockets_of! = |args| match Io.call!([Call(Root("ctx"), "getWebSockets", args)]) 
 	})
 	Ok(other) => crash "Object.Self.sockets!: getWebSockets gave ${Str.inspect(other)}"
 	Err(t) => crash "Object.Self.sockets!: ${t.name}: ${t.message}"
+}
+
+## `send!` to each socket. A closed socket does not count.
+send_each! : List(Object.Socket), WebSocket.Message => U64
+send_each! = |socks, msg| {
+	var $sent = 0
+	for sock in socks {
+		match sock.send!(msg) {
+			Ok(_) => {
+				$sent = $sent + 1
+			}
+			Err(Closed) => {}
+		}
+	}
+	$sent
 }

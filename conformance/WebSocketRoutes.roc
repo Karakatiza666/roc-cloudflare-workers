@@ -120,6 +120,49 @@ WebSocketRoutes :: [].{
 			}
 			Response.from_text(200, got)
 		}
+		# `Io.timeout`: the same as "race" with `receive().timeout(ms).run!()`.
+		["timeout"] => {
+			got = match WebSocket.connect!(Q.text(req, "url")) {
+				Ok(ws) => {
+					_ = ws.send!(Text("delay 100 m"))
+					first = ws.receive().timeout(50).run!()
+					next = ws.receive().timeout(1_000).run!()
+					ws.close!(1000, "done")
+					"first=${Str.inspect(first)} next=${Str.inspect(next)}"
+				}
+				Err(e) => "Err ${Str.inspect(e)}"
+			}
+			Response.from_text(200, got)
+		}
+		# `Io.timeout` that does not fire: the message comes at once, the sleep of 5 s is aborted (the task is short).
+		["timeout_ok"] => {
+			got = match WebSocket.connect!(Q.text(req, "url")) {
+				Ok(ws) => {
+					_ = ws.send!(Text("m"))
+					first = ws.receive().timeout(5_000).run!()
+					ws.close!(1000, "done")
+					"first=${Str.inspect(first)}"
+				}
+				Err(e) => "Err ${Str.inspect(e)}"
+			}
+			Response.from_text(200, got)
+		}
+		# `send_json!` of a `NaN`: `BadData`, and no frame goes out (the next reply is for the text after it).
+		["send_json_nan"] => {
+			got = match WebSocket.connect!(Q.text(req, "url")) {
+				Ok(ws) => {
+					bad = ws.send_json!({ r: 0.0.F64 / 0.0.F64 })
+					good = ws.send_json!({ r: 0.5.F64 })
+					first = ws.receive!()
+					_ = ws.send!(Text("after"))
+					second = ws.receive!()
+					ws.close!(1000, "done")
+					"bad=${Str.inspect(bad)} good=${Str.inspect(good)} first=${Str.inspect(first)} second=${Str.inspect(second)}"
+				}
+				Err(e) => "Err ${Str.inspect(e)}"
+			}
+			Response.from_text(200, got)
+		}
 		# OP8, the same turn: the message at 100 ms is in the queue. A race of a branch with no wait (it wins) and `receive`:
 		# `receive` takes the message in the same turn as the end of the race, and gives it back.
 		["race_ready"] => {
@@ -239,8 +282,33 @@ room_message! = |self, socket, msg| {
 			_ = socket.send!(Text(text))
 			{}
 		}
+		Text("bcast") => {
+			sent = self.broadcast!(Text("all from ${name}"))
+			_ = socket.send!(Text("sent=${sent.to_str()}"))
+			{}
+		}
+		# Closes the sockets with the tag `victim` and broadcasts at once: a closed socket is still in `sockets!` until the
+		# client answers the close, and its `send!` is `Err(Closed)`, so it is not in the count.
+		Text("bcast_closed") => {
+			for victim in self.sockets_with!({ tag: "victim" }) {
+				victim.close!(1000, "victim")
+			}
+			sent = self.broadcast!(Text("closed from ${name}"))
+			_ = socket.send!(Text("sent=${sent.to_str()}"))
+			{}
+		}
+		Text("bcast_tag") => {
+			sent = self.broadcast_with!({ tag: name }, Text("tag from ${name}"))
+			_ = socket.send!(Text("sent=${sent.to_str()}"))
+			{}
+		}
 		Text("json") => {
 			_ = socket.send_json!({ user: name, n })
+			{}
+		}
+		Text("json_nan") => {
+			bad = socket.send_json!({ r: 0.0.F64 / 0.0.F64 })
+			_ = socket.send!(Text("bad=${Str.inspect(bad)}"))
 			{}
 		}
 		Text(t) =>

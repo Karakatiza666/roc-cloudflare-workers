@@ -71,6 +71,16 @@ export default class extends Handler {
       }
       return Response.json(out);
     }
+    // 8h item 2: what a JS caller sees of the reply of `busy` (RpcMethods.roc): the plain object `{ Ok }` or `{ Err }`
+    // of each callee, for n = 1, 2, 3. The default export, `Admin` and an object of `Counter`.
+    if (path === '/__wire') {
+      const out = {};
+      for (const [k, stub] of [['self', () => this.env.SELF], ['admin', () => this.env.ADMIN], ['obj', () => this.env.COUNTERS.getByName('wire')]]) {
+        out[k] = [];
+        for (const n of [1, 2, 3]) out[k].push(await stub().busy({ n }));
+      }
+      return new Response(JSON.stringify(out));
+    }
     // 8f: the own names of the prototype of an exported class (`?class=`), or of the default export.
     if (path === '/__proto') {
       const C = exported[new URL(request.url).searchParams.get('class')] ?? Handler;
@@ -88,11 +98,20 @@ export default class extends Handler {
     return out;
   }
   // 8f: JS callees of the RPC checks. MC5: the JS kinds of the fields of the argument (a `Cbor.Bytes` field is a
-  // `Uint8Array`, a `List(U8)` field an `Array`). The RPC limit: a text of `n` bytes.
+  // `Uint8Array`, a `List(U8)` field an `Array`). The RPC limit: a text of `n` bytes. A reply is a `Reply` of `Rpc.roc`: `{ Ok: value }`.
   inspect(arg) {
-    return { data: kind(arg?.data), list: kind(arg?.list) };
+    return { Ok: { data: kind(arg?.data), list: kind(arg?.list) } };
   }
   big(arg) {
-    return 'x'.repeat(Number(arg.n));
+    return { Ok: 'x'.repeat(Number(arg.n)) };
+  }
+  // 8h item 2: a JS callee gives the reply as a plain object, `{ Ok: value }` or `{ Err: tag }` (the wire form of `Rpc.roc`).
+  jsbusy(arg) {
+    if (arg.n === 1) return { Ok: 2 };
+    if (arg.n === 2) return { Err: { Busy: 'js' } };
+    return { Err: 'StillOpen' };
+  }
+  jsthrow() {
+    throw new Error('js callee throw');
   }
 }

@@ -1,10 +1,14 @@
 ## An R2 bucket (MODULES.md 5.3): `env[name]`, one program for each call. A body is a `Body` (a stream stays in JS, API.md
 ## RS3), so an object goes to a response with no copy into wasm (10a). A missing object is `NotFound` (OP7: `Fields` of
-## the `null` result). A throw is `R2Err`. The reads that the platform does as a `Js` tree have no `BadData`: a shape
+## the `null` result). A throw is `R2Err`. `R2.respond!` and `R2.to_response` make the HTTP response of an object
+## (`Response` cannot import `R2`, so they are here: MODULES.md 4). The reads that the platform does as a `Js` tree have no `BadData`: a shape
 ## that is not the shape of the program is a platform bug, a crash.
 import Io
 import Js
 import Body
+import Request
+import Response
+import http.Header
 
 R2 :: { name : Str }.{
 	binding : Str -> R2
@@ -35,29 +39,68 @@ R2 :: { name : Str }.{
 	## `range`: the bytes to read. `only_if`: a failed condition is `PreconditionFailed` (R2 gives the object with no body).
 	get_with : R2, Str, { range ?: R2.Range, only_if ?: R2.Cond } -> Io(R2.Object, [NotFound, PreconditionFailed, R2Err(Io.Thrown)])
 	get_with = |bucket, key, opts| {
-		built = get_options(opts, 1)
-		with_range = match opts.?range {
-			Ok(_) => Bool.True
-			Err(_) => Bool.False
-		}
-		ops = read_ops(call_ops(bucket, "get", [Lit(Text(key)), Slot(built.slot)], built.ops))
+		given = get_program(bucket, key, opts)
 		Io.new(
-			ops,
-			|r| match r {
-				Ok(v) => match unpack(v) {
-					Err(Missing) => Err(NotFound)
-					Ok(got) => match object_of(got, with_range) {
-						Ok(obj) => Ok(obj)
-						Err(NoBody) => Err(PreconditionFailed)
-					}
-				}
-				Err(t) => Err(R2Err(t))
+			given.ops,
+			|r| match fetched_of(r, given.with_range) {
+				Ok(Found(obj)) => Ok(obj)
+				Ok(NotMet(_)) => Err(PreconditionFailed)
+				Ok(Absent) => Err(NotFound)
+				Err(e) => Err(e)
 			},
 		)
 	}
 
 	get_with! : R2, Str, { range ?: R2.Range, only_if ?: R2.Cond } => Try(R2.Object, [NotFound, PreconditionFailed, R2Err(Io.Thrown)])
 	get_with! = |bucket, key, opts| Io.run!(get_with(bucket, key, opts))
+
+	## The HTTP response of an object: status 200, the body (a stream, no copy into wasm), the HTTP metadata of the object
+	## (`content-type`, `content-language`, `content-disposition`, `content-encoding`, `cache-control`, `expires`) and
+	## `etag` (`http_etag`). The same headers as `writeHttpMetadata` and `httpEtag` of Workers.
+	to_response : R2.Object -> Response
+	to_response = |obj| Response.{ status: 200, headers: meta_headers(obj.meta), body: obj.body }
+
+	## A GET request answered from the bucket. The key is the argument, the request gives the conditions and the range.
+	## `If-None-Match` and `If-Modified-Since` that fail: 304 with `etag`. `If-Match` and `If-Unmodified-Since` that
+	## fail: 412. A key that is not there: 404. A `Range` of one range (`bytes=a-b`, `bytes=a-`, `bytes=-n`): 206 with
+	## `content-range`, 416 with `content-range: bytes */size` when it starts after the end (R2 error 10039; `respond!` makes the header with one `head!`, the `Io` twin `respond` gives a 416 without it). A request with `If-Range` gets the whole object (R2 has no
+	## `If-Range`). A `Range` that has more than one range, or has a wrong form, is not used. The method is not read:
+	## the app routes GET and HEAD to it. The bytes of a HEAD response are dropped by Workers.
+	respond : R2, Str, Request -> Io(Response, [R2Err(Io.Thrown)])
+	respond = |bucket, key, req| {
+		wanted = wanted_range(req)
+		opts0 : { range ?: R2.Range, only_if ?: R2.Cond }
+		opts0 = { only_if: R2.from_headers(req.headers) }
+		opts = match wanted {
+			Ok(range) => { ..opts0, range }
+			Err(_) => opts0
+		}
+		given = get_program(bucket, key, opts)
+		Io.new(
+			given.ops,
+			|r| match fetched_of(r, given.with_range) {
+				Ok(Found(obj)) => Ok(found_response(obj, wanted))
+				Ok(NotMet(meta)) => Ok(not_met_response(req, meta))
+				Ok(Absent) => Ok(Response.from_text(404, "Not found"))
+				# R2 error 10039: the range starts after the end.
+				Err(R2Err(t)) => if t.message.contains("(10039)") Ok(Response.from_status(416)) else Err(R2Err(t))
+			},
+		)
+	}
+
+	respond! : R2, Str, Request => Try(Response, [R2Err(Io.Thrown)])
+	respond! = |bucket, key, req| {
+		res = Io.run!(respond(bucket, key, req))?
+		# The error 10039 gives a 416 with no size: one `head!` adds `content-range` (the `Io` twin `respond` has none).
+		if res.status == 416 and res.headers.is_empty() {
+			match head!(bucket, key) {
+				Ok(meta) => Ok({ ..res, headers: [Header.{ name: "content-range", value: "bytes */${meta.size_bytes.to_str()}" }] })
+				Err(_) => Ok(res)
+			}
+		} else {
+			Ok(res)
+		}
+	}
 
 	## The metadata only (`head`).
 	head : R2, Str -> Io(R2.Meta, [NotFound, R2Err(Io.Thrown)])
@@ -250,8 +293,16 @@ R2 :: { name : Str }.{
 
 	Checksum : [Md5(List(U8)), Sha1(List(U8)), Sha256(List(U8)), Sha384(List(U8)), Sha512(List(U8))]
 
-	## `R2Conditional`: R2 checks each field that is there.
-	Cond : { etag_matches ?: Str, etag_does_not_match ?: Str, uploaded_before_ms ?: U64, uploaded_after_ms ?: U64 }
+	## `R2Conditional`: R2 checks each field that is there. `headers`: the conditional headers of a request
+	## (If-Match, If-None-Match, If-Modified-Since, If-Unmodified-Since). R2 reads them as it reads the headers of a
+	## request: a quoted etag is fine. A weak etag matches only in If-None-Match (If-Match uses strong comparison). The
+	## other fields are not used when `headers` is there.
+	Cond : { etag_matches ?: Str, etag_does_not_match ?: Str, uploaded_before_ms ?: U64, uploaded_after_ms ?: U64, headers ?: List(Header) }
+
+	## `only_if: R2.from_headers(req.headers)`: the conditions of the request. A header that is not a conditional header
+	## is not sent to R2.
+	from_headers : List(Header) -> R2.Cond
+	from_headers = |headers| { headers: headers }
 
 	## Only a new key (`etagDoesNotMatch: "*"`).
 	absent : R2.Cond
@@ -261,6 +312,139 @@ R2 :: { name : Str }.{
 }
 
 # ---- Programs ----
+
+## What a get gave: the object, the metadata of an object whose condition failed (R2 gives no body), or no object.
+Fetched : [Found(R2.Object), NotMet(R2.Meta), Absent]
+
+## The program of `get` with options. `with_range`: the call had a `range`.
+get_program : R2, Str, { range ?: R2.Range, only_if ?: R2.Cond } -> { ops : List(Js.Op), with_range : Bool }
+get_program = |bucket, key, opts| {
+	built = get_options(opts, 1)
+	with_range = match opts.?range {
+		Ok(_) => Bool.True
+		Err(_) => Bool.False
+	}
+	{ ops: read_ops(call_ops(bucket, "get", [Lit(Text(key)), Slot(built.slot)], built.ops)), with_range }
+}
+
+fetched_of : Try(Js, Io.Thrown), Bool -> Try(Fetched, [R2Err(Io.Thrown)])
+fetched_of = |r, with_range| match r {
+	Ok(v) => match unpack(v) {
+		Err(Missing) => Ok(Absent)
+		Ok(got) => match object_of(got, with_range) {
+			Ok(obj) => Ok(Found(obj))
+			Err(NoBody) => Ok(NotMet(got.meta))
+		}
+	}
+	Err(t) => Err(R2Err(t))
+}
+
+# ---- HTTP response ----
+
+## The headers of the HTTP metadata of an object and its `etag`.
+meta_headers : R2.Meta -> List(Header)
+meta_headers = |meta| {
+	h = meta.http
+	[
+		("content-type", h.?content_type),
+		("content-language", h.?content_language),
+		("content-disposition", h.?content_disposition),
+		("content-encoding", h.?content_encoding),
+		("cache-control", h.?cache_control),
+		("expires", h.?cache_expiry_ms.map_ok(http_date)),
+		("etag", Ok(meta.http_etag)),
+	].keep_oks(|(name, v)| v.map_ok(|value| Header.{ name, value }))
+}
+
+## Only the headers that a 304 or a 412 response has.
+validator_headers : R2.Meta -> List(Header)
+validator_headers = |meta| meta_headers(meta).keep_if(|h| h.name == "etag" or h.name == "cache-control" or h.name == "expires")
+
+## The range of the request, when R2 can read it: a `Range` with one range, and no `If-Range`.
+wanted_range : Request -> Try(R2.Range, [NoRange])
+wanted_range = |req| match (req.header("if-range"), req.header("range")) {
+	(Err(_), Ok(text)) => parse_range(text)
+	_ => Err(NoRange)
+}
+
+## `bytes=a-b`, `bytes=a-`, `bytes=-n`. A range that ends before it starts, and `bytes=-0`, are not used.
+parse_range : Str -> Try(R2.Range, [NoRange])
+parse_range = |text| {
+	t = text.trim()
+	if t.starts_with("bytes=") and !t.contains(",") {
+		match t.drop_prefix("bytes=").split_first("-") {
+			Ok({ before, after }) => match (U64.from_str(before.trim()), U64.from_str(after.trim())) {
+				(Err(_), Ok(n)) => if n > 0 Ok(Suffix(n)) else Err(NoRange)
+				(Ok(a), Err(_)) => if after.trim() == "" Ok(From({ offset_bytes: a })) else Err(NoRange)
+				(Ok(a), Ok(b)) => if b >= a Ok(From({ offset_bytes: a, length_bytes: b - a + 1 })) else Err(NoRange)
+				(Err(_), Err(_)) => Err(NoRange)
+			}
+			Err(_) => Err(NoRange)
+		}
+	} else {
+		Err(NoRange)
+	}
+}
+
+## The first and the last byte that a range reads, in an object of `size` bytes. `Err(Unsatisfiable)`: it starts at or
+## after the end.
+range_span : R2.Range, U64 -> Try({ first : U64, last : U64 }, [Unsatisfiable])
+range_span = |range, size| match range {
+	From(r) => if r.offset_bytes >= size {
+		Err(Unsatisfiable)
+	} else {
+		last = match r.?length_bytes {
+			Ok(len) => U64.min(r.offset_bytes + len - 1, size - 1)
+			Err(_) => size - 1
+		}
+		Ok({ first: r.offset_bytes, last })
+	}
+	Suffix(n) => if size == 0 Err(Unsatisfiable) else Ok({ first: size - U64.min(n, size), last: size - 1 })
+}
+
+found_response : R2.Object, Try(R2.Range, [NoRange]) -> Response
+found_response = |obj, wanted| {
+	plain = { ..R2.to_response(obj), headers: meta_headers(obj.meta).append(Header.{ name: "accept-ranges", value: "bytes" }) }
+	size = obj.meta.size_bytes
+	match wanted {
+		Ok(range) => match range_span(range, size) {
+			Ok({ first, last }) => { ..plain, status: 206, headers: plain.headers.append(Header.{ name: "content-range", value: "bytes ${first.to_str()}-${last.to_str()}/${size.to_str()}" }) }
+			Err(Unsatisfiable) => Response.{ status: 416, headers: [Header.{ name: "content-range", value: "bytes */${size.to_str()}" }] }
+		}
+		Err(_) => plain
+	}
+}
+
+## 304 when the request asks "has it changed" (`If-None-Match`, `If-Modified-Since`), else 412.
+not_met_response : Request, R2.Meta -> Response
+not_met_response = |req, meta| {
+	asks_change = req.header("if-none-match").is_ok() or req.header("if-modified-since").is_ok()
+	Response.{ status: if asks_change 304 else 412, headers: validator_headers(meta) }
+}
+
+## "Sun, 06 Nov 1994 08:49:37 GMT" for a time in ms.
+http_date : U64 -> Str
+http_date = |ms| {
+	secs = ms // 1000
+	days = secs // 86400
+	rest = secs % 86400
+	# Days since 1970-01-01 to a civil date (H. Hinnant). Day 0 is a Thursday.
+	z = days + 719468
+	era = z // 146097
+	doe = z - era * 146097
+	yoe = (doe - doe // 1460 + doe // 36524 - doe // 146096) // 365
+	doy = doe - (365 * yoe + yoe // 4 - yoe // 100)
+	mp = (5 * doy + 2) // 153
+	day = doy - (153 * mp + 2) // 5 + 1
+	month = if mp < 10 mp + 3 else mp - 9
+	year = yoe + era * 400 + (if month <= 2 1 else 0)
+	weekday = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"].get((days % 7).to_u64()) ?? "Thu"
+	month_name = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].get(month - 1) ?? "Jan"
+	"${weekday}, ${two(day)} ${month_name} ${year.to_str()} ${two(rest // 3600)}:${two(rest % 3600 // 60)}:${two(rest % 60)} GMT"
+}
+
+two : U64 -> Str
+two = |n| if n < 10 "0${n.to_str()}" else n.to_str()
 
 ## Slot 0: the binding. The ops of `before` (the pieces of the arguments) come next, then the call on slot 0.
 call_ops : R2, Str, List(Js.Arg), List(Js.Op) -> List(Js.Op)
@@ -382,6 +566,25 @@ finish = |b| { ops: b.ops.append(Record(b.fields)), slot: next(b) }
 int : U64 -> I64
 int = |n| n.to_i64_try() ?? I64.highest
 
+## The `onlyIf` argument: a `Headers` for `headers`, else a record of the fields. Gives the ops and the slot.
+cond_ops : R2.Cond, U32 -> { ops : List(Js.Op), slot : U32 }
+cond_ops = |c, base| match c.?headers {
+	Ok(headers) => { ops: [New(Root("global"), "Headers", [Lit(Obj(conditional_headers(headers)))])], slot: base }
+	Err(_) => finish(cond_build(c, base))
+}
+
+## The conditional headers of a request, each once, with a lower case name (a `Headers` has one value for each name here).
+conditional_headers : List(Header) -> List((Str, Js))
+conditional_headers = |headers| {
+	names = ["if-match", "if-none-match", "if-modified-since", "if-unmodified-since"]
+	names.keep_oks(
+		|name| match headers.find_first(|h| h.name.with_ascii_lowercased() == name) {
+			Ok(h) => Ok((name, Text(h.value)))
+			Err(_) => Err(NotThere)
+		},
+	)
+}
+
 cond_build : R2.Cond, U32 -> Build
 cond_build = |c, base|
 	build(base)
@@ -431,7 +634,7 @@ get_options = |opts, base| {
 	}
 	finish(
 		match opts.?only_if {
-			Ok(c) => put_record(with_range, "onlyIf", finish(cond_build(c, next(with_range))))
+			Ok(c) => put_record(with_range, "onlyIf", cond_ops(c, next(with_range)))
 			Err(_) => with_range
 		},
 	)
@@ -441,7 +644,7 @@ get_options = |opts, base| {
 put_options : { only_if ?: R2.Cond, http ?: R2.Http, custom ?: List((Str, Str)), checksum ?: R2.Checksum, length_bytes ?: U64 }, U32 -> { ops : List(Js.Op), slot : U32 }
 put_options = |opts, base| {
 	b1 = match opts.?only_if {
-		Ok(c) => put_record(build(base), "onlyIf", finish(cond_build(c, base)))
+		Ok(c) => put_record(build(base), "onlyIf", cond_ops(c, base))
 		Err(_) => build(base)
 	}
 	b2 = match opts.?http {
@@ -690,3 +893,19 @@ expect {
 }
 
 expect unpack(Obj([("meta", Undefined), ("checksums", Undefined)])) == Err(Missing)
+
+expect http_date(784111777000) == "Sun, 06 Nov 1994 08:49:37 GMT"
+
+expect http_date(1709164800000) == "Thu, 29 Feb 2024 00:00:00 GMT"
+
+expect parse_range("bytes=2-4") == Ok(From({ offset_bytes: 2, length_bytes: 3 }))
+
+expect parse_range("bytes=5-") == Ok(From({ offset_bytes: 5 }))
+
+expect parse_range("bytes=-3") == Ok(Suffix(3))
+
+expect parse_range("bytes=0-1,4-5") == Err(NoRange)
+
+expect range_span(Suffix(100), 10) == Ok({ first: 0, last: 9 })
+
+expect range_span(From({ offset_bytes: 10 }), 10) == Err(Unsatisfiable)

@@ -139,6 +139,32 @@ export function makePins(limit = 1000, now = () => Date.now()) {
   };
 }
 
+// SQL parameters (MODULES.md 5.1, "Parameters"): the decoded CBOR array of the call, as the arguments of `bind` or `exec`.
+// null, text, a Number and a Uint8Array go as they are. A BigInt is an integer of 2^53 or more: it goes as decimal text
+// (D1 takes no BigInt, a Number rounds) when it fits I64, else it is a BadParam. A map is a tag or a record: BadParam.
+const I64_MIN = -(1n << 63n), I64_MAX = (1n << 63n) - 1n;
+class BadParam extends Error {
+  constructor(message) { super(message); this.name = 'BadParam'; }
+}
+const kindOf = (v) => (Array.isArray(v) ? 'a list' : v instanceof Uint8Array ? 'bytes' : v === null ? 'null' : typeof v === 'object' ? 'a record or a tag' : typeof v);
+export function sqlParams(params) {
+  if (!Array.isArray(params)) {
+    throw new BadParam(`SQL parameters must be a list or a tuple, not ${kindOf(params)}: write [x] for one parameter and (a, b) for more`);
+  }
+  return params.map((v, i) => {
+    switch (typeof v) {
+      case 'string': case 'number': return v;
+      case 'bigint':
+        if (v < I64_MIN || v > I64_MAX) throw new BadParam(`SQL parameter ${i}: the integer ${v} does not fit I64`);
+        return v.toString();
+      case 'undefined': throw new BadParam(`SQL parameter ${i}: undefined is not a SQL value`);
+      case 'boolean': throw new BadParam(`SQL parameter ${i}: a Bool is not a SQL value, use 0 or 1`);
+    }
+    if (v === null || v instanceof Uint8Array) return v;
+    throw new BadParam(`SQL parameter ${i}: ${kindOf(v)} is not a SQL value${v !== null && typeof v === 'object' && !Array.isArray(v) ? ', tag values are not SQL values, use Sql.null or Sql.or_null for NULL' : ''}`);
+  });
+}
+
 // t: the task (or undefined), c: its program context, shim: { pins, log }, tasks: the task table.
 export function makeHelpers(t, c, shim, tasks) {
   return {
@@ -153,6 +179,14 @@ export function makeHelpers(t, c, shim, tasks) {
       if (!Array.isArray(array)) throw new TypeError('packEach: the first argument must be an array');
       const budget = { left: maxBytes ?? Infinity };
       return array.map((item) => ({ ...item, [key]: new Packed(item?.[key], Infinity, budget) }));
+    },
+    // `stmt.bind(...params)`: `params` is the decoded CBOR array of the call (`D1`, MODULES.md 5.1).
+    bind(stmt, params) {
+      return stmt.bind(...sqlParams(params));
+    },
+    // `sql.exec(text, ...params)` of a Durable Object (`Object.Self.sql!`): the same parameter rules as `bind`.
+    sqlExec(sql, text, params) {
+      return sql.exec(text, ...sqlParams(params));
     },
     // The value as a `Js` tree (J1 to J7), with a limit of its CBOR size: more is a TooLarge, before any copy into
     // wasm (MC11). `D1.rows!`: rows with no types do not go through `pack`.

@@ -88,9 +88,13 @@ WebSocket :: { ref : Js.Ref }.{
 	send! : WebSocket, WebSocket.Message => Try({}, [Closed])
 	send! = |ws, msg| Remote.socket_send!(ws.ref, frame(msg))
 
-	## The value as JSON text, in a text frame.
-	send_json! : WebSocket, a => Try({}, [Closed]) where [a.Json.Encodable([])]
-	send_json! = |ws, value| Remote.socket_send!(ws.ref, Text(Json.to_str(value)))
+	## The value as JSON text, in a text frame. A value that JSON cannot show (a `NaN` in an `F64`) is `BadData`, and
+	## nothing is sent.
+	send_json! : WebSocket, a => Try({}, [Closed, BadData(Str)]) where [a.Json.Encodable(enc)]
+	send_json! = |ws, value| match Json.to_str_try(value) {
+		Ok(text) => Remote.socket_send!(ws.ref, Text(text)).map_err(|_| Closed)
+		Err(e) => Err(BadData(Str.inspect(e)))
+	}
 
 	## The next message: one wait (`pf.wsReceive`), with no deadline (API.md 10.2). After the close, each call gives
 	## `Closed`. In `Io.race!`, a branch that lost takes no message: it stays for the next call (OP8).
