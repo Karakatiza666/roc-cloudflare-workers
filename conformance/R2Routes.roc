@@ -24,6 +24,13 @@ R2Routes :: [].{
 			["put_with_io"] => out(Io.run!(bucket.put_with(key, Text(Q.text(req, "text")), put_options(req))), show_meta)
 			["get_with"] => out!(bucket.get_with!(key, get_options(req)), show_object!)
 			["get_with_io"] => out!(Io.run!(bucket.get_with(key, get_options(req))), show_object!)
+			["get_cond"] => out!(bucket.get_with!(key, { only_if: R2.from_headers(req.headers) }), show_object!)
+			["respond"] => respond!(bucket.respond!(key, req))
+			["respond_io"] => respond!(Io.run!(bucket.respond(key, req)))
+			["to_response"] => match bucket.get!(key) {
+				Ok(obj) => R2.to_response(obj)
+				Err(e) => Response.from_text(404, Str.inspect(e))
+			}
 			["delete"] => out(bucket.delete!(keys(req)), |_| "deleted")
 			["delete_io"] => out(Io.run!(bucket.delete(keys(req))), |_| "deleted")
 			["list"] => out(bucket.list!(list_options(req)), show_list)
@@ -49,6 +56,13 @@ R2Routes :: [].{
 }
 
 # ---- Answers ----
+
+## The response of `respond!` as it is, or a 500 for an R2 error.
+respond! : Try(Response, [R2Err(Io.Thrown)]) => Response
+respond! = |r| match r {
+	Ok(resp) => resp
+	Err(e) => Response.from_text(500, Str.inspect(e))
+}
 
 out : Try(a, e), (a -> Str) -> Response
 out = |r, f| Response.from_text(

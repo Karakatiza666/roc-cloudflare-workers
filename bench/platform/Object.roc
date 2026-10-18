@@ -311,6 +311,15 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 		sockets_with! : Object.Self, { tag : Str } => List(Object.Socket)
 		sockets_with! = |_self, opts| sockets_of!([Lit(Text(opts.tag))])
 
+		## Sends the message to each open socket of the object. A closed socket is skipped. Gives the number of sockets
+		## that got it.
+		broadcast! : Object.Self, WebSocket.Message => U64
+		broadcast! = |_self, msg| send_each!(sockets_of!([]), msg)
+
+		## `broadcast!` to the open sockets with the tag only.
+		broadcast_with! : Object.Self, { tag : Str }, WebSocket.Message => U64
+		broadcast_with! = |_self, opts, msg| send_each!(sockets_of!([Lit(Text(opts.tag))]), msg)
+
 		## `ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(request, response))`: Workers answers the text
 		## `request` with `response` and sends no event, so the object can stay asleep. 2,048 characters or less each
 		## (Workers), else `TooLarge`.
@@ -613,4 +622,19 @@ sockets_of! = |args| match Io.call!([Call(Root("ctx"), "getWebSockets", args)]) 
 	})
 	Ok(other) => crash "Object.Self.sockets!: getWebSockets gave ${Str.inspect(other)}"
 	Err(t) => crash "Object.Self.sockets!: ${t.name}: ${t.message}"
+}
+
+## `send!` to each socket. A closed socket does not count.
+send_each! : List(Object.Socket), WebSocket.Message => U64
+send_each! = |socks, msg| {
+	var $sent = 0
+	for sock in socks {
+		match sock.send!(msg) {
+			Ok(_) => {
+				$sent = $sent + 1
+			}
+			Err(Closed) => {}
+		}
+	}
+	$sent
 }

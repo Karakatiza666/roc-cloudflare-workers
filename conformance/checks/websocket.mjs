@@ -92,6 +92,79 @@ export const checks = [
     await a.close(1000, 'a leaves');
     await b.close(4001, 'b leaves');
   }],
+  // Object.Self.broadcast!, broadcast_with! (MODULES.md 12.1): the count of sends that succeed. The sender is in the
+  // count and gets the message too, before its own "sent=N" line.
+  ['websocket broadcast!: 3 sockets give sent=3 and each gets the message once', async (t) => {
+    const a = await room(t, 'bc1', 'a');
+    const b = await room(t, 'bc1', 'b');
+    const c = await room(t, 'bc1', 'c');
+    // Wait until the object knows the 3 sockets.
+    c.send('info');
+    ok((await c.next()).includes('peers=3'), 'peers=3');
+    a.send('bcast');
+    eq(await a.next(), 'all from a', 'a gets the message');
+    eq(await a.next(), 'sent=3', 'the count');
+    eq(await b.next(), 'all from a', 'b gets the message');
+    eq(await c.next(), 'all from a', 'c gets the message');
+    await sleep(200);
+    eq(JSON.stringify([a.pending(), b.pending(), c.pending()]), '[[],[],[]]', 'no second copy');
+    await Promise.all([a.close(1000, 'x'), b.close(1000, 'x'), c.close(1000, 'x')]);
+  }],
+  ['websocket broadcast_with!: only the sockets with the tag get the message', async (t) => {
+    const a1 = await room(t, 'bc2', 'a');
+    const a2 = await room(t, 'bc2', 'a');
+    const b = await room(t, 'bc2', 'b');
+    b.send('info');
+    ok((await b.next()).includes('peers=3'), 'peers=3');
+    a1.send('bcast_tag');
+    eq(await a1.next(), 'tag from a', 'a1 gets the message');
+    eq(await a1.next(), 'sent=2', 'the count of the tag a');
+    eq(await a2.next(), 'tag from a', 'a2 gets the message');
+    await sleep(200);
+    eq(JSON.stringify([a1.pending(), a2.pending(), b.pending()]), '[[],[],[]]', 'b got nothing, nobody got a second copy');
+    // The other tag: one socket.
+    b.send('bcast_tag');
+    eq(await b.next(), 'tag from b', 'b gets its message');
+    eq(await b.next(), 'sent=1', 'the count of the tag b');
+    await sleep(200);
+    eq(JSON.stringify([a1.pending(), a2.pending()]), '[[],[]]', 'the sockets a got nothing');
+    await Promise.all([a1.close(1000, 'x'), a2.close(1000, 'x'), b.close(1000, 'x')]);
+  }],
+  ['websocket broadcast!: after a close the count drops', async (t) => {
+    const a = await room(t, 'bc3', 'a');
+    const b = await room(t, 'bc3', 'b');
+    const c = await room(t, 'bc3', 'c');
+    a.send('bcast');
+    eq(await a.next(), 'all from a', 'first message');
+    eq(await a.next(), 'sent=3', 'before the close');
+    await c.close(1000, 'c leaves');
+    // The object sees the close after a short time: wait for peers=2.
+    let peers = '';
+    for (let i = 0; i < 50 && !peers.includes('peers=2'); i++) {
+      await sleep(50);
+      a.send('info');
+      peers = await a.next();
+    }
+    ok(peers.includes('peers=2'), `the object still has 3 sockets: ${peers}`);
+    a.send('bcast');
+    eq(await a.next(), 'all from a', 'second message');
+    eq(await a.next(), 'sent=2', 'after the close');
+    await Promise.all([a.close(1000, 'x'), b.close(1000, 'x')]);
+  }],
+  // A socket that the object closed is still listed, and its `send!` is `Err(Closed)`: the count has only the sends that work.
+  ['websocket broadcast!: a socket that is closed but still listed is not in the count', async (t) => {
+    const a = await room(t, 'bc4', 'a');
+    const b = await room(t, 'bc4', 'b');
+    const v = await room(t, 'bc4', 'victim');
+    v.send('info');
+    ok((await v.next()).includes('peers=3'), 'peers=3');
+    a.send('bcast_closed');
+    eq(await a.next(), 'closed from a', 'a gets the message');
+    eq(await a.next(), 'sent=2', 'the count has no closed socket');
+    eq(await b.next(), 'closed from a', 'b gets the message');
+    eq(JSON.stringify((await v.closed).code), '1000', 'the victim is closed');
+    await Promise.all([a.close(1000, 'x'), b.close(1000, 'x')]);
+  }],
   ['websocket web_socket_close!: the code and the reason of the close of the client', async (t) => {
     for (let i = 0; i < 50 && !logOf(t, 'room close').some((l) => l.code === 4001); i++) await sleep(50);
     const l = logOf(t, 'room close').find((x) => x.code === 4001);
