@@ -227,9 +227,10 @@ export const checks = [
     // Only the four conditional headers go to R2: other headers change nothing.
     answer(await t.get('/r2/get_cond?key=cond1', { headers: { 'x-other': '1', range: 'bytes=0-1' } }), 'Ok size=11 range=none text=hello world');
   }],
-  ['r2 put_with! of a Body.writer! stream is R2Err with "known length"', async (t) => {
+  ['r2 put_with! of a Body.writer! stream with no length_bytes stores the bytes', async (t) => {
     const r = await t.get('/r2/put_stream?key=ws1');
-    ok(r.body.startsWith('Err R2Err(') && r.body.includes('known length'), `got ${r.body}`);
+    ok(r.body.startsWith('Ok key=ws1 size=11 '), `got ${r.body}`);
+    eq(await (await (await t.mf.getR2Bucket('BUCKET')).get('ws1')).text(), 'hello world', 'the stored bytes');
   }],
   ['r2 put_with! of a stream with length_bytes stores the bytes', async (t) => {
     const r = await t.get('/r2/put_stream?key=ws2&len=11');

@@ -1,6 +1,6 @@
 app [event!] { pf: platform "platform/main.roc" }
 
-## PLAN.md 8b (second half), 9c, 10a, 10b: stream bodies, `Ctx.respond!`, `Ctx.pass_through!`, `Ctx.wait_until!`,
+## PLAN.md 8b (second half), 9c, 10a, 10b: stream bodies, `Response.after`, `Ctx.pass_through!`, `Ctx.wait_until!`,
 ## `Body.writer!`, `compress!` and `decompress!`. `bench/stream-test.mjs` (Node) and `bench/stream-workerd.mjs`
 ## (workerd) send the requests below. The ops of the test (`makeHandler(module, { ops })`): `sleep(ms, signal)`,
 ## `mark(id, text)`, `put(key, stream)` (a stand-in for a `Cache.named` put: it reads the stream and keeps its bytes),
@@ -22,12 +22,12 @@ import pf.Js
 ## | POST /sha | `sha256!` of the stream, in hex. With `?bytes=1`: of the bytes in wasm |
 ## | POST /compress?f=, /decompress?f= | the body through `compress!` or `decompress!` (`gzip`, `deflate`) |
 ## | GET /ping | "pong": a task, so the shim runs its deadline sweep |
-## | GET /after?id= | `respond!` "early", then a wait of 100 ms, then `mark(id, "after")`, then "late" |
-## | GET /twice?id= | `respond!` twice: `mark(id, <the result of the second>)` |
-## | GET /deadline?id=&ms= | `respond!` with a `Bytes` body, a wait of `ms`, then `mark(id, "done")` |
-## | GET /stream?id=&n=&gap=&after= | `writer!`, `respond!`, `n` chunks with `gap` ms after each, `close!`, a wait of `after` ms, `mark(id, "done")` |
-## | GET /closed?id= | `writer!`, `respond!`, `close!`, `write!`: `mark(id, <the result>)` |
-## | POST /late?id= | `respond!`, a wait of 100 ms, then a read of the request body: an `Err` is `Failed` |
+## | GET /after?id= | "early" with `after`: a wait of 100 ms, then `mark(id, "after")` |
+## | GET /twice?id= | "first" with two `after` calls: `mark(id, "one")`, then `mark(id, "two")` |
+## | GET /deadline?id=&ms= | a `Bytes` body with `after`: a wait of `ms`, then `mark(id, "done")` |
+## | GET /stream?id=&n=&gap=&after= | `writer!`, its body with `after`: `n` chunks with `gap` ms after each, `close!`, a wait of `after` ms, `mark(id, "done")` |
+## | GET /closed?id= | `writer!`, its body with `after`: `close!`, `write!`: `mark(id, <the result>)` |
+## | POST /late?id= | "early" with `after`: a wait of 100 ms, then a read of the request body: an `Err` is `Failed` |
 ## | GET /pass, /passcrash | `pass_through!`, then `Err(Boom)` or a `crash` |
 ## | GET /waituntil?id=&ms= | `wait_until!` of a wait of `ms` (with the signal of the task), then `mark(id, "started")` |
 ## | POST /started?key= | `wait_until!` of a wait of 100 ms, then `put(key, <the request body>)` (9c) |
@@ -80,56 +80,70 @@ fetch! = |req| match (req.method, req.segments()) {
 	(POST, ["compress"]) => Ok(Response.from_body(200, "application/octet-stream", req.body.compress!(format(req))?))
 	(POST, ["decompress"]) => Ok(Response.from_body(200, "application/octet-stream", req.body.decompress!(format(req))?))
 	(GET, ["ping"]) => Ok(Response.from_text(200, "pong"))
-	(GET, ["after"]) => {
-		Ctx.respond!(Response.from_text(200, "early"))?
-		sleep!(100)
-		mark!(id(req), "after")
-		Ok(Response.from_text(200, "late"))
-	}
+	(GET, ["after"]) => Ok(
+		Response.from_text(200, "early").after(
+			|_| {
+				sleep!(100)
+				mark!(id(req), "after")
+				Ok({})
+			},
+		),
+	)
 	(GET, ["twice"]) => {
-		Ctx.respond!(Response.from_text(200, "first"))?
-		second = match Ctx.respond!(Response.from_text(200, "second")) {
-			Ok({}) => "Ok"
-			Err(InvalidState) => "InvalidState"
+		one! = |_| {
+			mark!(id(req), "one")
+			Ok({})
 		}
-		mark!(id(req), second)
-		Ok(Response.from_text(200, "late"))
+		two! = |_| {
+			mark!(id(req), "two")
+			Ok({})
+		}
+		Ok(Response.from_text(200, "first").after(one!).after(two!))
 	}
-	(GET, ["deadline"]) => {
-		Ctx.respond!(Response.from_bytes(200, "application/octet-stream", [1, 2, 3]))?
-		sleep!(num(req, "ms"))
-		mark!(id(req), "done")
-		Ok(Response.from_status(200))
-	}
+	(GET, ["deadline"]) => Ok(
+		Response.from_bytes(200, "application/octet-stream", [1, 2, 3]).after(
+			|_| {
+				sleep!(num(req, "ms"))
+				mark!(id(req), "done")
+				Ok({})
+			},
+		),
+	)
 	(GET, ["stream"]) => {
 		{ body, writer } = Body.writer!({})?
-		Ctx.respond!(Response.from_body(200, "text/plain", body))?
-		for i in 0.U64.until(num(req, "n")) {
-			writer.write_text!("chunk ${i.to_str()}\n")?
-			sleep!(num(req, "gap"))
+		work! = |_| {
+			for i in 0.U64.until(num(req, "n")) {
+				writer.write_text!("chunk ${i.to_str()}\n")?
+				sleep!(num(req, "gap"))
+			}
+			writer.close!()
+			sleep!(num(req, "after"))
+			mark!(id(req), "done")
+			Ok({})
 		}
-		writer.close!()
-		sleep!(num(req, "after"))
-		mark!(id(req), "done")
-		Ok(Response.from_status(200))
+		Ok(Response.from_body(200, "text/plain", body).after(work!))
 	}
 	(GET, ["closed"]) => {
 		{ body, writer } = Body.writer!({})?
-		Ctx.respond!(Response.from_body(200, "text/plain", body))?
-		writer.close!()
-		got = match writer.write!([1]) {
-			Ok({}) => "Ok"
-			Err(BodyErr(t)) => "BodyErr(${t.name})"
+		work! = |_| {
+			writer.close!()
+			got = match writer.write!([1]) {
+				Ok({}) => "Ok"
+				Err(BodyErr(t)) => "BodyErr(${t.name})"
+			}
+			mark!(id(req), got)
+			Ok({})
 		}
-		mark!(id(req), got)
-		Ok(Response.from_status(200))
+		Ok(Response.from_body(200, "text/plain", body).after(work!))
 	}
 	(POST, ["late"]) => {
-		Ctx.respond!(Response.from_text(200, "early"))?
-		sleep!(100)
-		bytes = req.bytes!()?
-		mark!(id(req), "read ${bytes.len().to_str()}")
-		Ok(Response.from_status(200))
+		work! = |_| {
+			sleep!(100)
+			bytes = req.bytes!()?
+			mark!(id(req), "read ${bytes.len().to_str()}")
+			Ok({})
+		}
+		Ok(Response.from_text(200, "early").after(work!))
 	}
 	(GET, ["pass"]) => {
 		Ctx.pass_through!({})?
@@ -165,11 +179,10 @@ fetch! = |req| match (req.method, req.segments()) {
 	_ => Ok(Response.from_status(404))
 }
 
-## Cron `respond` and `pass`: `respond!` and `pass_through!` in a `Scheduled` event give `InvalidState`.
+## Cron `pass`: `pass_through!` in a `Scheduled` event gives `InvalidState`.
 scheduled! : Worker.Scheduled => Try({}, _)
 scheduled! = |s| {
 	got = match s.cron {
-		"respond" => Ctx.respond!(Response.from_status(200))
 		"pass" => Ctx.pass_through!({})
 		other => return Err(UnknownCron(other))
 	}

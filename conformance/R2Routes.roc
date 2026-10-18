@@ -241,22 +241,23 @@ list_options = |req| {
 
 # ---- A stream that the app makes ----
 
-## A stream that the app makes: R2 needs a known length. With no `len`, the put of a `Body.writer!` stream fails at
-## once. With `len`, `length_bytes` pipes the stream through a `FixedLengthStream`. The writes and the close come
+## A stream that the app makes, with no known length. With no `len`, the put buffers it in JS (`pf.r2put`, MODULES.md
+## 5.3). With `len`, `length_bytes` pipes the stream through a `FixedLengthStream`. The writes and the close come
 ## before the put, with the public API: `Io.start!` of the `write` and `write_text` twins queues the chunks (a write
 ## waits until the put reads it), then `close!` queues the end, then `put_with!` reads all of it.
 put_stream! : Str, Str => Response
 put_stream! = |key, len| match Body.writer!({}) {
 	Err(BodyErr(t)) => Response.from_text(200, "writer ${t.name}")
-	Ok({ body, writer }) =>
+	Ok({ body, writer }) => {
+		_ = Io.start!(writer.write("hello ".to_utf8()))
+		_ = Io.start!(writer.write_text("world"))
+		writer.close!()
 		if len == "" {
 			out(bucket.put_with!(key, body, {}), show_meta)
 		} else {
-			_ = Io.start!(writer.write("hello ".to_utf8()))
-			_ = Io.start!(writer.write_text("world"))
-			writer.close!()
 			out(bucket.put_with!(key, body, { length_bytes: U64.from_str(len) ?? 0 }), show_meta)
 		}
+	}
 }
 
 # ---- Multipart ----

@@ -127,7 +127,7 @@ text! = |r| match r {
 answer : Str -> Try(Response, e)
 answer = |t| Ok(Response.from_text(200, t))
 
-# Counter: object SQL, cells, `list!`, alarms, `delete_all!`, `respond!`, and RPC methods.
+# Counter: object SQL, cells, `list!`, alarms, `delete_all!`, `Response.after`, and RPC methods.
 
 counter_fetch! : Object.Self, Request => Try(Response, e)
 counter_fetch! = |self, req| match req.segments() {
@@ -268,12 +268,13 @@ counter_fetch! = |self, req| match req.segments() {
 		table = self.sql!("SELECT a FROM gone", Sql.none)
 		answer("del=${Str.inspect(del)} table=${Str.inspect(table.is_ok())} cell=${Str.inspect(count.get!(self))} alarm=${Str.inspect(self.get_alarm!())}")
 	}
-	# API.md 10.2: `respond!` in the `Fetch` of an object, then work after it.
+	# API.md 10.2: `Response.after` in the `Fetch` of an object: the response, then the work.
 	["respond"] => {
-		first = Ctx.respond!(Response.from_text(200, "early"))
-		Time.sleep!(300)
-		_ = late.set!(self, "written")
-		answer("not sent: respond! gave ${Str.inspect(first)}")
+		work! = |_| {
+			Time.sleep!(300)
+			late.set!(self, "written")
+		}
+		Ok(Response.from_text(200, "early").after(work!))
 	}
 	["late"] => answer(Str.inspect(late.get!(self)))
 	["pass_through"] => answer(Str.inspect(Ctx.pass_through!({})))
