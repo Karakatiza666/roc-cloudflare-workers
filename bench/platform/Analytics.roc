@@ -7,6 +7,10 @@ Analytics :: { name : Str }.{
 	binding : Str -> Analytics
 	binding = |name| Analytics.{ name }
 
+	## The binding for the manifest (`Worker.new({ bindings: [...] })`, MODULES.md 3): the kind `analytics`.
+	declare : Analytics -> { name : Str, kind : Str, props : List((Str, Str)) }
+	declare = |b| { name: b.name, kind: "analytics", props: [] }
+
 	## One data point. Workers allows 20 blobs, 20 doubles and 1 index (a text of 96 bytes at most): the limits are those of
 	## Workers, the module does not check them.
 	write! : Analytics, { blobs : List(Str), doubles : List(F64), indexes : List(Str) } => Try({}, [AnalyticsErr(Io.Thrown)])

@@ -13,13 +13,15 @@ import Object
 import cbor.Cbor
 
 ## `handlers`: the handlers of the default export that the app gives (the manifest). `own!`: runs the events of those
-## handlers (`Fetch`, `Scheduled`, `Queue`, `Email`, `Tail`, `Other`).
+## handlers (`Fetch`, `Scheduled`, `Queue`, `Email`, `Tail`, `Other`). `bindings` and `crons`: for the manifest only.
 Worker :: {
 	handlers : List(Str),
 	own! : Worker.Event => Worker.Outcome,
 	rpc : List(Rpc.Handler({})),
 	entrypoints : List(Rpc.Entrypoint),
 	objects : List(Object.Class),
+	bindings : List(Worker.Binding),
+	crons : List(Str),
 }.{
 
 	## The handlers of the app. A function, not a record literal: each handler keeps its own error type until here.
@@ -33,8 +35,11 @@ Worker :: {
 		rpc ?: List(Rpc.Handler({})),
 		entrypoints ?: List(Rpc.Entrypoint),
 		objects ?: List(Object.Class),
+		bindings ?: List(Worker.Binding),
+		crons ?: List(Worker.Cron),
 	} -> Worker
 	new = |h| {
+		crons = h.?crons ?? []
 		given = [("fetch", h.?fetch!.is_ok()), ("scheduled", h.?scheduled!.is_ok()), ("queue", h.?queue!.is_ok()), ("email", h.?email!.is_ok()), ("tail", h.?tail!.is_ok())]
 		Worker.{
 			handlers: given.keep_oks(|(name, on)| if on Ok(name) else Err(NotGiven)),
@@ -46,9 +51,16 @@ Worker :: {
 					}
 					Err(MissingField) => Unhandled
 				}
-				Scheduled(s) => match h.?scheduled! {
-					Ok(f!) => done(f!(s))
-					Err(MissingField) => Unhandled
+				# The handler of the cron first, then `scheduled!` (MODULES.md 3).
+				Scheduled(s) => match crons.find_first(|c| c.cron == s.cron) {
+					Ok(c) => {
+						run! = c.run!
+						run!(s)
+					}
+					Err(_) => match h.?scheduled! {
+						Ok(f!) => done(f!(s))
+						Err(MissingField) => Unhandled
+					}
 				}
 				Queue(batch) => match h.?queue! {
 					Ok(f!) => done(f!(batch))
@@ -74,8 +86,23 @@ Worker :: {
 			rpc: h.?rpc ?? [],
 			entrypoints: h.?entrypoints ?? [],
 			objects: h.?objects ?? [],
+			bindings: h.?bindings ?? [],
+			crons: crons.map(|c| c.cron),
 		}
 	}
+
+	## A handler for one cron expression (`triggers.crons` of the Wrangler config). A run of another cron goes to
+	## `scheduled!`. The expression is in the manifest, so `roc-cloudflare-workers sync` checks the config.
+	cron : Str, (Worker.Scheduled => Try({}, e)) -> Worker.Cron
+	cron = |expr, f!| { cron: expr, run!: |s| done(f!(s)) }
+
+	## A cron handler with its error type erased.
+	Cron : { cron : Str, run! : Worker.Scheduled => Worker.Outcome }
+
+	## A binding that the app uses (`db.declare()`, `rooms.declare()`, ...), for the manifest: the name in `env`, the
+	## kind, and the settings of the kind (`class` and `script` of an object namespace, `service` and `entrypoint` of a
+	## service). The shim checks at load that `env` has each one with its kind.
+	Binding : { name : Str, kind : Str, props : List((Str, Str)) }
 
 	## One event of Workers (API.md 10.1). Phase A has all tags. The shim sends `Fetch`, `Scheduled`, `Other`, and since
 	## PLAN.md 8f `Rpc`, `EntrypointFetch`, `Object` and `Manifest`.
@@ -211,16 +238,20 @@ expect {
 }
 
 ## The names of classes and methods (API.md AQ10): `{ default: { handlers, methods }, objects: { Name: { handlers,
-## methods } }, entrypoints: { Name: { handlers, methods } } }`. The shim defines a JS method only for a name in it
-## (MODULES.md 3). The handlers of the default export: the fields that the app gives (QO5 of PLAN.md 8f, part 2).
+## methods } }, entrypoints: { Name: { handlers, methods } }, bindings: [{ name, kind, ... }], crons: [...] }`. The shim
+## defines a JS method only for a name in it (MODULES.md 3). The handlers of the default export: the fields that the app
+## gives (QO5 of PLAN.md 8f, part 2).
 manifest : Worker -> Js
 manifest = |w| {
 	texts = |names| Arr(names.map(|n| Text(n)))
 	class_of = |handlers, methods| Obj([("handlers", texts(handlers)), ("methods", texts(methods))])
+	binding_of = |b| Obj([("name", Text(b.name)), ("kind", Text(b.kind))].concat(b.props.map(|(k, v)| (k, Text(v)))))
 	Obj([
 		("default", class_of(w.handlers, w.rpc.map(|h| h.name))),
 		("objects", Obj(w.objects.map(|c| (c.name, class_of(c.handlers, c.methods))))),
 		("entrypoints", Obj(w.entrypoints.map(|ep| (ep.name, class_of(ep.handlers, ep.rpc.map(|h| h.name)))))),
+		("bindings", Arr(w.bindings.map(binding_of))),
+		("crons", texts(w.crons)),
 	])
 }
 
@@ -228,5 +259,5 @@ manifest = |w| {
 expect {
 	consume! = |_batch| Ok({})
 	w = Worker.new({ queue!: consume! })
-	manifest(w) == Obj([("default", Obj([("handlers", Arr([Text("queue")])), ("methods", Arr([]))])), ("objects", Obj([])), ("entrypoints", Obj([]))])
+	manifest(w) == Obj([("default", Obj([("handlers", Arr([Text("queue")])), ("methods", Arr([]))])), ("objects", Obj([])), ("entrypoints", Obj([])), ("bindings", Arr([])), ("crons", Arr([]))])
 }

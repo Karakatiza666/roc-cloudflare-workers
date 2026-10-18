@@ -81,7 +81,8 @@ done
 pair() {
   local bad=$1 want=$2 control=$3
   out=$("$ROC" check "$dir/$bad" 2>&1)
-  if [ $? -eq 1 ] && grep -qF -- "$want" <<< "$out"; then echo "PASS $bad does not compile (an error has \"$want\")"
+  # The compiler wraps a long type over lines: the text is matched with each run of spaces and line ends as one space.
+  if [ $? -eq 1 ] && tr -s ' \n' '  ' <<< "$out" | grep -qF -- "$want"; then echo "PASS $bad does not compile (an error has \"$want\")"
   else echo "FAIL $bad: it compiles, or the error does not have \"$want\""; echo "$out" | head -20; rc=1; fi
   out=$("$ROC" check "$dir/$control" 2>&1)
   if [ $? -eq 0 ]; then echo "PASS $control compiles"

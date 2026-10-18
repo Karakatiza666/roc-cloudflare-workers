@@ -8,6 +8,10 @@ Version :: { name : Str }.{
 	binding : Str -> Version
 	binding = |name| Version.{ name }
 
+	## The binding for the manifest (`Worker.new({ bindings: [...] })`, MODULES.md 3): the kind `version`.
+	declare : Version -> { name : Str, kind : Str, props : List((Str, Str)) }
+	declare = |b| { name: b.name, kind: "version", props: [] }
+
 	metadata! : Version => { id : Str, tag : Str, timestamp_ms : U64 }
 	metadata! = |v| match Io.call!(
 		[

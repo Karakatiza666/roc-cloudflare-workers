@@ -19,11 +19,24 @@ import cbor.Cbor
 
 Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)], location_hint : Str }.{
 
-	namespace : Str -> Object.Namespace
-	namespace = |binding| Object.Namespace.{ binding, jurisdiction: "" }
+	## A namespace: the binding name and the class of its objects (`class_name` in the Wrangler config). `script`: the
+	## Worker that has the class (`script_name`), when it is not this Worker.
+	namespace : Str, { class : Str, script ?: Str } -> Object.Namespace
+	namespace = |binding, opts| Object.Namespace.{ binding, jurisdiction: "", class: opts.class, script: opts.?script ?? "" }
 
-	## A namespace: the binding name and its jurisdiction ("" for none). Data.
-	Namespace := { binding : Str, jurisdiction : Str }.{
+	## A namespace: the binding name, its jurisdiction ("" for none), its class and the Worker of the class ("" for
+	## this Worker). Data.
+	Namespace := { binding : Str, jurisdiction : Str, class : Str, script : Str }.{
+
+		## The binding for the manifest (`Worker.new({ bindings: [...] })`, MODULES.md 3): the kind `object`, with
+		## `class`, and `script` when the class is in another Worker. With no `script`, the shim checks at load that
+		## the class is in `objects`.
+		declare : Object.Namespace -> { name : Str, kind : Str, props : List((Str, Str)) }
+		declare = |ns| {
+			props = [("class", ns.class), ("script", ns.script)].keep_if(|(_, v)| v != "")
+			{ name: ns.binding, kind: "object", props }
+		}
+
 		## A stub of the object with this name: `getByName(name)` runs in the program of each call.
 		named : Object.Namespace, Str -> Object
 		named = |ns, name| stub(ns, Named(name), Err(MissingField))

@@ -33,6 +33,10 @@ Kv(a) :: { name : Str, write : a -> Try(Js, Str), read : List(U8) -> Try(a, Str)
 	bytes : Str -> Kv(List(U8))
 	bytes = |name| Kv.{ name, write: |b| Ok(Bytes(b)), read: |b| Ok(b) }
 
+	## The binding for the manifest (`Worker.new({ bindings: [...] })`, MODULES.md 3): the kind `kv`.
+	declare : Kv(a) -> { name : Str, kind : Str, props : List((Str, Str)) }
+	declare = |b| { name: b.name, kind: "kv", props: [] }
+
 	## `get(key, { type: "stream" })` and the stream to `Body.default_max` bytes: one wait.
 	get : Kv(a), Str -> Io(a, [NotFound, KvErr(Io.Thrown), BadData(Str), TooLarge])
 	get = |kv, key| get_io(kv, key, Err(MissingField), Body.default_max)

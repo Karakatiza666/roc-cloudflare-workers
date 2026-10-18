@@ -1,5 +1,4 @@
-// The entry of the Worker: the app (app.wasm, made by `roc build`) behind the shim.
-// `import app from './app.wasm'` gives a WebAssembly.Module (Wrangler compiles it at build time).
+// Made by roc-cloudflare-workers sync from the manifest of the app. Run it again after a change of the classes in Roc.
 import app from './app.wasm';
 import { makeHandler } from 'roc-cloudflare-workers';
 

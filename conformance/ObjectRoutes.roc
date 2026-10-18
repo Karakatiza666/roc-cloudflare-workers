@@ -14,12 +14,12 @@ import RpcMethods
 import RpcErrRoutes
 import Q
 
-counters = Object.namespace("COUNTERS")
-stores = Object.namespace("STORES")
-flakies = Object.namespace("FLAKY")
-slows = Object.namespace("SLOW")
-tickers = Object.namespace("TICKERS")
-kv_only = Object.namespace("KVONLY")
+counters = Object.namespace("COUNTERS", { class: "Counter" })
+stores = Object.namespace("STORES", { class: "Store" })
+flakies = Object.namespace("FLAKY", { class: "Flaky" })
+slows = Object.namespace("SLOW", { class: "Slow" })
+tickers = Object.namespace("TICKERS", { class: "Ticker" })
+kv_only = Object.namespace("KVONLY", { class: "KvOnly" })
 
 count : Object.Cell(I64)
 count = Object.cell("count")

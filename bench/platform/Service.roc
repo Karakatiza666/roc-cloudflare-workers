@@ -8,9 +8,22 @@ import Rpc
 import Remote
 import cbor.Cbor
 
-Service :: { name : Str }.{
+Service :: { name : Str, service : Str, entrypoint : Str }.{
 	binding : Str -> Service
-	binding = |name| Service.{ name }
+	binding = |name| Service.{ name, service: "", entrypoint: "" }
+
+	## `service`: the name of the bound Worker. `entrypoint`: its named entry point. Both are for the manifest only
+	## (`declare`): the calls use the binding as Workers made it.
+	binding_with : Str, { service ?: Str, entrypoint ?: Str } -> Service
+	binding_with = |name, opts| Service.{ name, service: opts.?service ?? "", entrypoint: opts.?entrypoint ?? "" }
+
+	## The binding for the manifest (`Worker.new({ bindings: [...] })`, MODULES.md 3): the kind `service`, with
+	## `service` and `entrypoint` when `binding_with` gave them.
+	declare : Service -> { name : Str, kind : Str, props : List((Str, Str)) }
+	declare = |s| {
+		props = [("service", s.service), ("entrypoint", s.entrypoint)].keep_if(|(_, v)| v != "")
+		{ name: s.name, kind: "service", props }
+	}
 
 	## `env[name].fetch(request)`. The response body stays a stream.
 	fetch : Service, Request -> Io(Response, [ServiceErr(Io.Thrown)])

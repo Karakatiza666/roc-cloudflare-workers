@@ -13,6 +13,8 @@ const config :Workerd.Config = (
         (name = "js/host.js", esModule = embed "../js/host.js"),
         (name = "js/tasks.js", esModule = embed "../js/tasks.js"),
         (name = "js/budget.js", esModule = embed "../js/budget.js"),
+        (name = "js/manifest.js", esModule = embed "../js/manifest.js"),
+        (name = "js/bindings.js", esModule = embed "../js/bindings.js"),
         (name = "js/bridge.js", esModule = embed "../js/bridge.js"),
         (name = "js/program.js", esModule = embed "../js/program.js"),
         (name = "js/helpers.js", esModule = embed "../js/helpers.js"),

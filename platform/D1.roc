@@ -13,6 +13,10 @@ D1 :: { name : Str }.{
 	binding : Str -> D1
 	binding = |name| D1.{ name }
 
+	## The binding for the manifest (`Worker.new({ bindings: [...] })`, MODULES.md 3): the kind `d1`.
+	declare : D1 -> { name : Str, kind : Str, props : List((Str, Str)) }
+	declare = |b| { name: b.name, kind: "d1", props: [] }
+
 	## The rows as the type of the call: `rows : List(Pkg)`. To `Body.default_max` bytes of CBOR.
 	all : D1, Str, params -> Io(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs]), params.Cbor.Encodable([])]
 	all = |db, sql, params| all_io(start(db), sql, Cbor.encode(params), Body.default_max)

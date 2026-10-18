@@ -12,6 +12,10 @@ Email :: { name : Str }.{
 	binding : Str -> Email
 	binding = |name| Email.{ name }
 
+	## The binding for the manifest (`Worker.new({ bindings: [...] })`, MODULES.md 3): the kind `email`.
+	declare : Email -> { name : Str, kind : Str, props : List((Str, Str)) }
+	declare = |b| { name: b.name, kind: "email", props: [] }
+
 	## The structured send of the docs: `env[name].send({ from, to, subject, text, html, cc, bcc, replyTo })`.
 	## Gives the `messageId` that Workers made. One wait.
 	send : Email, { from : Str, to : List(Str), subject : Str, text ?: Str, html ?: Str, cc ?: List(Str), bcc ?: List(Str), reply_to ?: Str } -> Io({ message_id : Str }, [EmailErr(Io.Thrown)])
