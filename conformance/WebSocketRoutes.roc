@@ -244,6 +244,16 @@ room_message! = |self, socket, msg| {
 			_ = socket.send!(Text("sent=${sent.to_str()}"))
 			{}
 		}
+		# Closes the sockets with the tag `victim` and broadcasts at once: a closed socket is still in `sockets!` until the
+		# client answers the close, and its `send!` is `Err(Closed)`, so it is not in the count.
+		Text("bcast_closed") => {
+			for victim in self.sockets_with!({ tag: "victim" }) {
+				victim.close!(1000, "victim")
+			}
+			sent = self.broadcast!(Text("closed from ${name}"))
+			_ = socket.send!(Text("sent=${sent.to_str()}"))
+			{}
+		}
 		Text("bcast_tag") => {
 			sent = self.broadcast_with!({ tag: name }, Text("tag from ${name}"))
 			_ = socket.send!(Text("sent=${sent.to_str()}"))
