@@ -284,7 +284,8 @@ R2 :: { name : Str }.{
 
 	## `R2Conditional`: R2 checks each field that is there. `headers`: the conditional headers of a request
 	## (If-Match, If-None-Match, If-Modified-Since, If-Unmodified-Since). R2 reads them as it reads the headers of a
-	## request: a weak or quoted etag is fine. The other fields are not used when `headers` is there.
+	## request: a quoted etag is fine. A weak etag matches only in If-None-Match (If-Match uses strong comparison). The
+	## other fields are not used when `headers` is there.
 	Cond : { etag_matches ?: Str, etag_does_not_match ?: Str, uploaded_before_ms ?: U64, uploaded_after_ms ?: U64, headers ?: List(Header) }
 
 	## `only_if: R2.from_headers(req.headers)`: the conditions of the request. A header that is not a conditional header

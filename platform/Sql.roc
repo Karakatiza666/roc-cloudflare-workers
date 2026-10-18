@@ -52,8 +52,8 @@ Sql := [Null, Int(I64), Real(F64), Text(Str), Blob(List(U8))].{
 		}
 	}
 
-	## A parameter that can be NULL: `Ok(x)` encodes as `x`, `Err(_)` as NULL. Do not put a bare `Err(Null)` in a
-	## parameter list: it encodes as a map and the call fails with `BadParam`.
+	## A parameter that can be NULL: `Ok(x)` encodes as `x`, `Err(_)` as NULL, for any error type. A bare `Err(Null)` of
+	## an annotated `Try(a, [Null])` also encodes as CBOR null (NULL). A tag with a payload encodes as a map: `BadParam`.
 	or_null : Try(a, _) -> Sql.OrNull(a)
 	or_null = |t| match t {
 		Ok(x) => Sql.OrNull.Some(x)
