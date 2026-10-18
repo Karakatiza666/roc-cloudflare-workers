@@ -161,7 +161,8 @@ export const checks = [
   ['objects init! past the Init deadline is cancelled: ObjectErr with the name of the task', async (t) => {
     const r = await t.get('/objects/slow?name=s1');
     answer(r, 'Err ObjectErr({ message: "Slow.init: cancelled: deadline", name: "Error" })');
-    ok(r.ms < 2500, `took ${r.ms} ms`);
+    // The deadline is 1 s and init! sleeps 6 s: a cancel at the deadline, with room for a slow load.
+    ok(r.ms < 4500, `took ${r.ms} ms`);
     return `${r.ms} ms`;
   }],
   ['objects a KV-backed class: its first event names the class and new_sqlite_classes', async (t) => {

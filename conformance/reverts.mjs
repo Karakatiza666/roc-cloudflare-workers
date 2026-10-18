@@ -389,7 +389,7 @@ const reverts = [
   R('8f: no Init deadline (js/tasks.js)', 'conformance', ['objects init! past the Init deadline is cancelled: ObjectErr with the name of the task'],
     ['js/tasks.js', "  if (t.kind === 'Init') return t.startedAt + d.initMs;\n", '']),
   R('8f: no timer for the Init deadline (a sweep only at the next request)', 'conformance', ['objects init! past the Init deadline is cancelled: ObjectErr with the name of the task'],
-    [IX, 'const timer = setTimeout(() => runnerOf().tasks.sweep(), initMs + 50);', 'const timer = 0;']),
+    [IX, '      tick(initMs + 50);\n', '']),
   R('8f: the shim always gives retry_count 0', 'conformance', ['objects alarm!: Err while retry_count < 2 runs 3 times, with retry_count and is_retry'],
     ['js/events.js', 'retry_count: Number(info?.retryCount ?? 0)', 'retry_count: 0']),
   R('8f: no check of a SQLite-backed class in the constructor', 'conformance', ['objects a KV-backed class: its first event names the class and new_sqlite_classes'],

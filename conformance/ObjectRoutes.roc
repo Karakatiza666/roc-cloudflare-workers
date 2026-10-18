@@ -353,7 +353,7 @@ flaky_init! = |_self| match Io.await!([Get(Root("env"), "OBJFLAGS"), Call(Slot(0
 # Slow: `init!` waits longer than the `Init` deadline of the test (`initMs` in conformance/worker.js).
 slow_init! : Object.Self => Try({}, [])
 slow_init! = |_self| {
-	Time.sleep!(3_000)
+	Time.sleep!(6_000)
 	Ok({})
 }
 

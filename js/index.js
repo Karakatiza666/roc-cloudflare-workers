@@ -254,9 +254,12 @@ export function makeHandler(module, opts = {}) {
   const hooksOf = (kind, self) => ({ kind, ctx: self.ctx });
   const app = {
     // The event `Init` in `blockConcurrencyWhile`. Its deadline (API.md 10.2, shim option `initMs`): a timer sweeps the
-    // task table then, so the cancel names the task before Workers resets the object (30 s).
+    // task table then, so the cancel names the task before Workers resets the object (30 s). The task starts after this
+    // line (late under load), so the timer comes again every 100 ms until the task ends.
     async objectInit(name, ctx, env) {
-      const timer = setTimeout(() => runnerOf().tasks.sweep(), initMs + 50);
+      let timer;
+      const tick = (ms) => (timer = setTimeout(() => (runnerOf().tasks.sweep(), tick(100)), ms));
+      tick(initMs + 50);
       try {
         const r = await run(`${name}.init`, objectEvent(name, ctx.id.toString(), objectInit()), { kind: 'Init', env, ctx, event: ctx, hooks: { kind: 'Init', ctx } });
         done(`${name}.init`, r);
