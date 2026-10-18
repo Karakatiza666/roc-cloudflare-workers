@@ -5,9 +5,11 @@ import pf.Response
 import pf.R2
 import pf.Io
 import pf.Body
+import pf.Http
 import Q
 
 bucket = R2.binding("BUCKET")
+trace = R2.binding("TRACE")
 
 R2Routes :: [].{
 	route! : Request, List(Str) => Response
@@ -36,6 +38,13 @@ R2Routes :: [].{
 			["list"] => out(bucket.list!(list_options(req)), show_list)
 			["list_io"] => out(Io.run!(bucket.list(list_options(req))), show_list)
 			["put_stream"] => put_stream!(key, Q.text(req, "len"))
+			# 8h wave B: a writer stream with no length, of `?bytes=` bytes, on the bucket `TRACE` (`?trace=1`) or `BUCKET`.
+			["put_gen"] => put_gen!(if Q.text(req, "trace") == "" bucket else trace, key, Q.num(req, "bytes"), put_options(req))
+			# A stream of the local server that breaks after 6 MiB, put on `TRACE`.
+			["put_broken"] => match Http.open!(Request.get(Q.text(req, "from"))) {
+				Ok(res) => out(trace.put!(key, res.body), show_meta)
+				Err(e) => Response.from_text(200, "open Err ${Str.inspect(e)}")
+			}
 			["mp_create"] => mp_create!(key, part_number(req), Bool.False)
 			["mp_create_io"] => mp_create!(key, part_number(req), Bool.True)
 			["mp_resume"] => Response.from_text(200, Json.to_str(bucket.resume_multipart_upload(key, Q.text(req, "id"))))
@@ -241,22 +250,40 @@ list_options = |req| {
 
 # ---- A stream that the app makes ----
 
-## A stream that the app makes: R2 needs a known length. With no `len`, the put of a `Body.writer!` stream fails at
-## once. With `len`, `length_bytes` pipes the stream through a `FixedLengthStream`. The writes and the close come
+## A stream that the app makes, with no known length. With no `len`, the put buffers it in JS (`pf.r2put`, MODULES.md
+## 5.3). With `len`, `length_bytes` pipes the stream through a `FixedLengthStream`. The writes and the close come
 ## before the put, with the public API: `Io.start!` of the `write` and `write_text` twins queues the chunks (a write
 ## waits until the put reads it), then `close!` queues the end, then `put_with!` reads all of it.
 put_stream! : Str, Str => Response
 put_stream! = |key, len| match Body.writer!({}) {
 	Err(BodyErr(t)) => Response.from_text(200, "writer ${t.name}")
-	Ok({ body, writer }) =>
+	Ok({ body, writer }) => {
+		_ = Io.start!(writer.write("hello ".to_utf8()))
+		_ = Io.start!(writer.write_text("world"))
+		writer.close!()
 		if len == "" {
 			out(bucket.put_with!(key, body, {}), show_meta)
 		} else {
-			_ = Io.start!(writer.write("hello ".to_utf8()))
-			_ = Io.start!(writer.write_text("world"))
-			writer.close!()
 			out(bucket.put_with!(key, body, { length_bytes: U64.from_str(len) ?? 0 }), show_meta)
 		}
+	}
+}
+
+## A writer stream of `total` bytes with no known length, in chunks of 1 MiB (byte `A` + the number of the chunk), then `put_with!`.
+put_gen! : R2, Str, U64, { only_if ?: R2.Cond, http ?: R2.Http, custom ?: List((Str, Str)), checksum ?: R2.Checksum, length_bytes ?: U64 } => Response
+put_gen! = |target, key, total, opts| match Body.writer!({}) {
+	Err(BodyErr(t)) => Response.from_text(200, "writer ${t.name}")
+	Ok({ body, writer }) => {
+		full = total // 1_048_576
+		for i in 0.U64.until(full) {
+			_ = Io.start!(writer.write(List.repeat(65 + i.to_u8_wrap(), 1_048_576)))
+		}
+		if total % 1_048_576 > 0 {
+			_ = Io.start!(writer.write(List.repeat(90, total % 1_048_576)))
+		}
+		writer.close!()
+		out(target.put_with!(key, body, { ..opts, http: { content_type: "text/x-big" } }), show_meta)
+	}
 }
 
 # ---- Multipart ----

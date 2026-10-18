@@ -40,6 +40,7 @@ import RpcErrRoutes
 import CborRoutes
 import WebSocketRoutes
 import TcpRoutes
+import AfterRoutes
 
 fetch! : Request => Try(Response, _)
 fetch! = |req| {
@@ -78,6 +79,7 @@ fetch! = |req| {
 		["cbor", .. as rest] => CborRoutes.route!(req, rest)
 		["websocket", .. as rest] => WebSocketRoutes.route!(req, rest)
 		["tcp", .. as rest] => TcpRoutes.route!(req, rest)
+		["after", .. as rest] => AfterRoutes.route!(req, rest)
 		_ => Response.from_text(404, "no route")
 	}
 	Ok(res)
@@ -93,6 +95,6 @@ email! = |mail| EmailRoutes.handle!(mail)
 
 tail! = |items| TailRoutes.handle!(items)
 
-worker = Worker.new({ fetch!, scheduled!, queue!, email!, tail!, rpc: RpcRoutes.rpc, entrypoints: RpcRoutes.entrypoints, objects: ObjectRoutes.classes.concat(WebSocketRoutes.classes) })
+worker = Worker.new({ fetch!, scheduled!, queue!, email!, tail!, rpc: RpcRoutes.rpc, entrypoints: RpcRoutes.entrypoints.concat(AfterRoutes.entrypoints), objects: ObjectRoutes.classes.concat(WebSocketRoutes.classes) })
 
 event! = |e| worker.event!(e)

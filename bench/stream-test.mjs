@@ -178,7 +178,7 @@ await (await post(H, '/limit?max=100', 'x'.repeat(50))).text();
   }
 }
 
-// respond!: the response goes out at once, and the work after it runs after the response (in ctx.waitUntil).
+// Response.after: the response goes out at once, and the work after it runs after the response (in ctx.waitUntil).
 {
   const res = await get(H, '/after?id=a1');
   const text = await res.text();
@@ -186,19 +186,19 @@ await (await post(H, '/limit?max=100', 'x'.repeat(50))).text();
   await settle();
   console.log('respond after:', { text, atResponse, after: marks.get('a1') });
   if (text !== 'early' || atResponse !== undefined) fail('after', `the response came at the task end: ${text}, marks ${atResponse}`);
-  if (marks.get('a1')?.[0] !== 'after') fail('after', 'the work after respond! did not run');
+  if (marks.get('a1')?.[0] !== 'after') fail('after', 'the work of after did not run');
 }
 
-// A second respond! gives InvalidState (status 1).
+// Two after calls: the work of each, in order.
 {
   const text = await (await get(H, '/twice?id=t1')).text();
   await settle();
-  console.log('respond twice:', text, marks.get('t1'));
-  if (text !== 'first' || marks.get('t1')?.[0] !== 'InvalidState') fail('twice', `${text} ${marks.get('t1')}`);
+  console.log('after twice:', text, marks.get('t1'));
+  if (text !== 'first' || marks.get('t1')?.join(',') !== 'one,two') fail('twice', `${text} ${marks.get('t1')}`);
 }
 
-// respond! and pass_through! in a Scheduled event give InvalidState.
-for (const cron of ['respond', 'pass']) {
+// pass_through! in a Scheduled event gives InvalidState.
+for (const cron of ['pass']) {
   const n = lines.length;
   let got;
   try {

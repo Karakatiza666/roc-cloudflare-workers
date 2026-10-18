@@ -35,7 +35,7 @@ WebSocket :: { ref : Js.Ref }.{
 	}
 
 	## `new WebSocketPair()`, `accept()` of the server end, and a 101 response with the client end, in one `call!`.
-	## Give the response to `Ctx.respond!`, then `receive!` in a loop: a 101 response keeps the task until the socket
+	## Give `response.after(work!)` with a `receive!` loop in the work: a 101 response keeps the task until the socket
 	## closes (API.md 10.2). `NotUpgrade` when the request has no `Upgrade: websocket`.
 	accept! : Request => Try({ socket : WebSocket, response : Response }, [NotUpgrade])
 	accept! = |req|

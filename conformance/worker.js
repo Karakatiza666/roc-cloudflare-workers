@@ -16,9 +16,10 @@ export const Slow = objectClass('Slow');
 export const Ticker = objectClass('Ticker');
 export const KvOnly = objectClass('KvOnly');
 export const Admin = entrypointClass('Admin');
+export const After = entrypointClass('After');
 // PLAN.md 8f part 3: the class of the hibernation API (conformance/WebSocketRoutes.roc).
 export const Room = objectClass('Room');
-const exported = { Counter, Store, Flaky, Slow, Ticker, KvOnly, Admin, Room };
+const exported = { Counter, Store, Flaky, Slow, Ticker, KvOnly, Admin, After, Room };
 const kind = (v) => (v === null ? 'null' : Array.isArray(v) ? 'Array' : typeof v === 'object' ? Object.getPrototypeOf(v)?.constructor?.name ?? 'null-proto' : typeof v);
 
 // The root `ops` (API.md 6.4). `lib` is an object of functions, not a function (the option check, PLAN.md 8a O4).

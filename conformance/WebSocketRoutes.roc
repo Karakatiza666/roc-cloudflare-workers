@@ -6,7 +6,6 @@ import pf.Request
 import pf.Response
 import pf.Object
 import pf.WebSocket
-import pf.Ctx
 import pf.Io
 import pf.Time
 import pf.Log
@@ -210,14 +209,16 @@ WebSocketRoutes :: [].{
 	}
 }
 
-## MODULES.md 12.2: `accept!`, `respond!`, then `receive!` until the close. "close" closes the socket from the Worker.
+## MODULES.md 12.2: `accept!`, its response with `after`: `receive!` until the close. "close" closes the socket from the Worker.
 echo! : Request => Response
 echo! = |req| match WebSocket.accept!(req) {
 	Ok({ socket, response }) => {
-		_ = Ctx.respond!(response)
-		closed = serve!(socket)
-		Log.info!("echo closed", closed)
-		response
+		work! = |_| {
+			closed = serve!(socket)
+			Log.info!("echo closed", closed)
+			Ok({})
+		}
+		response.after(work!)
 	}
 	Err(NotUpgrade) => Response.from_status(426)
 }

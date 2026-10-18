@@ -50,7 +50,7 @@ const cf = {
   httpProtocol: 'HTTP/1.1', requestPriority: 'weight=192;exclusive=0', tlsCipher: 'AEAD-AES128-GCM-SHA256', tlsVersion: 'TLSv1.3',
 };
 
-// A local HTTP server for the `Http` checks: `/hello` (text), `/ten` (10 bytes), `/slow` (answers after 2 s), `/echo` (the
+// A local HTTP server for the `Http` checks: `/hello` (text), `/ten` (10 bytes), `/slow` (answers after 2 s), `/broken` (6 MiB, then a broken connection), `/echo` (the
 // method, the header `x-test` and the body), `/status/<n>` (that status, no body).
 const server = createServer((req, res) => {
   const chunks = [];
@@ -60,6 +60,11 @@ const server = createServer((req, res) => {
     if (path === '/hello') return res.end('hello');
     if (path === '/ten') return res.end('0123456789');
     if (path === '/slow') return setTimeout(() => res.end('late'), 2000);
+    // 6 MiB in chunks (no content-length), then the connection breaks: a stream that errors in the middle.
+    if (path === '/broken') {
+      res.write(Buffer.alloc(6 * 1024 * 1024, 66));
+      return setTimeout(() => res.destroy(), 100);
+    }
     if (path === '/echo_json') return res.end(`${req.method} ${req.headers['content-type'] ?? '-'} ${Buffer.concat(chunks).toString()}`);
     if (path === '/echo') return res.end(`${req.method} ${req.headers['x-test'] ?? '-'} ${Buffer.concat(chunks).toString()}`);
     // Cloudflare error pages for `Http.cloudflare_error`: the status and the body `error code: <n>` (`/cf64`: 64 bytes, `/cflong`: 76).

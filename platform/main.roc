@@ -63,4 +63,4 @@ import Entry
 
 ## API.md 4: the host decodes the event bytes into a `Js` value, and encodes the result for JS.
 event_for_host! : Js => Js
-event_for_host! = |js| Entry.outcome(event!(Entry.event(js)))
+event_for_host! = |js| Entry.finish!(event!(Entry.event(js)))

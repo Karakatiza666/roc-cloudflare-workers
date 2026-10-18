@@ -97,8 +97,8 @@ Body := [Empty, Text(Str), Bytes(List(U8)), Stream(Js.Ref)].{
 		}
 	}
 
-	## A stream that the task writes, for example after `Ctx.respond!` (API.md 10.2): `pf.writer`, a
-	## `TransformStream`, no wait. The 30 s limit after `respond!` starts at `close!`.
+	## A stream that the task writes, for example in the work of `Response.after` (API.md 10.2): `pf.writer`, a
+	## `TransformStream`, no wait. The 30 s limit after the response starts at `close!`.
 	writer! : {} => Try({ body : Body, writer : Body.Writer }, [BodyErr(Io.Thrown)])
 	writer! = |_| match Io.call!([Call(Root("pf"), "writer", [])]) {
 		Ok(Obj(fields)) => match (field(fields, "readable"), field(fields, "writer")) {

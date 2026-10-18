@@ -93,16 +93,16 @@ export function makeHandler(module, opts = {}) {
   // An outcome that the entry does not take: the reason as text (API.md 10.1: `Failed`, `Unhandled`, another one).
   const reason = (o) => (o.outcome === 'failed' ? `failed: ${o.message}` : o.outcome === 'unhandled' ? 'unhandled: the app has no handler for it' : `the outcome ${o.outcome} is not for this event`);
 
-  // After `Ctx.respond!` the response is out: the outcome of the task is not a response. A `Failed` or `Unhandled` is
-  // a log line (a trap has its line from `run`).
+  // After the response of `Response.after` the work gives `Done`, or `Failed` with its error: a log line (a trap has
+  // its line from `run`).
   const after = (r) => {
-    if (!r.trap && r.outcome.outcome !== 'respond') log(`fetch: after respond: ${reason(r.outcome)}`);
+    if (!r.trap && r.outcome.outcome !== 'done') log(`fetch: after respond: ${reason(r.outcome)}`);
   };
 
   class Handler extends WorkerEntrypoint {
     // `Respond` gives the response. `Failed`, `Unhandled`: a log line and a 500 response with no body.
     // A trap: a response with `trap ...` and the status of the runner (500, or 503 for a shed, a cancel, OOM).
-    // `Ctx.respond!` (API.md 10.2): its response goes to Workers at once, and the rest of the task runs in
+    // `Response.after` (API.md 10.2): the response goes to Workers at once, and the work after it runs in
     // `ctx.waitUntil`. After `Ctx.pass_through!`, a `Failed` and a trap are a throw: Workers sends the request to the
     // origin (API.md 10.1).
     async fetch(request) {
@@ -206,7 +206,7 @@ export function makeHandler(module, opts = {}) {
     throw new Error(`${tag}: ${reason(r.outcome)}`);
   };
   // The `fetch` of a named entry point and of a Durable Object: as the `fetch` of the Worker, with the `respond` hook
-  // of `Ctx.respond!` (API.md 10.2) and no `pass_through!`. After `respond!`, an entry point gives the rest of the task
+  // of `Response.after` (API.md 10.2) and no `pass_through!`. After the response, an entry point gives the rest of the task
   // to `ctx.waitUntil`; an object does not need it (`keep` false).
   const fetchLike = async (tag, kind, ev, request, self, keep) => {
     const hooks = { kind, ctx: self.ctx, respond: null, response: null, passThrough: false };
@@ -215,7 +215,7 @@ export function makeHandler(module, opts = {}) {
     const r = await Promise.race([running, early]);
     if (hooks.response) {
       const rest = running.then((x) => {
-        if (!x.trap && x.outcome.outcome !== 'respond') log(`${tag}: after respond: ${reason(x.outcome)}`);
+        if (!x.trap && x.outcome.outcome !== 'done') log(`${tag}: after respond: ${reason(x.outcome)}`);
       });
       if (keep) self.ctx?.waitUntil?.(rest);
       return hooks.response;
