@@ -22,6 +22,9 @@ CacheRoutes :: [].{
 				Ok(res) => show(cache.put!(url, res.with_header("cache-control", "max-age=60")), |_| "put")
 				Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
 			}
+			# 8h wave B: `put!` and `put_after!` give the response to send: the route sends it.
+			["put_send"] => sent(cache.put!(url, with_cc(Http.open!(Request.get(Q.text(req, "from"))))))
+			["put_after"] => sent(cache.put_after!(url, with_cc(Http.open!(Request.get(Q.text(req, "from"))))))
 			["delete"] => show(cache.delete!(url), |_| "deleted")
 			["delete_io"] => show(Io.run!(cache.delete(url)), |_| "deleted")
 			_ => Response.from_text(404, "no route")
@@ -54,4 +57,18 @@ show_get! = |r| match r {
 		Err(e) => Response.from_text(200, "Err body ${Str.inspect(e)}")
 	}
 	Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+}
+
+## The response to send, or the error as text.
+sent : Try(Response, e) -> Response
+sent = |r| match r {
+	Ok(res) => res
+	Err(e) => Response.from_text(500, "Err ${Str.inspect(e)}")
+}
+
+## A response with a cache-control header, or an error response when the fetch failed.
+with_cc : Try(Response, e) -> Response
+with_cc = |r| match r {
+	Ok(res) => res.with_header("cache-control", "max-age=60")
+	Err(e) => Response.from_text(500, "fetch Err ${Str.inspect(e)}")
 }

@@ -23,7 +23,8 @@ flowchart LR
 | `canon.mjs`, `assets/` | `canon(value)`: JSON text with the keys in order (Roc writes the fields of a record in name order). `assets/`: the files of the local `Assets` binding. |
 | `assert.mjs` | `eq`, `ok`, `answer(r, text)` (a 200 with that body) |
 | `reverts.mjs` | The revert checks: a real edit, a build, a run, a restore (`PLAN.md` 8c, "Status of step 8c, wave 1") |
-| `must-not-compile.sh`, `must-not-compile/` | A `Secret` in `Log` fields and in a CBOR encode (`pf.Cbor`) does not compile; the controls with `s.reveal()` do |
+| `AfterRoutes.roc`, `checks/after.mjs` | `Response.after` in a Worker `fetch!` and in the named entry point `After` (8h wave B): early response, order, failing work. R2 multipart of a stream with no length uses the bucket `TRACE` (`bindings.js` records its multipart calls). |
+| `must-not-compile.sh`, `must-not-compile/` | A `Secret` in `Log` fields and in a CBOR encode (`pf.Cbor`) does not compile; the controls with `s.reveal()` do. Also `Cache.put!` as a statement, `Ctx.wait_until!` of `cache.put`, `.after` in a cron handler (8h wave B) |
 | `edge-forms-test.mjs` | The checks that have a local form and an edge form of an answer (`t.edge`): each passes with the answers of the edge when `t.edge` is true and fails with them when it is not (`PLAN.md` 11c, EP7). No Miniflare. |
 | `tmpdir-test.sh` | `run.mjs` leaves no temp dir: a normal run, a `FAIL start` run and a run killed with SIGTERM |
 
