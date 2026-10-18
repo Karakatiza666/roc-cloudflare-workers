@@ -273,9 +273,9 @@ export const checks = [
       ok(r.body.startsWith('Err D1Err({ message: "SQL parameters must be a list or a tuple, not a record or a tag') && r.body.includes('name: "BadParam"'), `${c}: got ${r.body}`);
     }
   }],
-  ['d1 params: a bare Err(Null) item is BadParam with the hint for Sql.or_null; a Bool item is BadParam', async (t) => {
+  ['d1 params: a tag item is BadParam with the hint for Sql.or_null; a Bool item is BadParam', async (t) => {
     const e = await par(t, 'tag_item');
-    ok(e.body.includes('name: "BadParam"') && e.body.includes('SQL parameter 1: a record or a tag is not a SQL value, use Sql.null or Sql.or_null for NULL, not a bare Err(Null)'), `tag_item: got ${e.body}`);
+    ok(e.body.includes('name: "BadParam"') && e.body.includes('SQL parameter 1: a record or a tag is not a SQL value, tag values are not SQL values, use Sql.null or Sql.or_null for NULL'), `tag_item: got ${e.body}`);
     const db = await t.mf.getD1Database('DB');
     eq((await db.prepare("SELECT count(*) AS n FROM pi WHERE k = 'tag_item'").first()).n, 0, 'rows of the refused insert');
     const b = await par(t, 'bool');

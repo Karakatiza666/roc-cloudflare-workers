@@ -201,7 +201,7 @@ export const checks = [
     for (const range of ['bytes=11-', 'bytes=20-30']) {
       const r = await hit(t, '/r2/respond?key=cond1', { range });
       eq(r.status, 416, `${range} status`);
-      // The 416 of the error 10039 has no content-range (R2 gives no size): a finding, not checked here.
+      eq(r.headers['content-range'], 'bytes */11', `${range} content-range`);
     }
   }],
   ['r2 respond!: more than one range, a wrong range and If-Range give 200 with the whole object', async (t) => {

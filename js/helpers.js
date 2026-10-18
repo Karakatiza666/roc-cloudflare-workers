@@ -161,7 +161,7 @@ export function sqlParams(params) {
       case 'boolean': throw new BadParam(`SQL parameter ${i}: a Bool is not a SQL value, use 0 or 1`);
     }
     if (v === null || v instanceof Uint8Array) return v;
-    throw new BadParam(`SQL parameter ${i}: ${kindOf(v)} is not a SQL value${v !== null && typeof v === 'object' && !Array.isArray(v) ? ', use Sql.null or Sql.or_null for NULL, not a bare Err(Null)' : ''}`);
+    throw new BadParam(`SQL parameter ${i}: ${kindOf(v)} is not a SQL value${v !== null && typeof v === 'object' && !Array.isArray(v) ? ', tag values are not SQL values, use Sql.null or Sql.or_null for NULL' : ''}`);
   });
 }
 

@@ -63,7 +63,7 @@ R2 :: { name : Str }.{
 	## A GET request answered from the bucket. The key is the argument, the request gives the conditions and the range.
 	## `If-None-Match` and `If-Modified-Since` that fail: 304 with `etag`. `If-Match` and `If-Unmodified-Since` that
 	## fail: 412. A key that is not there: 404. A `Range` of one range (`bytes=a-b`, `bytes=a-`, `bytes=-n`): 206 with
-	## `content-range`, 416 when it starts after the end (R2 error 10039). A request with `If-Range` gets the whole object (R2 has no
+	## `content-range`, 416 with `content-range: bytes */size` when it starts after the end (R2 error 10039; `respond!` makes the header with one `head!`, the `Io` twin `respond` gives a 416 without it). A request with `If-Range` gets the whole object (R2 has no
 	## `If-Range`). A `Range` that has more than one range, or has a wrong form, is not used. The method is not read:
 	## the app routes GET and HEAD to it. The bytes of a HEAD response are dropped by Workers.
 	respond : R2, Str, Request -> Io(Response, [R2Err(Io.Thrown)])
@@ -89,7 +89,18 @@ R2 :: { name : Str }.{
 	}
 
 	respond! : R2, Str, Request => Try(Response, [R2Err(Io.Thrown)])
-	respond! = |bucket, key, req| Io.run!(respond(bucket, key, req))
+	respond! = |bucket, key, req| {
+		res = Io.run!(respond(bucket, key, req))?
+		# The error 10039 gives a 416 with no size: one `head!` adds `content-range` (the `Io` twin `respond` has none).
+		if res.status == 416 and res.headers.is_empty() {
+			match head!(bucket, key) {
+				Ok(meta) => Ok({ ..res, headers: [Header.{ name: "content-range", value: "bytes */${meta.size_bytes.to_str()}" }] })
+				Err(_) => Ok(res)
+			}
+		} else {
+			Ok(res)
+		}
+	}
 
 	## The metadata only (`head`).
 	head : R2, Str -> Io(R2.Meta, [NotFound, R2Err(Io.Thrown)])

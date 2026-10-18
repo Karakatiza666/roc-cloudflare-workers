@@ -68,7 +68,7 @@ export const checks = [
       const r = await sqlp(t, c);
       ok(r.body.includes('name: "BadParam"') && r.body.includes('SQL parameters must be a list or a tuple, not a record or a tag'), `${c}: got ${r.body}`);
     }
-    has(await sqlp(t, 'tag_item'), 'SQL parameter 1: a record or a tag is not a SQL value, use Sql.null or Sql.or_null for NULL, not a bare Err(Null)');
+    has(await sqlp(t, 'tag_item'), 'SQL parameter 1: a record or a tag is not a SQL value, tag values are not SQL values, use Sql.null or Sql.or_null for NULL');
     has(await sqlp(t, 'bool'), 'SQL parameter 1: a Bool is not a SQL value, use 0 or 1');
     has(await sqlp(t, 'bool'), 'name: "BadParam"');
   }],

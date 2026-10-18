@@ -425,7 +425,7 @@ SQL parameter items (items of the array that is the parameter value):
 | `Sql.or_null(t)` | the value, or null | the value, or `null` | `Ok(x)` is `x`, `Err(_)` is NULL |
 | `Sql.blob(list)` | byte string | `Uint8Array` | The same as `Cbor.bytes(list)` |
 | `Str` | text | string | |
-| `F64` | f64 | number | |
+| `F64` | f64 | number | A NaN needs an explicit `F64`: `0.0.F64 / 0.0.F64`. An untyped `0.0 / 0.0` is a `Dec` and traps, and a Roc trap gives a 500, which can hide in a test. |
 | an integer type | integer | number, or decimal text from 2^53 | Roc types with no CBOR encoder (`U128`, `I128`) do not compile. A `U64` above 2^63 - 1 is `BadParam` (never a wrap). |
 | `Id64` | text (the I64 decimal) | string | SQLite stores the exact integer in an INTEGER column ("Ids: `Id64`") |
 | a `Sql` value | per tag | as above | For SQL built at run time: `Null`, `Int`, `Real`, `Text`, `Blob` |
@@ -1042,7 +1042,7 @@ Log :: [].{
 | `wait_until!` | `Io.start!` and `ctx.waitUntil` in one `call!`, with no wait. The Roc reader of the `Io` does not run, so a Roc-level `Err` (`PreconditionFailed`, `BadData`) is not seen. Only a JS throw goes to the log. The context of the task (refs and roots) stays until the operation settles, or until the 30 s limit of `waitUntil` (`API.md` 6.5, RS1). Work whose result matters (a write that can fail, a check) runs in the task after `respond!`. |
 | `pass_through!` | `ctx.passThroughOnException()`. Only in the `Fetch` of a Worker. Elsewhere the shim gives status 1, and the function gives `InvalidState`. After it, an `Err` of `fetch!` makes the shim throw, and Workers sends the request to the origin (`API.md` 10.1). Workers cannot send a request body that the handler already read (Cloudflare docs, Context API). |
 | `Io.timeout` | `io.timeout(ms)` gives `Io(a, [TimedOut, ..e])`: the operation, or `Err(TimedOut)` when `ms` pass first. It is a `Race` of the operation and the sleep of `Time.sleep` in one program, so the loser is aborted as in `Io.race!`. `ws.receive().timeout(5_000).run!()` replaces `Io.race!([ws.receive().map(Got), Time.sleep(5_000).map(\|_\| TimedOut)])` and its `match`. No `receive_within!`: the call above has the same length and works for each `Io` (a `Tcp` read, a fetch). |
-| `sleep!`, `sleep` | `scheduler.wait(ms)`. On the edge, a timer does not move during CPU work, only at I/O (Cloudflare docs, scheduler). A sleep is a wait, so the deadlines of `API.md` 10.2 apply. A timeout is a race: `Io.race!([op.map(Done), Time.sleep(ms).map(\|_\| TimedOut)])` (`API.md` 6.5). |
+| `sleep!`, `sleep` | `scheduler.wait(ms)`. On the edge, a timer does not move during CPU work, only at I/O (Cloudflare docs, scheduler). A sleep is a wait, so the deadlines of `API.md` 10.2 apply. A timeout is `Io.timeout` (`op.timeout(ms)`, `API.md` 6.5). |
 
 As built in `PLAN.md` 8b (second half) and 9c (`platform/Ctx.roc`, `js/helpers.js`, `js/index.js`). `Time` and `Log` are 8c (the table after this one).
 
@@ -1361,7 +1361,7 @@ Lessons from the compiler (nightlies 10-09 and 10-12):
 | A `where` clause cannot name `List(a)` | `all!` takes the type of the whole result. The caller writes `List(Pkg)`. |
 | A type module `Crypto` shadows the builtin module (`clash/`) | `WebCrypto` |
 | The tags of the nominal `Method` of `roc-lang/http` match in a tuple with a list pattern, from another module | Routing by `match (req.method, req.segments())` |
-| A phantom type variable on an opaque type (`Rpc(arg, ret) :: { name : Str }`) fixes the types of both sides | Typed RPC with one constant |
+| A phantom type variable on an opaque type (`Rpc(arg, ret, err) :: { name : Str }`) fixes the types of both sides | Typed RPC with one constant |
 | An optional field of a structural record can hold an effectful function with an error type variable | `Object.class` takes a plain record |
 | `Str.inspect` works on the type variable `e` of `Worker(e)` (now of each handler in `Worker.new`) | `Err(e)` becomes a log line |
 | An opaque type over a bare `Str` (`Secret :: Str`) gets the codecs of `Str`: `Json.to_str` and `Cbor.encode` write the hidden text. A hand-written `encoder_for` does not compile (type mismatch on `encode_str`). With a record backing (`Secret :: { text : Str }`), an encode is a compile error, as the Roc docs say for nominal types. The bug is only in the encoder, for a nominal type over `Str` or a number type in a record, a tuple or a tag; a bare value is rejected. Over `Bool`, the same encode crashes the compiler. Repro: `research/roc-bugs/` (also on nightly 10-14). | `Secret` has a record backing. Reported: roc-lang/roc#12309. |
