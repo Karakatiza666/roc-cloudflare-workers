@@ -77,6 +77,7 @@ for pair in 'u128:encode_u128' 'empty:encoder_for'; do
   if [ $? -eq 0 ]; then echo "PASS sql_${kind}_ok.roc compiles"
   else echo "FAIL sql_${kind}_ok.roc: the control does not compile"; echo "$out" | head -20; rc=1; fi
 done
+# 8h: a `set!` of a typed socket attachment with a value of another type (attachment_bad.roc).
 # 8h: `<name>_bad.roc` must fail with an error that has the text `want`; `control` must compile.
 pair() {
   local bad=$1 want=$2 control=$3
@@ -89,4 +90,5 @@ pair() {
 }
 pair rpc_tag_bad.roc 'Err([Busy])' rpc_tag_ok.roc
 pair worker_field_bad.roc 'fetch! ?: Str => Try(Response, [])' worker_errs_ok.roc
+pair attachment_bad.roc 'slot.set!(socket, { name: 5 })' attachment_ok.roc
 exit "$rc"

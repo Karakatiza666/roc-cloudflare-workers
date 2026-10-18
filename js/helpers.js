@@ -200,6 +200,10 @@ export function makeHelpers(t, c, shim, tasks) {
       for (const [k] of entries) out.push(k);
       return new Limited(out, maxBytes ?? Infinity);
     },
+    // `Object.Self.set_alarm_in!`: `storage.setAlarm(Date.now() + delayMs)`, so the delay needs no clock crossing.
+    alarmIn(storage, delayMs) {
+      return storage.setAlarm(Date.now() + delayMs);
+    },
     // The item whose `id` is `id`, else undefined (OP7). `Queue.Message.ack!` finds its message with it.
     findById(array, id) {
       if (!Array.isArray(array)) throw new TypeError('findById: the first argument must be an array');

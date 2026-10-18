@@ -271,4 +271,23 @@ export const checks = [
     ok(r.status === 200 && r.body.startsWith('bad=Err(BadData("'), `got ${r.body}`);
     ok(r.body.endsWith(' good=Ok({}) first=Ok(Text("echo {\\"r\\":0.5}")) second=Ok(Text("echo after"))'), `got ${r.body}`);
   }],
+  // The typed attachment `Object.Attachment` (MODULES.md 12.1).
+  ['websocket Attachment: NotFound before set!, a record round trip, and a read as another type is BadData', async (t) => {
+    const a = await client(wsUrl(t.url, '/websocket/room/ra?user=a&noattach=1'));
+    a.send('att_before');
+    eq(await a.next(), 'Err(NotFound)', 'before set!');
+    a.send('att_round');
+    eq(await a.next(), 'set=Ok({}) same=True', 'a record of Str, U64 of 2^60, List, Bool, I64');
+    a.send('att_wrong');
+    const wrong = await a.next();
+    ok(wrong.startsWith('Err(BadData("the attachment count: ') && !wrong.includes('Ok('), `read as U64: ${wrong}`);
+    await a.close(1000, 'done');
+    // The `user` slot set at the join is read back with the same slot (and as another type: BadData).
+    const b = await room(t, 'rb', 'b');
+    b.send('att_wrong');
+    ok((await b.next()).startsWith('Err(BadData("the attachment count: '), 'a socket that has a user record, read as U64');
+    b.send('info');
+    ok((await b.next()).startsWith('user=b '), 'the same slot still reads it');
+    await b.close(1000, 'done');
+  }],
 ];
