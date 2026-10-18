@@ -18,6 +18,7 @@
 /QueueRoutes.roc
 /R2Routes.roc
 /RateLimitRoutes.roc
+/RpcErrRoutes.roc
 /RpcMethods.roc
 /RpcRoutes.roc
 /SecretsStoreRoutes.roc
