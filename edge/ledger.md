@@ -22,7 +22,7 @@ Rule: each resource of this run has a name that starts with `rocplat-test-`. The
 | Time (UTC) | Kind | Name | Id | Deleted (UTC) |
 | --- | --- | --- | --- | --- |
 | 11:46:02 | D1 | `rocplat-test-d1` | 85ab4dbf-afaf-4807-b0b9-d44e5babfb18 | 12:58:44 |
-| 11:46:05 | R2 | `rocplat-test-r2` | - | not yet: empty of objects, held by incomplete multipart uploads (End state) |
+| 11:46:05 | R2 | `rocplat-test-r2` | - | 2026-10-18 13:31 UTC, after the lifecycle rule aborted the uploads (End state) |
 | 11:46:10 | KV | `rocplat-test-kv` | f0de62f2176142b09b998909ad6cab12 | 12:59:01 |
 | 11:46:16 | KV | `rocplat-test-objflags` | d32b8ab5ef4c4aa5aaf12cfcf93b5183 | 12:59:03 |
 | 11:46:29 | Worker | `rocplat-test-echo` | https://rocplat-test-echo.bellup.workers.dev | 12:58:42 |
@@ -57,5 +57,7 @@ Open: the bucket `rocplat-test-r2` has no object (all 22 keys deleted at 12:58 a
 ```sh
 wrangler r2 bucket delete rocplat-test-r2
 ```
+
+Done: the bucket was deleted on 2026-10-18 at 13:31 UTC ("Deleted bucket rocplat-test-r2."). `wrangler r2 bucket list` then showed no `rocplat-test-` bucket. No resource of the run is left.
 
 Raw lists: `edge/.start-lists.txt` (start) and `edge/.end-lists.txt` (end).

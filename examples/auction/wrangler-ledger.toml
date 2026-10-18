@@ -1,0 +1,29 @@
+name = "auction-ledger"
+main = "worker-ledger.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["enable_request_signal", "global_fetch_strictly_public"]
+
+[triggers]
+crons = ["0 * * * *"]
+
+# Same KV namespace as auction-web: it has the key "config", and this Worker writes "fx:rates".
+[[kv_namespaces]]
+binding = "KV"
+id = "00000000000000000000000000000000"
+
+# R2.binding("RECEIPTS") in ledger.roc.
+[[r2_buckets]]
+binding = "RECEIPTS"
+bucket_name = "gavel-receipts"
+
+# Same D1 database as auction-web.
+[[d1_databases]]
+binding = "DB"
+database_name = "gavel"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+# The class LotRoom is in the other script. This Worker has no class of its own, so it has no migration.
+[[durable_objects.bindings]]
+name = "LOT_ROOM"
+class_name = "LotRoom"
+script_name = "auction-web"

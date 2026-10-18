@@ -1,0 +1,39 @@
+name = "auction-web"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["enable_request_signal", "global_fetch_strictly_public"]
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+# Secret: wrangler secret put ADMIN_TOKEN --config wrangler-web.toml
+
+# KV: Kv.json("KV") in Gavel.roc and web.roc (keys: config, catalog).
+[[kv_namespaces]]
+binding = "KV"
+id = "00000000000000000000000000000000"
+
+# R2: R2.binding("BUCKET") in web.roc.
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "gavel-images"
+
+# D1: the same database as auction-ledger (D1.binding("DB") in Gavel.roc). The Roc code makes the tables.
+[[d1_databases]]
+binding = "DB"
+database_name = "gavel"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+# The Durable Object class LotRoom (LotRoom.roc). The platform needs a SQLite-backed class.
+[[durable_objects.bindings]]
+name = "LOT_ROOM"
+class_name = "LotRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["LotRoom"]
+
+# Service.binding("LEDGER") in web.roc: the Rpc method settle_due.
+[[services]]
+binding = "LEDGER"
+service = "auction-ledger"
