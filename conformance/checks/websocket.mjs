@@ -146,6 +146,8 @@ export const checks = [
     answer(await t.get(`/websocket/client_with?url=${encodeURIComponent(await echoServer(t))}`), 'info=Ok(Text("proto=chat x-test=yes")) json=Ok(Text("echo {\\"n\\":5}")) parsed=Ok({ n: 5 }) bytes=Ok(Bytes([0, 1, 255]))')],
   ['websocket connect! to a server that answers 200 gives NotUpgrade (OP7)', async (t) =>
     answer(await t.get(`/websocket/client?url=${encodeURIComponent(`${t.server}/hello`)}`), 'Err NotUpgrade')],
+  ['websocket Io.timeout: receive().timeout(50) is TimedOut, the next one gets the message at 100 ms', async (t) =>
+    answer(await t.get(`/websocket/timeout?url=${encodeURIComponent(await echoServer(t))}`), 'first=Err(TimedOut) next=Ok(Text("echo m"))')],
   ['websocket Io.race! of receive and Time.sleep(50), the message at 100 ms: the sleep wins, the next receive! gets it', async (t) =>
     answer(await t.get(`/websocket/race?url=${encodeURIComponent(await echoServer(t))}`), 'first=1 Ok(TimedOut) next=Ok(Got(Text("echo m")))')],
   ['websocket OP8 in the same turn: a receive that loses to a branch with no wait gives its message back, the next receive gets it', async (t) =>

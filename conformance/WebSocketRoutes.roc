@@ -120,6 +120,20 @@ WebSocketRoutes :: [].{
 			}
 			Response.from_text(200, got)
 		}
+		# `Io.timeout`: the same as "race" with `receive().timeout(ms).run!()`.
+		["timeout"] => {
+			got = match WebSocket.connect!(Q.text(req, "url")) {
+				Ok(ws) => {
+					_ = ws.send!(Text("delay 100 m"))
+					first = ws.receive().timeout(50).run!()
+					next = ws.receive().timeout(1_000).run!()
+					ws.close!(1000, "done")
+					"first=${Str.inspect(first)} next=${Str.inspect(next)}"
+				}
+				Err(e) => "Err ${Str.inspect(e)}"
+			}
+			Response.from_text(200, got)
+		}
 		# OP8, the same turn: the message at 100 ms is in the queue. A race of a branch with no wait (it wins) and `receive`:
 		# `receive` takes the message in the same turn as the end of the race, and gives it back.
 		["race_ready"] => {

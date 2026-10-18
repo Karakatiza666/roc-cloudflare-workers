@@ -46,13 +46,14 @@ WorkflowsRoutes :: [].{
 ok : Str -> Response
 ok = |text| Response.from_text(200, text)
 
-made : Try(Workflows.Instance, [WorkflowsErr({ name : Str, message : Str }), AlreadyExists, NotFound]) -> Response
+made : Try(Workflows.Instance, [WorkflowsErr({ name : Str, message : Str }), AlreadyExists, NotFound, BadData(Str)]) -> Response
 made = |r| ok(
 	match r {
 		Ok(i) => "Ok id=${i.id()}"
 		Err(WorkflowsErr(t)) => "WorkflowsErr ${t.name}: ${t.message}"
 		Err(AlreadyExists) => "AlreadyExists"
 		Err(NotFound) => "NotFound"
+		Err(BadData(m)) => "BadData ${m}"
 	},
 )
 
@@ -103,6 +104,7 @@ act! = |w, id, which, twin, x| {
 		match r {
 			Ok({}) => "Ok"
 			Err(NotFound) => "NotFound"
+			Err(BadData(m)) => "BadData ${m}"
 			Err(WorkflowsErr(t)) => "WorkflowsErr ${t.name}: ${t.message}"
 		},
 	)

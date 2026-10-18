@@ -116,6 +116,31 @@ export const checks = [
     answer(await route(t, 'list_page', 'p/', `&v=${q(cursor)}`), 'Ok ["p/c:Never:none"] Done');
     return page1.body.slice(0, 120);
   }],
+  ['kv get_or!: the default for a key that is not there, the value for one that is', async (t) => {
+    const k = `or-${rand()}`;
+    answer(await route(t, 'get_or', k), 'Ok "default"');
+    answer(await route(t, 'get_or_io', k), 'Ok "default"');
+    await route(t, 'put', k, '&v=hi');
+    answer(await route(t, 'get_or', k), 'Ok "hi"');
+    answer(await route(t, 'get_or_io', k), 'Ok "hi"');
+    answer(await route(t, 'cell_delete'), 'Ok {}');
+    answer(await route(t, 'cell_get_or'), 'Ok { big: 0, n: 0, theme: "none" }');
+    answer(await route(t, 'cell_get_or_io'), 'Ok { big: 0, n: 0, theme: "none" }');
+    await route(t, 'delete', k);
+  }],
+  ['kv json of a record with an F64 field: a value is stored, a NaN is BadData and nothing is sent', async (t) => {
+    const k = `f64-${rand()}`;
+    answer(await route(t, 'f64_put', k, '&v=pi'), 'Ok {}');
+    answer(await route(t, 'f64_get', k), 'Ok { name: "pi", ratio: 0.5 }');
+    const nan = await route(t, 'f64_put', `${k}-nan`, '&v=nan');
+    ok(nan.body.startsWith('Err BadData("the value does not encode: '), `NaN: ${nan.body}`);
+    answer(await route(t, 'f64_get', `${k}-nan`), 'Err NotFound');
+    const r = await route(t, 'f64_response', '', '&v=pi');
+    eq(r.body, '{"name":"pi","ratio":0.5}', 'Response.from_json of an F64 field');
+    const bad = await route(t, 'f64_response', '', '&v=nan');
+    eq(bad.status, 500, 'a NaN gives a 500');
+    await route(t, 'delete', k);
+  }],
   ['kv Cell: set!, get!, delete! and the twins', async (t) => {
     await route(t, 'cell_delete');
     answer(await route(t, 'cell_get'), 'Err NotFound');

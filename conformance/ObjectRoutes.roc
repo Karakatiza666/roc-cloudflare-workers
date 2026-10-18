@@ -209,6 +209,15 @@ counter_fetch! = |self, req| match req.segments() {
 		_ = Object.cell("b1").set!(self, "three")
 		answer("prefix=${Str.inspect(self.list_with!({ prefix: "a" }))} all=${Str.inspect(self.list!())} after=${Str.inspect(self.list_with!({ start_after: "a1", limit: 1 }))}")
 	}
+	# `get_or!`: the default when the cell has no value, the value after `set!`.
+	["cell_or"] => {
+		_ = count.delete!(self)
+		none = count.get_or!(self, 42)
+		_ = count.set!(self, 7)
+		some = count.get_or!(self, 42)
+		_ = count.delete!(self)
+		answer("none=${Str.inspect(none)} some=${Str.inspect(some)}")
+	}
 	["cell"] => {
 		before = count.get!(self)
 		set = count.set!(self, -9_007_199_254_740_993)

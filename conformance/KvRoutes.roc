@@ -9,12 +9,16 @@ import Q
 
 Prefs : { theme : Str, n : U64, big : U64 }
 Meta : { tag : Str, n : U64 }
+Ratio : { name : Str, ratio : F64 }
 
 prefs : Kv(Prefs)
 prefs = Kv.json("KV")
 
 plain : Kv(Str)
 plain = Kv.text("KV")
+
+ratios : Kv(Ratio)
+ratios = Kv.json("KV")
 
 raw : Kv(List(U8))
 raw = Kv.bytes("KV")
@@ -35,6 +39,12 @@ KvRoutes :: [].{
 		match path {
 			["get"] => show(plain.get!(k))
 			["get_io"] => show(Io.run!(plain.get(k)))
+			["get_or"] => show(plain.get_or!(k, "default"))
+			["get_or_io"] => show(Io.run!(plain.get_or(k, "default")))
+			# A record with an `F64` field is JSON-encodable (MODULES.md 15). `?v=nan` is a `NaN`: `BadData`, nothing is sent.
+			["f64_put"] => show(ratios.put!(k, { name: v, ratio: if v == "nan" 0.0 / 0.0 else 0.5 }))
+			["f64_get"] => show(ratios.get!(k))
+			["f64_response"] => Response.from_json(200, { name: v, ratio: if v == "nan" 0.0 / 0.0 else 0.5 })
 			["len"] => len(plain.get!(k))
 			["len_with"] => len(plain.get_with!(k, { max_bytes: max }))
 			["len_with_io"] => len(Io.run!(plain.get_with(k, { max_bytes: max })))
@@ -65,6 +75,8 @@ KvRoutes :: [].{
 			["cell_set_ttl"] => show(cell.set_with!(value, { ttl_ms: ttl }))
 			["cell_set_ttl_io"] => show(Io.run!(cell.set_with(value, { ttl_ms: ttl })))
 			["cell_get"] => show(cell.get!())
+			["cell_get_or"] => show(cell.get_or!({ theme: "none", n: 0, big: 0 }))
+			["cell_get_or_io"] => show(Io.run!(cell.get_or({ theme: "none", n: 0, big: 0 })))
 			["cell_get_io"] => show(Io.run!(cell.get()))
 			["cell_delete"] => show(cell.delete!())
 			["cell_delete_io"] => show(Io.run!(cell.delete()))
