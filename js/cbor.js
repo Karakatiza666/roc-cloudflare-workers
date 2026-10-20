@@ -6,10 +6,43 @@
 // Reserved values (28 to 30), indefinite lengths, other tags and other simple values are errors.
 // Depth: 64 containers or less, both ways. Text must be valid UTF-8. Bytes after the value are an error.
 //
+// Tag 4 (a decimal fraction, RFC 8949 3.4.4, the encoding of a Dec of Roc that has a fraction): [exponent, mantissa],
+// the mantissa an integer or a bignum (tags 2 and 3, only inside tag 4). The reader gives the plain object
+// `{ $dec: [exponent, mantissa] }` (exponent: a Number, mantissa: a Number, or a BigInt of 2^53 or more) and the
+// writer turns such an object back into the same tag 4. The value stays exact: a Roc to Roc RPC goes decode, structured
+// clone (it keeps a plain object, but not a class instance), encode. JS turns it into a Number with `decNumber` only
+// where it must use the value (an SQL parameter, a JSON message): see `plain`.
+//
 // Errors: a TypeError for a format fault (not in the profile, bad UTF-8, trailing bytes), a RangeError
 // for a limit (cut input, depth, size). The shim maps both to status 1.
 
 export const MAX_DEPTH = 64;
+
+// The key of the plain object that stands for a tag 4 value.
+export const DEC_KEY = '$dec';
+const isInt = (x) => (typeof x === 'number' && Number.isSafeInteger(x)) || typeof x === 'bigint';
+// A tag 4 value: an object with the one key `$dec`, the array [exponent (a safe integer Number), mantissa (an integer)].
+export function isDec(v) {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return false;
+  const k = Object.keys(v);
+  if (k.length !== 1 || k[0] !== DEC_KEY) return false;
+  const d = v[DEC_KEY];
+  return Array.isArray(d) && d.length === 2 && typeof d[0] === 'number' && Number.isSafeInteger(d[0]) && isInt(d[1]);
+}
+// The Number of a tag 4 value: mantissa * 10^exponent, rounded to the nearest double.
+export const decNumber = (d) => Number(`${d[DEC_KEY][1]}e${d[DEC_KEY][0]}`);
+// A copy of `v` with each tag 4 value as a Number (for a JSON message). Other values stay as they are.
+export function plain(v, level = 0) {
+  if (isDec(v)) return decNumber(v);
+  if (v === null || typeof v !== 'object') return v;
+  if (level >= MAX_DEPTH) throw depthError();
+  if (Array.isArray(v)) return v.map((x) => plain(x, level + 1));
+  const proto = Object.getPrototypeOf(v);
+  if (proto !== Object.prototype && proto !== null) return v;
+  const o = {};
+  for (const k of Object.keys(v)) Object.defineProperty(o, k, { value: plain(v[k], level + 1), enumerable: true, writable: true, configurable: true });
+  return o;
+}
 
 // A write over the size limit (`maxBytes`). Callers map it by `e.name === 'TooLarge'`.
 export class TooLarge extends RangeError {
@@ -94,6 +127,21 @@ export class Writer {
   bigint(v) {
     const major = v >= 0n ? 0 : 1, a = v >= 0n ? v : -1n - v;
     if (a < 0x20000000000000n) this.head(major, Number(a)); else this.head64(major, a);
+  }
+  // The tag 4 value of `{ $dec: [exponent, mantissa] }` (the caller checks it with isDec). A mantissa out of the range of the
+  // major types 0 and 1 is a bignum (tag 2 or 3).
+  dec(d) {
+    const [exp, mant] = d[DEC_KEY];
+    this.tag(4); this.array(2); this.int(exp);
+    if (typeof mant === 'number') return this.int(mant);
+    if (mant >= -(1n << 64n) && mant < (1n << 64n)) return this.bigint(mant);
+    const a = mant >= 0n ? mant : -1n - mant;
+    let hex = a.toString(16);
+    if (hex.length % 2) hex = '0' + hex;
+    const u8 = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < u8.length; i++) u8[i] = parseInt(hex.slice(2 * i, 2 * i + 2), 16);
+    this.tag(mant >= 0n ? 2 : 3);
+    this.bytes(u8);
   }
   // Bytes that are already CBOR (a prefix of a tag, for example).
   raw(u8) { this.room(u8.length); this.buf.set(u8, this.n); this.n += u8.length; }
@@ -285,6 +333,7 @@ class Reader {
         const t = this.arg(info);
         if (t === 27) return this.generic();
         if (t === 24) return this.packed(level);
+        if (t === 4) return this.decimal(level);
         return this.fail(`tag ${t} is not in the profile`);
       }
       default: return this.simple(info);
@@ -324,6 +373,45 @@ class Reader {
       return e;
     }
     return this.fail('tag 27 is not ["Ref", id] or ["Error", name, message]');
+  }
+  // Tag 4: [exponent, mantissa] (the head of tag 4 is read). Gives { $dec: [exponent, mantissa] }.
+  decimal(level) {
+    if (level >= MAX_DEPTH) throw depthError();
+    this.need(1);
+    if (this.u8[this.at++] !== 0x82) this.fail('tag 4 needs an array of 2 items');
+    const exp = this.int('the exponent of tag 4');
+    if (!Number.isSafeInteger(exp)) this.fail('the exponent of tag 4 is too large');
+    this.need(1);
+    const ib = this.u8[this.at];
+    let mant;
+    if (ib >> 5 === 6) {
+      this.at++;
+      const t = this.arg(ib & 31);
+      if (t !== 2 && t !== 3) this.fail(`tag ${t} is not in the profile (the mantissa of tag 4 is an integer or tag 2 or 3)`);
+      this.need(1);
+      const bb = this.u8[this.at++];
+      if (bb >> 5 !== 2) this.fail(`tag ${t} needs a byte string`);
+      const n = this.len(bb & 31, 1);
+      let big = 0n;
+      for (let i = 0; i < n; i++) big = (big << 8n) | BigInt(this.u8[this.at + i]);
+      this.at += n;
+      mant = t === 2 ? big : -1n - big;
+      if (mant >= -0x1fffffffffffffn && mant <= 0x1fffffffffffffn) mant = Number(mant);
+    } else {
+      mant = this.int('the mantissa of tag 4');
+      // int() gives 2^53 and -2^53 as Numbers, but isDec needs a safe integer: a BigInt from there.
+      if (typeof mant === 'number' && !Number.isSafeInteger(mant)) mant = BigInt(mant);
+    }
+    return { [DEC_KEY]: [exp, mant] };
+  }
+  // An integer item (major type 0 or 1): a Number, or a BigInt of 2^53 or more.
+  int(what) {
+    this.need(1);
+    const ib = this.u8[this.at++], major = ib >> 5;
+    if (major > 1) this.fail(`${what} must be an integer`);
+    const n = this.arg(ib & 31);
+    if (major === 0) return n;
+    return typeof n === 'number' && n < 0x20000000000000 ? -1 - n : -1n - BigInt(n);
   }
   // Tag 24: a byte string with one CBOR item. It reads as that item.
   packed(level) {

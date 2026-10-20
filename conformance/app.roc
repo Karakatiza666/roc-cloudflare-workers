@@ -42,6 +42,7 @@ import ObjectRoutes
 import RpcRoutes
 import RpcErrRoutes
 import CborRoutes
+import DecRoutes
 import WebSocketRoutes
 import TcpRoutes
 import AfterRoutes
@@ -81,6 +82,7 @@ fetch! = |req| {
 		["rpc", .. as rest] => RpcRoutes.route!(req, rest)
 		["rpcerr", .. as rest] => RpcErrRoutes.route!(req, rest)
 		["cbor", .. as rest] => CborRoutes.route!(req, rest)
+		["dec", .. as rest] => DecRoutes.route!(req, rest)
 		["websocket", .. as rest] => WebSocketRoutes.route!(req, rest)
 		["tcp", .. as rest] => TcpRoutes.route!(req, rest)
 		["after", .. as rest] => AfterRoutes.route!(req, rest)
@@ -93,7 +95,7 @@ fetch! = |req| {
 scheduled! : Worker.Scheduled => Try({}, [UnknownCron(Str)])
 scheduled! = |s| if s.cron() == "bad" Err(UnknownCron(s.cron())) else Ok({})
 
-queue! = |batch| QueueRoutes.consume!(batch)
+queue! = |batch| if batch.queue() == "decv" DecRoutes.consume!(batch) else QueueRoutes.consume!(batch)
 
 email! = |mail| EmailRoutes.handle!(mail)
 
@@ -109,6 +111,6 @@ cron_a! = |s| {
 # Wave B issue 5: the bindings that the shim checks at load (checks/cron.mjs, checks/bindings.mjs): the options of `checks/d1.mjs`, `kv.mjs`, `objects.mjs`.
 bindings = [D1.binding("DB").declare(), Kv.text("KV").declare(), Object.namespace("COUNTERS", { class: "Counter" }).declare()]
 
-worker = Worker.new({ fetch!, scheduled!, queue!, email!, tail!, rpc: RpcRoutes.rpc, entrypoints: RpcRoutes.entrypoints.concat(AfterRoutes.entrypoints), objects: ObjectRoutes.classes.concat(WebSocketRoutes.classes), bindings, crons: [Worker.cron("cron-a", cron_a!)] })
+worker = Worker.new({ fetch!, scheduled!, queue!, email!, tail!, rpc: RpcRoutes.rpc.concat(DecRoutes.rpc), entrypoints: RpcRoutes.entrypoints.concat(AfterRoutes.entrypoints), objects: ObjectRoutes.classes.concat(WebSocketRoutes.classes), bindings, crons: [Worker.cron("cron-a", cron_a!)] })
 
 event! = |e| worker.event!(e)

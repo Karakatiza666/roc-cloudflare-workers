@@ -33,7 +33,7 @@ Sql := [Null, Int(I64), Real(F64), Text(Str), Blob(List(U8))].{
 	none = []
 
 	## One statement of `D1.batch!`. The parameters are encoded here, so a batch can hold statements of different types.
-	stmt : Str, params -> Sql.Stmt where [params.Cbor.Encodable([])]
+	stmt : Str, params -> Sql.Stmt where [params.Cbor.Writable]
 	stmt = |sql, params| { sql, params: Cbor.encode(params) }
 
 	## The parameters are the CBOR bytes of an array.

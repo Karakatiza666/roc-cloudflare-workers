@@ -1,6 +1,6 @@
 // The platform helpers: the root `pf` of a program (API.md 6.4). Each one is a loop or a branch that a program
 // cannot have (OP4). One `pf` object for each task: `spawn`, `writer`, `respond` and `passThrough` use its task.
-import { Packed, Limited, TooLarge } from './values.js';
+import { Packed, Limited, TooLarge, isDec, decNumber, plain } from './values.js';
 import { runAwait, errorOf, onLoss } from './program.js';
 import { responseOf } from './events.js';
 
@@ -237,6 +237,8 @@ export function sqlParams(params) {
       case 'boolean': throw new BadParam(`SQL parameter ${i}: a Bool is not a SQL value, use 0 or 1`);
     }
     if (v === null || v instanceof Uint8Array) return v;
+    // A tag 4 value (a Dec with a fraction) is a Number here: SQLite has no exact decimal.
+    if (isDec(v)) return decNumber(v);
     throw new BadParam(`SQL parameter ${i}: ${kindOf(v)} is not a SQL value${v !== null && typeof v === 'object' && !Array.isArray(v) ? ', tag values are not SQL values, use Sql.null or Sql.or_null for NULL' : ''}`);
   });
 }
@@ -255,6 +257,10 @@ export function makeHelpers(t, c, shim, tasks) {
       if (!Array.isArray(array)) throw new TypeError('packEach: the first argument must be an array');
       const budget = { left: maxBytes ?? Infinity };
       return array.map((item) => ({ ...item, [key]: new Packed(item?.[key], Infinity, budget) }));
+    },
+    // `v` as a JSON message: each tag 4 value (a Dec with a fraction) becomes a Number (`Queue.json`).
+    plain(v) {
+      return plain(v);
     },
     // `stmt.bind(...params)`: `params` is the decoded CBOR array of the call (`D1`, MODULES.md 5.1).
     bind(stmt, params) {

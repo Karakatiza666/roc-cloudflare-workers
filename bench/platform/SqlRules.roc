@@ -19,17 +19,18 @@ SqlRules :: [].{
 
 	## Typed rows (5.1): an integer field also reads canonical decimal text (`int_from_text`), and a parse error is
 	## `BadData` with the column name.
-	typed : List(U8) -> Try(a, [BadData(Str)]) where [a.Cbor.Parseable([InvalidCbor(U64), ..errs])]
-	typed = |bytes| match Cbor.parse_with(bytes, { fields: Snake, int_from_text: Bool.True }) {
+	typed : List(U8) -> Try(a, [BadData(Str)]) where [a.Cbor.Readable(errs)]
+	typed = |bytes| match Cbor.parse_with(bytes, { int_from_text: Bool.True }) {
 		Ok(v) => Ok(v)
 		Err(InvalidCbor(pos)) => Err(BadData(bad_data(bytes, pos)))
-		Err(other) => Err(BadData(missing(Str.inspect(other))))
+		Err(MissingRequiredField(name)) => Err(BadData("column ${name}: missing"))
+		Err(other) => Err(BadData(Str.inspect(other)))
 	}
 
 	## Typed rows as arrays (`D1.all_tuples!`): the same integer rules as `typed`. A row is a CBOR array, so the column has
 	## no name: `BadData` gives its index from 0.
-	typed_tuples : List(U8) -> Try(a, [BadData(Str)]) where [a.Cbor.Parseable([InvalidCbor(U64), ..errs])]
-	typed_tuples = |bytes| match Cbor.parse_with(bytes, { fields: Snake, int_from_text: Bool.True }) {
+	typed_tuples : List(U8) -> Try(a, [BadData(Str)]) where [a.Cbor.Readable(errs)]
+	typed_tuples = |bytes| match Cbor.parse_with(bytes, { int_from_text: Bool.True }) {
 		Ok(v) => Ok(v)
 		Err(InvalidCbor(pos)) => Err(BadData(bad_tuple_data(bytes, pos)))
 		Err(other) => Err(BadData(Str.inspect(other)))
@@ -68,14 +69,6 @@ value_of = |v| match v {
 	}))
 	Bool(b) => Int(if b 1 else 0)
 	_ => crash "SqlRules: a value of another kind: ${Str.inspect(v)}"
-}
-
-## `MissingRequiredField(x)` of the derived parser is `column x: missing`. The tag is not in the type of the `where`
-## clause (`[InvalidCbor(U64), ..errs]`), so a match on it closes the union: the module reads its `Str.inspect` text.
-missing : Str -> Str
-missing = |text| {
-	name = text.drop_prefix("MissingRequiredField(\"").drop_suffix("\")")
-	if name != text and !name.contains("\"") "column ${name}: missing" else text
 }
 
 ## The text of `BadData` for the item at `pos` (MODULES.md 5.1): the column is the last key of its path.
@@ -145,9 +138,6 @@ expect SqlRules.constraint_of("x failed: SQLITE_CONSTRAINT") == Ok({ kind: Other
 expect SqlRules.constraint_of("D1_ERROR: x: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_ROWID)") == Ok({ kind: Other, message: "x" })
 expect SqlRules.constraint_of("D1_ERROR: near \"SELEC\": syntax error at offset 0: SQLITE_ERROR") == Err(NotConstraint)
 expect SqlRules.constraint_of("D1_ERROR: CHECK constraint failed: c >= 0: SQLITE_CONSTRAINT_EXTRA") == Err(NotConstraint)
-
-expect missing("MissingRequiredField(\"id\")") == "column id: missing"
-expect missing("Other") == "Other"
 
 # 5.1, "Integers in rows": [{"id": 2^53 as f64}] is the text with CAST, [{"id": 1.5}] is "does not fit".
 expect bad_data([0x81, 0xa1, 0x62, 0x69, 0x64, 0xfb, 0x43, 0x40, 0, 0, 0, 0, 0, 0], 5) == "column id: integer of 2^53 or more, read it with CAST(id AS TEXT) into an I64, U64 or Id64 field"

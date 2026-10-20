@@ -3,7 +3,7 @@
 # On a pass, record the nightly in compat/last-stack-first-nightly. Releases build with that nightly.
 # The platform has no fallback for a data-first module (js/runner.js refuses it), so a nightly that is not
 # stack-first cannot be used at all: bench/build.sh and this job fail.
-# Usage: bench/ci-layout.sh <tag>   (e.g. nightly-2026-10-12-2664a27). Env: ZIG, optional ROC. Exit 1 on a failure.
+# Usage: bench/ci-layout.sh <tag>   (e.g. nightly-2026-10-19-601b54c). Env: ZIG, optional ROC. Exit 1 on a failure.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 tag=${1:?usage: bench/ci-layout.sh <tag>}

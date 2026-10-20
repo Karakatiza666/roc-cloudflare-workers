@@ -66,16 +66,16 @@ Kv(a) :: { name : Str, write : a -> Try(Js, Str), read : List(U8) -> Try(a, Str)
 
 	## `getWithMetadata`. The type of the metadata comes from the annotation at the call (MC7). A key with no metadata
 	## has `Err(Missing)` in `metadata`. KV stores the metadata as JSON.
-	get_with_metadata : Kv(a), Str -> Io({ value : a, metadata : Try(m, [Missing]) }, [NotFound, KvErr(Io.Thrown), BadData(Str), TooLarge]) where [m.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+	get_with_metadata : Kv(a), Str -> Io({ value : a, metadata : Try(m, [Missing]) }, [NotFound, KvErr(Io.Thrown), BadData(Str), TooLarge]) where [m.Cbor.Readable(errs)]
 	get_with_metadata = |kv, key| meta_io(kv, key, Err(MissingField), Body.default_max)
 
-	get_with_metadata! : Kv(a), Str => Try({ value : a, metadata : Try(m, [Missing]) }, [NotFound, KvErr(Io.Thrown), BadData(Str), TooLarge]) where [m.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+	get_with_metadata! : Kv(a), Str => Try({ value : a, metadata : Try(m, [Missing]) }, [NotFound, KvErr(Io.Thrown), BadData(Str), TooLarge]) where [m.Cbor.Readable(errs)]
 	get_with_metadata! = |kv, key| Io.run!(kv.get_with_metadata(key))
 
-	get_with_metadata_with : Kv(a), Str, { cache_ttl_ms ?: U64, max_bytes ?: U64 } -> Io({ value : a, metadata : Try(m, [Missing]) }, [NotFound, KvErr(Io.Thrown), BadData(Str), TooLarge]) where [m.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+	get_with_metadata_with : Kv(a), Str, { cache_ttl_ms ?: U64, max_bytes ?: U64 } -> Io({ value : a, metadata : Try(m, [Missing]) }, [NotFound, KvErr(Io.Thrown), BadData(Str), TooLarge]) where [m.Cbor.Readable(errs)]
 	get_with_metadata_with = |kv, key, opts| meta_io(kv, key, opts.?cache_ttl_ms, opts.?max_bytes ?? Body.default_max)
 
-	get_with_metadata_with! : Kv(a), Str, { cache_ttl_ms ?: U64, max_bytes ?: U64 } => Try({ value : a, metadata : Try(m, [Missing]) }, [NotFound, KvErr(Io.Thrown), BadData(Str), TooLarge]) where [m.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+	get_with_metadata_with! : Kv(a), Str, { cache_ttl_ms ?: U64, max_bytes ?: U64 } => Try({ value : a, metadata : Try(m, [Missing]) }, [NotFound, KvErr(Io.Thrown), BadData(Str), TooLarge]) where [m.Cbor.Readable(errs)]
 	get_with_metadata_with! = |kv, key, opts| Io.run!(kv.get_with_metadata_with(key, opts))
 
 	## `put(key, value)`: a value of 25 MiB or less (KV throws for more: `KvErr`).
@@ -149,10 +149,10 @@ Kv(a) :: { name : Str, write : a -> Try(Js, Str), read : List(U8) -> Try(a, Str)
 	## The metadata of a key as CBOR. `of` writes it for `put_with!`, `parse` reads it typed at the use (MC7):
 	## `(key.metadata ? |_| Missing).parse()`.
 	Metadata :: { cbor : List(U8) }.{
-		of : m -> Kv.Metadata where [m.Cbor.Encodable([])]
+		of : m -> Kv.Metadata where [m.Cbor.Writable]
 		of = |m| Kv.Metadata.{ cbor: Cbor.encode(m) }
 
-		parse : Kv.Metadata -> Try(m, [BadData(Str)]) where [m.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+		parse : Kv.Metadata -> Try(m, [BadData(Str)]) where [m.Cbor.Readable(errs)]
 		parse = |md| Cbor.parse(md.cbor).map_err(|e| BadData(Str.inspect(e)))
 	}
 
@@ -216,7 +216,7 @@ get_io = |kv, key, cache_ttl_ms, max| {
 }
 
 ## `getWithMetadata(key, { type: "stream" })`, then `pf.kvMeta`: `{ value: bytes or undefined, metadata: Packed or undefined }`.
-meta_io : Kv(a), Str, Try(U64, [MissingField]), U64 -> Io({ value : a, metadata : Try(m, [Missing]) }, [NotFound, KvErr(Io.Thrown), BadData(Str), TooLarge]) where [m.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+meta_io : Kv(a), Str, Try(U64, [MissingField]), U64 -> Io({ value : a, metadata : Try(m, [Missing]) }, [NotFound, KvErr(Io.Thrown), BadData(Str), TooLarge]) where [m.Cbor.Readable(errs)]
 meta_io = |kv, key, cache_ttl_ms, max| {
 	read = kv.read
 	Io.new(

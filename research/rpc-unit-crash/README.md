@@ -13,8 +13,8 @@ Date: 2026-10-20. Pinned compiler: `bench/get-roc.sh` (nightly-2026-10-12-2664a2
 | nightly-2026-10-18-1df370f | crash |
 | nightly-2026-10-19-601b54c | fixed: each file prints `True` |
 | Upstream | No new issue: the bug is fixed upstream. The fix is in the range 1df370f..601b54c, most likely commit 09061cd45 "Register payload records for a tag-union spec with no labels" (PR roc-lang/roc#12424, branch `issue-12376-spec-entry-records`, for https://github.com/roc-lang/roc/issues/12376). |
-| Workaround | `Rpc.reply_of` reads the head (`ok_head`, `err_head`) by hand and parses only the value as `ret` or `err`. The type `Reply` is gone. `on` already wrote the heads by hand (research/e1-errors/mod). The public API does not change. |
-| When to remove | Not needed: the hand parse is short and has no cost. Keep it until the pinned nightly is 2026-10-19 or later, then it is optional. |
+| Workaround | `Rpc.reply_of` read the head (`ok_head`, `err_head`) by hand and parsed only the value as `ret` or `err`. The public API did not change. |
+| Removed | The pin moved to nightly-2026-10-19-601b54c. `Rpc.reply_of` parses the derived `Reply(ret, err)` again. `Rpc.on` still writes the heads by hand: `Cbor.encode(Reply.Ok(r))` in `on` still crashes the compiler on 10-19 when a type module of the app uses `on` (`research/e1-errors/mod`). |
 
 ## Files
 

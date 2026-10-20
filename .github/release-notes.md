@@ -18,7 +18,7 @@ The compatibility flag `enable_request_signal` is required in the Wrangler confi
 
 ## No `cbor` entry in the app header
 
-The platform has its own module `Cbor`: `import pf.Cbor`. It wraps roc-cbor 0.1.0, which the platform
+The platform has its own module `Cbor`: `import pf.Cbor`. It wraps roc-cbor 0.2.0, which the platform
 header takes by URL. An app needs no `cbor` entry and no `http` entry.
 
 An app may add the same roc-cbor URL. The types are the same: a `Cbor.Bytes` of `pf.Cbor` goes where a `Bytes`

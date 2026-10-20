@@ -1,14 +1,16 @@
-## Typed data as CBOR (MODULES.md MC5, API.md 5.2). The module wraps `Cbor` of the package `roc-cbor` 0.1.0, so an app
+## Typed data as CBOR (MODULES.md MC5, API.md 5.2). The module wraps `Cbor` of the package `roc-cbor` 0.2.0, so an app
 ## needs no `cbor` entry in its header: `import pf.Cbor`. Each type here is an alias of the type of the package, not a new
 ## type. An app that also adds the same package URL gets the same types, and values pass between the two.
 ##
 ## | Name | Kind | The package |
 ## | --- | --- | --- |
-## | `Bytes` | type | `Cbor.Bytes`: a CBOR byte string. `bytes(list)` makes one (`Bytes` is an alias, so `Bytes.(list)` does not compile in an app), `b.to_list()` reads it. |
+## | `Bytes` | type | `Cbor.Bytes`: it writes as a CBOR byte string and reads a byte string or an array of integers 0 to 255 (a D1 BLOB). `bytes(list)` makes one (`Bytes` is an alias, so `Bytes.(list)` does not compile in an app), `b.to_list()` reads it. |
 ## | `Options` | type | `Cbor.Options`: the options of `parse_with`. |
 ## | `Step` | type | `Cbor.Step`: one step of a path (`Index` or `Key`). |
 ## | `Parseable(errs)` | `where` alias | `Cbor.Parseable(errs)`: a type that `parse` can read. |
 ## | `Encodable(err)` | `where` alias | `Cbor.Encodable(err)`: a type that `encode` can write. |
+## | `Readable(errs)` | `where` alias | `Cbor.Readable(errs)`: `Parseable` with `InvalidCbor(U64)` and `MissingRequiredField(Str)` in the error row. |
+## | `Writable` | `where` alias | `Cbor.Writable`: the same as `Encodable([])`. |
 ## | `Format` | type | `Cbor`: the encoding value of a custom `parser_for` or `encoder_for`. |
 ## | `State` | type | `Cbor.State`: the read position of a custom `parser_for`. |
 ## | `parse`, `parse_camel`, `parse_with` | function | Read one item of the type of the annotation. |
@@ -31,11 +33,12 @@ import cbor.Cbor as CborPkg
 Cbor :: [].{
 
 	## Bytes that cross as a CBOR byte string (major type 2). A `List(U8)` writes as an array of numbers.
+	## It reads a byte string or an array of integers 0 to 255: a D1 BLOB, which JS gives as an array, reads into it.
 	## `Cbor.bytes(list)` makes one (an alias has no constructor: `Cbor.Bytes.(list)` gives "expected nominal type"), and `bytes.to_list()` gives the list back.
 	## The same type as `Bytes` of the package.
 	Bytes : CborPkg.Bytes
 
-	## The options of `parse_with`: `{ fields : [Snake, Camel], int_from_text : Bool }`.
+	## The options of `parse_with`: `{ fields ?: [Snake, Camel], int_from_text ?: Bool }`. Each field is optional: `{}` is the same as `parse`.
 	## The same type as `Options` of the package.
 	Options : CborPkg.Options
 
@@ -57,6 +60,21 @@ Cbor :: [].{
 	a.Encodable(err) :
 		where [
 			a.encoder_for : CborPkg -> (a, List(U8) -> Try(List(U8), err)),
+		]
+
+	## The short form of `Parseable`: `where [a.Cbor.Readable(errs)]` is `where [a.Cbor.Parseable([InvalidCbor(U64), MissingRequiredField(Str), ..errs])]`.
+	## A function with it can `match` on `InvalidCbor(pos)` and `MissingRequiredField(field)`.
+	## The same constraint as `Readable` of the package.
+	a.Readable(errs) :
+		where [
+			a.parser_for : CborPkg -> (CborPkg.State -> Try({ value : a, rest : CborPkg.State }, [InvalidCbor(U64), MissingRequiredField(Str), ..errs])),
+		]
+
+	## The short form of `Encodable([])`: `where [a.Cbor.Writable]`.
+	## The same constraint as `Writable` of the package.
+	a.Writable :
+		where [
+			a.encoder_for : CborPkg -> (a, List(U8) -> Try(List(U8), [])),
 		]
 
 	## The encoding value. A custom `parser_for` or `encoder_for` in an app takes it as its argument:
@@ -83,7 +101,7 @@ Cbor :: [].{
 	parse_camel : List(U8) -> Try(a, [InvalidCbor(U64), ..errs]) where [a.Parseable([InvalidCbor(U64), ..errs])]
 	parse_camel = |raw| CborPkg.parse_camel(raw)
 
-	## Like `parse`, with options: `{ fields: Snake, int_from_text: Bool.False }`.
+	## Like `parse`, with options: `{ fields: Snake, int_from_text: Bool.False }`. Each field is optional, `{}` is the same as `parse`.
 	## `int_from_text: Bool.True` reads an integer type also from text that is a canonical decimal integer in its range.
 	parse_with : List(U8), CborPkg.Options -> Try(a, [InvalidCbor(U64), ..errs]) where [a.Parseable([InvalidCbor(U64), ..errs])]
 	parse_with = |raw, options| CborPkg.parse_with(raw, options)
@@ -98,3 +116,12 @@ Cbor :: [].{
 	encode : a -> List(U8) where [a.Encodable([])]
 	encode = |value| CborPkg.encode(value)
 }
+
+# roc-cbor 0.2.0: a BLOB (a JS array of 0..255) reads into Bytes, a Dec literal list is CBOR integers.
+expect {
+	got : Try({ b : Cbor.Bytes }, _)
+	got = Cbor.parse(Cbor.encode({ b: [1.U8, 2, 255] }))
+	got == Ok({ b: Cbor.bytes([1, 2, 255]) })
+}
+expect Cbor.encode([1]) == [0x81, 0x01]
+expect Cbor.encode([3.14159]) == [0x81, 0xc4, 0x82, 0x24, 0x1a, 0x00, 0x04, 0xcb, 0x2f]

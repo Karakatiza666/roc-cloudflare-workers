@@ -218,7 +218,7 @@ Row : { id : Id64, n : I64 }
 expect {
 	raw = Cbor.encode({ id: "-1", n: 3.I64 })
 	got : Try(Row, _)
-	got = Cbor.parse_with(raw, { fields: Snake, int_from_text: Bool.True })
+	got = Cbor.parse_with(raw, { int_from_text: Bool.True })
 	got == Ok({ id: Id64.from_u64(big), n: 3 })
 }
 # The same with no `int_from_text`: the text is read by the type of the id, not by the option.
@@ -243,28 +243,28 @@ expect {
 expect {
 	id = Id64.from_u64(0xDEAD_BEEF_0000_0001)
 	got : Try(List(Row), _)
-	got = Cbor.parse_with(Cbor.encode([{ id, n: 1.I64 }]), { fields: Snake, int_from_text: Bool.True })
+	got = Cbor.parse_with(Cbor.encode([{ id, n: 1.I64 }]), { int_from_text: Bool.True })
 	got == Ok([{ id, n: 1 }]) and got.map_ok(|rows| rows.map(|r| r.id.to_u64())) == Ok([0xDEAD_BEEF_0000_0001])
 }
 # A float of size 2^53 or more (a rounded D1 integer) is an error, not a wrong id (R-ID2).
 expect {
 	raw = Cbor.encode({ id: 1.0e19.F64, n: 3.I64 })
 	got : Try(Row, _)
-	got = Cbor.parse_with(raw, { fields: Snake, int_from_text: Bool.True })
+	got = Cbor.parse_with(raw, { int_from_text: Bool.True })
 	got.is_err()
 }
 # Bad text and text out of range are errors.
 expect ["18446744073709551616", "01", "x", ""].all(
 	|t| {
 		got : Try(Row, _)
-		got = Cbor.parse_with(Cbor.encode({ id: t, n: 3.I64 }), { fields: Snake, int_from_text: Bool.True })
+		got = Cbor.parse_with(Cbor.encode({ id: t, n: 3.I64 }), { int_from_text: Bool.True })
 		got.is_err()
 	},
 )
 # A tuple row, as `D1.all_tuples!` reads.
 expect {
 	got : Try((Id64, I64), _)
-	got = Cbor.parse_with(Cbor.encode(("-1", 3.I64)), { fields: Snake, int_from_text: Bool.True })
+	got = Cbor.parse_with(Cbor.encode(("-1", 3.I64)), { int_from_text: Bool.True })
 	got == Ok((Id64.from_u64(big), 3))
 }
 
@@ -308,6 +308,6 @@ expect Cbor.encode(Id64.from_u64(big).to_web()) == Cbor.encode("1844674407370955
 # Full path: a SQL row (I64 text) to a browser payload (U64 text) with one call, `to_web`.
 expect {
 	row : Try(Row, _)
-	row = Cbor.parse_with(Cbor.encode({ id: "-1", n: 3.I64 }), { fields: Snake, int_from_text: Bool.True })
+	row = Cbor.parse_with(Cbor.encode({ id: "-1", n: 3.I64 }), { int_from_text: Bool.True })
 	row.map_ok(|r| Encoding.Json.to_str({ id: r.id.to_web() })) == Ok("{\"id\":\"18446744073709551615\"}")
 }

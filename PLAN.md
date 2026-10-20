@@ -62,6 +62,7 @@ Facts:
 - roc passes no layout flag to wasm-ld (`../roc/src/cli/linker.zig:690-750`, roc `9ec02d8c48`). The layout is the LLD default.
 - roc `a76bc229ba` (2026-10-07) moved to the LLVM 22 bundles from roc-bootstrap `zig-0.17.0` (`build.zig.zon`). LLD 22 defaults to stack-first (`zig wasm-ld --help`: "--stack-first: Place stack at start of linear memory (default)").
 - Nightly 10-09 (`258ab27`) is older than that commit. 10-11 and 10-12 contain it. 10-10 was not checked.
+- The pinned nightly moved to 10-19 (`601b54c`, 2026-10-20): it fixes the crash of a `{}` Rpc answer (roc-lang/roc PR 12424), so `Rpc.reply_of` parses the derived `Reply` again. Text in the status sections that says 10-12 is history.
 - The relinked 10-09 app passes `bench/node-test.mjs` unchanged.
 - `bench/README.md:175` says our layout is stack-first. That is wrong for the 10-09 build.
 
