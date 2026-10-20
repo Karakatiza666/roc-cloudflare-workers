@@ -15,7 +15,7 @@ Tag := Str.{
 	parser_for : Cbor.Format -> (Cbor.State -> Try({ value : Tag, rest : Cbor.State }, [InvalidCbor(U64)]))
 	parser_for = |enc| |state| {
 		parsed = enc.parse_str(state)?
-		if parsed.value.starts_with("id-") Ok({ value: Tag.(parsed.value), rest: parsed.rest }) else Err(enc.invalid_value(state))
+		if (parsed.value.starts_with("id-")) Ok({ value: Tag.(parsed.value), rest: parsed.rest }) else Err(enc.invalid_value(state))
 	}
 }
 
@@ -78,4 +78,4 @@ CborRoutes :: [].{
 }
 
 text : Str, Str -> Response
-text = |a, b| Response.from_text(200, if b == "" a else "${a} | ${b}")
+text = |a, b| Response.from_text(200, if (b == "") a else "${a} | ${b}")

@@ -138,6 +138,7 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 	## A WebSocket that the object accepted with the hibernation API (MODULES.md 12.1). It holds a ref (MC13): good for
 	## one event. `:=`, not `::`: `Entry` makes it from the socket of an event. Each call is one `call!` (no wait).
 	Socket := { ref : Js.Ref }.{
+
 		## The same JS socket has the same ref in a task (API.md RS1), so `peer == socket` finds the sender in
 		## `self.sockets!()`.
 		is_eq : Object.Socket, Object.Socket -> Bool
@@ -159,10 +160,12 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 		## `ctx.getTags(ws)`: the tags of `accept_with!`.
 		tags! : Object.Socket => List(Str)
 		tags! = |sock| match Js.call!([Call(Root("ctx"), "getTags", [Lit(Ref(sock.ref))])]) {
-			Ok(Arr(items)) => items.map(|t| match t {
-				Text(x) => x
-				other => crash "Object.Socket.tags!: a tag is ${Str.inspect(other)}"
-			})
+			Ok(Arr(items)) => items.map(
+				|t| match t {
+					Text(x) => x
+					other => crash "Object.Socket.tags!: a tag is ${Str.inspect(other)}"
+				},
+			)
 			Ok(other) => crash "Object.Socket.tags!: getTags gave ${Str.inspect(other)}"
 			Err(t) => crash "Object.Socket.tags!: ${t.name}: ${t.message}"
 		}
@@ -179,6 +182,7 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 
 	## The object that runs: its class and its id. Each storage function reaches `ctx.storage` of the task.
 	Self :: { class : Str, id : Str }.{
+
 		## `ctx.id.toString()`: pure, the event carries it.
 		id : Object.Self -> Str
 		id = |self| self.id
@@ -299,12 +303,16 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 				Call(Root("pf"), "keys", [Slot(2), Lit(Int(limit(Body.default_max)))]),
 			]
 			match Js.call!(ops) {
-				Ok(Arr(keys)) => Ok(keys.map(|k| match k {
-					Text(s) => s
-					other => crash "Object.list!: a key is ${Str.inspect(other)}"
-				}))
+				Ok(Arr(keys)) => Ok(
+					keys.map(
+						|k| match k {
+							Text(s) => s
+							other => crash "Object.list!: a key is ${Str.inspect(other)}"
+						},
+					),
+				)
 				Ok(other) => crash "Object.list!: pf.keys gave ${Str.inspect(other)}"
-				Err(t) => if t.name == "TooLarge" Err(TooLarge) else Err(StorageErr(t))
+				Err(t) => if (t.name == "TooLarge") Err(TooLarge) else Err(StorageErr(t))
 			}
 		}
 
@@ -387,7 +395,8 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 	## A class of Durable Objects: a record of handlers, all optional (MODULES.md 7). Each handler has its own error
 	## type: an `Err(e)` becomes a log line with `Str.inspect(e)` (the outcome `Failed`). The name is the name of the JS
 	## export (`export const Counter = objectClass("Counter")`) and of the Wrangler config.
-	class : Str, {
+	class : Str,
+	{
 		init! ?: Object.Self => Try({}, e1),
 		fetch! ?: Object.Self, Request => Try(Response, e2),
 		rpc ?: List(Rpc.Handler(Object.Self)),
@@ -463,6 +472,7 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 
 	## Each function takes the `Object.Self` and is one `call!` (no wait).
 	Cell(a) :: { key : Str, write : a -> List(U8), read : List(U8) -> Try(a, Str) }.{
+
 		## `storage.kv.get(key)`: `NotFound` when there is no value.
 		get! : Object.Cell(a), Object.Self => Try(a, [NotFound, BadData(Str), StorageErr(Io.Thrown)])
 		get! = |c, _self| {
@@ -513,6 +523,7 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 	attachment = |name| Object.Attachment.{ name, write: |v| Cbor.encode(v), read: |bytes| Cbor.parse(bytes).map_err(|e| Str.inspect(e)) }
 
 	Attachment(a) :: { name : Str, write : a -> List(U8), read : List(U8) -> Try(a, Str) }.{
+
 		## `ws.serializeAttachment(bytes)`: it stays while the object sleeps. Workers refuses more than 16,384 bytes:
 		## `TooLarge`.
 		set! : Object.Attachment(a), Object.Socket, a => Try({}, [TooLarge])
@@ -560,7 +571,7 @@ stub_ops : Object -> { ops : List(Js.Op), slot : U32 }
 stub_ops = |obj| {
 	ns = namespace_ops(obj)
 	n = ns.len().to_u32_wrap()
-	opts = if obj.location_hint == "" [] else [Lit(Obj([("locationHint", Text(obj.location_hint))]))]
+	opts = if (obj.location_hint == "") [] else [Lit(Obj([("locationHint", Text(obj.location_hint))]))]
 	match obj.target {
 		Named(name) => { ops: ns.append(Call(Slot(n - 1), "getByName", [Lit(Text(name))].concat(opts))), slot: n }
 		Id(id) => { ops: ns.concat([Call(Slot(n - 1), "idFromString", [Lit(Text(id))]), Call(Slot(n - 1), "get", [Slot(n)].concat(opts))]), slot: n + 1 }
@@ -569,7 +580,7 @@ stub_ops = |obj| {
 
 unique_id! : Object.Namespace, List(Js.Arg) => Try(Str, Io.Thrown)
 unique_id! = |ns, args| {
-	start = if ns.jurisdiction == "" [Get(Root("env"), ns.binding)] else [Get(Root("env"), ns.binding), Call(Slot(0), "jurisdiction", [Lit(Text(ns.jurisdiction))])]
+	start = if (ns.jurisdiction == "") [Get(Root("env"), ns.binding)] else [Get(Root("env"), ns.binding), Call(Slot(0), "jurisdiction", [Lit(Text(ns.jurisdiction))])]
 	n = start.len().to_u32_wrap()
 	match Js.call!(start.concat([Call(Slot(n - 1), "newUniqueId", args), Call(Slot(n), "toString", [])])) {
 		Ok(Text(id)) => Ok(id)
@@ -711,10 +722,12 @@ accept_tags! = |_self, req, tags|
 ## `ctx.getWebSockets(...args)` as sockets.
 sockets_of! : List(Js.Arg) => List(Object.Socket)
 sockets_of! = |args| match Js.call!([Call(Root("ctx"), "getWebSockets", args)]) {
-	Ok(Arr(items)) => items.map(|v| match v {
-		Ref(r) => Object.Socket.{ ref: r }
-		other => crash "Object.Self.sockets!: a socket is ${Str.inspect(other)}"
-	})
+	Ok(Arr(items)) => items.map(
+		|v| match v {
+			Ref(r) => Object.Socket.{ ref: r }
+			other => crash "Object.Self.sockets!: a socket is ${Str.inspect(other)}"
+		},
+	)
 	Ok(other) => crash "Object.Self.sockets!: getWebSockets gave ${Str.inspect(other)}"
 	Err(t) => crash "Object.Self.sockets!: ${t.name}: ${t.message}"
 }

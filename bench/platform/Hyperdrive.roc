@@ -18,12 +18,10 @@ Hyperdrive :: { name : Str }.{
 
 	## A binding that is not in the config gives `undefined` fields (OP7): a crash with the name of the binding.
 	config! : Hyperdrive => Hyperdrive.Config
-	config! = |h| match Js.call!(
-		[
-			Get(Root("env"), h.name),
-			Fields(Slot(0), ["connectionString", "host", "port", "user", "password", "database"]),
-		],
-	) {
+	config! = |h| match Js.call!([
+		Get(Root("env"), h.name),
+		Fields(Slot(0), ["connectionString", "host", "port", "user", "password", "database"]),
+	]) {
 		Ok(js) => match config_of(js) {
 			Ok(c) => c
 			Err(why) => crash "Hyperdrive.config!: ${h.name}: ${why}"
@@ -73,4 +71,4 @@ expect match config_of(Obj(fields_ok)) {
 	Err(_) => Bool.False
 }
 expect config_of(Obj([("connectionString", Undefined)])).is_err()
-expect config_of(Obj(fields_ok.map(|(k, v)| if k == "port" (k, Int(70_000)) else (k, v)))).is_err()
+expect config_of(Obj(fields_ok.map(|(k, v)| if (k == "port") (k, Int(70_000)) else (k, v)))).is_err()

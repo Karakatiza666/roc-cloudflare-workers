@@ -9,6 +9,7 @@ import pf.Http
 import Q
 
 bucket = R2.binding("BUCKET")
+
 trace = R2.binding("TRACE")
 
 R2Routes :: [].{
@@ -39,7 +40,7 @@ R2Routes :: [].{
 			["list_io"] => out(Io.run!(bucket.list(list_options(req))), show_list)
 			["put_stream"] => put_stream!(key, Q.text(req, "len"))
 			# 8h wave B: a writer stream with no length, of `?bytes=` bytes, on the bucket `TRACE` (`?trace=1`) or `BUCKET`.
-			["put_gen"] => put_gen!(if Q.text(req, "trace") == "" bucket else trace, key, Q.num(req, "bytes"), put_options(req))
+			["put_gen"] => put_gen!(if (Q.text(req, "trace") == "") bucket else trace, key, Q.num(req, "bytes"), put_options(req))
 			# A stream of the local server that breaks after 6 MiB, put on `TRACE`.
 			["put_broken"] => match Http.open!(Request.get(Q.text(req, "from"))) {
 				Ok(res) => out(trace.put!(key, res.body()), show_meta)
@@ -130,7 +131,7 @@ show_list : { objects : List(R2.Meta), prefixes : List(Str), next : [More(Str), 
 show_list = |l| {
 	objects = Str.join_with(l.objects.map(|m| "${m.key}:${m.http.?cache_control ?? "none"}:${Str.join_with(m.custom.map(|(k, v)| "${k}=${v}"), ",")}"), " ")
 	next = match l.next {
-		More(c) => if c == "" "More(empty)" else "More"
+		More(c) => if (c == "") "More(empty)" else "More"
 		Done => "Done"
 	}
 	"objects=[${objects}] prefixes=[${Str.join_with(l.prefixes, ",")}] next=${next}"
@@ -175,7 +176,7 @@ put_options = |req| {
 	o0 = {}
 	o1 = match req.query("absent") {
 		Ok(_) => { ..o0, only_if: R2.absent }
-		Err(_) => if given(req, "etag") or given(req, "nomatch") or given(req, "before") or given(req, "after") { ..o0, only_if: cond(req) } else o0
+		Err(_) => if (given(req, "etag") or given(req, "nomatch") or given(req, "before") or given(req, "after")) { ..o0, only_if: cond(req) } else o0
 	}
 	o2 = match req.query("cc") {
 		Ok(cc) => { ..o1, http: { cache_control: cc } }
@@ -275,7 +276,7 @@ put_gen! = |target, key, total, opts| match Body.writer!() {
 	Err(BodyErr(t)) => Response.from_text(200, "writer ${t.name}")
 	Ok({ body, writer }) => {
 		full = total // 1_048_576
-		for i in 0.U64.until(full) {
+		for i in (0.U64).until(full) {
 			_ = Io.start!(writer.write(List.repeat(65 + i.to_u8_wrap(), 1_048_576)))
 		}
 		if total % 1_048_576 > 0 {
@@ -298,17 +299,17 @@ part_two = Bytes(List.repeat(66, 1024))
 part_number : Request -> U32
 part_number = |req| {
 	n = Q.num(req, "part")
-	if n == 0 1 else n.to_u32_wrap()
+	if (n == 0) 1 else n.to_u32_wrap()
 }
 
 ## Request 1: the upload and its part (5 MiB), as JSON.
 mp_create! : Str, U32, Bool => Response
 mp_create! = |key, number, twin| {
-	made = if twin Io.run!(bucket.create_multipart_upload(key)) else bucket.create_multipart_upload!(key)
+	made = if (twin) Io.run!(bucket.create_multipart_upload(key)) else bucket.create_multipart_upload!(key)
 	match made {
 		Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
 		Ok(up) => {
-			part = if twin Io.run!(up.upload_part(number, part_one)) else up.upload_part!(number, part_one)
+			part = if (twin) Io.run!(up.upload_part(number, part_one)) else up.upload_part!(number, part_one)
 			match part {
 				Ok(p) => Response.from_text(200, "{\"upload\":${Json.to_str(up)},\"part\":${Json.to_str(p)}}")
 				# PLAN.md EP10: the caller has no upload id on an error, so the upload is aborted here.
@@ -332,7 +333,7 @@ mp_part! : Request, Bool => Response
 mp_part! = |req, twin| {
 	up : R2.Upload
 	up = upload_of(req)
-	part = if twin Io.run!(up.upload_part(2, part_two)) else up.upload_part!(2, part_two)
+	part = if (twin) Io.run!(up.upload_part(2, part_two)) else up.upload_part!(2, part_two)
 	match part {
 		Ok(p) => Response.from_text(200, Json.to_str(p))
 		Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
@@ -345,7 +346,7 @@ mp_part_with! = |req, twin| {
 	up : R2.Upload
 	up = upload_of(req)
 	opts = { length_bytes: Q.num(req, "len") }
-	part = if twin Io.run!(up.upload_part_with(2, part_two, opts)) else up.upload_part_with!(2, part_two, opts)
+	part = if (twin) Io.run!(up.upload_part_with(2, part_two, opts)) else up.upload_part_with!(2, part_two, opts)
 	match part {
 		Ok(p) => Response.from_text(200, Json.to_str(p))
 		Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
@@ -362,7 +363,7 @@ mp_complete! = |req, twin| {
 		Ok(p) => p
 		Err(e) => crash "the parts are not JSON: ${Str.inspect(e)}"
 	}
-	done = if twin Io.run!(up.complete(parts)) else up.complete!(parts)
+	done = if (twin) Io.run!(up.complete(parts)) else up.complete!(parts)
 	match done {
 		Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
 		Ok(_) => match bucket.get!(up.key) {
@@ -376,7 +377,7 @@ mp_abort! : Request, Bool => Response
 mp_abort! = |req, twin| {
 	up : R2.Upload
 	up = upload_of(req)
-	done = if twin Io.run!(up.abort()) else up.abort!()
+	done = if (twin) Io.run!(up.abort()) else up.abort!()
 	out(done, |_| "aborted")
 }
 
@@ -386,7 +387,7 @@ mp_with! : Str, U32, Str, Bool => Response
 mp_with! = |key, number, etag, twin| {
 	opts : { http ?: R2.Http, custom ?: List((Str, Str)) }
 	opts = { http: { cache_control: "max-age=30" }, custom: [("origin", "mp")] }
-	made = if twin Io.run!(bucket.create_multipart_upload_with(key, opts)) else bucket.create_multipart_upload_with!(key, opts)
+	made = if (twin) Io.run!(bucket.create_multipart_upload_with(key, opts)) else bucket.create_multipart_upload_with!(key, opts)
 	match made {
 		Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
 		# PLAN.md EP10: an upload that does not complete is aborted here (the caller has no upload id).
@@ -396,7 +397,7 @@ mp_with! = |key, number, etag, twin| {
 				Response.from_text(200, "Err ${Str.inspect(e)}")
 			}
 			Ok(p) => {
-				done = up.complete!([if etag == "" p else { ..p, etag }])
+				done = up.complete!([if (etag == "") p else { ..p, etag }])
 				if done.is_err() {
 					_aborted = up.abort!()
 				}

@@ -19,7 +19,7 @@ RateLimit :: { name : Str }.{
 			Get(Slot(1), "success"),
 		],
 		|r| match r {
-			Ok(Bool(b)) => if b Ok({}) else Err(RateLimited)
+			Ok(Bool(b)) => if (b) Ok({}) else Err(RateLimited)
 			Ok(other) => Err(LimitErr({ name: "BadData", message: "limit gave success ${Str.inspect(other)}" }))
 			Err(t) => Err(LimitErr(t))
 		},

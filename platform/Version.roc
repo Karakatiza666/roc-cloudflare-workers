@@ -13,17 +13,15 @@ Version :: { name : Str }.{
 	declare = |b| { name: b.name, kind: "version", props: [] }
 
 	metadata! : Version => { id : Str, tag : Str, timestamp_ms : U64 }
-	metadata! = |v| match Js.call!(
-		[
-			Get(Root("env"), v.name),
-			Get(Slot(0), "id"),
-			Get(Slot(0), "tag"),
-			Get(Slot(0), "timestamp"),
-			Get(Root("global"), "Date"),
-			Call(Slot(4), "parse", [Slot(3)]),
-			Record([("id", Slot(1)), ("tag", Slot(2)), ("timestamp_ms", Slot(5))]),
-		],
-	) {
+	metadata! = |v| match Js.call!([
+		Get(Root("env"), v.name),
+		Get(Slot(0), "id"),
+		Get(Slot(0), "tag"),
+		Get(Slot(0), "timestamp"),
+		Get(Root("global"), "Date"),
+		Call(Slot(4), "parse", [Slot(3)]),
+		Record([("id", Slot(1)), ("tag", Slot(2)), ("timestamp_ms", Slot(5))]),
+	]) {
 		Ok(js) => match meta_of(js) {
 			Ok(m) => m
 			Err(why) => crash "Version.metadata!: ${v.name}: ${why}"

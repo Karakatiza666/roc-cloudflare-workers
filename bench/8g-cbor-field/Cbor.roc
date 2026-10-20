@@ -112,7 +112,7 @@ Cbor :: { fields : [Snake, Camel], int_from_text : Bool }.{
 		Shape : a
 		parse_shape = Shape.parser_for(Cbor.{ fields: options.fields, int_from_text: options.int_from_text })
 		parsed = parse_shape(Cbor.State.{ bytes, pos: 0, raw: 0 })?
-		if parsed.rest.pos == bytes.len() Ok(parsed.value) else Err(InvalidCbor(parsed.rest.pos))
+		if (parsed.rest.pos == bytes.len()) Ok(parsed.value) else Err(InvalidCbor(parsed.rest.pos))
 	}
 
 	## The path from the root to the item that starts at `pos`: the array indexes and the map keys.
@@ -168,7 +168,7 @@ Cbor :: { fields : [Snake, Camel], int_from_text : Bool }.{
 	## Codec protocol: the derived `parser_for` of a type calls it. An app calls `Cbor.parse`.
 	parse_bool : Cbor, Cbor.State -> Try({ value : Bool, rest : Cbor.State }, [InvalidCbor(U64)])
 	parse_bool = |_, state|
-		match if state.raw > 0 Err(OutOfBounds) else state.bytes.get(state.pos) {
+		match if (state.raw > 0) Err(OutOfBounds) else state.bytes.get(state.pos) {
 			Ok(0xf4) => Ok({ value: Bool.False, rest: at(state, state.pos + 1) })
 			Ok(0xf5) => Ok({ value: Bool.True, rest: at(state, state.pos + 1) })
 			_ => Err(InvalidCbor(state.pos))
@@ -177,7 +177,7 @@ Cbor :: { fields : [Snake, Camel], int_from_text : Bool }.{
 	## Codec protocol: the derived `parser_for` of a type calls it. An app calls `Cbor.parse`.
 	parse_null : Cbor, Cbor.State -> Try(Cbor.State, [InvalidCbor(U64)])
 	parse_null = |_, state|
-		match if state.raw > 0 Err(OutOfBounds) else state.bytes.get(state.pos) {
+		match if (state.raw > 0) Err(OutOfBounds) else state.bytes.get(state.pos) {
 			Ok(0xf6) | Ok(0xf7) => Ok(at(state, state.pos + 1))
 			_ => Err(InvalidCbor(state.pos))
 		}
@@ -289,7 +289,7 @@ Cbor :: { fields : [Snake, Camel], int_from_text : Bool }.{
 	parse_tuple_start : Cbor, Cbor.State, U64 -> Try(Cbor.State, [InvalidCbor(U64)])
 	parse_tuple_start = |_, state, len| {
 		h = head(state)?
-		if h.major == 4 and h.arg == len Ok(at(state, h.next)) else Err(InvalidCbor(state.pos))
+		if (h.major == 4 and h.arg == len) Ok(at(state, h.next)) else Err(InvalidCbor(state.pos))
 	}
 
 	## Codec protocol: the derived `parser_for` of a type calls it. An app calls `Cbor.parse`.
@@ -390,7 +390,7 @@ Cbor :: { fields : [Snake, Camel], int_from_text : Bool }.{
 						tag: name.value,
 						encoding,
 						state: name.rest,
-						start_payloads: |s, count| if count == 0 Ok(s) else Err(InvalidCbor(s.pos)),
+						start_payloads: |s, count| if (count == 0) Ok(s) else Err(InvalidCbor(s.pos)),
 						next_payload: |s, _, _| Err(InvalidCbor(s.pos)),
 						finish_payloads: |s, _| Ok(s),
 						missing: InvalidCbor(state.pos),
@@ -410,7 +410,7 @@ Cbor :: { fields : [Snake, Camel], int_from_text : Bool }.{
 								Ok(s)
 							} else {
 								t = head(s)?
-								if t.major == 4 and t.arg == count Ok(at(s, t.next)) else Err(InvalidCbor(s.pos))
+								if (t.major == 4 and t.arg == count) Ok(at(s, t.next)) else Err(InvalidCbor(s.pos))
 							},
 						next_payload: |s, _, _| Ok(s),
 						finish_payloads: |s, _| Ok(s),
@@ -435,7 +435,7 @@ Cbor :: { fields : [Snake, Camel], int_from_text : Bool }.{
 
 	## Codec protocol: the derived `encoder_for` of a type calls it. An app calls `Cbor.encode`.
 	encode_bool : Bool, List(U8) -> Try(List(U8), [])
-	encode_bool = |value, out| Ok(out.append(if value 0xf5 else 0xf4))
+	encode_bool = |value, out| Ok(out.append(if (value) 0xf5 else 0xf4))
 
 	## Codec protocol: the derived `encoder_for` of a type calls it. An app calls `Cbor.encode`.
 	encode_null : List(U8) -> Try(List(U8), [])
@@ -648,7 +648,7 @@ decimal = |s| {
 		}
 	if ok {
 		n = digits.fold(0.I128, |acc, d| acc * 10 + (d - '0').to_i128())
-		Ok(if neg -n else n)
+		Ok(if (neg) -n else n)
 	} else {
 		Err(NotDecimal)
 	}
@@ -682,7 +682,7 @@ half = |h| {
 		} else {
 			F64.nan
 		}
-	if h.bitwise_and(0x8000) != 0 -value else value
+	if (h.bitwise_and(0x8000) != 0) -value else value
 }
 
 pow2 : I64 -> F64
@@ -712,7 +712,7 @@ skip = |state| {
 		if ((h.major == 2 or h.major == 3 or h.major == 4) and h.arg > room) or (h.major == 5 and h.arg > room // 2) {
 			return Err(InvalidCbor($s.pos))
 		}
-		next = if h.major == 2 or h.major == 3 h.next + h.arg else h.next
+		next = if (h.major == 2 or h.major == 3) h.next + h.arg else h.next
 		more =
 			match h.major {
 				4 => h.arg
@@ -758,7 +758,7 @@ path_to = |state, pos| {
 				$open = $open.append({ map: h.major == 5, left: h.arg, index: 0 })
 				$s = at($s, h.next)
 			} else {
-				$s = at($s, if h.major == 2 or h.major == 3 h.next + h.arg else h.next)
+				$s = at($s, if (h.major == 2 or h.major == 3) h.next + h.arg else h.next)
 			}
 			# Go to the start of the next item. Close each container that has no items left.
 			var $next = Bool.False
@@ -1121,7 +1121,7 @@ float_big = [0x81, 0xa2, 0x64, 0x6e, 0x61, 0x6d, 0x65, 0x61, 0x61, 0x62, 0x69, 0
 cbor_text : Str -> List(U8)
 cbor_text = |s| {
 	n = s.count_utf8_bytes().to_u8_wrap()
-	head_bytes = if n < 24 [0x60 + n] else [0x78, n]
+	head_bytes = if (n < 24) [0x60 + n] else [0x78, n]
 	head_bytes.concat(s.to_utf8())
 }
 

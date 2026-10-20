@@ -11,6 +11,7 @@ import RpcMethods
 import RpcErrRoutes
 
 self_service = Service.binding("SELF")
+
 admin_service = Service.binding("ADMIN")
 
 RpcRoutes :: [].{

@@ -34,7 +34,7 @@ Head : { major : U8, info : U8, arg : U64, next : U64 }
 be : List(U8), U64, U64 -> U64
 be = |b, start, size| {
 	var $x = 0
-	for k in 0.U64.until(size) {
+	for k in (0.U64).until(size) {
 		$x = $x * 256 + (b.get(start + k) ?? 0).to_u64()
 	}
 	$x
@@ -55,7 +55,7 @@ head = |b, i| {
 			26 => 4
 			_ => 8
 		}
-		if i + 1 + size > b.len() Err(Bad(i)) else Ok({ major, info, arg: be(b, i + 1, size), next: i + 1 + size })
+		if (i + 1 + size > b.len()) Err(Bad(i)) else Ok({ major, info, arg: be(b, i + 1, size), next: i + 1 + size })
 	} else {
 		# 28 to 30: reserved. 31: an indefinite length or a break.
 		Err(Bad(i))
@@ -64,19 +64,19 @@ head = |b, i| {
 
 # `n` bytes at `i`, or an error when the input is shorter.
 take : List(U8), U64, U64 -> Try(List(U8), [Bad(U64)])
-take = |b, i, n| if n > b.len() or i > b.len() - n Err(Bad(i)) else Ok(b.sublist({ start: i, len: n }))
+take = |b, i, n| if (n > b.len() or i > b.len() - n) Err(Bad(i)) else Ok(b.sublist({ start: i, len: n }))
 
 text_at : List(U8), U64 -> Try({ value : Str, next : U64 }, [Bad(U64)])
 text_at = |b, i| {
 	h = head(b, i)?
-	if h.major != 3 return Err(Bad(i))
+	if (h.major != 3) return Err(Bad(i))
 	raw = take(b, h.next, h.arg)?
 	s = Str.from_utf8(raw) ? |_| Bad(i)
 	Ok({ value: s, next: h.next + h.arg })
 }
 
 f64_bits : Bool, U64, U64 -> F64
-f64_bits = |neg, exp, mant| F64.from_bits((if neg 9223372036854775808 else 0) + exp * 4503599627370496 + mant)
+f64_bits = |neg, exp, mant| F64.from_bits((if (neg) 9223372036854775808 else 0) + exp * 4503599627370496 + mant)
 
 # An f16 to an f64, from the bits (exact).
 half : U64 -> F64
@@ -87,9 +87,9 @@ half = |h| {
 	if exp == 0 {
 		# Subnormal: mant * 2^-24.
 		v = mant.to_f64() * f64_bits(Bool.False, 999, 0)
-		if neg -v else v
+		if (neg) -v else v
 	} else if exp == 31 {
-		if mant == 0 f64_bits(neg, 2047, 0) else F64.nan
+		if (mant == 0) f64_bits(neg, 2047, 0) else F64.nan
 	} else {
 		f64_bits(neg, exp + 1008, mant * 4398046511104)
 	}
@@ -116,12 +116,12 @@ value_at = |b, i, level| {
 			Ok({ value: Js.Text(t.value), next: t.next })
 		}
 		4 => {
-			if level >= max_depth return Err(Bad(i))
+			if (level >= max_depth) return Err(Bad(i))
 			# Each item has 1 byte or more: a longer count is a bad length.
-			if h.arg > b.len() return Err(Bad(i))
+			if (h.arg > b.len()) return Err(Bad(i))
 			var $at = h.next
 			var $items = List.with_capacity(h.arg)
-			for _ in 0.U64.until(h.arg) {
+			for _ in (0.U64).until(h.arg) {
 				item = value_at(b, $at, level + 1)?
 				$items = $items.append(item.value)
 				$at = item.next
@@ -129,11 +129,11 @@ value_at = |b, i, level| {
 			Ok({ value: Js.Arr($items), next: $at })
 		}
 		5 => {
-			if level >= max_depth return Err(Bad(i))
-			if h.arg > b.len() return Err(Bad(i))
+			if (level >= max_depth) return Err(Bad(i))
+			if (h.arg > b.len()) return Err(Bad(i))
 			var $at = h.next
 			var $fields = List.with_capacity(h.arg)
-			for _ in 0.U64.until(h.arg) {
+			for _ in (0.U64).until(h.arg) {
 				key = text_at(b, $at)?
 				item = value_at(b, key.next, level + 1)?
 				$fields = $fields.append((key.value, item.value))
@@ -144,7 +144,7 @@ value_at = |b, i, level| {
 		6 => {
 			if h.arg == 24 {
 				inner = head(b, h.next)?
-				if inner.major != 2 return Err(Bad(i))
+				if (inner.major != 2) return Err(Bad(i))
 				raw = take(b, inner.next, inner.arg)?
 				Ok({ value: Js.Packed(raw), next: inner.next + inner.arg })
 			} else if h.arg == 27 {
@@ -170,14 +170,14 @@ value_at = |b, i, level| {
 generic : List(U8), U64 -> Try({ value : Js, next : U64 }, [Bad(U64)])
 generic = |b, i| {
 	arr = head(b, i)?
-	if arr.major != 4 return Err(Bad(i))
+	if (arr.major != 4) return Err(Bad(i))
 	kind = head(b, arr.next)?
-	if kind.major != 3 return Err(Bad(i))
+	if (kind.major != 3) return Err(Bad(i))
 	name = take(b, kind.next, kind.arg)?
 	at = kind.next + kind.arg
 	if arr.arg == 2 and name == "Ref".to_utf8() {
 		id = head(b, at)?
-		if id.major != 0 return Err(Bad(at))
+		if (id.major != 0) return Err(Bad(at))
 		n = id.arg.to_u32_try() ? |_| Bad(at)
 		Ok({ value: Js.Ref(n), next: id.next })
 	} else if arr.arg == 3 and name == "Error".to_utf8() {
@@ -192,7 +192,7 @@ generic = |b, i| {
 decode : List(U8) -> Try(Js, [Bad(U64)])
 decode = |b| {
 	v = value_at(b, 0, 0)?
-	if v.next == b.len() Ok(v.value) else Err(Bad(v.next))
+	if (v.next == b.len()) Ok(v.value) else Err(Bad(v.next))
 }
 
 # ---- encode (the shortest head; floats as f64)
@@ -204,7 +204,7 @@ put_be = |out, n, size| {
 	while $k > 0 {
 		$k = $k - 1
 		var $d = n
-		for _ in 0.U64.until($k) {
+		for _ in (0.U64).until($k) {
 			$d = $d // 256
 		}
 		$o = $o.append(($d % 256).to_u8_wrap())
@@ -238,9 +238,9 @@ encode : List(U8), Js -> List(U8)
 encode = |out, v| match v {
 	Undefined => out.append(0xf7)
 	Null => out.append(0xf6)
-	Bool(x) => out.append(if x 0xf5 else 0xf4)
+	Bool(x) => out.append(if (x) 0xf5 else 0xf4)
 	Num(f) => put_be(out.append(0xfb), f.to_bits(), 8)
-	Int(n) => if n >= 0 put_head(out, 0, n.to_u64_wrap()) else put_head(out, 1, (-1 - n).to_u64_wrap())
+	Int(n) => if (n >= 0) put_head(out, 0, n.to_u64_wrap()) else put_head(out, 1, (-1 - n).to_u64_wrap())
 	Text(s) => put_text(out, s)
 	Bytes(raw) => put_head(out, 2, raw.len()).concat(raw)
 	Arr(items) => {
@@ -320,7 +320,7 @@ main! = |_args| {
 					Ok(bytes) => "oracle ${to_hex(bytes)}"
 					Err(_) => "oracle error"
 				}
-				zig_what = if ok "zig ${to_hex(zbytes)}" else "zig error"
+				zig_what = if (ok) "zig ${to_hex(zbytes)}" else "zig error"
 				echo!("differ: input ${$n.to_str()}: ${to_hex(input)}: ${what}, ${zig_what}\n")
 			}
 		}

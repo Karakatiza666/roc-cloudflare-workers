@@ -73,7 +73,7 @@ fetch! = |req| match (req.method(), req.segments()) {
 		Ok(Response.from_text(200, "a=${ba.len().to_str()} b=${bb.len().to_str()} same=${Str.inspect(ba == bb)} again=${again}"))
 	}
 	(POST, ["sha"]) => {
-		body = if req.query("bytes") == Ok("1") Bytes(req.bytes_with!({ max_bytes: 100_000_000 })?) else req.body()
+		body = if (req.query("bytes") == Ok("1")) Bytes(req.bytes_with!({ max_bytes: 100_000_000 })?) else req.body()
 		digest = body.sha256!()?
 		Ok(Response.from_text(200, hex(digest)))
 	}
@@ -112,7 +112,7 @@ fetch! = |req| match (req.method(), req.segments()) {
 	(GET, ["stream"]) => {
 		{ body, writer } = Body.writer!()?
 		work! = || {
-			for i in 0.U64.until(num(req, "n")) {
+			for i in (0.U64).until(num(req, "n")) {
 				writer.write_text!("chunk ${i.to_str()}\n")?
 				sleep!(num(req, "gap"))
 			}
@@ -218,7 +218,7 @@ num = |req, name| match req.query(name) {
 }
 
 format : Request -> Body.Format
-format = |req| if req.query("f") == Ok("deflate") Deflate else Gzip
+format = |req| if (req.query("f") == Ok("deflate")) Deflate else Gzip
 
 hex : List(U8) -> Str
 hex = |bytes| {

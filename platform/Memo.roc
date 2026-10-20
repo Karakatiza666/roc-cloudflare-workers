@@ -7,6 +7,7 @@ import Js
 import cbor.Cbor
 
 Memo(a, e) := { name : Str, max_age_ms : U64, load! : () => Try(a, e), write : a -> List(U8), read : List(U8) -> Try(a, Str) }.{
+
 	## A constant (WR1): it does nothing until `get!`. `load!` needs a type annotation (MODULES.md 15).
 	new : Str, { max_age_ms : U64, load! : () => Try(a, e) } -> Memo(a, e) where [a.Cbor.Writable, a.Cbor.Readable(errs)]
 	new = |name, opts| Memo.{

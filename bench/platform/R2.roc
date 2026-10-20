@@ -87,7 +87,7 @@ R2 :: { name : Str }.{
 				Ok(NotMet(meta)) => Ok(not_met_response(req, meta))
 				Ok(Absent) => Ok(Response.from_text(404, "Not found"))
 				# R2 error 10039: the range starts after the end.
-				Err(R2Err(t)) => if t.message.contains("(10039)") Ok(Response.from_status(416)) else Err(R2Err(t))
+				Err(R2Err(t)) => if (t.message.contains("(10039)")) Ok(Response.from_status(416)) else Err(R2Err(t))
 			},
 		)
 	}
@@ -381,9 +381,9 @@ parse_range = |text| {
 	if t.starts_with("bytes=") and !t.contains(",") {
 		match t.drop_prefix("bytes=").split_first("-") {
 			Ok({ before, after }) => match (U64.from_str(before.trim()), U64.from_str(after.trim())) {
-				(Err(_), Ok(n)) => if n > 0 Ok(Suffix(n)) else Err(NoRange)
-				(Ok(a), Err(_)) => if after.trim() == "" Ok(From({ offset_bytes: a })) else Err(NoRange)
-				(Ok(a), Ok(b)) => if b >= a Ok(From({ offset_bytes: a, length_bytes: b - a + 1 })) else Err(NoRange)
+				(Err(_), Ok(n)) => if (n > 0) Ok(Suffix(n)) else Err(NoRange)
+				(Ok(a), Err(_)) => if (after.trim() == "") Ok(From({ offset_bytes: a })) else Err(NoRange)
+				(Ok(a), Ok(b)) => if (b >= a) Ok(From({ offset_bytes: a, length_bytes: b - a + 1 })) else Err(NoRange)
 				(Err(_), Err(_)) => Err(NoRange)
 			}
 			Err(_) => Err(NoRange)
@@ -406,7 +406,7 @@ range_span = |range, size| match range {
 		}
 		Ok({ first: r.offset_bytes, last })
 	}
-	Suffix(n) => if size == 0 Err(Unsatisfiable) else Ok({ first: size - U64.min(n, size), last: size - 1 })
+	Suffix(n) => if (size == 0) Err(Unsatisfiable) else Ok({ first: size - U64.min(n, size), last: size - 1 })
 }
 
 found_response : R2.Object, Try(R2.Range, [NoRange]) -> Response
@@ -426,7 +426,7 @@ found_response = |obj, wanted| {
 not_met_response : Request, R2.Meta -> Response
 not_met_response = |req, meta| {
 	asks_change = req.header("if-none-match").is_ok() or req.header("if-modified-since").is_ok()
-	Response.from_status(if asks_change 304 else 412).with_headers(validator_headers(meta))
+	Response.from_status(if (asks_change) 304 else 412).with_headers(validator_headers(meta))
 }
 
 ## "Sun, 06 Nov 1994 08:49:37 GMT" for a time in ms.
@@ -443,15 +443,15 @@ http_date = |ms| {
 	doy = doe - (365 * yoe + yoe // 4 - yoe // 100)
 	mp = (5 * doy + 2) // 153
 	day = doy - (153 * mp + 2) // 5 + 1
-	month = if mp < 10 mp + 3 else mp - 9
-	year = yoe + era * 400 + (if month <= 2 1 else 0)
+	month = if (mp < 10) mp + 3 else mp - 9
+	year = yoe + era * 400 + (if (month <= 2) 1 else 0)
 	weekday = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"].get((days % 7).to_u64()) ?? "Thu"
 	month_name = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].get(month - 1) ?? "Jan"
 	"${weekday}, ${two(day)} ${month_name} ${year.to_str()} ${two(rest // 3600)}:${two(rest % 3600 // 60)}:${two(rest % 60)} GMT"
 }
 
 two : U64 -> Str
-two = |n| if n < 10 "0${n.to_str()}" else n.to_str()
+two = |n| if (n < 10) "0${n.to_str()}" else n.to_str()
 
 ## Slot 0: the binding. The ops of `before` (the pieces of the arguments) come next, then the call on slot 0.
 call_ops : R2, Str, List(Js.Arg), List(Js.Op) -> List(Js.Op)
@@ -901,11 +901,11 @@ expect {
 	match got {
 		Ok(g) => g.meta.size_bytes == 11
 			and g.meta.http.?cache_control == Ok("max-age=60")
-				and g.meta.http.?content_type == Err(MissingField)
-					and g.meta.custom == [("a", "1")]
-						and g.meta.checksums.?md5 == Ok([1, 2])
-							and g.meta.checksums.?sha1 == Err(MissingField)
-								and range_of(field(g.fields, "range")) == Ok(From({ offset_bytes: 2, length_bytes: 3 }))
+			and g.meta.http.?content_type == Err(MissingField)
+			and g.meta.custom == [("a", "1")]
+			and g.meta.checksums.?md5 == Ok([1, 2])
+			and g.meta.checksums.?sha1 == Err(MissingField)
+			and range_of(field(g.fields, "range")) == Ok(From({ offset_bytes: 2, length_bytes: 3 }))
 		Err(_) => Bool.False
 	}
 }

@@ -15,7 +15,6 @@ import RpcMethods
 import RpcErrRoutes
 import Q
 
-
 count : Object.Cell(I64)
 count = Object.cell("count")
 
@@ -29,7 +28,9 @@ late = Object.cell("late")
 
 ## Typed rows of the object SQL.
 Row : { id : I64, u : Str }
+
 Wide : { v : I64 }
+
 Big : { x : Str }
 
 ObjectRoutes :: [].{
@@ -153,7 +154,7 @@ forward! = |o, op, req| {
 text! : Try(Response, [ObjectErr(Io.Thrown)]) => Str
 text! = |r| match r {
 	Ok(res) => match res.text!() {
-		Ok(t) => if res.status() == 200 t else "status ${res.status().to_str()} ${t}"
+		Ok(t) => if (res.status() == 200) t else "status ${res.status().to_str()} ${t}"
 		Err(e) => "body ${Str.inspect(e)}"
 	}
 	Err(e) => "Err ${Str.inspect(e)}"
@@ -224,7 +225,12 @@ counter_fetch! = |self, req| match req.segments() {
 	["sql_params", "count"] => {
 		n : Try(List({ n : I64 }), _)
 		n = self.sql!("SELECT count(*) AS n FROM pi WHERE k = 'u64over' OR v < 0", Sql.none)
-		answer(match n { Ok([row]) => "n=${row.n.to_str()}", _ => "Err" })
+		answer(
+			match n {
+				Ok([row]) => "n=${row.n.to_str()}"
+				_ => "Err"
+			},
+		)
 	}
 	["sql_params", case] => sql_params!(self, case)
 	["sql_rows"] => answer(Str.inspect(self.sql_rows!("SELECT id, u, b, 1.5 AS r, NULL AS z FROM t WHERE id = 1", Sql.none)))
@@ -328,7 +334,7 @@ counter_fetch! = |self, req| match req.segments() {
 	["alarm_in"] => {
 		delay = Q.num(req, "ms")
 		t0 = Time.now_ms!()
-		set = if Q.text(req, "twin") == "1" Io.run!(self.set_alarm_in(delay)) else self.set_alarm_in!(delay)
+		set = if (Q.text(req, "twin") == "1") Io.run!(self.set_alarm_in(delay)) else self.set_alarm_in!(delay)
 		got = self.get_alarm!()
 		answer("set=${Str.inspect(set)} id=${self.id()} t0=${t0.to_str()} alarm=${Str.inspect(got)}")
 	}
@@ -344,7 +350,7 @@ counter_fetch! = |self, req| match req.segments() {
 		_ = self.sql_run!("CREATE TABLE IF NOT EXISTS gone (a)", Sql.none)
 		_ = count.set!(self, 5)
 		_ = self.set_alarm_at!(Time.now_ms!() + 3_600_000)
-		del = if Q.text(req, "twin") == "1" Io.run!(self.delete_all()) else self.delete_all!()
+		del = if (Q.text(req, "twin") == "1") Io.run!(self.delete_all()) else self.delete_all!()
 		table : Try(List({ a : I64 }), _)
 		table = self.sql!("SELECT a FROM gone", Sql.none)
 		answer("del=${Str.inspect(del)} table=${Str.inspect(table.is_ok())} cell=${Str.inspect(count.get!(self))} alarm=${Str.inspect(self.get_alarm!())}")
@@ -432,7 +438,7 @@ ticker_fetch! = |self, _req| answer(Str.inspect(self.set_alarm_at!(Time.now_ms!(
 ticker_alarm! : Object.Self, { retry_count : U32, is_retry : Bool } => Try({}, [Retry(U32)])
 ticker_alarm! = |_self, info| {
 	Log.info!("ticker alarm", { retry_count: info.retry_count, is_retry: info.is_retry })
-	if info.retry_count < 2 Err(Retry(info.retry_count)) else Ok({})
+	if (info.retry_count < 2) Err(Retry(info.retry_count)) else Ok({})
 }
 
 # KvOnly: a class in a `new_classes` migration (KV-backed). The shim stops its first event with the class name.
@@ -444,8 +450,11 @@ kv_only_fetch! = |self, _req| {
 }
 
 Typed : { ta : Str, tb : Str, tc : Str, td : Str, a : Str, b : I64, c : F64, hd : Str }
+
 Nulls : { an : I64, b : I64, cn : I64, tb : Str }
+
 Stored : { v : Str, t : Str }
+
 TextRow : { t : Str }
 
 typed! : Object.Self, Str => Try(Response, e)

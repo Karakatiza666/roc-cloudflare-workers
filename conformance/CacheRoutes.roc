@@ -11,7 +11,7 @@ CacheRoutes :: [].{
 	route! : Request, List(Str) => Response
 	route! = |req, path| {
 		url = Q.text(req, "url")
-		cache = if Q.text(req, "name") == "" Cache.default else Cache.named(Q.text(req, "name"))
+		cache = if (Q.text(req, "name") == "") Cache.default else Cache.named(Q.text(req, "name"))
 		match path {
 			["get"] => show_get!(cache.get!(url))
 			["get_io"] => show_get!(Io.run!(cache.get(url)))
@@ -44,9 +44,9 @@ show = |r, f| Response.from_text(
 ## The response to put: `status` (default 200), `text`, and the header `cache-control` from `cc` (the cache needs it).
 made : Request -> Response
 made = |req| {
-	status = if Q.text(req, "status") == "" 200 else Q.num(req, "status").to_u16_wrap()
+	status = if (Q.text(req, "status") == "") 200 else Q.num(req, "status").to_u16_wrap()
 	base = Response.from_text(status, Q.text(req, "text"))
-	if Q.text(req, "cc") == "" base else base.with_header("cache-control", Q.text(req, "cc"))
+	if (Q.text(req, "cc") == "") base else base.with_header("cache-control", Q.text(req, "cc"))
 }
 
 ## A hit: its status, its `cache-control` header and its body (a stream, `text!` is one more wait).

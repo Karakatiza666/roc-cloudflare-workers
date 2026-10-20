@@ -383,7 +383,7 @@ info_of = |bytes| {
 
 ## A rowid of size 2^53 or more can be the rounded value of many rowids (5.1).
 row_id : F64 -> Try(I64, [Rounded])
-row_id = |f| if f.abs() < 9_007_199_254_740_992.0 Ok(f.to_i64_try() ?? 0) else Err(Rounded)
+row_id = |f| if (f.abs() < 9_007_199_254_740_992.0) Ok(f.to_i64_try() ?? 0) else Err(Rounded)
 
 ## The bytes of the first item of a CBOR array (the first row of `D1.Result.first`). A `where` clause cannot name
 ## `List(row)` (MODULES.md 15), so the module cuts the first row out and parses it as a `row`.
@@ -410,12 +410,12 @@ head = |bytes, pos| {
 		25 => 2
 		26 => 4
 		27 => 8
-		_ => if info < 24 0 else return Err(Bad)
+		_ => if (info < 24) 0 else return Err(Bad)
 	}
 	if pos + 1 + width > bytes.len() {
 		return Err(Bad)
 	}
-	arg = if width == 0 info.to_u64() else bytes.sublist({ start: pos + 1, len: width }).fold(0.U64, |acc, b| acc.shl_wrap(8).bitwise_or(b.to_u64()))
+	arg = if (width == 0) info.to_u64() else bytes.sublist({ start: pos + 1, len: width }).fold(0.U64, |acc, b| acc.shl_wrap(8).bitwise_or(b.to_u64()))
 	Ok({ major: ib.shr_zf_wrap(5), arg, next: pos + 1 + width })
 }
 
@@ -428,9 +428,9 @@ skip = |bytes, pos| {
 		h = head(bytes, $at)?
 		left = bytes.len() - h.next
 		(next, more) = match h.major {
-			2 | 3 => if h.arg > left return Err(Bad) else (h.next + h.arg, 0)
-			4 => if h.arg > left return Err(Bad) else (h.next, h.arg)
-			5 => if h.arg > left // 2 return Err(Bad) else (h.next, h.arg * 2)
+			2 | 3 => if (h.arg > left) return Err(Bad) else (h.next + h.arg, 0)
+			4 => if (h.arg > left) return Err(Bad) else (h.next, h.arg)
+			5 => if (h.arg > left // 2) return Err(Bad) else (h.next, h.arg * 2)
 			6 => (h.next, 1)
 			_ => (h.next, 0)
 		}
@@ -449,7 +449,7 @@ thrown = |t| match SqlRules.constraint_of(t.message) {
 
 ## A read: also the limit of `pf.pack`, `pf.packEach` and `pf.limit` (MC11).
 read_error : Io.Thrown -> [D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge]
-read_error = |t| if t.name == "TooLarge" TooLarge else match thrown(t) {
+read_error = |t| if (t.name == "TooLarge") TooLarge else match thrown(t) {
 	Constraint(c) => Constraint(c)
 	D1Err(e) => D1Err(e)
 }
@@ -475,4 +475,3 @@ expect first_item([0x82, 0xa1, 0x61, 0x61, 0x82, 0x01, 0x02, 0x07]) == Ok([0xa1,
 expect first_item([0x80]) == Err(Empty)
 expect first_item([0xa0]) == Err(Bad)
 expect first_item([0x81, 0x82, 0x01]) == Err(Bad)
-

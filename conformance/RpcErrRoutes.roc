@@ -64,7 +64,7 @@ by_object! = |o, case, n| match case {
 
 ## The lot of a `unit` case: "new" for n = 1, else "old".
 lot : I64 -> { id : Str, close_ms : U64 }
-lot = |n| { id: if n == 1 "new" else "old", close_ms: 5 }
+lot = |n| { id: if (n == 1) "new" else "old", close_ms: 5 }
 
 open_room! = |o, l| {
 	o.call!(RpcMethods.open_lot, l)?
@@ -110,10 +110,10 @@ busy! = |_self, { n }| match n {
 }
 
 crashes! : self, { n : I64 } => Try(I64, Rpc.NoErr)
-crashes! = |_self, { n }| if n >= 0 crash "rpc callee crash" else Ok(n)
+crashes! = |_self, { n }| if (n >= 0) crash "rpc callee crash" else Ok(n)
 
 open_lot! : self, { id : Str, close_ms : U64 } => Try({}, [AlreadyOpen])
-open_lot! = |_self, l| if l.id == "new" Ok({}) else Err(AlreadyOpen)
+open_lot! = |_self, l| if (l.id == "new") Ok({}) else Err(AlreadyOpen)
 
 mismatch! : self, { n : I64 } => Try(I64, [Surprise])
-mismatch! = |_self, { n }| if n >= 0 Err(Surprise) else Ok(n)
+mismatch! = |_self, { n }| if (n >= 0) Err(Surprise) else Ok(n)

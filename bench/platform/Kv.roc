@@ -47,24 +47,28 @@ Kv(a) :: { name : Str, write : a -> Try(Js, Str), read : List(U8) -> Try(a, Str)
 
 	## `get`, and `default` for a key that is not there. The other errors stay.
 	get_or : Kv(a), Str, a -> Io(a, [KvErr(Io.Thrown), BadData(Str), TooLarge])
-	get_or = |kv, key, default| kv.get(key).recover(|e| match e {
-		NotFound => Ok(default)
-		KvErr(t) => Err(KvErr(t))
-		BadData(m) => Err(BadData(m))
-		TooLarge => Err(TooLarge)
-	})
+	get_or = |kv, key, default| kv.get(key).recover(
+		|e| match e {
+			NotFound => Ok(default)
+			KvErr(t) => Err(KvErr(t))
+			BadData(m) => Err(BadData(m))
+			TooLarge => Err(TooLarge)
+		},
+	)
 
 	get_or! : Kv(a), Str, a => Try(a, [KvErr(Io.Thrown), BadData(Str), TooLarge])
 	get_or! = |kv, key, default| Io.run!(kv.get_or(key, default))
 
 	## `get` that gives a missing key as `Ok(Err(NotFound))`, so the error type of the caller has no `NotFound`.
 	find : Kv(a), Str -> Io(Try(a, [NotFound]), [KvErr(Io.Thrown), BadData(Str), TooLarge])
-	find = |kv, key| kv.get(key).map(|v| Ok(v)).recover(|e| match e {
-		NotFound => Ok(Err(NotFound))
-		KvErr(t) => Err(KvErr(t))
-		BadData(m) => Err(BadData(m))
-		TooLarge => Err(TooLarge)
-	})
+	find = |kv, key| kv.get(key).map(|v| Ok(v)).recover(
+		|e| match e {
+			NotFound => Ok(Err(NotFound))
+			KvErr(t) => Err(KvErr(t))
+			BadData(m) => Err(BadData(m))
+			TooLarge => Err(TooLarge)
+		},
+	)
 
 	find! : Kv(a), Str => Try(Try(a, [NotFound]), [KvErr(Io.Thrown), BadData(Str), TooLarge])
 	find! = |kv, key| Io.run!(kv.find(key))
@@ -234,7 +238,7 @@ get_io = |kv, key, cache_ttl_ms, max| {
 			Ok(Undefined) => Err(NotFound)
 			Ok(Bytes(bytes)) => read(bytes).map_err(|text| BadData(text))
 			Ok(other) => crash "Kv.get: readMaybe gave ${Str.inspect(other)}"
-			Err(t) => Err(error(t)),
+			Err(t) => Err(error(t))
 		},
 	)
 }
@@ -265,7 +269,7 @@ meta_io = |kv, key, cache_ttl_ms, max| {
 				other => crash "Kv.get_with_metadata: the value is ${Str.inspect(other)}"
 			}
 			Ok(other) => crash "Kv.get_with_metadata: kvMeta gave ${Str.inspect(other)}"
-			Err(t) => Err(error(t)),
+			Err(t) => Err(error(t))
 		},
 	)
 }
@@ -319,7 +323,7 @@ limit = |n| n.to_i64_try() ?? I64.highest
 
 ## The limit of `pf.readMaybe` is `TooLarge` (MC11). Each other throw is `KvErr`.
 error : Io.Thrown -> [KvErr(Io.Thrown), TooLarge]
-error = |t| if t.name == "TooLarge" TooLarge else KvErr(t)
+error = |t| if (t.name == "TooLarge") TooLarge else KvErr(t)
 
 field : List((Str, Js)), Str -> Js
 field = |fields, name| match fields.find_first(|(k, _)| k == name) {

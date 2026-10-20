@@ -15,6 +15,7 @@ import pf.WebCrypto
 import Q
 
 db = D1.binding("DB")
+
 self_service = Service.binding("SELF")
 
 ## The queues: `DECJ` (json, a JS consumer), `DECV` (v8, the Roc consumer `consume!`), `DECVJS` (v8, a JS consumer).
@@ -31,9 +32,13 @@ decv_js = Queue.v8("DECVJS")
 
 ## Rows of the typed reads.
 TypedReal : { t : Str, r : F64 }
+
 Blob : { b : Cbor.Bytes }
+
 BlobList : { b : List(U8) }
+
 NeedsX : { x : I64 }
+
 DecRow : { x : Dec }
 
 ## The value that is sent, stored and sent back.
@@ -78,10 +83,13 @@ DecRoutes :: [].{
 			["d1_read"] => {
 				r : Try(List(DecRow), _)
 				r = db.all!("SELECT 2.5 AS x UNION ALL SELECT 3 AS x UNION ALL SELECT 0.1 AS x", Sql.none)
-				Response.from_text(200, match r {
-					Ok(rows) => "Ok ${Str.join_with(rows.map(|row| row.x.to_str()), " ")}"
-					Err(e) => "Err ${Str.inspect(e)}"
-				})
+				Response.from_text(
+					200,
+					match r {
+						Ok(rows) => "Ok ${Str.join_with(rows.map(|row| row.x.to_str()), " ")}"
+						Err(e) => "Err ${Str.inspect(e)}"
+					},
+				)
 			}
 			# A BLOB (JS gives an array of numbers) reads into `Cbor.Bytes` and into `List(U8)`.
 			["d1_blob"] => {
@@ -148,10 +156,13 @@ msg : Request -> Msg
 msg = |req| { label: Q.text(req, "label"), n: 1, d: 0.1, whole: 5, big: Dec.highest, list: [1.5, 2, -0.25] }
 
 queued : Try({}, e) -> Response
-queued = |r| Response.from_text(200, match r {
-	Ok(_) => "Ok"
-	Err(e) => "Err ${Str.inspect(e)}"
-})
+queued = |r| Response.from_text(
+	200,
+	match r {
+		Ok(_) => "Ok"
+		Err(e) => "Err ${Str.inspect(e)}"
+	},
+)
 
 echo_handler! : Pair => Try(Pair, Rpc.NoErr)
 echo_handler! = |p| Ok(p)

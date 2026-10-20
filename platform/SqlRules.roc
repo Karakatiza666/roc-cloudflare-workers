@@ -63,11 +63,15 @@ value_of = |v| match v {
 	Num(f) => Real(f)
 	Text(s) => Text(s)
 	Bytes(b) => Blob(b)
-	Arr(items) => Blob(items.map(|i| match i {
-		Int(n) => n.to_u8_wrap()
-		_ => 0
-	}))
-	Bool(b) => Int(if b 1 else 0)
+	Arr(items) => Blob(
+		items.map(
+			|i| match i {
+				Int(n) => n.to_u8_wrap()
+				_ => 0
+			},
+		),
+	)
+	Bool(b) => Int(if (b) 1 else 0)
 	_ => crash "SqlRules: a value of another kind: ${Str.inspect(v)}"
 }
 
@@ -79,7 +83,7 @@ bad_data = |bytes, pos| {
 		Err(NotFound) => Err(NotFound)
 	}
 	match column {
-		Ok(c) => if rounded_at(bytes, pos) "column ${c}: integer of 2^53 or more, read it with CAST(${c} AS TEXT) into an I64, U64 or Id64 field" else "column ${c}: the value does not fit the type"
+		Ok(c) => if (rounded_at(bytes, pos)) "column ${c}: integer of 2^53 or more, read it with CAST(${c} AS TEXT) into an I64, U64 or Id64 field" else "column ${c}: the value does not fit the type"
 		Err(_) => "the value at byte ${pos.to_str()} does not fit the type"
 	}
 }

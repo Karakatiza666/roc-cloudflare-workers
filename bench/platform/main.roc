@@ -1,10 +1,12 @@
 platform ""
-	requires { event! : Worker.Event => Worker.Outcome }
+	requires {
+		event! : Worker.Event => Worker.Outcome
+	}
 	# The app modules first. Last, the low level (MODULES.md 1, "Modules"): `Cbor`, `Native`, `Io`, then `Js` (the escape hatch).
-	exposes [Worker, Request, Response, Body, Http, Ctx, Time, Log, Env, Secret, D1, Sql, Id64, Kv, R2, Cache, Memo, Queue, Object, Rpc, Service, WebSocket, Tcp, Email, WebCrypto, RateLimit, Ai, Vectorize, Analytics, Hyperdrive, Workflows, Assets, Version, SecretsStore, Cbor, Native, Io, Js]
+	exposes [Ai, Analytics, Assets, Body, Cache, Cbor, Ctx, D1, Email, Env, Http, Hyperdrive, Id64, Io, Js, Kv, Log, Memo, Native, Object, Queue, R2, RateLimit, Request, Response, Rpc, Secret, SecretsStore, Service, Sql, Tcp, Time, Vectorize, Version, WebCrypto, WebSocket, Worker, Workflows]
 	packages {
-		http: "https://github.com/roc-lang/http/releases/download/2.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
 		cbor: "https://github.com/Karakatiza666/roc-cbor/releases/download/0.2.1/9jD8bxEKhNu6CzBKej1nA1hzymTedJsfhiGgiMPGA1mu.tar.zst",
+		http: "https://github.com/roc-lang/http/releases/download/2.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
 	}
 	provides { "roc_event": event_for_host! }
 	hosted { "roc_await": Js.host_await!, "roc_call": Js.host_call!, "roc_native": Host.native! }

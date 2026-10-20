@@ -10,6 +10,7 @@ import Js
 import Body
 
 Vectorize(meta) := { name : Str, write : meta -> Try(Str, Str), read : Str -> Try(meta, Str) }.{
+
 	## A constant (WR1): the name of the binding and the codecs of the metadata.
 	json : Str -> Vectorize(meta) where [meta.Json.Encodable(enc), meta.Json.Parseable([InvalidJson(Str), ..errs])]
 	json = |name| Vectorize.{ name, write: |m| Json.to_str_try(m).map_err(|e| Str.inspect(e)), read: |text| Json.parse(text).map_err(|e| Str.inspect(e)) }
@@ -139,7 +140,7 @@ mutation_read = |r| match r {
 }
 
 read_error : Io.Thrown -> [VectorizeErr(Io.Thrown), TooLarge]
-read_error = |t| if t.name == "TooLarge" TooLarge else VectorizeErr(t)
+read_error = |t| if (t.name == "TooLarge") TooLarge else VectorizeErr(t)
 
 ## The options object of `query`: only the fields that the app gives (not `max_bytes`).
 query_js : Vectorize.QueryOptions -> List((Str, Js))
@@ -270,9 +271,9 @@ opt_text = |js| match js {
 js_json : Js -> Str
 js_json = |js| match js {
 	Null | Undefined => "null"
-	Bool(b) => if b "true" else "false"
+	Bool(b) => if (b) "true" else "false"
 	Int(i) => i.to_str()
-	Num(f) => if f.is_finite() f.to_str() else "null"
+	Num(f) => if (f.is_finite()) f.to_str() else "null"
 	Text(s) => Json.to_str(s)
 	Arr(items) => "[${Str.join_with(items.map(js_json), ",")}]"
 	Obj(fs) => "{${Str.join_with(fs.map(|(k, v)| "${Json.to_str(k)}:${js_json(v)}"), ",")}}"
@@ -298,7 +299,7 @@ shape = |v| match v {
 ## A number of a vector as JSON text. `Json.to_str` of an F64 can fail (`NaN`): a non-finite value goes as `null`, and
 ## Vectorize refuses the vector.
 f64_json : F64 -> Str
-f64_json = |f| if f.is_finite() f.to_str() else "null"
+f64_json = |f| if (f.is_finite()) f.to_str() else "null"
 
 limit : U64 -> I64
 limit = |n| n.to_i64_try() ?? I64.highest

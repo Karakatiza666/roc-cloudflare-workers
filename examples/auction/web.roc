@@ -82,7 +82,7 @@ require_admin! : Request => Try({}, [Unauthorized, MissingEnv(Str)])
 require_admin! = |req| {
 	token = Env.secret!("ADMIN_TOKEN")?
 	given = (req.header("authorization") ?? "").drop_prefix("Bearer ")
-	if WebCrypto.timing_safe_equal!(given.to_utf8(), token.reveal().to_utf8()) Ok({}) else Err(Unauthorized)
+	if (WebCrypto.timing_safe_equal!(given.to_utf8(), token.reveal().to_utf8())) Ok({}) else Err(Unauthorized)
 }
 
 # ---- Catalog ----
@@ -119,7 +119,7 @@ create_lot! = |req| {
 		return Err(BadRequest("id is empty or the close time is past"))
 	}
 	cfg = Gavel.config.get!()?
-	step = if new.reserve_cents / 100 > 100 new.reserve_cents / 100 else 100
+	step = if (new.reserve_cents / 100 > 100) new.reserve_cents / 100 else 100
 	lot : Gavel.Lot
 	lot = { id: new.id, title: new.title, reserve_cents: new.reserve_cents, close_ms: new.close_ms, min_step_cents: step, max_step_cents: cfg.max_step_cents }
 	_ = db.run!(

@@ -39,7 +39,7 @@ fetch! = |req| match (req.method(), req.segments()) {
 ## The cron of the test decides the result. A `time_ms` that is not the one of the test is an error.
 scheduled! : Worker.Scheduled => Try({}, _)
 scheduled! = |s| match s.cron() {
-	"*/5 * * * *" => if s.time_ms() == 1_700_000_000_000 Ok({}) else Err(WrongTime(s.time_ms()))
+	"*/5 * * * *" => if (s.time_ms() == 1_700_000_000_000) Ok({}) else Err(WrongTime(s.time_ms()))
 	"fail" => Err(Failing)
 	"noretry" => {
 		s.no_retry!()
@@ -70,7 +70,7 @@ cf_text = |req| match req.cf() {
 			Ok(n) => "Ok(${n.to_str()})"
 			Err(Missing) => "Missing"
 		}
-		eu = if cf.is_eu_country "eu" else "not eu"
+		eu = if (cf.is_eu_country) "eu" else "not eu"
 		"colo=${show(cf.colo)} city=${show(cf.city)} asn=${asn} rtt=${rtt} ${eu}"
 	}
 	Err(_) => "no cf"
@@ -78,7 +78,7 @@ cf_text = |req| match req.cf() {
 
 ## The event `Queue` (8f): the batch of one message that `bench/entry-workerd.mjs` sends.
 queue! : Queue.Batch => Try({}, _)
-queue! = |batch| if batch.queue() == "jobs" and batch.messages().len() == 1 Ok({}) else Err(WrongBatch(batch.queue()))
+queue! = |batch| if (batch.queue() == "jobs" and batch.messages().len() == 1) Ok({}) else Err(WrongBatch(batch.queue()))
 
 worker = Worker.new({ fetch!, scheduled!, queue!, other! })
 

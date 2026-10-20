@@ -491,7 +491,7 @@ resolve_tag_union_type = |type_table, duplicate_tag_names, preferred_names, type
 			} else {
 				"*anyopaque"
 			}
-		}
+	}
 
 ## Generate the RocList(T) generic type function (static Zig code)
 generate_roc_list_generic : Str
@@ -887,7 +887,6 @@ generate_element_type_structs = |type_table, duplicate_tag_names, preferred_name
 			RocUnit => {}
 			RocUnknown(_) => {}
 		}
-
 	}
 
 	$structs
@@ -1174,7 +1173,7 @@ release_policy_for_type_id = |type_table, duplicate_tag_names, preferred_names, 
 					} else {
 						"${tag_union_struct_name(preferred_names, duplicate_tag_names, type_id, tu)}Release"
 					}
-				}
+			}
 		RocErasedCallable(_) => "RocErasedCallableRelease"
 		_ => ""
 	}
@@ -1212,7 +1211,7 @@ type_ident_zig = |type_table, duplicate_tag_names, preferred_names, type_id|
 					} else {
 						"Type${U64.to_str(type_id)}"
 					}
-				}
+			}
 		RocErasedCallable(_) => "ErasedCallable"
 		_ => "Type${U64.to_str(type_id)}"
 	}
@@ -1314,7 +1313,7 @@ incref_stmt_for_repr = |type_table, duplicate_tag_names, preferred_names, _type_
 					} else {
 						""
 					}
-				}
+			}
 		RocErasedCallable(_) => "    increfErasedCallable(${expr}, amount);\n"
 		_ => ""
 	}
@@ -1674,7 +1673,7 @@ generate_platform_type_aliases_zig = |hosted_functions, provides_list, type_tabl
 					RocTagUnion(_) => add_tag_union_aliases_zig($state, plan.alias, target, type_table.layout(plan.type_id))
 					_ => add_type_alias_zig($state, plan.alias, target)
 				}
-			}
+		}
 	}
 
 	if $state.content == "" {

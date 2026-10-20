@@ -162,7 +162,7 @@ Native :: [].{
 call! : U32, List(U8) => Try(List(U8), Str)
 call! = |op, bytes| {
 	r = Host.native!(op, bytes)
-	if r.status == 0 Ok(r.bytes) else Err(Str.from_utf8_lossy(r.bytes))
+	if (r.status == 0) Ok(r.bytes) else Err(Str.from_utf8_lossy(r.bytes))
 }
 
 ## The u32 fields of the ops are little-endian.

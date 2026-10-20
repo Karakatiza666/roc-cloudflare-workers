@@ -32,7 +32,7 @@ TailRoutes :: [].{
 				Err(Missing) => "none"
 			}
 			timestamp = match item.event_timestamp_ms() {
-				Ok(t) => if t > 0 "set" else "zero"
+				Ok(t) => if (t > 0) "set" else "zero"
 				Err(Missing) => "none"
 			}
 			messages = item.logs().map(|l| l.message)

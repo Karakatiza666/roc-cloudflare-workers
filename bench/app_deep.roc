@@ -21,7 +21,7 @@ down = |n, salt, alloc| {
 	if n == 0 {
 		{ a: salt, b: 1, c: 2, d: 1, e: 3, f: 4, g: 5, h: 6, i: 7, j: 8, k: 9, l: 10, m: 11, n: 12, o: 13, p: 14 }
 	} else {
-		extra = if alloc List.repeat(n, 2).len() else 0
+		extra = if (alloc) List.repeat(n, 2).len() else 0
 		r = down(n - 1, m(salt + n * 3), alloc)
 		{ a: m(r.b + n + extra), b: m(r.c * 5 + n), c: m(r.a + r.d), d: r.d + 1, e: m(r.f + r.e), f: m(r.g + n), g: m(r.h * 3), h: m(r.i + 1), i: m(r.j + r.a), j: m(r.k + 2), k: m(r.l + n), l: m(r.m + 3), m: m(r.n + r.b), n: m(r.o + 4), o: m(r.p + n), p: m(r.a + r.c) }
 	}
@@ -47,7 +47,7 @@ handle! : Str => Str
 handle! = |req| {
 	_w = Js.await!(wait_ops)
 	depth = U64.from_str(req.drop_suffix(" alloc").drop_suffix(" free")) ?? 10
-	r = if req.ends_with(" free") down_free(depth, 17, List.repeat(0, 100)) else down(depth, 17, req.ends_with(" alloc"))
+	r = if (req.ends_with(" free")) down_free(depth, 17, List.repeat(0, 100)) else down(depth, 17, req.ends_with(" alloc"))
 	"a=${r.a.to_str()} d=${r.d.to_str()} p=${r.p.to_str()}"
 }
 

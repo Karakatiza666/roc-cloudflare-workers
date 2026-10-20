@@ -35,7 +35,7 @@ Time :: [].{
 	## Milliseconds to whole seconds, rounded up (MC10), for a Workers option in seconds: 1 ms gives 1 s, so a
 	## duration never becomes shorter (KV `expirationTtl`, Queues `delaySeconds`, a `max-age`).
 	seconds_up : U64 -> U64
-	seconds_up = |ms| ms // 1000 + (if ms % 1000 > 0 1 else 0)
+	seconds_up = |ms| ms // 1000 + (if (ms % 1000 > 0) 1 else 0)
 }
 
 # MC10: the module converts, and it rounds up.

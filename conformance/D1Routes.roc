@@ -14,16 +14,24 @@ db = D1.binding("DB")
 
 ## The row types of the typed reads (`?type=`).
 Person : { id : I64, name : Str }
+
 IdRow : { id : I64 }
+
 RealRow : { x : F64 }
+
 Count : { n : U64 }
+
 TextRow : { t : Str }
+
 Big : { x : Str }
+
 IdRow64 : { id : Id64 }
 
 ## The tuple types of `all_tuples!` (the same columns, in the order of the SELECT).
 PersonT : (I64, Str)
+
 IdsT : (I64, I64)
+
 RealsT : (I64, F64)
 
 D1Routes :: [].{
@@ -102,13 +110,15 @@ show_info = |i| "changes=${i.changes.to_str()} last_row_id=${Str.inspect(i.last_
 
 ## `i:<I64>`, `r:<F64>`, `t:<text>`, `n:` (null), split at `,`.
 params : Str -> List(Sql)
-params = |text| if text == "" [] else text.split_on(",").map(|item| match item.split_first(":") {
-	Ok({ before: "i", after }) => Int(I64.from_str(after) ?? crash "a bad i: parameter")
-	Ok({ before: "r", after }) => Real(F64.from_str(after) ?? crash "a bad r: parameter")
-	Ok({ before: "t", after }) => Text(after)
-	Ok({ before: "n", after: _ }) => Null
-	_ => crash "a bad parameter: ${item}"
-})
+params = |text| if (text == "") [] else text.split_on(",").map(
+	|item| match item.split_first(":") {
+		Ok({ before: "i", after }) => Int(I64.from_str(after) ?? crash "a bad i: parameter")
+		Ok({ before: "r", after }) => Real(F64.from_str(after) ?? crash "a bad r: parameter")
+		Ok({ before: "t", after }) => Text(after)
+		Ok({ before: "n", after: _ }) => Null
+		_ => crash "a bad parameter: ${item}"
+	},
+)
 
 stmts : Str -> List(Sql.Stmt)
 stmts = |text| text.split_on(";").map(|s| Sql.stmt(s, Sql.none))
@@ -357,8 +367,10 @@ id64! = |k| {
 
 ## The columns of `pt` as `typeof()` and as values.
 Typed : { ta : Str, tb : Str, tc : Str, td : Str, a : Str, b : I64, c : F64, hd : Str }
+
 ## The columns of `pt` that hold NULL or a value.
 Nulls : { an : I64, b : I64, cn : I64, tb : Str }
+
 ## A value of `pi` as text, and its `typeof()`.
 Stored : { v : Str, t : Str }
 

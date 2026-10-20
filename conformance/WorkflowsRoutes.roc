@@ -9,8 +9,11 @@ import pf.Io
 import Q
 
 Params : { name : Str, n : U64 }
+
 FParams : { x : F64 }
+
 Done : { payload : Params, id : Str }
+
 Waited : { started : Params, got : { x : U64 } }
 
 WorkflowsRoutes :: [].{
@@ -31,17 +34,17 @@ WorkflowsRoutes :: [].{
 			["create_f64"] => {
 				fw : Workflows(FParams)
 				fw = Workflows.json(Q.text(req, "binding"))
-				made(fw.create!({ x: if Q.num(req, "n") == 1 0.0.F64 / 0.0.F64 else 0.5.F64 }))
+				made(fw.create!({ x: if (Q.num(req, "n") == 1) 0.0.F64 / 0.0.F64 else 0.5.F64 }))
 			}
 			["create_f64_io"] => {
 				fw : Workflows(FParams)
 				fw = Workflows.json(Q.text(req, "binding"))
-				made(Io.run!(fw.create_with({ x: if Q.num(req, "n") == 1 0.0.F64 / 0.0.F64 else 0.5.F64 }, { id: id })))
+				made(Io.run!(fw.create_with({ x: if (Q.num(req, "n") == 1) 0.0.F64 / 0.0.F64 else 0.5.F64 }, { id: id })))
 			}
 			# `send_event!` with a payload that has an `F64`.
 			["send_event_f64"] => match w.get!(id) {
 				Ok(i) => ok(
-					match i.send_event!("go", { x: if Q.num(req, "n") == 1 0.0.F64 / 0.0.F64 else 0.5.F64 }) {
+					match i.send_event!("go", { x: if (Q.num(req, "n") == 1) 0.0.F64 / 0.0.F64 else 0.5.F64 }) {
 						Ok({}) => "Ok"
 						Err(NotFound) => "NotFound"
 						Err(BadData(m)) => "BadData ${m}"
@@ -88,7 +91,7 @@ status! = |w, id, twin| {
 		Ok(x) => x
 		Err(e) => return ok("get: ${Str.inspect(e)}")
 	}
-	got = if twin Io.run!(i.status()) else i.status!()
+	got = if (twin) Io.run!(i.status()) else i.status!()
 	match got {
 		Ok(s) => {
 			ok("state=${Str.inspect(s.state)} error=${Str.inspect(s.error)} json=${Str.inspect(s.output_json)} ${show_output(s)}")
@@ -119,10 +122,10 @@ act! = |w, id, which, twin, x| {
 		Err(e) => return ok("get: ${Str.inspect(e)}")
 	}
 	r = match which {
-		"pause" => if twin Io.run!(i.pause()) else i.pause!()
-		"resume" => if twin Io.run!(i.resume()) else i.resume!()
-		"terminate" => if twin Io.run!(i.terminate()) else i.terminate!()
-		_ => if twin Io.run!(i.send_event("go", { x: x })) else i.send_event!("go", { x: x })
+		"pause" => if (twin) Io.run!(i.pause()) else i.pause!()
+		"resume" => if (twin) Io.run!(i.resume()) else i.resume!()
+		"terminate" => if (twin) Io.run!(i.terminate()) else i.terminate!()
+		_ => if (twin) Io.run!(i.send_event("go", { x: x })) else i.send_event!("go", { x: x })
 	}
 	ok(
 		match r {

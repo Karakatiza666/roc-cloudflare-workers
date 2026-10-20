@@ -31,7 +31,7 @@ db! = |q| effect!("db", [Lit(Text(q))])
 items : Str, U64 -> List(Item)
 items = |id, count| {
 	var $out = List.with_capacity(count)
-	for i in 0.U64.until(count) {
+	for i in (0.U64).until(count) {
 		n = i.to_str()
 		$out = $out.append({
 			id: i,
@@ -60,7 +60,7 @@ deep! = |n, id, trap| {
 	} else {
 		mine = { level: n, tag: "level-${n.to_str()}-of-request-${id}" }
 		r = deep!(n - 1, id, trap)
-		good = if mine.tag.ends_with(id) 1 else 1000000
+		good = if (mine.tag.ends_with(id)) 1 else 1000000
 		{ sum: r.sum + mine.level * 1000 + mine.tag.count_utf8_bytes() + good, out: r.out }
 	}
 }
@@ -90,7 +90,7 @@ handle! = |req| {
 	json = Json.to_str(items(id, count))
 	r = deep!(depth, id, trap)
 	if parts.get(4) == Ok("dbg") {
-		for i in 0.U64.until(200) {
+		for i in (0.U64).until(200) {
 			dbg "request ${id} line ${i.to_str()}"
 		}
 		crash "crash after dbg of request ${id}"

@@ -16,7 +16,7 @@ Body := [Empty, Text(Str), Bytes(List(U8)), Stream(Js.Ref)].{
 	## The body as UTF-8 text, to `default_max` bytes.
 	text! : Body => Try(Str, [TooLarge, BadData(Str), BodyErr(Io.Thrown)])
 	text! = |body| match body {
-		Text(s) => if s.count_utf8_bytes() > default_max Err(TooLarge) else Ok(s)
+		Text(s) => if (s.count_utf8_bytes() > default_max) Err(TooLarge) else Ok(s)
 		_ => {
 			bytes = match bytes_with!(body, { max_bytes: default_max }) {
 				Ok(b) => b
@@ -53,7 +53,7 @@ Body := [Empty, Text(Str), Bytes(List(U8)), Stream(Js.Ref)].{
 				Err(t) => return Err(BodyErr(t))
 			}
 		}
-		if bytes.len() > max_bytes Err(TooLarge) else Ok(bytes)
+		if (bytes.len() > max_bytes) Err(TooLarge) else Ok(bytes)
 	}
 
 	## The next chunk of a stream, as JS gives it, cut to `default_max` (MC11). One wait.

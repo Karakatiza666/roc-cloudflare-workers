@@ -1,8 +1,8 @@
 app [event!] {
-	pf: platform "../platform/main.roc",
-	http: "https://github.com/roc-lang/http/releases/download/2.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
 	cbor_f: "../8g-cbor-field/main.roc",
 	cbor_l: "../8g-cbor-first/main.roc",
+	http: "https://github.com/roc-lang/http/releases/download/2.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
+	pf: platform "../platform/main.roc",
 }
 
 ## PLAN.md step 8g: the measure app. Each route runs one operation `n` times in one request (a loop with a changing
@@ -82,7 +82,7 @@ cross! = |n, k, waits| {
 		op : Js.Op
 		op = Call(Root("global"), "isFinite", [Lit(Int($i.to_i64_wrap()))])
 		ops = List.repeat(op, k)
-		r = if waits Js.await!(ops) else Js.call!(ops)
+		r = if (waits) Js.await!(ops) else Js.call!(ops)
 		match r {
 			Ok(Bool(Bool.True)) => {
 				$acc = $acc + 1
@@ -412,7 +412,7 @@ sha_wasm! = |n, size| {
 		$last = Crypto.SHA256.hash($data)
 		$i = $i + 1
 	}
-	"sha ${n.to_str()} ${size.to_str()} ${if n == 0 "" else $last.to_hex()}"
+	"sha ${n.to_str()} ${size.to_str()} ${if (n == 0) "" else $last.to_hex()}"
 }
 
 ## PLAN.md 8g P2: `n` times `WebCrypto.sha256!` of a buffer of `size` bytes (the builtin below 4,096 bytes, `digest` above).
@@ -431,7 +431,7 @@ sha_pick! = |n, size| {
 		}
 		$i = $i + 1
 	}
-	"sha ${n.to_str()} ${size.to_str()} ${if n == 0 "" else to_hex($last)}"
+	"sha ${n.to_str()} ${size.to_str()} ${if (n == 0) "" else to_hex($last)}"
 }
 
 ShaCase : [FromWasm, FromJs, CopyOnly]
@@ -476,12 +476,12 @@ sha_digest! = |n, size, which| {
 		}
 		$i = $i + 1
 	}
-	"sha ${n.to_str()} ${size.to_str()} ${if n == 0 "" else if which == FromWasm to_hex($last) else "-"}"
+	"sha ${n.to_str()} ${size.to_str()} ${if (n == 0) "" else if (which == FromWasm) to_hex($last) else "-"}"
 }
 
 to_hex : List(U8) -> Str
 to_hex = |bytes| {
-	digit = |x| if x < 10 48 + x else 87 + x
+	digit = |x| if (x < 10) 48 + x else 87 + x
 	chars = bytes.join_map(|b| [digit(b // 16), digit(b % 16)])
 	Str.from_utf8(chars) ?? ""
 }

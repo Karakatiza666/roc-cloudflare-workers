@@ -11,6 +11,7 @@ import Remote
 import http.Header
 
 WebSocket :: { ref : Js.Ref }.{
+
 	## Two values are the same socket when they hold the same ref (API.md RS1).
 	is_eq : _
 

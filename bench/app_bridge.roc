@@ -16,7 +16,7 @@ show : Js -> Str
 show = |v| match v {
 	Undefined => "undefined"
 	Null => "null"
-	Bool(b) => if b "true" else "false"
+	Bool(b) => if (b) "true" else "false"
 	Num(f) => "num:${f.to_str()}"
 	Int(i) => i.to_str()
 	Text(s) => "\"${s}\""
@@ -35,7 +35,7 @@ shown = |r| match r {
 }
 
 yes : Bool -> Str
-yes = |b| if b "true" else "false"
+yes = |b| if (b) "true" else "false"
 
 num : Str -> U64
 num = |s| U64.from_str(s) ?? 0
@@ -70,7 +70,7 @@ field = |fields, k| match fields.find_first(|(n, _)| n == k) {
 }
 
 deep : U64 -> Js
-deep = |n| if n == 0 Int(7) else Arr([deep(n - 1)])
+deep = |n| if (n == 0) Int(7) else Arr([deep(n - 1)])
 
 ## HD3: one of each tag, empty and long strings, strings of 11 and 12 bytes (the wasm32 small-string limit),
 ## 2^53 + 1 and the edges of I64, deep nesting, a ref and an error.
@@ -158,21 +158,25 @@ handle! = |req| match req.split_on(" ") {
 		"get=${shown(g)} getu=${shown(gu)} fields=${shown(f)} fieldsu=${shown(fu)} call=${shown(c)}"
 	}
 	# RS2: a CryptoKey pinned by one task, used by a later task.
-	["pin", name] => shown(Js.await!([
-		Get(Root("global"), "crypto"),
-		Get(Slot(0), "subtle"),
-		Call(Slot(1), "generateKey", [Lit(Obj([("name", Text("HMAC")), ("hash", Text("SHA-256"))])), Lit(Bool(Bool.False)), Lit(Arr([Text("sign"), Text("verify")]))]),
-		Call(Root("pf"), "pin", [Lit(Text(name)), Slot(2)]),
-	]))
-	["use", name] => shown(Js.await!([
-		Call(Root("pf"), "pinned", [Lit(Text(name))]),
-		Get(Root("global"), "crypto"),
-		Get(Slot(1), "subtle"),
-		Call(Slot(2), "sign", [Lit(Text("HMAC")), Slot(0), Lit(Bytes([1, 2, 3]))]),
-		Call(Slot(2), "verify", [Lit(Text("HMAC")), Slot(0), Slot(3), Lit(Bytes([1, 2, 3]))]),
-		Fields(Slot(0), ["type", "extractable"]),
-		Array([Slot(3), Slot(4), Slot(5)]),
-	]))
+	["pin", name] => shown(
+		Js.await!([
+			Get(Root("global"), "crypto"),
+			Get(Slot(0), "subtle"),
+			Call(Slot(1), "generateKey", [Lit(Obj([("name", Text("HMAC")), ("hash", Text("SHA-256"))])), Lit(Bool(Bool.False)), Lit(Arr([Text("sign"), Text("verify")]))]),
+			Call(Root("pf"), "pin", [Lit(Text(name)), Slot(2)]),
+		]),
+	)
+	["use", name] => shown(
+		Js.await!([
+			Call(Root("pf"), "pinned", [Lit(Text(name))]),
+			Get(Root("global"), "crypto"),
+			Get(Slot(1), "subtle"),
+			Call(Slot(2), "sign", [Lit(Text("HMAC")), Slot(0), Lit(Bytes([1, 2, 3]))]),
+			Call(Slot(2), "verify", [Lit(Text("HMAC")), Slot(0), Slot(3), Lit(Bytes([1, 2, 3]))]),
+			Fields(Slot(0), ["type", "extractable"]),
+			Array([Slot(3), Slot(4), Slot(5)]),
+		]),
+	)
 	# API.md 5.2: rows as one Packed value, read by Cbor.parse.
 	["pack", n] => match Js.await!([Call(Root("ops"), "rows", [Lit(Int(num(n).to_i64_wrap()))]), Call(Root("pf"), "pack", [Slot(0)])]) {
 		Ok(Packed(bytes)) => "packed ${rows_of(bytes)}"
@@ -181,13 +185,15 @@ handle! = |req| match req.split_on(" ") {
 	# 6.4: the field `results` of each item as Packed.
 	["packeach"] => match Js.await!([Call(Root("ops"), "batch", []), Call(Root("pf"), "packEach", [Slot(0), Lit(Text("results"))])]) {
 		Ok(Arr(items)) => {
-			each = items.map(|item| match item {
-				Obj(fs) => match field(fs, "results") {
-					Packed(bytes) => "${rows_of(bytes)} meta=${show(field(fs, "meta"))}"
-					other => "results=${show(other)}"
-				}
-				other => "item=${show(other)}"
-			})
+			each = items.map(
+				|item| match item {
+					Obj(fs) => match field(fs, "results") {
+						Packed(bytes) => "${rows_of(bytes)} meta=${show(field(fs, "meta"))}"
+						other => "results=${show(other)}"
+					}
+					other => "item=${show(other)}"
+				},
+			)
 			"items=${items.len().to_str()} ${Str.join_with(each, "; ")}"
 		}
 		other => "bad ${shown(other)}"
@@ -202,7 +208,7 @@ handle! = |req| match req.split_on(" ") {
 			packed = Js.call!([Array([Lit(Packed(Cbor.encode([1.U8, 2])))])])
 			match back {
 				Ok(Arr(got)) => {
-					bad = want.map2(got, |w, g| if w == g "" else "${show(w)} != ${show(g)}").keep_if(|s| s != "")
+					bad = want.map2(got, |w, g| if (w == g) "" else "${show(w)} != ${show(g)}").keep_if(|s| s != "")
 					"hd3 ${yes(got.len() == want.len() and bad.is_empty())} ${got.len().to_str()} ${Str.join_with(bad, "; ")} packed=${shown(packed)}"
 				}
 				_ => "bad ${shown(back)}"
@@ -215,10 +221,10 @@ handle! = |req| match req.split_on(" ") {
 		Ok(Ref(r)) => {
 			fix = fixtures(r).map(|v| Lit(v))
 			var $ok = 0.U64
-			for _ in 0.U64.until(num(n)) {
+			for _ in (0.U64).until(num(n)) {
 				match Js.call!([Array(fix)]) {
 					Ok(Arr(got)) => {
-						$ok = $ok + (if got.len() == fix.len() 1 else 0)
+						$ok = $ok + (if (got.len() == fix.len()) 1 else 0)
 					}
 					_ => {}
 				}

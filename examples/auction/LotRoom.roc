@@ -158,7 +158,7 @@ close_now! : Object.Self, State => Try(Gavel.Closeout, _)
 close_now! = |self, st| {
 	best = top!(self)?
 	met = best.bids_count > 0 and best.amount_cents >= st.reserve_cents
-	out = if met { winner: best.bidder, amount_cents: best.amount_cents } else { winner: "", amount_cents: 0 }
+	out = if (met) { winner: best.bidder, amount_cents: best.amount_cents } else { winner: "", amount_cents: 0 }
 	state_cell.set!(self, { ..st, status: Closed, winner: out.winner, final_cents: out.amount_cents })?
 	Ok(out)
 }

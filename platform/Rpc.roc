@@ -7,6 +7,7 @@ import Response
 import cbor.Cbor
 
 Rpc(arg, ret, err) :: { name : Str }.{
+
 	## A constant (WR1): the method name and, by its annotation, the types of both sides. `err` is the tag union that
 	## the callee can give (`Rpc.NoErr` for none): the caller gets it as `Remote(err)`.
 	method : Str -> Rpc(arg, ret, err)
@@ -69,7 +70,7 @@ Rpc(arg, ret, err) :: { name : Str }.{
 	entrypoint : Str, { fetch! ?: Request => Try(Response, e), rpc ?: List(Rpc.Handler({})) } -> Rpc.Entrypoint
 	entrypoint = |ep_name, h| {
 		name: ep_name,
-		handlers: if h.?fetch!.is_ok() ["fetch"] else [],
+		handlers: if (h.?fetch!.is_ok()) ["fetch"] else [],
 		rpc: h.?rpc ?? [],
 		fetch!: |req| match h.?fetch! {
 			Ok(f!) => match f!(req) {

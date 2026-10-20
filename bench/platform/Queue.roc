@@ -149,6 +149,7 @@ Queue(a) :: { name : Str, content_type : Str, write : a -> Js, read : List(U8) -
 	## A consumer batch: the queue name (not the binding name) and its messages. A batch has the limit of the Queues
 	## config (MC11), so it crosses with no `max_bytes`.
 	Batch :: { queue : Str, messages : List(Queue.Message) }.{
+
 		## Plain data (MC13): a test can make one.
 		new : { queue : Str, messages : List(Queue.Message) } -> Queue.Batch
 		new = |r| Queue.Batch.{ queue: r.queue, messages: r.messages }
@@ -158,7 +159,6 @@ Queue(a) :: { name : Str, content_type : Str, write : a -> Js, read : List(U8) -
 
 		messages : Queue.Batch -> List(Queue.Message)
 		messages = |x| x.messages
-
 
 		## `batch.ackAll()`: no wait.
 		ack_all! : Queue.Batch => {}
@@ -175,6 +175,7 @@ Queue(a) :: { name : Str, content_type : Str, write : a -> Js, read : List(U8) -
 	## One message. `body`: the message as CBOR (MC5). `attempts` starts at 1. A function finds its message in the batch
 	## of the task by `id` (`pf.findById`), so a message holds no ref.
 	Message :: { id : Str, timestamp_ms : U64, attempts : U32, body : List(U8) }.{
+
 		## Plain data (MC13): a test can make one.
 		new : { id : Str, timestamp_ms : U64, attempts : U32, body : List(U8) } -> Queue.Message
 		new = |r| Queue.Message.{ id: r.id, timestamp_ms: r.timestamp_ms, attempts: r.attempts, body: r.body }
@@ -190,7 +191,6 @@ Queue(a) :: { name : Str, content_type : Str, write : a -> Js, read : List(U8) -
 
 		body : Queue.Message -> List(U8)
 		body = |x| x.body
-
 
 		## `message.ack()`: no wait.
 		ack! : Queue.Message => {}
@@ -215,7 +215,7 @@ options = |content_type, delay_ms| match delay_ms {
 retry_options : U64 -> List((Str, Js))
 retry_options = |ms| {
 	s = Time.seconds_up(ms)
-	[("delaySeconds", Int((if s > 86_400 86_400 else s).to_i64_try() ?? 86_400))]
+	[("delaySeconds", Int((if (s > 86_400) 86_400 else s).to_i64_try() ?? 86_400))]
 }
 
 ## The message of the batch of the task, then the call: `pf.findById(event.messages, id)`.

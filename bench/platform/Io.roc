@@ -3,6 +3,7 @@
 import Js
 
 Io(a, e) := { ops : List(Js.Op), waits : Bool, read : Try(Js, Io.Thrown) -> Try(a, e) }.{
+
 	## What JS threw: the name and the message of the error (API.md 4, status 1).
 	Thrown : Js.Thrown
 
@@ -31,7 +32,7 @@ Io(a, e) := { ops : List(Js.Op), waits : Bool, read : Try(Js, Io.Thrown) -> Try(
 	run! : Io(a, e) => Try(a, e)
 	run! = |io| {
 		read = io.read
-		read(if io.waits Js.await!(io.ops) else Js.call!(io.ops))
+		read(if (io.waits) Js.await!(io.ops) else Js.call!(io.ops))
 	}
 
 	## Two operations at the same time, in one crossing (`Par`, OP6).
@@ -60,10 +61,13 @@ Io(a, e) := { ops : List(Js.Op), waits : Bool, read : Try(Js, Io.Thrown) -> Try(
 			Ok(_) => crash "Io.all!: the Par result has another length"
 			Err(t) => ios.map(|_| Err(t))
 		}
-		ios.map2(got, |io, r| {
-			read = io.read
-			read(r)
-		})
+		ios.map2(
+			got,
+			|io, r| {
+				read = io.read
+				read(r)
+			},
+		)
 	}
 
 	## The first operation to settle wins (`Race`, OP8). `index` is its place in the list.

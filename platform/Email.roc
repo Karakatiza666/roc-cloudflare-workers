@@ -56,6 +56,7 @@ Email :: { name : Str }.{
 	## `can_be_forwarded`: `canBeForwarded` of the message, true when the runtime does not give it.
 	## Opaque: read it with its methods (`mail.from()`, `mail.raw()`, ...).
 	Mail :: { from : Str, to : Str, headers : List(Header), raw : Body, raw_size_bytes : U64, can_be_forwarded : Bool }.{
+
 		## Plain data (MC13): a test can make one.
 		new : { from : Str, to : Str, headers : List(Header), raw : Body, raw_size_bytes : U64, can_be_forwarded : Bool } -> Email.Mail
 		new = |r| Email.Mail.{ from: r.from, to: r.to, headers: r.headers, raw: r.raw, raw_size_bytes: r.raw_size_bytes, can_be_forwarded: r.can_be_forwarded }
@@ -77,7 +78,6 @@ Email :: { name : Str }.{
 
 		can_be_forwarded : Email.Mail -> Bool
 		can_be_forwarded = |x| x.can_be_forwarded
-
 
 		## The first header with this name (the case does not matter), or `Missing`.
 		header : Email.Mail, Str -> Try(Str, [Missing])

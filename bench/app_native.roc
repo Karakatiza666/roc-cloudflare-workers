@@ -70,7 +70,7 @@ m = |x| x % 1000003
 down! : U64, U64, Str => W
 down! = |n, salt, name| {
 	if n == 0 {
-		x = if name == "-" 0 else {
+		x = if (name == "-") 0 else {
 			out = Native.zstd_decode!(data!(name), 1_000_000_000) ?? crash "deep decode"
 			h = Native.Sha256.new!() ?? crash "deep sha"
 			Native.Sha256.update!(h, out) ?? crash "deep update"
@@ -97,7 +97,7 @@ handle! = |req| match req.split_on(" ") {
 	}
 	["stream", name, chunk, push_limit] => {
 		bytes = data!(name)
-		opened = if push_limit == "0" Native.ZstdStream.open!() else Native.ZstdStream.open_with!({ push_limit_bytes: num(push_limit) })
+		opened = if (push_limit == "0") Native.ZstdStream.open!() else Native.ZstdStream.open_with!({ push_limit_bytes: num(push_limit) })
 		match opened {
 			Err(e) => "open err ${Str.inspect(e)}"
 			Ok(s) => {

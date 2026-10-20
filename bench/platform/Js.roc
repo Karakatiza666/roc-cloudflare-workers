@@ -14,6 +14,7 @@ Js := [
 	Obj(List((Str, Js))),
 	Ref(Js.Ref),
 	Error(Str, Str),
+
 	## One value as CBOR, for typed data (API.md 5.2).
 	Packed(List(U8)),
 ].{

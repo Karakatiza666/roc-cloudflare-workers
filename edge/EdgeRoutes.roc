@@ -45,7 +45,12 @@ EdgeRoutes :: [].{
 					Log.info!("edge after", { tag, i: $i })
 					$i = $i + 1
 				}
-				Log.info!("edge after done", { tag })
+				Log.info!(
+					"edge after done",
+					{
+						tag
+					},
+				)
 				Ok({})
 			}
 			Response.from_text(200, "early ${tag}").after(work!)
@@ -99,12 +104,22 @@ EdgeRoutes :: [].{
 		["starttls"] => {
 			host = Q.text(req, "host")
 			port = Q.num(req, "port").to_u16_try() ?? 587
-			mode = if Q.text(req, "plain") == "1" Off else StartTls
-			Log.info!("edge starttls connect", { host })
+			mode = if (Q.text(req, "plain") == "1") Off else StartTls
+			Log.info!(
+				"edge starttls connect",
+				{
+					host
+				},
+			)
 			match Tcp.connect_with!(host, port, { tls: mode }) {
 				Err(e) => Response.from_text(200, "connect ${Str.inspect(e)}")
 				Ok(s) => {
-					Log.info!("edge starttls connected", { host })
+					Log.info!(
+						"edge starttls connected",
+						{
+							host
+						},
+					)
 					banner = first_line(s.read!())
 					Log.info!("edge starttls banner", { host, banner })
 					_ = s.write!(Str.to_utf8("EHLO rocplat.test\r\n"))
@@ -133,7 +148,12 @@ EdgeRoutes :: [].{
 				Ok(s) => {
 					greeting = first_line(s.read!())
 					t0 = Time.now_ms!()
-					Log.info!("edge tcpwait start", { host })
+					Log.info!(
+						"edge tcpwait start",
+						{
+							host
+						},
+					)
 					second = first_line(s.read!())
 					waited = Time.now_ms!() - t0
 					Log.info!("edge tcpwait end", { host, waited, second })

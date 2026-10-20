@@ -74,7 +74,7 @@ sent : Try({ message_id : Str }, e) -> Response
 sent = |r| Response.from_text(
 	200,
 	match r {
-		Ok(x) => if x.message_id.is_empty() "Ok no id" else "Ok id"
+		Ok(x) => if (x.message_id.is_empty()) "Ok no id" else "Ok id"
 		Err(e) => "Err ${Str.inspect(e)}"
 	},
 )

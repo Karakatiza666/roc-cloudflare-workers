@@ -60,7 +60,7 @@ WebSocketRoutes :: [].{
 		["room_admin", name] => {
 			op = Q.text(req, "op")
 			base = Request.get("http://o/?op=${op}")
-			to_object = if op == "tags" base.with_header("Upgrade", "websocket") else base
+			to_object = if (op == "tags") base.with_header("Upgrade", "websocket") else base
 			match rooms.named(name).fetch!(to_object) {
 				Ok(res) => Response.from_text(200, res.text!() ?? "status ${res.status().to_str()}")
 				Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
@@ -266,8 +266,8 @@ room_fetch! = |self, req| match Q.text(req, "op") {
 		user = Q.text(req, "user")
 		match self.accept_with!(req, { tags: ["room", user] }) {
 			Ok({ socket, response }) => {
-				attached = if Q.text(req, "noattach") == "1" Ok({}) else user_slot.set!(socket, { name: user })
-				if attached.is_ok() Ok(response) else answer("attach! gave ${Str.inspect(attached)}")
+				attached = if (Q.text(req, "noattach") == "1") Ok({}) else user_slot.set!(socket, { name: user })
+				if (attached.is_ok()) Ok(response) else answer("attach! gave ${Str.inspect(attached)}")
 			}
 			Err(e) => answer(Str.inspect(e))
 		}

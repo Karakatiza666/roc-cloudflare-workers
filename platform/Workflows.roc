@@ -8,6 +8,7 @@ import Io
 import Js
 
 Workflows(a) := { name : Str, write : a -> Try(Str, Str) }.{
+
 	## A constant (WR1): the name of the binding in the Wrangler config, and the codec of the parameters.
 	## A value that JSON cannot show (a `NaN` in an `F64`) is `BadData` of the call.
 	json : Str -> Workflows(a) where [a.Json.Encodable(enc)]
@@ -52,17 +53,15 @@ Workflows(a) := { name : Str, write : a -> Try(Str, Str) }.{
 
 		status : Workflows.Instance -> Io(Workflows.Status, [WorkflowsErr(Io.Thrown), NotFound])
 		status = |i| Io.new(
-			instance_ops(i).concat(
-				[
-					Call(Slot(1), "status", []),
-					Get(Slot(2), "status"),
-					Get(Slot(2), "error"),
-					Get(Slot(2), "output"),
-					Get(Root("global"), "JSON"),
-					Call(Slot(6), "stringify", [Slot(5)]),
-					Record([("status", Slot(3)), ("error", Slot(4)), ("output", Slot(7))]),
-				],
-			),
+			instance_ops(i).concat([
+				Call(Slot(1), "status", []),
+				Get(Slot(2), "status"),
+				Get(Slot(2), "error"),
+				Get(Slot(2), "output"),
+				Get(Root("global"), "JSON"),
+				Call(Slot(6), "stringify", [Slot(5)]),
+				Record([("status", Slot(3)), ("error", Slot(4)), ("output", Slot(7))]),
+			]),
 			|r| match r {
 				Ok(js) => Ok(status_of(js))
 				Err(t) => Err(error_of(t))
@@ -95,14 +94,12 @@ Workflows(a) := { name : Str, write : a -> Try(Str, Str) }.{
 		send_event : Workflows.Instance, Str, p -> Io({}, [WorkflowsErr(Io.Thrown), NotFound, BadData(Str)]) where [p.Json.Encodable(enc)]
 		send_event = |i, type, payload| match Json.to_str_try(payload) {
 			Ok(text) => Io.new(
-				[Get(Root("global"), "JSON"), Call(Slot(0), "parse", [Lit(Text(text))])].concat(
-					[
-						Get(Root("env"), i.name),
-						Call(Slot(2), "get", [Lit(Text(i.id))]),
-						Record([("type", Lit(Text(type))), ("payload", Slot(1))]),
-						Call(Slot(3), "sendEvent", [Slot(4)]),
-					],
-				),
+				[Get(Root("global"), "JSON"), Call(Slot(0), "parse", [Lit(Text(text))])].concat([
+					Get(Root("env"), i.name),
+					Call(Slot(2), "get", [Lit(Text(i.id))]),
+					Record([("type", Lit(Text(type))), ("payload", Slot(1))]),
+					Call(Slot(3), "sendEvent", [Slot(4)]),
+				]),
 				|r| match r {
 					Ok(_) => Ok({})
 					Err(t) => Err(error_of(t))
@@ -176,10 +173,10 @@ plain = |i, method| Io.new(
 ## MC9: the codes of the Workflows binding are in the message of the throw (`instance.not_found`,
 ## `instance.already_exists`). Each other throw is `WorkflowsErr`.
 error_of : Io.Thrown -> [WorkflowsErr(Io.Thrown), NotFound]
-error_of = |t| if t.message.contains("instance.not_found") NotFound else WorkflowsErr(t)
+error_of = |t| if (t.message.contains("instance.not_found")) NotFound else WorkflowsErr(t)
 
 create_error : Io.Thrown -> [WorkflowsErr(Io.Thrown), AlreadyExists]
-create_error = |t| if t.message.contains("instance.already_exists") AlreadyExists else WorkflowsErr(t)
+create_error = |t| if (t.message.contains("instance.already_exists")) AlreadyExists else WorkflowsErr(t)
 
 status_of : Js -> Workflows.Status
 status_of = |js| match js {

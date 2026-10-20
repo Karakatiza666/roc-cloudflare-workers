@@ -45,7 +45,7 @@ Worker :: {
 		crons = h.?crons ?? []
 		given = [("fetch", h.?fetch!.is_ok()), ("scheduled", h.?scheduled!.is_ok()), ("queue", h.?queue!.is_ok()), ("email", h.?email!.is_ok()), ("tail", h.?tail!.is_ok())]
 		Worker.{
-			handlers: given.keep_oks(|(name, on)| if on Ok(name) else Err(NotGiven)),
+			handlers: given.keep_oks(|(name, on)| if (on) Ok(name) else Err(NotGiven)),
 			own!: |ev| match ev {
 				Fetch(req) => match h.?fetch! {
 					Ok(f!) => match f!(req) {
@@ -133,6 +133,7 @@ Worker :: {
 
 	## The payload of a cron run (MODULES.md 3). `time_ms` is `controller.scheduledTime`, the planned time.
 	Scheduled :: { cron : Str, time_ms : U64 }.{
+
 		## Plain data (MC13): a test can make one.
 		new : { cron : Str, time_ms : U64 } -> Worker.Scheduled
 		new = |r| Worker.Scheduled.{ cron: r.cron, time_ms: r.time_ms }
@@ -142,7 +143,6 @@ Worker :: {
 
 		time_ms : Worker.Scheduled -> U64
 		time_ms = |x| x.time_ms
-
 
 		## `controller.noRetry()`, one `call!` with no wait. The shim never calls it by itself (MODULES.md 3).
 		## A throw is dropped: only a `Worker.Scheduled` of a `Scheduled` event has a controller.
@@ -195,7 +195,7 @@ Worker :: {
 		}
 		# RPC of the default entry point ("default") or of a named one: the handler of the method (MODULES.md 8).
 		Rpc({ entrypoint, method, arg }) => {
-			handlers = if entrypoint == "default" w.rpc else match w.entrypoints.find_first(|ep| ep.name == entrypoint) {
+			handlers = if (entrypoint == "default") w.rpc else match w.entrypoints.find_first(|ep| ep.name == entrypoint) {
 				Ok(ep) => ep.rpc
 				Err(_) => []
 			}

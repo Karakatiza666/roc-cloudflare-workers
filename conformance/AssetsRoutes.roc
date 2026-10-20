@@ -36,9 +36,9 @@ AssetsRoutes :: [].{
 request : Request -> Request
 request = |req| {
 	url = "http://assets.local${Q.text(req, "path")}"
-	base = if Q.text(req, "method") == "POST" Request.post(url, Text("abc")) else Request.get(url)
+	base = if (Q.text(req, "method") == "POST") Request.post(url, Text("abc")) else Request.get(url)
 	etag = Q.text(req, "etag")
-	if etag == "" base else base.with_header("if-none-match", etag)
+	if (etag == "") base else base.with_header("if-none-match", etag)
 }
 
 show! : Try(Response, [AssetsErr({ name : Str, message : Str })]) => Response

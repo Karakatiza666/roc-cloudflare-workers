@@ -25,7 +25,7 @@ WebCrypto :: [].{
 		Io.new(
 			ops.append(Call(Slot(1), "verify", [Lit(sign_algo(a.alg)), arg_of(key), Lit(Bytes(a.signature)), Lit(Bytes(a.data))])),
 			|r| match r {
-				Ok(Bool(ok)) => if ok Ok({}) else Err(BadSignature)
+				Ok(Bool(ok)) => if (ok) Ok({}) else Err(BadSignature)
 				Ok(other) => Err(CryptoErr(bad_data("verify gave ${Str.inspect(other)}")))
 				Err(t) => Err(CryptoErr(t))
 			},
@@ -172,7 +172,7 @@ WebCrypto :: [].{
 	hmac_sha256 : List(U8), List(U8) -> List(U8)
 	hmac_sha256 = |key, msg| {
 		block = 64
-		k0 = if key.len() > block Crypto.SHA256.hash(key).to_bytes() else key
+		k0 = if (key.len() > block) Crypto.SHA256.hash(key).to_bytes() else key
 		k = k0.concat(List.repeat(0, block - k0.len()))
 		inner = Crypto.SHA256.hash(k.map(|b| b.bitwise_xor(0x36)).concat(msg)).to_bytes()
 		Crypto.SHA256.hash(k.map(|b| b.bitwise_xor(0x5c)).concat(inner)).to_bytes()
@@ -214,13 +214,13 @@ WebCrypto :: [].{
 	## `crypto.getRandomValues`: `n` new random bytes, one `call!` for each 65,536 bytes (the limit of Workers).
 	random! : U64 => List(U8)
 	random! = |n| {
-		chunk = if n > 65_536 65_536 else n
+		chunk = if (n > 65_536) 65_536 else n
 		got = match Js.call!([Get(Root("global"), "crypto"), New(Root("global"), "Uint8Array", [Lit(Int(chunk.to_i64_wrap()))]), Call(Slot(0), "getRandomValues", [Slot(1)])]) {
 			Ok(Bytes(b)) => b
 			Ok(other) => crash "WebCrypto.random!: getRandomValues gave ${Str.inspect(other)}"
 			Err(t) => crash "WebCrypto.random!: ${t.name}: ${t.message}"
 		}
-		if n > chunk got.concat(WebCrypto.random!(n - chunk)) else got
+		if (n > chunk) got.concat(WebCrypto.random!(n - chunk)) else got
 	}
 
 	## `crypto.randomUUID`: one `call!`, no wait.
@@ -255,7 +255,7 @@ WebCrypto :: [].{
 ## after the first): empty for the first key.
 with_key : WebCrypto.Key, Js, List(Str), Bool, List(Js.Op) -> (List(Js.Op), Js.Target)
 with_key = |key, algo, usages, extractable, before| {
-	base = if before.is_empty() [Get(Root("global"), "crypto"), Get(Slot(0), "subtle")] else before
+	base = if (before.is_empty()) [Get(Root("global"), "crypto"), Get(Slot(0), "subtle")] else before
 	n = base.len().to_u32_wrap()
 	args = |format, material| [Lit(Text(format)), material, Lit(algo), Lit(Bool(extractable)), Lit(Arr(usages.map(|u| Text(u))))]
 	match key {
@@ -416,9 +416,9 @@ import_usages = |alg, key| match alg {
 	Hmac(_) => ["sign", "verify"]
 	AesGcm | AesCbc | AesCtr => ["encrypt", "decrypt"]
 	Pbkdf2 | Hkdf => ["deriveBits"]
-	RsaPkcs1(_) | RsaPss(_) | Ecdsa(_) | Ed25519 => if is_private(key) ["sign"] else ["verify"]
-	RsaOaep(_) => if is_private(key) ["decrypt"] else ["encrypt"]
-	Ecdh(_) | X25519 => if is_private(key) ["deriveBits"] else []
+	RsaPkcs1(_) | RsaPss(_) | Ecdsa(_) | Ed25519 => if (is_private(key)) ["sign"] else ["verify"]
+	RsaOaep(_) => if (is_private(key)) ["decrypt"] else ["encrypt"]
+	Ecdh(_) | X25519 => if (is_private(key)) ["deriveBits"] else []
 }
 
 ## A key as data is private when it is `Pkcs8`, or a JWK with the member `d`. `Raw` is a public key or a secret key.

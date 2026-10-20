@@ -102,7 +102,7 @@ QueueRoutes :: [].{
 handle_job! : Queue.Message, Job => Try({}, [Failing(Str)])
 handle_job! = |msg, job| {
 	Log.info!("job", { n: job.n, label: job.label, attempts: msg.attempts() })
-	if job.label.starts_with("fail-once") and msg.attempts() == 1 Err(Failing(job.label)) else Ok({})
+	if (job.label.starts_with("fail-once") and msg.attempts() == 1) Err(Failing(job.label)) else Ok({})
 }
 
 out : Try({}, e) -> Response

@@ -8,7 +8,9 @@ import pf.Io
 import Q
 
 Prefs : { theme : Str, n : U64, big : U64 }
+
 Meta : { tag : Str, n : U64 }
+
 Ratio : { name : Str, ratio : F64 }
 
 prefs : Kv(Prefs)
@@ -49,29 +51,33 @@ KvRoutes :: [].{
 			["get_or"] => show(plain.get_or!(k, "default"))
 			["get_or_io"] => show(Io.run!(plain.get_or(k, "default")))
 			# A record with an `F64` field is JSON-encodable (MODULES.md 15). `?v=nan` is a `NaN`: `BadData`, nothing is sent.
-			["f64_put"] => show(ratios.put!(k, { name: v, ratio: if v == "nan" 0.0 / 0.0 else 0.5 }))
-			["f64_put_io"] => show(Io.run!(ratios.put(k, { name: v, ratio: if v == "nan" 0.0 / 0.0 else 0.5 })))
-			["f64_put_with"] => show(ratios.put_with!(k, { name: v, ratio: if v == "nan" 0.0 / 0.0 else 0.5 }, { ttl_ms: 60_000 }))
-			["f64_cell_set"] => show(ratio_cell.set!({ name: v, ratio: if v == "nan" 0.0 / 0.0 else 0.5 }))
+			["f64_put"] => show(ratios.put!(k, { name: v, ratio: if (v == "nan") 0.0 / 0.0 else 0.5 }))
+			["f64_put_io"] => show(Io.run!(ratios.put(k, { name: v, ratio: if (v == "nan") 0.0 / 0.0 else 0.5 })))
+			["f64_put_with"] => show(ratios.put_with!(k, { name: v, ratio: if (v == "nan") 0.0 / 0.0 else 0.5 }, { ttl_ms: 60_000 }))
+			["f64_cell_set"] => show(ratio_cell.set!({ name: v, ratio: if (v == "nan") 0.0 / 0.0 else 0.5 }))
 			["f64_cell_get"] => show(ratio_cell.get!())
 			# `get_or!` gives `NotFound` the default only: a value that does not parse stays `BadData`.
 			["get_or_bad"] => show(prefs.get_or!(k, { theme: "default", n: 0, big: 0 }))
 			# `Io.recover`: `NotFound` is a value, a `BadData` goes to the new error `Other`, a value stays.
 			["recover"] => ok(
-				match plain.get(k).recover(|e| match e {
-					NotFound => Ok("recovered")
-					_ => Err(Other)
-				}).run!() {
+				match plain.get(k).recover(
+					|e| match e {
+						NotFound => Ok("recovered")
+						_ => Err(Other)
+					},
+				).run!() {
 					Ok(s) => "Ok ${Str.inspect(s)}"
 					Err(Other) => "Err Other"
 				},
 			)
 			["recover_bad"] => ok(
-				match prefs.get(k).recover(|e| match e {
-					NotFound => Ok({ theme: "recovered", n: 0, big: 0 })
-					BadData(_) => Err(Other)
-					_ => Err(Other)
-				}).run!() {
+				match prefs.get(k).recover(
+					|e| match e {
+						NotFound => Ok({ theme: "recovered", n: 0, big: 0 })
+						BadData(_) => Err(Other)
+						_ => Err(Other)
+					},
+				).run!() {
 					Ok(p) => "Ok ${p.theme}"
 					Err(Other) => "Err Other"
 				},
@@ -86,7 +92,7 @@ KvRoutes :: [].{
 				},
 			)
 			["f64_get"] => show(ratios.get!(k))
-			["f64_response"] => Response.from_json(200, { name: v, ratio: if v == "nan" 0.0.F64 / 0.0.F64 else 0.5.F64 })
+			["f64_response"] => Response.from_json(200, { name: v, ratio: if (v == "nan") 0.0.F64 / 0.0.F64 else 0.5.F64 })
 			["len"] => len(plain.get!(k))
 			["len_with"] => len(plain.get_with!(k, { max_bytes: max }))
 			["len_with_io"] => len(Io.run!(plain.get_with(k, { max_bytes: max })))

@@ -93,9 +93,9 @@ fetch! = |req| {
 
 # 8h item 1: `scheduled!` has the error type `[UnknownCron(Str)]`, `queue!` and `email!` have `[Boom]`, `fetch!` has `[FetchFail(Str)]`.
 scheduled! : Worker.Scheduled => Try({}, [UnknownCron(Str)])
-scheduled! = |s| if s.cron() == "bad" Err(UnknownCron(s.cron())) else Ok({})
+scheduled! = |s| if (s.cron() == "bad") Err(UnknownCron(s.cron())) else Ok({})
 
-queue! = |batch| if batch.queue() == "decv" DecRoutes.consume!(batch) else QueueRoutes.consume!(batch)
+queue! = |batch| if (batch.queue() == "decv") DecRoutes.consume!(batch) else QueueRoutes.consume!(batch)
 
 email! = |mail| EmailRoutes.handle!(mail)
 

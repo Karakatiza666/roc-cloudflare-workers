@@ -22,7 +22,7 @@ HttpRoutes :: [].{
 				show!(Http.send!(out))
 			}
 			# `Request.post_json` is a `Try`: a `NaN` is `BadData` and nothing is sent.
-			["post_json"] => match Request.post_json(url, { name: Q.text(req, "v"), r: if Q.text(req, "v") == "nan" 0.0.F64 / 0.0.F64 else 0.5.F64 }) {
+			["post_json"] => match Request.post_json(url, { name: Q.text(req, "v"), r: if (Q.text(req, "v") == "nan") 0.0.F64 / 0.0.F64 else 0.5.F64 }) {
 				Ok(out) => show!(Http.send!(out))
 				Err(BadData(m)) => Response.from_text(200, "BadData ${m}")
 			}
@@ -30,7 +30,7 @@ HttpRoutes :: [].{
 			["open_io"] => show_open!(Io.run!(Http.open(Request.get(url))))
 			# `Http.cloudflare_error` of the response of `send!` (a body of bytes), or of `open!` (a stream, `open=1`).
 			["cf_error"] => {
-				got = if Q.text(req, "open") == "1" Http.open!(Request.get(url)).map_err(|_| Failed) else Http.send!(Request.get(url)).map_err(|_| Failed)
+				got = if (Q.text(req, "open") == "1") Http.open!(Request.get(url)).map_err(|_| Failed) else Http.send!(Request.get(url)).map_err(|_| Failed)
 				match got {
 					Ok(res) => Response.from_text(200, Str.inspect(Http.cloudflare_error(res)))
 					Err(Failed) => Response.from_text(200, "request failed")

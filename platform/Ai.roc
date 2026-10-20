@@ -83,7 +83,7 @@ run_io = |ai, model, input, o| {
 				Err(e) => Err(BadData(Str.inspect(e)))
 			}
 			Ok(other) => crash "Ai.run: pf.pack gave ${Str.inspect(other)}"
-			Err(t) => if t.name == "TooLarge" Err(TooLarge) else Err(AiErr(t))
+			Err(t) => if (t.name == "TooLarge") Err(TooLarge) else Err(AiErr(t))
 		},
 	)
 }

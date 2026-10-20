@@ -32,7 +32,7 @@ down! = |n, salt, waits| {
 		down!(n - 1, salt, waits)
 	}
 	want = salt.to_str().concat(":").concat(n.to_str())
-	below + (if tag == want 0 else 1)
+	below + (if (tag == want) 0 else 1)
 }
 
 ## Request: "<salt> <depth> <waits>", salt below 100000. Body: "bad=<wrong canaries>".

@@ -11,7 +11,9 @@ import Q
 ai = Ai.binding("STUB_AI")
 
 Input : { prompt : Str, max_tokens : U64 }
+
 Output : { response : Str }
+
 WrongOutput : { response : U64 }
 
 AiRoutes :: [].{
@@ -57,7 +59,7 @@ ok = |text| Response.from_text(200, text)
 show : Try(Output, [AiErr({ name : Str, message : Str }), BadData(Str), TooLarge]) -> Response
 show = |r| ok(
 	match r {
-		Ok(o) => "Ok len=${o.response.count_utf8_bytes().to_str()} ${o.response.to_utf8().take_first(40) |> Str.from_utf8_lossy()}"
+		Ok(o) => "Ok len=${o.response.count_utf8_bytes().to_str()} ${o.response.to_utf8().take_first(40) |> Str.from_utf8_lossy}"
 		Err(AiErr(t)) => "AiErr ${t.name}: ${t.message}"
 		Err(BadData(_)) => "BadData"
 		Err(TooLarge) => "TooLarge"

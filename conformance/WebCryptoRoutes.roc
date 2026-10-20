@@ -297,7 +297,7 @@ sha256_loop = |size, n| {
 		$last = Crypto.SHA256.hash($data)
 		$i = $i + 1
 	}
-	if n == 0 "" else $last.to_hex()
+	if (n == 0) "" else $last.to_hex()
 }
 
 ## The bytes of the test of `WebCrypto.sha256!`: byte `i` is `(i * 31 + 7) % 256` (`checks/webcrypto.mjs` makes the same).
@@ -314,14 +314,14 @@ sha256_pick_io! = |size| Ok(to_hex(Io.run!(WebCrypto.sha256(pick_bytes(size)))?)
 
 to_hex : List(U8) -> Str
 to_hex = |bytes| {
-	digit = |n| if n < 10 48 + n else 87 + n
+	digit = |n| if (n < 10) 48 + n else 87 + n
 	chars = bytes.join_map(|b| [digit(b // 16), digit(b % 16)])
 	Str.from_utf8(chars) ?? ""
 }
 
 from_hex : Str -> List(U8)
 from_hex = |text| {
-	nibble = |c| if c >= 97 c - 87 else c - 48
+	nibble = |c| if (c >= 97) c - 87 else c - 48
 	text.to_utf8().chunks_of(2).map(
 		|pair| match pair {
 			[hi, lo] => nibble(hi) * 16 + nibble(lo)

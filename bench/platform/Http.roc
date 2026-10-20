@@ -63,14 +63,14 @@ Http :: [].{
 	cloudflare_error = |res| {
 		text = match res.body() {
 			Text(t) => Ok(t)
-			Bytes(b) => if b.len() <= cf_error_max Str.from_utf8(b).map_err(|_| NotCloudflareError) else Err(NotCloudflareError)
+			Bytes(b) => if (b.len() <= cf_error_max) Str.from_utf8(b).map_err(|_| NotCloudflareError) else Err(NotCloudflareError)
 			Empty | Stream(_) => Err(NotCloudflareError)
 		}
 		if res.status() < 400 {
 			Err(NotCloudflareError)
 		} else {
 			match text {
-				Ok(t) => if t.count_utf8_bytes() <= cf_error_max cf_error_code(t).map_ok(|code| { status: res.status(), code }) else Err(NotCloudflareError)
+				Ok(t) => if (t.count_utf8_bytes() <= cf_error_max) cf_error_code(t).map_ok(|code| { status: res.status(), code }) else Err(NotCloudflareError)
 				Err(e) => Err(e)
 			}
 		}
@@ -171,7 +171,7 @@ response_of = |v| match v {
 		}
 		body = match field(fields, "body") {
 			Undefined | Null => Empty
-			Bytes(b) => if b.is_empty() Empty else Bytes(b)
+			Bytes(b) => if (b.is_empty()) Empty else Bytes(b)
 			Ref(r) => Stream(r)
 			other => crash "Http: the body is ${Str.inspect(other)}"
 		}
