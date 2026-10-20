@@ -25,6 +25,10 @@ kv_only = Object.namespace("KVONLY", { class: "KvOnly" })
 count : Object.Cell(I64)
 count = Object.cell("count")
 
+## roc-cbor 0.2.0: a cell with `Dec` fields (a Dec is exact in the storage: Roc to Roc).
+dec_cell : Object.Cell({ a : Dec, b : Dec })
+dec_cell = Object.cell("dec")
+
 ## Written after `respond!` (API.md 10.2).
 late : Object.Cell(Str)
 late = Object.cell("late")
@@ -238,6 +242,24 @@ counter_fetch! = |self, req| match req.segments() {
 		got = as_text.get_or!(self, "dflt")
 		_ = count.delete!(self)
 		answer(Str.inspect(got))
+	}
+	# roc-cbor 0.2.0: a `Dec` in a cell is exact (a fraction, the lowest `Dec`: a bignum mantissa).
+	["dec_cell"] => {
+		want = { a: 0.1, b: Dec.lowest }
+		set = dec_cell.set!(self, want)
+		got = dec_cell.get!(self)
+		_ = dec_cell.delete!(self)
+		answer("set=${Str.inspect(set)} same=${Str.inspect(got == Ok(want))} a=${Str.inspect(got.map_ok(|p| p.a.to_str()))} b=${Str.inspect(got.map_ok(|p| p.b.to_str()))}")
+	}
+	# roc-cbor 0.2.0, object SQL: a fractional `Dec` parameter binds a Number, the list literal `[1]` binds 1.
+	["dec_sql"] => {
+		_ = self.sql_run!("CREATE TABLE IF NOT EXISTS dec_t (k TEXT, r)", Sql.none)
+		_ = self.sql_run!("DELETE FROM dec_t", Sql.none)
+		_ = self.sql_run!("INSERT INTO dec_t (k, r) VALUES (?, ?)", ("frac", 3.25))
+		_ = self.sql_run!("INSERT INTO dec_t (k, r) VALUES ('lit1', ?)", [1])
+		rows : Try(List({ k : Str, t : Str, r : F64 }), _)
+		rows = self.sql!("SELECT k, typeof(r) AS t, r FROM dec_t ORDER BY k", Sql.none)
+		answer(Str.inspect(rows))
 	}
 	["cell"] => {
 		before = count.get!(self)

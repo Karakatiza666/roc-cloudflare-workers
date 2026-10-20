@@ -33,9 +33,19 @@ const Handler = makeHandler(app, { ops, heapCheckWhenIdle: false, tailMaxBytes: 
 // The messages that the JS consumer of the queue `v8` got (PLAN.md 8f): a `Queue.v8` message with a `Cbor.Bytes` field is
 // a `Uint8Array` here, and a `U64` of 2^60 is a `BigInt`. `GET /__queue_seen` gives them.
 const seen = [];
+// roc-cbor 0.2.0: the messages that the JS consumers of the queues `decj` (json) and `decvjs` (v8) got, as JSON text (a BigInt is `<n>n`).
+// `GET /__dec_seen` gives them: a Dec with a fraction is a Number in `decj` and `{ $dec: [exponent, mantissa] }` in `decvjs`.
+const decSeen = [];
 
 export default class extends Handler {
   async queue(batch) {
+    if (batch.queue === 'decj' || batch.queue === 'decvjs') {
+      for (const m of batch.messages) {
+        decSeen.push({ queue: batch.queue, text: JSON.stringify(m.body, (_k, v) => (typeof v === 'bigint' ? `${v}n` : v)) });
+        m.ack();
+      }
+      return;
+    }
     if (batch.queue !== 'v8') return super.queue(batch);
     for (const m of batch.messages) {
       const b = m.body;
@@ -51,6 +61,7 @@ export default class extends Handler {
   async fetch(request) {
     const path = new URL(request.url).pathname;
     if (path === '/__queue_seen') return Response.json(seen);
+    if (path === '/__dec_seen') return Response.json(decSeen);
     const r = Handler.runner;
     const stub = stubRoute(path);
     if (stub) return stub;

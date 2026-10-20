@@ -4,7 +4,7 @@
 // bench/cbor-js-reverts.mjs breaks the code in a copy, one change at a time, and checks that tests fail.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { Writer, TooLarge, BufferFull, decode, MAX_DEPTH, Refs, Packed, Kept, toJs, fromJs, pack } from '../js/values.js';
+import { Writer, TooLarge, BufferFull, decode, MAX_DEPTH, Refs, Packed, Kept, toJs, fromJs, pack, DEC_KEY, isDec, decNumber, plain } from '../js/values.js';
 import * as proto from '../research/api-probe/cbor/cbor.mjs';
 
 const hex = (u8) => Buffer.from(u8).toString('hex');
@@ -481,6 +481,177 @@ test('Packed: a Packed inside Packed data, a byte string of other kind, and byte
   rangeErr('d818' + '41' + '18', /input ends/); // cut inside the packed item
   typeErr('d818' + '42' + 'c11a', /tag 1/);
   assert.strictEqual(dec('d818' + '44' + 'd8184100'), 0); // tag 24 inside tag 24 reads
+});
+
+// ---- Tag 4, a Dec of Roc (MODULES.md 1 "The Dec in JS"). The hex vectors are the bytes that roc-cbor 0.2.0 writes
+// (conformance/checks/dec.mjs reads them from the real Roc code too): [name, hex, exponent, mantissa].
+const D = (e, m) => ({ $dec: [e, m] });
+const decVectors = [
+  ['3.14159', 'c482241a0004cb2f', -5, 314159],
+  ['-2.75', 'c48221390112', -2, -275],
+  ['123456789012.345678 (mantissa of 2^53 or more, a CBOR integer of 8 bytes)', 'c482251b01b69b4ba630f34e', -6, 123456789012345678n],
+  ['-123456789012.345678', 'c482253b01b69b4ba630f34d', -6, -123456789012345678n],
+  ['the highest Dec (a bignum, tag 2)', 'c48231c2507fffffffffffffffffffffffffffffff', -18, 170141183460469231731687303715884105727n],
+  ['the lowest Dec (a bignum, tag 3)', 'c48231c3507fffffffffffffffffffffffffffffff', -18, -170141183460469231731687303715884105728n],
+  ['1e-18', 'c4823101', -18, 1],
+];
+test('Dec decode: tag 4 gives { $dec: [exponent, mantissa] } (the bytes of Roc)', () => {
+  for (const [name, h, e, m] of decVectors) assert.deepStrictEqual(dec(h), D(e, m), name);
+  // A positive exponent, a zero mantissa, and a safe mantissa as a Number.
+  assert.deepStrictEqual(dec('c4820205'), D(2, 5));
+  assert.deepStrictEqual(dec('c4822000'), D(-1, 0));
+  assert.deepStrictEqual(dec('c482203b001ffffffffffffe'), D(-1, -9007199254740991));
+  assert.deepStrictEqual(dec('c482201b001fffffffffffff'), D(-1, 9007199254740991));
+  assert.deepStrictEqual(dec('c482201b0020000000000001'), D(-1, 9007199254740993n));
+  // Inside a container and in a map.
+  assert.deepStrictEqual(dec('82c482200101'), [D(-1, 1), 1]);
+  assert.deepStrictEqual(dec('a16161c4822001'), { a: D(-1, 1) });
+});
+test('Dec decode: tags 2 and 3 inside tag 4 (the mantissa) give a Number or a BigInt, also with leading zero bytes', () => {
+  assert.deepStrictEqual(dec('c48200c24101'), D(0, 1)); // a bignum that fits a safe integer reads as a Number
+  assert.deepStrictEqual(dec('c48200c3410f'), D(0, -16));
+  assert.deepStrictEqual(dec('c48200c24100'), D(0, 0));
+  assert.deepStrictEqual(dec('c48200c240'), D(0, 0)); // an empty byte string is 0
+  assert.deepStrictEqual(dec('c48200c249010000000000000000'), D(0, 2n ** 64n));
+  assert.deepStrictEqual(dec('c48200c349010000000000000000'), D(0, -(2n ** 64n) - 1n));
+  assert.deepStrictEqual(dec('c48200c2480020000000000000'), D(0, 2n ** 53n));
+});
+test('Dec decode: tag 2 and 3 outside tag 4 are an error (the profile has no bignum)', () => {
+  typeErr('c24101', /tag 2 is not in the profile/);
+  typeErr('c34101', /tag 3 is not in the profile/);
+  typeErr('81c24101', /tag 2 is not in the profile/);
+  typeErr('a161' + '61' + 'c24101', /tag 2 is not in the profile/);
+  typeErr('82c48200c24101c24101', /tag 2 is not in the profile/); // the second one is outside
+  typeErr('c482c24101' + '00', /exponent of tag 4 must be an integer/); // a bignum as the exponent
+});
+test('Dec decode: a bad shape of tag 4 is an error', () => {
+  typeErr('c4' + '00', /tag 4 needs an array of 2 items/);
+  typeErr('c4' + '80', /tag 4 needs an array of 2 items/);
+  typeErr('c4' + '8100', /tag 4 needs an array of 2 items/);
+  typeErr('c4' + '83000000', /tag 4 needs an array of 2 items/);
+  typeErr('c4' + 'a0', /tag 4 needs an array of 2 items/);
+  typeErr('c4' + '6161', /tag 4 needs an array of 2 items/);
+  typeErr('c4820161' + '61', /mantissa of tag 4 must be an integer/); // text mantissa
+  typeErr('c48261' + '6100', /exponent of tag 4 must be an integer/); // text exponent
+  typeErr('c482f9' + '3c0000', /exponent of tag 4 must be an integer/); // a float exponent
+  typeErr('c48200f9' + '3c00', /mantissa of tag 4 must be an integer/);
+  typeErr('c4820080', /mantissa of tag 4 must be an integer/);
+    typeErr('c48200c4820000', /tag 4 is not in the profile/); // tag 4 as the mantissa
+  typeErr('c48200c1' + '00', /tag 1 is not in the profile/);
+  typeErr('c48200c2' + '00', /tag 2 needs a byte string/);
+  typeErr('c48200c3' + '6100', /tag 3 needs a byte string/);
+  typeErr('c4821b0040000000000000' + '00', /exponent of tag 4 is too large/); // an exponent of 2^54
+  typeErr('c482' + '3b0040000000000000' + '00', /exponent of tag 4 is too large/); // a negative one
+  rangeErr('c482', /input ends/);
+  rangeErr('c48200', /input ends/);
+  rangeErr('c48200c2', /input ends/);
+  rangeErr('c48200c249' + '0100', /longer than the input/);
+  typeErr('c4820000' + '00', /bytes after the value/);
+});
+test('Dec decode: tag 4 counts as one level of depth, both ways (63 arrays and a Dec pass, 64 fail)', () => {
+  const nest = (n) => { let v = D(-1, 1); for (let i = 0; i < n; i++) v = [v]; return v; };
+  assert.doesNotThrow(() => toJs(nest(MAX_DEPTH - 1), new Refs()));
+  assert.throws(() => toJs(nest(MAX_DEPTH), new Refs()), cls(RangeError, /deeper than 64/));
+  const bytes = (n) => unhex('81'.repeat(n) + 'c4822001');
+  assert.doesNotThrow(() => fromJs(bytes(MAX_DEPTH - 1)));
+  assert.throws(() => fromJs(bytes(MAX_DEPTH)), cls(RangeError, /deeper than 64/));
+});
+test('Dec encode: the marker is byte-identical to the Roc bytes (a bignum, a negative bignum, a negative mantissa, 8 byte integers)', () => {
+  for (const [name, h, e, m] of decVectors) {
+    assert.strictEqual(enc(D(e, m)), h, name);
+    assert.strictEqual(hex(toJs(dec(h), new Refs())), h, `${name}: decode, encode`);
+  }
+  // A mantissa of exactly 2^64 - 1 and -2^64 is a CBOR integer, 2^64 and -2^64 - 1 are bignums.
+  assert.strictEqual(enc(D(0, 2n ** 64n - 1n)), 'c48200' + '1bffffffffffffffff');
+  assert.strictEqual(enc(D(0, -(2n ** 64n))), 'c48200' + '3bffffffffffffffff');
+  assert.strictEqual(enc(D(0, 2n ** 64n)), 'c48200c249010000000000000000');
+  assert.strictEqual(enc(D(0, -(2n ** 64n) - 1n)), 'c48200c349010000000000000000');
+  assert.strictEqual(enc(D(0, 2n ** 127n - 1n)), 'c48200c2507fffffffffffffffffffffffffffffff');
+  assert.strictEqual(enc(D(0, 255n * 2n ** 64n)), 'c48200c249ff0000000000000000');
+  // Inside a record and a list.
+  assert.strictEqual(enc({ d: D(-1, 1) }), 'a16164c4822001');
+  assert.strictEqual(enc([D(-1, 1), 5]), '82c482200105');
+});
+test('Dec encode: an object that is not a marker is a plain map (more keys, a bad exponent, a float or text mantissa)', () => {
+  assert.strictEqual(isDec(D(-1, 1)), true);
+  for (const v of [{ $dec: [-1, 1], x: 1 }, { $dec: [1.5, 1] }, { $dec: [-1, 1.5] }, { $dec: [-1, '1'] }, { $dec: [-1] }, { $dec: [-1, 1, 2] }, { $dec: 5 }, { $dec: [2 ** 53, 1] }, { $dec: [-1, 2 ** 53] }, { $dec: [-1n, 1] }, [D(0, 1)], null]) {
+    assert.strictEqual(isDec(v), false, JSON.stringify(v, (_k, x) => (typeof x === 'bigint' ? `${x}n` : x)));
+  }
+  assert.strictEqual(enc({ $dec: [-1, 1], x: 1 })[1], '2'); // a map of 2 keys
+  assert.strictEqual(enc({ $dec: [1.5, 1] })[0], 'a'); // a map, not tag 4
+  assert.strictEqual(DEC_KEY, '$dec');
+  // A class instance with the key is not a marker (the clone would drop it too).
+  class Fake { constructor() { this.$dec = [-1, 1]; } }
+  assert.notStrictEqual(enc(new Fake()).slice(0, 2), 'c4');
+});
+test('Dec clone: the marker survives structuredClone (decode, clone, encode keeps the bytes)', () => {
+  for (const [name, h] of decVectors) {
+    const clone = structuredClone(dec(h));
+    assert.strictEqual(hex(toJs(clone, new Refs())), h, name);
+  }
+  // A Dec in a deep value, and the clone of a value with a BigInt.
+  const v = [{ a: D(-1, 1), b: [D(-18, 2n ** 127n - 1n), 5] }];
+  const h = enc(v);
+  assert.ok(h.includes('c2507fff'), 'the bignum is in the bytes');
+  assert.strictEqual(hex(toJs(structuredClone(v), new Refs())), h);
+  assert.notStrictEqual(structuredClone(v)[0].a, v[0].a, 'a copy, not the same object');
+});
+test('Dec decNumber: the nearest double of mantissa * 10^exponent (Number, BigInt, negative, exponent above 0)', () => {
+  assert.strictEqual(decNumber(D(-5, 314159)), 3.14159);
+  assert.strictEqual(decNumber(D(-1, 1)), 0.1);
+  assert.strictEqual(decNumber(D(2, 5)), 500);
+  assert.strictEqual(decNumber(D(-2, -275)), -2.75);
+  assert.strictEqual(decNumber(D(-6, 123456789012345678n)), 123456789012.34567);
+  assert.strictEqual(decNumber(D(-18, 2n ** 127n - 1n)), 1.7014118346046924e20);
+  assert.strictEqual(decNumber(D(-18, -(2n ** 127n))), -1.7014118346046924e20);
+  assert.strictEqual(decNumber(D(0, 0)), 0);
+});
+test('Dec plain: each marker becomes a Number, deep; other values are the same (a copy of arrays and plain objects only)', () => {
+  const u8 = new Uint8Array([1]), date = new Date(5), inst = new Thing(), n = 1n << 70n;
+  const input = { a: D(-1, 1), list: [D(-5, 314159), 2, [D(-2, -275)]], deep: { x: { y: D(-6, 123456789012345678n) } }, s: 'x', n: null, u: undefined, big: n, u8, date, inst, flag: true, num: 1.5 };
+  const out = plain(input);
+  assert.deepStrictEqual(out.a, 0.1);
+  assert.deepStrictEqual(out.list, [3.14159, 2, [-2.75]]);
+  assert.strictEqual(out.deep.x.y, 123456789012.34567);
+  assert.strictEqual(out.u8, u8);
+  assert.strictEqual(out.date, date);
+  assert.strictEqual(out.inst, inst);
+  assert.strictEqual(out.big, n);
+  assert.deepStrictEqual([out.s, out.n, out.u, out.flag, out.num], ['x', null, undefined, true, 1.5]);
+  assert.ok('u' in out, 'a key with undefined stays');
+  assert.deepStrictEqual(input.a, D(-1, 1), 'the input is not changed');
+  assert.notStrictEqual(out, input);
+  assert.strictEqual(plain(5), 5);
+  assert.strictEqual(plain('x'), 'x');
+  assert.strictEqual(plain(null), null);
+  assert.strictEqual(plain(D(-1, 1)), 0.1);
+  assert.strictEqual(plain(u8), u8);
+  assert.deepStrictEqual(plain([]), []);
+  assert.deepStrictEqual(plain({}), {});
+  // A key `__proto__` is an own key of the copy, not the prototype; a null prototype object stays plain.
+  const p = JSON.parse('{"__proto__": {"d": 1}}');
+  const q = plain(p);
+  assert.strictEqual(Object.getPrototypeOf(q), Object.prototype);
+  assert.deepStrictEqual(Object.keys(q), ['__proto__']);
+  assert.deepStrictEqual(plain(Object.assign(Object.create(null), { d: D(-1, 1) })).d, 0.1);
+});
+test('Dec plain: the depth limit is 64 levels, as the codec (a RangeError at 65)', () => {
+  const nestA = (n, leaf) => { let v = [leaf]; for (let i = 1; i < n; i++) v = [v]; return v; };
+  assert.doesNotThrow(() => plain(nestA(MAX_DEPTH, 1)));
+  assert.throws(() => plain(nestA(MAX_DEPTH + 1, 1)), cls(RangeError, /deeper than 64/));
+  assert.doesNotThrow(() => plain(nestA(MAX_DEPTH - 1, D(-1, 1))));
+  let o = {}; for (let i = 1; i < MAX_DEPTH + 1; i++) o = { a: o };
+  assert.throws(() => plain(o), cls(RangeError, /deeper than 64/));
+  const cyc = []; cyc.push(cyc);
+  assert.throws(() => plain(cyc), cls(RangeError, /deeper than 64/));
+});
+test('Dec edge: a mantissa of exactly 2^53 and -2^53 stays a marker (Roc 9.007199254740992 and -9.007199254740992)', () => {
+  // The bytes of Roc for the Dec 9.007199254740992 (exponent -15, mantissa 2^53) and its negative.
+  for (const h of ['c4822e1b0020000000000000', 'c4822e3b001fffffffffffff']) {
+    const v = dec(h);
+    assert.strictEqual(isDec(v), true, `${h} reads as a marker the writer knows`);
+    assert.strictEqual(hex(toJs(structuredClone(v), new Refs())), h, `${h}: decode, clone, encode`);
+  }
 });
 
 // ---- Fuzz

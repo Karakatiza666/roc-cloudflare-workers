@@ -92,6 +92,8 @@ pair() {
 pair rpc_tag_bad.roc 'Err([Busy])' rpc_tag_ok.roc
 pair worker_field_bad.roc 'fetch! ?: Str => Try(Response, [])' worker_errs_ok.roc
 pair attachment_bad.roc 'slot.set!(socket, { name: 5 })' attachment_ok.roc
+# roc-cbor 0.2.0: a wrapper around `D1.all!` with the old long `Parseable([InvalidCbor(U64), ..errs])` form is a type mismatch (D1 reads with `Readable`, which adds `MissingRequiredField(Str)`).
+pair cbor_parseable_long_bad.roc 'MissingRequiredField(Str)' cbor_readable_ok.roc
 # 8h wave B (MODULES.md 4, 5.4): `cache.put!` gives the response to send, so a statement that drops it does not compile, and
 # `Ctx.wait_until!` takes `Io({}, e)`, not the `Io(Response, e)` of `cache.put`. `Response.after` gives a `Response`, so a cron
 # handler (its result is `Try({}, e)`) cannot give it. One body (or one handler) after a header; the controls must compile.
