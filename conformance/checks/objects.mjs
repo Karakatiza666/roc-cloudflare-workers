@@ -91,7 +91,7 @@ export const checks = [
   ['objects Object.Cell get_or!: the default, then the value', async (t) =>
     answer(await counter(t, 'cell_or', 'cell_or'), 'none=Ok(42) some=Ok(7)')],
   // N6: `find!` has `NotFound` as a value of the inner `Try`.
-  ['objects Object.Cell find!: a missing cell is Ok(Err(NotFound)), a value Ok(Ok(v)), a value of another type Err(Infra(BadData))', async (t) => {
+  ['objects Object.Cell find!: a missing cell is Ok(Err(NotFound)), a value Ok(Ok(v)), a value of another type Err(BadData)', async (t) => {
     const r = await counter(t, 'cell_find', 'cell_find');
     ok(r.status === 200 && r.body.startsWith('none=Ok(Err(NotFound)) some=Ok(Ok(7)) bad=Err(Infra(BadData('), `got ${r.status} ${r.body}`);
     return r.body.slice(0, 120);

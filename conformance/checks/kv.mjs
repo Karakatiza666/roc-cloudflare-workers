@@ -34,7 +34,7 @@ export const checks = [
     answer(await route(t, 'get_io', k), 'Err NotFound');
   }],
   // N6: `find!` and `find` (the Io twin), on Kv and on Kv.Cell: `NotFound` is a value of the inner `Try`.
-  ['kv find!, find (Io twin): a missing key is Ok(Err(NotFound)), a present key Ok(Ok(v)), a bad stored value Err(Infra(BadData))', async (t) => {
+  ['kv find!, find (Io twin): a missing key is Ok(Err(NotFound)), a present key Ok(Ok(v)), a bad stored value Err(BadData)', async (t) => {
     const k = `f-${rand()}`;
     answer(await route(t, 'find', k), 'Ok Err(NotFound)');
     answer(await route(t, 'find_io', k), 'Ok Err(NotFound)');
@@ -47,7 +47,7 @@ export const checks = [
     answer(await route(t, 'delete', k), 'Ok {}');
     answer(await route(t, 'find', k), 'Ok Err(NotFound)');
   }],
-  ['kv Cell find!, find (Io twin): missing is Ok(Err(NotFound)), a value Ok(Ok(v)), a bad stored value Err(Infra(BadData))', async (t) => {
+  ['kv Cell find!, find (Io twin): missing is Ok(Err(NotFound)), a value Ok(Ok(v)), a bad stored value Err(BadData)', async (t) => {
     const kv = await t.mf.getKVNamespace('KV');
     await route(t, 'cell_delete');
     answer(await route(t, 'cell_find'), 'Ok Err(NotFound)');

@@ -169,7 +169,7 @@ export const checks = [
     await Promise.all([a1.close(1000, 'x'), a2.close(1000, 'x'), b.close(1000, 'x')]);
   }],
   // A NaN in an F64 is not JSON: `Err(Infra(BadData))` and no socket gets a frame (the next frame of `a` is the reply of `send!`).
-  ['websocket broadcast_json!, broadcast_json_with!: a NaN is Err(Infra(BadData)) and no socket gets anything', async (t) => {
+  ['websocket broadcast_json!, broadcast_json_with!: a NaN is Err(BadData) and no socket gets anything', async (t) => {
     const a = await room(t, 'bc7', 'a');
     const b = await room(t, 'bc7', 'b');
     b.send('info');
