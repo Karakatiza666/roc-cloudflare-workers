@@ -19,8 +19,8 @@ Gavel :: [].{
 
 	Config : { fee_percent : U64, max_step_cents : U64, currencies : List(Str) }
 
-	## Units of each currency for 1 USD, as the FX feed gives them.
-	Rates : { as_of_ms : U64, rates : List({ currency : Str, rate : F64 }) }
+	## Units of each currency for 1 USD, as the FX feed gives them. `Dec`: a feed number is read exactly, and CBOR keeps it exact (tag 4).
+	Rates : { as_of_ms : U64, rates : List({ currency : Str, rate : Dec }) }
 
 	Receipt : { lot_id : Str, winner : Str, amount_cents : U64, fee_cents : U64, converted : List({ currency : Str, amount_cents : U64 }), settled_ms : U64 }
 

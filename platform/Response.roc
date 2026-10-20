@@ -69,7 +69,8 @@ Response :: { status : U16, headers : List(Header) ?? [], body : Body ?? Empty, 
 	with_header = |r, name, value| { ..r, headers: r.headers.append(Header.{ name, value }) }
 
 	## Respond now, work after (API.md 10.2): when a `fetch!` handler gives this response, the platform sends it, and
-	## then runs `work!` in the same task. An `Err(e)` of `work!` is the log line `fetch: after respond: failed: <e>`.
+	## then runs `work!` in the same task. The client has its response already, so an `Err(e)` of `work!` cannot reach it:
+	## it is the log line `fetch: after respond: failed: <Str.inspect(e)>` (`<name>.fetch: ...` in an object or a named entry point).
 	## A second `after` runs after the first. Only the response of a `fetch!` handler runs its work.
 	after : Response, (() => Try({}, e)) -> Response
 	after = |r, work!| {

@@ -31,6 +31,11 @@ AfterRoutes :: [].{
 				Ok(res) => res
 				Err(e) => Response.from_text(500, Str.inspect(e))
 			}
+			# A work that fails in a named entry point: the log line has the name of the entry point (`After.fetch: ...`).
+			["entry_fail"] => match after_service.fetch!(Request.get("http://x/?fail=1&id=${id}")) {
+				Ok(res) => res
+				Err(e) => Response.from_text(500, Str.inspect(e))
+			}
 			# Two `after` calls: the second work reads what the first one wrote.
 			["two"] => {
 				first! = || {
@@ -57,4 +62,11 @@ slow_work! = |url, key| || {
 }
 
 entry_fetch! : Request => Try(Response, [])
-entry_fetch! = |req| Ok(Response.from_text(200, "early").after(slow_work!(Q.text(req, "url"), "after-${Q.text(req, "id")}")))
+entry_fetch! = |req| {
+	id = Q.text(req, "id")
+	if Q.text(req, "fail") == "1" {
+		Ok(Response.from_text(200, "ok").after(|| Err(Boom(id))))
+	} else {
+		Ok(Response.from_text(200, "early").after(slow_work!(Q.text(req, "url"), "after-${id}")))
+	}
+}
