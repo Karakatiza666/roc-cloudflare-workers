@@ -2812,6 +2812,43 @@ Not run (with the reason):
 | `Ai` with a real model, `Vectorize` with a real index, `Analytics` with a dataset, `SecretsStore` | Not made: an Analytics dataset cannot be deleted with wrangler, a secrets store and an index were not in the time cap. The stub checks PASS on the edge |
 | 8g with `cpu_ms = 30000`; 3 runs of 8g | Free plan (E5); 2 runs only, to keep the request count small |
 
+### Status of step 8h: API ergonomics (2026-10-18 to 2026-10-20)
+
+Input: a review of the example app `examples/auction/` (two Workers, a Durable Object, KV, R2, D1, WebSockets, crons, RPC) and a list of issues found by another author. Each change had a code agent, then a separate test agent; reverts ran by filter only. The signatures are in `MODULES.md` (the "As built in 8h" rows).
+
+| Wave | Change | Main rule or name |
+| --- | --- | --- |
+| A | One error type for each handler | `Worker.new({...})`, `Object.class` with an error type per handler |
+| A | Typed RPC errors | `Rpc(arg, ret, err)`, the caller gets `Remote(err)`; `Rpc.NoErr` |
+| A | SQL parameters as a tuple or list | `(a, b)`, `[x]`, `Sql.none`, `Sql.null`, `Sql.or_null`, `Sql.blob`; an integer out of I64 is `BadParam`, never a wrap |
+| A | 64-bit ids | `Id64` (I64 text in SQL and CBOR), `Id64.Web` (U64 text in JSON); no math, no order |
+| A | Missing value as a default | `get_or!` on `Kv`, `Kv.Cell`, `Object.Cell`; `Io.recover` |
+| A | JSON of any encodable type | `a.Json.Encodable(e)`; a NaN is `BadData` |
+| A | A wait with a time limit | `Io.timeout` |
+| A | R2 to HTTP | `R2.respond!`, `R2.to_response`, `R2.from_headers` |
+| A | Socket broadcast | `broadcast!`, `broadcast_with!` |
+| B | Work after the response | `Response.after`; `Ctx.respond!` removed |
+| B | Cache and streams | `Cache.put!` tees and gives the response; `Cache.put_after!`; R2 put of a stream with no length uses a multipart upload above 5 MiB |
+| B | Alarms | `set_alarm_at!`, `set_alarm_in!` |
+| B | Typed attachments | `Object.attachment(name) : Object.Attachment(a)` |
+| B | Small items | KV `ttl_ms` raised to 60 s; `Http.cloudflare_error`; the D1 2^53 message names the fix |
+| B | Project files | `bindings` and `crons` in `Worker.new` and the manifest; load check of `env`; `Object.namespace(name, { class })`; CLI `roc-cloudflare-workers sync` and `init` |
+| C | One form for no arguments | `()` everywhere (MC14) |
+| C | Opaque handler types | `Request`, `Response`, `Scheduled`, queue and email types read through methods (MC15) |
+| C | Low-level modules | raw runs and pins in `Js`; `MODULES.md` 1 has a module index and a formats table |
+| C | Build cache | `--no-cache` is a reproducibility rule (`research/no-cache-repro/`) |
+
+Found on the way:
+
+| Item | Result |
+| --- | --- |
+| Init deadline timer | It swept once; a task that started late was never cut. It now sweeps again until the task ends. |
+| Compiler crash: `Cbor.encode` of the generic reply in an app module | `Rpc.on` writes the reply head by hand |
+| Compiler crash: an `Rpc` answer of `{}` | Fix in progress (N1 of `examples/auction/REVIEW.md`) |
+| roc-cbor 0.2.0 | Prepared, not published: `Cbor.Bytes` reads arrays (a D1 BLOB), a `Dec` encoder (a whole Dec is an integer, else tag 4, exact). The platform moves to it after the release. |
+
+Open: the new friction N2 to N14 in `examples/auction/REVIEW.md`; typed DO namespaces (not built: one more type argument on each `Rpc`).
+
 ## 9. JS shim
 
 | Gap | Now |
