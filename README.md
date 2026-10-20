@@ -17,7 +17,7 @@ Each release (tag `X.Y.Z`) has 2 files. They have the same version and are used 
 
 | File | Use |
 | --- | --- |
-| `<hash>.tar.zst` | The platform bundle. It goes in the header of the app. It has the Roc modules, `LICENSE` and the production host `targets/wasm32/host.wasm`. The packages `http` (roc-lang/http 2.0.0) and `cbor` (roc-cbor 0.2.0) stay URLs in the platform header: Roc downloads them. |
+| `<hash>.tar.zst` | The platform bundle. It goes in the header of the app. It has the Roc modules, `LICENSE` and the production host `targets/wasm32/host.wasm`. The packages `http` (roc-lang/http 2.0.0) and `cbor` (roc-cbor 0.2.1) stay URLs in the platform header: Roc downloads them. |
 | `roc-cloudflare-workers-X.Y.Z.tgz` | The JS shim, as an npm package (`makeHandler`, `objectClass`, `entrypointClass`), and the command `roc-cloudflare-workers` (`init`, `sync`). `npm install <file or URL>` takes it. |
 
 The release notes have both URLs. The package is not on the npm registry: the version of the shim must be the version of the platform, so the shim comes from the same release.
@@ -75,6 +75,8 @@ event! = |e| worker.event!(e)
 ```sh
 roc build --target=wasm32 --no-cache --output=app.wasm app.roc
 ```
+
+A `roc build` with type errors still writes the `.wasm` file. It prints "N errors and 0 warnings found ... while successfully building" and exits with 1 (checked 2026-10-20 with one bad line). A build is good only when the exit code is 0 and the text is "0 errors and 0 warnings". A script must check the exit code. In the repo, run the command from the root (a build inside `examples/auction/` gives `PathOutsideWorkspace`).
 
 3. The shim. `npm install https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/X.Y.Z/roc-cloudflare-workers-X.Y.Z.tgz`. The entry of the Worker (`examples/hello/worker.js`) is the file that `roc-cloudflare-workers sync` writes:
 

@@ -126,11 +126,15 @@ create_lot! = |req| {
 		"INSERT INTO lots (${lot_columns}) VALUES (?, ?, ?, ?, ?, ?)",
 		(lot.id, lot.title, lot.reserve_cents, lot.close_ms, lot.min_step_cents, lot.max_step_cents),
 	)?
-	# The room sets its alarm to the close time. When it fails, remove the row.
+	# The room sets its alarm to the close time. When it fails, remove the row (MODULES.md 5.5).
+	# A failed delete leaves a lot with no room: the log line names it, and the caller still gets the error of the room.
 	match lot_rooms.named(lot.id).call!(Gavel.open, lot) {
 		Ok(_) => {}
 		Err(e) => {
-			_ = db.run!("DELETE FROM lots WHERE id = ?", [lot.id])
+			match db.run!("DELETE FROM lots WHERE id = ?", [lot.id]) {
+				Ok(_) => {}
+				Err(undo) => Log.error!("create_lot: undo failed", { lot: lot.id, error: Str.inspect(undo) })
+			}
 			return Err(e)
 		}
 	}

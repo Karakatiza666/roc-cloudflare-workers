@@ -57,7 +57,7 @@ Formats of typed data. The format depends on the binding. Each module of the tab
 | `WebSocket` and `Object.Socket` `send_json!`, `Message.json` | A JSON text frame | The text | As JSON above | `BadData`, and no frame goes out | As JSON above | An array of numbers | Does not compile | Does not compile. Use `Id64.Web`. |
 
 
-The Dec in JS. `roc-cbor` 0.2.0 writes a `Dec` with no fraction as a CBOR integer, and any other `Dec` as tag 4 (`[exponent, mantissa]`, exact; a mantissa of 2^64 or more is a bignum, tag 2 or 3). `js/cbor.js` reads tag 4 (and tags 2 and 3 inside it only) as the plain object `{ $dec: [exponent, mantissa] }` (the exponent is a `Number`, the mantissa is a `Number`, or a `BigInt` of 2^53 or more), and writes such an object back as the same tag 4 (`Writer.dec`). A plain object survives the structured clone, a class instance does not, so a Roc to Roc call (JS decode, structured clone, encode) keeps the exact value. JS makes a `Number` (`decNumber`: the nearest double) only where it must use the value:
+The Dec in JS. `roc-cbor` 0.2.1 writes a `Dec` with no fraction as a CBOR integer, and any other `Dec` as tag 4 (`[exponent, mantissa]`, exact; a mantissa of 2^64 or more is a bignum, tag 2 or 3). `js/cbor.js` reads tag 4 (and tags 2 and 3 inside it only) as the plain object `{ $dec: [exponent, mantissa] }` (the exponent is a `Number`, the mantissa is a `Number`, or a `BigInt` of 2^53 or more), and writes such an object back as the same tag 4 (`Writer.dec`). A plain object survives the structured clone, a class instance does not, so a Roc to Roc call (JS decode, structured clone, encode) keeps the exact value. JS makes a `Number` (`decNumber`: the nearest double) only where it must use the value:
 
 | Place | Rule |
 | --- | --- |
@@ -75,7 +75,7 @@ Modules. `main.roc` exposes the app modules first, and the low-level modules las
 | Objects and services | `Object`, `Rpc`, `Service`, `WebSocket`, `Tcp`, `Email` | |
 | Other bindings | `WebCrypto`, `RateLimit`, `Ai`, `Vectorize`, `Analytics`, `Hyperdrive`, `Workflows`, `Assets`, `Version`, `SecretsStore` | |
 | Low level, used by apps | `Cbor` (`Cbor.Bytes`, `Cbor.bytes`, `encode`, `parse`, the `where` aliases of MC5), `Native` (BLAKE3, SHA-256 and zstd in the host, `API.md` 8) | An app needs them for typed bytes and for hashes, so they stay public |
-| Operations | `Io`: an operation as a value (MC3), `run!`, `both!`, `all!`, `race!`, `timeout`, `map`, `recover`, `start!`, and `Io.Thrown`. `Io.new` and `Io.sync` make an `Io` from `Js` ops: they are low level, but they stay in `Io`, because `Io` imports `Js` and Roc has no import cycles. | `Io.both!` and `Io.race!` in apps |
+| Operations | `Io`: an operation as a value (MC3), `run!`, `both!`, `all!`, `race!`, `timeout`, `timeout_at`, `map`, `recover`, `start!`, and `Io.Thrown`. `Io.new` and `Io.sync` make an `Io` from `Js` ops: they are low level, but they stay in `Io`, because `Io` imports `Js` and Roc has no import cycles. | `Io.both!` and `Io.race!` in apps |
 | The escape hatch | `Js`: the `Js` value, the ops of a program (`Js.Op`: `Get`, `Call`, `Root`, `Slot`, `Lit`, ...), `Js.program`, the raw runs `Js.await!` and `Js.call!`, the pin table (`Js.pin!`, `pinned!`, `unpin!`), `Js.Thrown`, and the hosted functions `Js.host_await!` and `Js.host_call!` (`API.md` 4). | A Workers API that no module has |
 
 Exceptions to MC10 and MC12 (each other name is the Workers name in snake_case, and each other unit follows MC10):
@@ -159,6 +159,11 @@ worker = Worker.new({ fetch!, queue! })
 
 event! = |e| worker.event!(e)
 ```
+
+| Build | Rule |
+| --- | --- |
+| Command | `roc build --target=wasm32 --no-cache --output=app.wasm app.roc`, from the root of the repository: a build inside a subdirectory can give `PathOutsideWorkspace` when the platform line is a relative path (`examples/auction/README.md`). |
+| Result | A build with type errors still writes the `.wasm`, prints "N errors and 0 warnings found ... while successfully building", and exits with 1 (checked 2026-10-20). A build is good only when the exit code is 0 and the text is "0 errors and 0 warnings". A script checks the exit code, not the file. |
 
 ## 3. Entry: `Worker`
 
@@ -436,7 +441,7 @@ Http :: [].{
 | Build | `Request.new(PUT, url).with_body(Bytes(b))`. A record literal `Request.{ ... }` and a field read (`req.url`) do not compile: the types are opaque (MC15). |
 | `web_socket` | The client end of a WebSocket, in a 101 response (`webSocket` of the Workers `Response`), as a ref (MC13). A response from `Object.fetch!` or `Service.fetch!` keeps it, so a Worker can give the 101 response of a Durable Object to the client (12). It is a ref and not a `WebSocket`, because `WebSocket.accept!` gives a `Response`, and two modules cannot import each other. The app does not read it: `accept!` sets it (`with_web_socket`), and the platform entry reads it (`web_socket()`). |
 | Response of an R2 object | `R2.to_response(obj)` and `R2.respond!(bucket, key, req)` (5.3). `Response` has no `from_r2`: it would import `R2`, and `R2` imports `Response`. |
-| Respond now, work after | `Ok(res.after(work!))`: the platform sends `res`, then runs `work! : () => Try({}, e)` in the same task (`API.md` 10.2). The order is in the types: the handler gives one result, and the work is its argument. Two `after` calls run both works, in order. An `Err(e)` of the work is the log line `fetch: after respond: failed: <e>`. Only the result of a `fetch!` (of a Worker, a named entry point, an object) runs its work. `after_work!` is the field that `after` sets: the app does not set it, and the platform entry reads it with `after_work()`. |
+| Respond now, work after | `Ok(res.after(work!))`: the platform sends `res`, then runs `work! : () => Try({}, e)` in the same task (`API.md` 10.2). The order is in the types: the handler gives one result, and the work is its argument. Two `after` calls run both works, in order. An `Err(e)` of the work does not reach the client, which has its response already: it is only the log line `fetch: after respond: failed: <Str.inspect(e)>` (`<name>.fetch: after respond: failed: ...` for an object or a named entry point, `name` is the class). A handler that must tell the client about a failure does the work before it gives the response. Only the result of a `fetch!` (of a Worker, a named entry point, an object) runs its work. `after_work!` is the field that `after` sets: the app does not set it, and the platform entry reads it with `after_work()`. |
 | Request body and `after` | Read the request body in the handler, not in the work. workerd ends the request body when the response is sent, so a `text!`, `json!` or `bytes!` in the work gives `BodyErr` (`API.md` 10.2). A closure can use `req`, so the types do not stop it: give the work the value that it needs. |
 | `Body.writer!` | A stream that the task writes after the response: `Response.from_body(200, "text/event-stream", body).after(work!)`, and the work calls `writer.write!` for each chunk, then `writer.close!()`. The task stays while the stream is open, and the 30 s limit after the response starts at `close!` (`API.md` 10.2). When the client stops reading, Workers cancels the stream, and the shim cancels the task. A `write!` after `close!` gives `BodyErr`. |
 | `compress!`, `decompress!` | `CompressionStream` and `DecompressionStream` of Workers: `Gzip` (`"gzip"`) and `Deflate` (`"deflate"`). A `Text` or `Bytes` body becomes a stream first. The result is a `Stream` body, so the bytes stay in JS. zstd is not in Workers: `Native` (`API.md` 8). Set `Content-Encoding` on the response by hand. |
@@ -774,6 +779,38 @@ Cache :: { ... }.{
 | Put after the response | `Ok(cache.put_after!(url, res)?)`: no wait in the handler. It tees a `Stream` body now (one `call!`), and gives the response with one branch and `Response.after` work that runs `put!` of the other branch. The client and the cache read at the same time, so the tee keeps only the bytes that one has read and the other has not. An `Err` of the put is the log line `fetch: after respond: failed: ...`. Only for the result of a `fetch!` handler: elsewhere the work does not run (`API.md` 10.2). A tee error is `CacheErr`. |
 | As built (`PLAN.md` 8h wave B) | `put` is one program: `tee`, `new Response(branch 0, init)`, `cache.put`, then `Get` of branch 1 as the result (a ref). `put_after!` is `Body.tee!`, then `Response.after` with `put!`. No twin for `put_after!`: it does not wait (MC3). | The tee is part of the function, so the response that follows has its body |
 
+### 5.5 A change in two places: D1 and an object
+
+No call gives one unit of work over D1 and a Durable Object: there is no distributed transaction. Write the undo by hand. The example is `create_lot!` of `examples/auction/web.roc` (lines 125 to 140).
+
+| Step | Code | If it fails |
+| --- | --- | --- |
+| 1. Write in D1 | `db.run!("INSERT INTO lots ...", params)?` | `?` gives the error. Nothing happened yet. |
+| 2. Call the object | `match lot_rooms.named(id).call!(Gavel.open, lot)` | Go to the undo. |
+| 3. Undo | `db.run!("DELETE FROM lots WHERE id = ?", [id])` | Log the error of the delete (step 4). |
+| 4. Report | `return Err(e)`: the error of step 2, not the error of the undo | The caller sees why the work failed. |
+
+```roc
+match lot_rooms.named(lot.id).call!(Gavel.open, lot) {
+	Ok(_) => {}
+	Err(e) => {
+		match db.run!("DELETE FROM lots WHERE id = ?", [lot.id]) {
+			Ok(_) => {}
+			Err(undo) => Log.error!("create_lot: undo failed", { lot: lot.id, error: Str.inspect(undo) })
+		}
+		return Err(e)
+	}
+}
+```
+
+| Rule | Why |
+| --- | --- |
+| Do the step that is easy to undo first (the insert), and the step that has effects outside (the call) last. | The undo is a plain delete. |
+| Return the error of the call. Do not replace it with the error of the undo. | The first failure is the cause. |
+| A failed undo goes to `Log.error!` with the key of the row, and is not returned. | A reader of the log can remove the row. A second error type would hide the first. |
+| The call must be safe to repeat, or the undo must tolerate a half-done call. | A call that failed can have changed the object (a timeout is not a proof that it did nothing). |
+| A job that finds rows with no object (a cron that lists the rows and calls the objects) closes the gap that a failed undo leaves. | The undo is best effort. |
+
 ## 6. Messages: `Queue`
 
 ```roc
@@ -1058,6 +1095,8 @@ jwks = Memo.new("github-jwks", { max_age_ms: 3_600_000, load!: load_jwks! })
 keys = jwks.get!()?    # the first call in an isolate runs load_jwks!, later calls do not
 ```
 
+A value with one field: `cell.set!({ name: name })`. `{ name }` is a block, not a record (12.1).
+
 | Item | Rule |
 | --- | --- |
 | Content | CBOR bytes (MC5). JS does not parse them. No JS objects. A key needs no `Memo`: `WebCrypto` imports it in the same crossing as its use (10), so RN6 keeps the JWKS as data. For a JS object, use `Js.pin!` (RS2). The table "Formats of typed data" (1). |
@@ -1171,7 +1210,7 @@ Ctx :: [].{
 Time :: [].{
 	now_ms! : () => U64                               # coarse on the edge: it moves at I/O
 	sleep! : U64 => {}                                # scheduler.wait(ms): one wait
-	sleep : U64 -> Io({}, e)                          # the twin, for Io.race! (API.md 6.5). For a timeout use Io.timeout
+	sleep : U64 -> Io({}, e)                          # the twin, for Io.race! (API.md 6.5). For a timeout use Io.timeout or Io.timeout_at
 	seconds_up : U64 -> U64                           # MC10: ms to whole seconds, rounded up (1,001 ms gives 2 s)
 }
 
@@ -1188,6 +1227,7 @@ Log :: [].{
 | `wait_until!` | `Io.start!` and `ctx.waitUntil` in one `call!`, with no wait. The Roc reader of the `Io` does not run, so a Roc-level `Err` (`PreconditionFailed`, `BadData`) is not seen. Only a JS throw goes to the log. The context of the task (refs and roots) stays until the operation settles, or until the 30 s limit of `waitUntil` (`API.md` 6.5, RS1). Only an `Io({}, e)` fits: the result is dropped, so an operation with a result is a type error (`wait_until!(cache.put(url, res))` would drop the response to send, 5.4; use `cache.put_after!`). Work whose result matters (a write that can fail, a check) runs in the work of `Response.after`. |
 | `pass_through!` | `ctx.passThroughOnException()`. Only in the `Fetch` of a Worker. Elsewhere the shim gives status 1, and the function gives `InvalidState`. After it, an `Err` of `fetch!` makes the shim throw, and Workers sends the request to the origin (`API.md` 10.1). Workers cannot send a request body that the handler already read (Cloudflare docs, Context API). |
 | `Io.timeout` | `io.timeout(ms)` gives `Io(a, [TimedOut, ..e])`: the operation, or `Err(TimedOut)` when `ms` pass first. It is a `Race` of the operation and the sleep of `Time.sleep` in one program, so the loser is aborted as in `Io.race!`. `ws.receive().timeout(5_000).run!()` replaces `Io.race!([ws.receive().map(Got), Time.sleep(5_000).map(\|_\| TimedOut)])` and its `match`. No `receive_within!`: the call above has the same length and works for each `Io` (a `Tcp` read, a fetch). |
+| `Io.timeout_at` | `io.timeout_at(deadline_ms)`: the same as `timeout`, with a point in time on the clock of `Time.now_ms!` (`Date.now()`) in place of a length. A loop with one limit for many reads writes `deadline = Time.now_ms!() + limit_ms` once, then `ws.receive().timeout_at(deadline).run!()` in each turn: no `deadline - now`, no second clock read. The wait is `max(0, deadline_ms - Date.now())` at the time the program runs (the helper `pf.waitUntil`). A deadline in the past waits 0 ms: the answer is `Err(TimedOut)` at once, unless the operation has its result already. |
 | `sleep!`, `sleep` | `scheduler.wait(ms)`. On the edge, a timer does not move during CPU work, only at I/O (Cloudflare docs, scheduler). A sleep is a wait, so the deadlines of `API.md` 10.2 apply. A timeout is `Io.timeout` (`op.timeout(ms)`, `API.md` 6.5). |
 
 As built in `PLAN.md` 8b (second half) and 9c (`platform/Ctx.roc`, `js/helpers.js`, `js/index.js`). `Time` and `Log` are 8c (the table after this one).
@@ -1207,6 +1247,7 @@ As built in `PLAN.md` 8c, wave 1 (`platform/Time.roc`, `platform/Log.roc`):
 | --- | --- | --- |
 | `now_ms!` | `Date.now()`, one `call!` | No wait |
 | `sleep!`, `sleep` | `scheduler.wait(ms, { signal })` with the root `signal`: a lost branch of `Io.race!` stops the timer (OP8). `sleep!` gives `{}`, also when the wait is aborted. | OP8 |
+| `Io.timeout_at` | `Io.timeout` with the sleep `Call(Root("pf"), "waitUntil", [Lit(Int(deadline_ms)), Slot(0)])` (`js/helpers.js`, the signal is `Keep(Root("signal"))`). A deadline above `I64.highest` is `I64.highest`. | The time left is computed in JS when the program runs: the ops have no arithmetic |
 | `seconds_up` | Public in `Time`. `roc test` checks 1 ms, 1,000 ms, 1,001 ms, 0 and `U64.highest`. | MC10: `Kv`, `Queue` and `Ai` (phase B) use it, and an app can use it for a `max-age` |
 | `Log` | `console.info`, `console.warn` or `console.error` with the line `{"level":..,"msg":..,<fields>}`. The fields are in the order of the derived JSON encoder. A value that is not a record goes in the field `fields`. A throw of `console` is a crash. | Workers Logs takes the level from the console method |
 
@@ -1281,6 +1322,8 @@ room = Object.class("Room", {
 	},
 })
 ```
+
+A record with one field is a block: `{ name }` is the value of `name`, not `{ name : Str }`. Write `{ name: name }` (or `{ name, }` with a comma) for an attachment, a cell or an Rpc argument with one field. The compiler says "Str, but set! needs { name: Str }".
 
 | Item | Rule |
 | --- | --- |
@@ -1526,7 +1569,7 @@ Lessons from the compiler (nightlies 10-09 and 10-12):
 | A tag union with a type variable tail does not widen: `Try(a, e) -> Try(a, [TimedOut, ..e])` with `Err(x) => Err(x)` is a type mismatch, also with `[..e]` in the argument. `?` does widen it (`Io.timeout_read`, `platform/Io.roc`). | `Io.timeout : Io(a, e), U64 -> Io(a, [TimedOut, ..e])` compiles with a reader that uses `?` |
 | A nominal type nested in the block of the format (`Cbor.Bytes := List(U8)`) takes a hand-written `parser_for` and `encoder_for` with `where` clauses on `parse_bytes` and `encode_bytes`, and the derived codec of a record uses them for a field (`research/api-probe/cbor/`) | Bytes cross as a CBOR byte string (MC5) |
 | An optional field with a type variable of a `where` clause (`metadata ?: m`) compiles when the caller leaves it out. A parsed type variable with no annotation at the call is "type not determined" (`research/api-probe/options-check/`). | `put_with!` takes typed metadata. `Kv.Key` keeps it as CBOR, parsed at the use (5.2). |
-| A format in a module of the app (`Cbor`, with its own `Parseable` and `Encodable` aliases) works with derived codecs, also through a `where` clause in another module (`D1.all!`, `Rpc.call!`) | The platform ships `Cbor` as an ordinary module. As built (`PLAN.md` 8c, DO1 decided 2026-10-16): `platform/Cbor.roc` is a local platform module that wraps `Cbor` of the package `roc-cbor` 0.2.0 (by release URL, in the `packages` of the platform header). A platform cannot list a module of a package in `exposes` ("package module is private", `research/cbor-in-platform/`), but it can list a module of its own, so an app writes `import pf.Cbor` with no `cbor` entry in its header: `Cbor.Bytes`, `Cbor.bytes`, `Cbor.parse`, `Cbor.parse_camel`, `Cbor.parse_with`, `Cbor.path_at`, `Cbor.encode`, the aliases `Cbor.Parseable`, `Cbor.Encodable`, `Cbor.Readable`, `Cbor.Writable`, `Cbor.Options`, `Cbor.Step`, and `Cbor.Format` and `Cbor.State` for a custom `parser_for`. Each type is an alias of the type of the package, so an app that also adds the same URL gets the same types (`research/cbor-in-platform/app_pf_and_pkg.roc`). |
+| A format in a module of the app (`Cbor`, with its own `Parseable` and `Encodable` aliases) works with derived codecs, also through a `where` clause in another module (`D1.all!`, `Rpc.call!`) | The platform ships `Cbor` as an ordinary module. As built (`PLAN.md` 8c, DO1 decided 2026-10-16): `platform/Cbor.roc` is a local platform module that wraps `Cbor` of the package `roc-cbor` 0.2.1 (by release URL, in the `packages` of the platform header). A platform cannot list a module of a package in `exposes` ("package module is private", `research/cbor-in-platform/`), but it can list a module of its own, so an app writes `import pf.Cbor` with no `cbor` entry in its header: `Cbor.Bytes`, `Cbor.bytes`, `Cbor.parse`, `Cbor.parse_camel`, `Cbor.parse_with`, `Cbor.path_at`, `Cbor.encode`, the aliases `Cbor.Parseable`, `Cbor.Encodable`, `Cbor.Readable`, `Cbor.Writable`, `Cbor.Options`, `Cbor.Step`, and `Cbor.Format` and `Cbor.State` for a custom `parser_for`. Each type is an alias of the type of the package, so an app that also adds the same URL gets the same types (`research/cbor-in-platform/app_pf_and_pkg.roc`). |
 | A function with no annotation that gives a value parsed by `Json` (`res.json!()`), given to a function that needs `Cbor` on the same type (`Memo.new`), is "type not determined". An annotation on the function fixes it. The trigger is a `parser_for` constraint of two formats on one value. Repro: `research/roc-bugs/` (also on nightly 10-14). | The `Memo` example in the docs has an annotated `load!`. Reported: roc-lang/roc#12310. |
 | Two modules cannot import each other | `Response.web_socket` is a ref, not a `WebSocket` (4). The response of an R2 object is `R2.to_response` and `R2.respond!`, not `Response.from_r2` (5.3). |
 | A nominal record with an optional field (`web_socket ?: U32`) can be built with or without the field | `Response` keeps its short forms |
