@@ -33,6 +33,36 @@ export const checks = [
     answer(await route(t, 'delete_io', k), 'Ok {}');
     answer(await route(t, 'get_io', k), 'Err NotFound');
   }],
+  // N6: `find!` and `find` (the Io twin), on Kv and on Kv.Cell: `NotFound` is a value of the inner `Try`.
+  ['kv find!, find (Io twin): a missing key is Ok(Err(NotFound)), a present key Ok(Ok(v)), a bad stored value Err(BadData)', async (t) => {
+    const k = `f-${rand()}`;
+    answer(await route(t, 'find', k), 'Ok Err(NotFound)');
+    answer(await route(t, 'find_io', k), 'Ok Err(NotFound)');
+    answer(await route(t, 'put', k, '&v=hi'), 'Ok {}');
+    answer(await route(t, 'find', k), 'Ok Ok("hi")');
+    answer(await route(t, 'find_io', k), 'Ok Ok("hi")');
+    await (await t.mf.getKVNamespace('KV')).put(`${k}-text`, 'not json');
+    const bad = await route(t, 'find_json', `${k}-text`);
+    ok(bad.body.startsWith('Err BadData('), `a text that is not JSON: ${bad.body}`);
+    answer(await route(t, 'delete', k), 'Ok {}');
+    answer(await route(t, 'find', k), 'Ok Err(NotFound)');
+  }],
+  ['kv Cell find!, find (Io twin): missing is Ok(Err(NotFound)), a value Ok(Ok(v)), a bad stored value Err(BadData)', async (t) => {
+    const kv = await t.mf.getKVNamespace('KV');
+    await route(t, 'cell_delete');
+    answer(await route(t, 'cell_find'), 'Ok Err(NotFound)');
+    answer(await route(t, 'cell_find_io'), 'Ok Err(NotFound)');
+    answer(await route(t, 'cell_set', '', '&v=dark'), 'Ok {}');
+    answer(await route(t, 'cell_find'), 'Ok Ok({ big: 1152921504606846976, n: 3, theme: "dark" })');
+    answer(await route(t, 'cell_find_io'), 'Ok Ok({ big: 1152921504606846976, n: 3, theme: "dark" })');
+    await kv.put('cell-prefs', 'not json');
+    const bad = await route(t, 'cell_find');
+    ok(bad.body.startsWith('Err BadData('), `a text that is not JSON: ${bad.body}`);
+    await route(t, 'cell_delete');
+  }],
+  // N7: `Kv.Cell.declare` is the binding of its Kv (the kind kv and the name, no props).
+  ['kv Cell declare: the binding of the manifest is the kind kv and the name of the namespace', async (t) =>
+    answer(await route(t, 'cell_declare'), '{ kind: "kv", name: "KV", props: [] }')],
   ['kv json: a record with a U64 of 2^60 is exact, and JS reads it as JSON', async (t) => {
     const k = `j-${rand()}`;
     answer(await route(t, 'json_put', k, '&v=dark'), 'Ok {}');

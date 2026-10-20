@@ -92,6 +92,12 @@ pair() {
 pair rpc_tag_bad.roc 'Err([Busy])' rpc_tag_ok.roc
 pair worker_field_bad.roc 'fetch! ?: Str => Try(Response, [])' worker_errs_ok.roc
 pair attachment_bad.roc 'slot.set!(socket, { name: 5 })' attachment_ok.roc
+# 8h wave N (MODULES.md 5.2, 7, 12.1): `find!` has no `NotFound` in the outer error (the closed error type of the control compiles, the
+# `get!` of the bad file does not); `Object.namespace` takes the class value, not its name; `broadcast!` gives `{}`, not a count.
+pair find_object_bad.roc 'This expression produces the tag NotFound but the annotated tag union does not list it' find_object_ok.roc
+pair find_kv_bad.roc 'This expression produces the tag NotFound but the annotated tag union does not list it' find_kv_ok.roc
+pair namespace_str_bad.roc 'from_quote' namespace_str_ok.roc
+pair broadcast_count_bad.roc 'But the annotation says it should be: U64' broadcast_count_ok.roc
 # roc-cbor 0.2.0: a wrapper around `D1.all!` with the old long `Parseable([InvalidCbor(U64), ..errs])` form is a type mismatch (D1 reads with `Readable`, which adds `MissingRequiredField(Str)`).
 pair cbor_parseable_long_bad.roc 'MissingRequiredField(Str)' cbor_readable_ok.roc
 # 8h wave B (MODULES.md 4, 5.4): `cache.put!` gives the response to send, so a statement that drops it does not compile, and

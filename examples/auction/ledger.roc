@@ -20,7 +20,7 @@ import Gavel
 receipts = R2.binding("RECEIPTS")
 
 ## The class `LotRoom` is in the script of auction-web.
-lot_rooms = Object.namespace("LOT_ROOM", { class: "LotRoom", script: "auction-web" })
+lot_rooms = Object.namespace_remote("LOT_ROOM", { class: "LotRoom", script: "auction-web" })
 
 feed_url = "wss://fx.example.com/stream"
 
@@ -151,7 +151,7 @@ hourly! = |_s| {
 worker = Worker.new({
 	fetch!,
 	rpc: [Gavel.settle_due.on_worker(settle_due!)],
-	bindings: [Gavel.db.declare(), Gavel.kv.declare(), receipts.declare(), lot_rooms.declare()],
+	bindings: [Gavel.db.declare(), Gavel.config_cell.declare(), receipts.declare(), lot_rooms.declare()],
 	crons: [Worker.cron("0 * * * *", hourly!)],
 })
 

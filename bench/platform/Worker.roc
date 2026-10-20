@@ -300,8 +300,10 @@ expect {
 		bindings: [
 			D1.binding("DB").declare(),
 			Kv.text("KV").declare(),
-			Object.namespace("ROOMS", { class: "Room" }).declare(),
-			Object.namespace("FAR", { class: "Far", script: "other" }).declare(),
+			Object.namespace("ROOMS", { class: Object.class("Room", {}) }).declare(),
+			Object.namespace_remote("FAR", { class: "Far", script: "other" }).declare(),
+			Object.namespace("FAR2", { class: Object.class("Far2", {}), script: "other" }).declare(),
+			Kv.text("CFG").cell("c").declare(),
 		],
 		crons: [Worker.cron("*/5 * * * *", |_s| Ok({})), Worker.cron("0 0 * * *", |_s| Ok({}))],
 	})
@@ -316,6 +318,8 @@ expect {
 				Obj([("name", Text("KV")), ("kind", Text("kv"))]),
 				Obj([("name", Text("ROOMS")), ("kind", Text("object")), ("class", Text("Room"))]),
 				Obj([("name", Text("FAR")), ("kind", Text("object")), ("class", Text("Far")), ("script", Text("other"))]),
+				Obj([("name", Text("FAR2")), ("kind", Text("object")), ("class", Text("Far2")), ("script", Text("other"))]),
+				Obj([("name", Text("CFG")), ("kind", Text("kv"))]),
 			]),
 		),
 		("crons", Arr([Text("*/5 * * * *"), Text("0 0 * * *")])),

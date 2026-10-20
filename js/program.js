@@ -72,7 +72,10 @@ function step(f, op) {
     case 'get': {
       if (op.length !== 3 || !isName(name)) bad('get needs a target and a name');
       const o = f.target(t);
-      return o === null || o === undefined ? undefined : o[name]; // OP7: as `?.`
+      const v = o === null || o === undefined ? undefined : o[name]; // OP7: as `?.`
+      // MODULES.md 3: a read of `env[name]` goes to the dev-mode check of the bindings (shim `envRead`).
+      if (t[0] === 'root' && t[1] === 'env') f.ctx.envRead?.(name, v);
+      return v;
     }
     case 'set': {
       if (op.length !== 4 || !isName(name)) bad('set needs a target, a name and an argument');

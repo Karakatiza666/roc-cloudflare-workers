@@ -42,6 +42,10 @@ KvRoutes :: [].{
 		match path {
 			["get"] => show(plain.get!(k))
 			["get_io"] => show(Io.run!(plain.get(k)))
+			# N6: `find!` gives a missing key as `Ok(Err(NotFound))`.
+			["find"] => show(plain.find!(k))
+			["find_io"] => show(Io.run!(plain.find(k)))
+			["find_json"] => show(prefs.find!(k))
 			["get_or"] => show(plain.get_or!(k, "default"))
 			["get_or_io"] => show(Io.run!(plain.get_or(k, "default")))
 			# A record with an `F64` field is JSON-encodable (MODULES.md 15). `?v=nan` is a `NaN`: `BadData`, nothing is sent.
@@ -115,6 +119,10 @@ KvRoutes :: [].{
 			["cell_get"] => show(cell.get!())
 			["cell_get_or"] => show(cell.get_or!({ theme: "none", n: 0, big: 0 }))
 			["cell_get_or_io"] => show(Io.run!(cell.get_or({ theme: "none", n: 0, big: 0 })))
+			["cell_find"] => show(cell.find!())
+			["cell_find_io"] => show(Io.run!(cell.find()))
+			# N7: the binding of a cell for the manifest.
+			["cell_declare"] => ok(Str.inspect(cell.declare()))
 			["cell_get_io"] => show(Io.run!(cell.get()))
 			["cell_delete"] => show(cell.delete!())
 			["cell_delete_io"] => show(Io.run!(cell.delete()))

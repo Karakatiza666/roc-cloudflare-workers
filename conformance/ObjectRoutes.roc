@@ -15,12 +15,6 @@ import RpcMethods
 import RpcErrRoutes
 import Q
 
-counters = Object.namespace("COUNTERS", { class: "Counter" })
-stores = Object.namespace("STORES", { class: "Store" })
-flakies = Object.namespace("FLAKY", { class: "Flaky" })
-slows = Object.namespace("SLOW", { class: "Slow" })
-tickers = Object.namespace("TICKERS", { class: "Ticker" })
-kv_only = Object.namespace("KVONLY", { class: "KvOnly" })
 
 count : Object.Cell(I64)
 count = Object.cell("count")
@@ -41,15 +35,45 @@ Big : { x : Str }
 ObjectRoutes :: [].{
 
 	## The classes of the app: the manifest names them, and `conformance/worker.js` exports each one.
+	counter_class : Object.Class
+	counter_class = Object.class("Counter", { fetch!: counter_fetch!, alarm!: counter_alarm!, rpc: [RpcMethods.increment.on(increment!), RpcMethods.ping.on(object_ping!), RpcMethods.boom.on(boom!), RpcMethods.echo.on(echo!), RpcMethods.hello.on(object_hello!)].concat(RpcErrRoutes.object_handlers) })
+
+	store_class : Object.Class
+	store_class = Object.class("Store", { init!: store_init!, fetch!: store_fetch! })
+
+	flaky_class : Object.Class
+	flaky_class = Object.class("Flaky", { init!: flaky_init!, fetch!: plain_fetch! })
+
+	slow_class : Object.Class
+	slow_class = Object.class("Slow", { init!: slow_init!, fetch!: plain_fetch! })
+
+	ticker_class : Object.Class
+	ticker_class = Object.class("Ticker", { fetch!: ticker_fetch!, alarm!: ticker_alarm! })
+
+	kv_only_class : Object.Class
+	kv_only_class = Object.class("KvOnly", { fetch!: kv_only_fetch! })
+
 	classes : List(Object.Class)
-	classes = [
-		Object.class("Counter", { fetch!: counter_fetch!, alarm!: counter_alarm!, rpc: [RpcMethods.increment.on(increment!), RpcMethods.ping.on(object_ping!), RpcMethods.boom.on(boom!), RpcMethods.echo.on(echo!), RpcMethods.hello.on(object_hello!)].concat(RpcErrRoutes.object_handlers) }),
-		Object.class("Store", { init!: store_init!, fetch!: store_fetch! }),
-		Object.class("Flaky", { init!: flaky_init!, fetch!: plain_fetch! }),
-		Object.class("Slow", { init!: slow_init!, fetch!: plain_fetch! }),
-		Object.class("Ticker", { fetch!: ticker_fetch!, alarm!: ticker_alarm! }),
-		Object.class("KvOnly", { fetch!: kv_only_fetch! }),
-	]
+	classes = [counter_class, store_class, flaky_class, slow_class, ticker_class, kv_only_class]
+
+	## The namespaces: each takes the class value, so a class name is written once.
+	counters : Object.Namespace
+	counters = Object.namespace("COUNTERS", { class: counter_class })
+
+	stores : Object.Namespace
+	stores = Object.namespace("STORES", { class: store_class })
+
+	flakies : Object.Namespace
+	flakies = Object.namespace("FLAKY", { class: flaky_class })
+
+	slows : Object.Namespace
+	slows = Object.namespace("SLOW", { class: slow_class })
+
+	tickers : Object.Namespace
+	tickers = Object.namespace("TICKERS", { class: ticker_class })
+
+	kv_only : Object.Namespace
+	kv_only = Object.namespace("KVONLY", { class: kv_only_class })
 
 	route! : Request, List(Str) => Response
 	route! = |req, path| {
@@ -61,6 +85,12 @@ ObjectRoutes :: [].{
 				outside = counters.named(name).id!()
 				inside = text!(counters.named(name).fetch!(Request.get("http://o/id")))
 				Response.from_text(200, "outside=${Str.inspect(outside)} same=${Str.inspect(outside == Ok(inside))}")
+			}
+			# N4: the bindings that the namespaces give to the manifest: a class value, a class value with `script`, and `namespace_remote`.
+			["namespaces"] => {
+				far = Object.namespace("FAR2", { class: store_class, script: "other" })
+				remote = Object.namespace_remote("FAR", { class: "Far", script: "other" })
+				Response.from_text(200, Str.inspect([counters.declare(), far.declare(), remote.declare()]))
 			}
 			["jurisdiction"] => Response.from_text(200, Str.inspect(counters.jurisdiction(Eu).named(name).id!()))
 			# `named_with` and `from_id_with` with a location hint, `unique!`, and `id!` of a stub of an id (no crossing).
@@ -242,6 +272,18 @@ counter_fetch! = |self, req| match req.segments() {
 		got = as_text.get_or!(self, "dflt")
 		_ = count.delete!(self)
 		answer(Str.inspect(got))
+	}
+	# N6: `find!` gives a missing cell as `Ok(Err(NotFound))`, a value as `Ok(Ok(v))`, a value of another type as `Err(BadData)`.
+	["cell_find"] => {
+		_ = count.delete!(self)
+		none = count.find!(self)
+		_ = count.set!(self, 7)
+		some = count.find!(self)
+		as_text : Object.Cell(Str)
+		as_text = Object.cell("count")
+		bad = as_text.find!(self)
+		_ = count.delete!(self)
+		answer("none=${Str.inspect(none)} some=${Str.inspect(some)} bad=${Str.inspect(bad)}")
 	}
 	# roc-cbor 0.2.0: a `Dec` in a cell is exact (a fraction, the lowest `Dec`: a bignum mantissa).
 	["dec_cell"] => {

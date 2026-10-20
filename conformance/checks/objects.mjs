@@ -90,6 +90,16 @@ export const checks = [
     answer(await counter(t, 'cell', 'cell'), 'before=Err(NotFound) set=Ok({}) got=Ok(-9007199254740993) del=Ok({}) after=Err(NotFound)')],
   ['objects Object.Cell get_or!: the default, then the value', async (t) =>
     answer(await counter(t, 'cell_or', 'cell_or'), 'none=Ok(42) some=Ok(7)')],
+  // N6: `find!` has `NotFound` as a value of the inner `Try`.
+  ['objects Object.Cell find!: a missing cell is Ok(Err(NotFound)), a value Ok(Ok(v)), a value of another type Err(BadData)', async (t) => {
+    const r = await counter(t, 'cell_find', 'cell_find');
+    ok(r.status === 200 && r.body.startsWith('none=Ok(Err(NotFound)) some=Ok(Ok(7)) bad=Err(BadData('), `got ${r.status} ${r.body}`);
+    return r.body.slice(0, 120);
+  }],
+  // N4: the bindings that the namespaces give to the manifest (the same values as the string form gave: the class name, `script`).
+  ['objects namespace: the class value gives the class name, script is kept, namespace_remote gives the text class and the script', async (t) =>
+    answer(await t.get('/objects/namespaces'),
+      '[{ kind: "object", name: "COUNTERS", props: [("class", "Counter")] }, { kind: "object", name: "FAR2", props: [("class", "Store"), ("script", "other")] }, { kind: "object", name: "FAR", props: [("class", "Far"), ("script", "other")] }]')],
   ['objects Object.Cell get_or!: a value of another type is BadData, not the default', async (t) => {
     const r = await counter(t, 'cell_or_bad', 'cell_or_bad');
     ok(r.status === 200 && r.body.startsWith('Err(BadData('), `got ${r.status} ${r.body}`);

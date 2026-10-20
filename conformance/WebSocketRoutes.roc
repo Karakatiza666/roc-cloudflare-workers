@@ -11,8 +11,6 @@ import pf.Time
 import pf.Log
 import Q
 
-rooms = Object.namespace("ROOMS", { class: "Room" })
-
 ## The attachment of a socket of `Room`: kept while the object sleeps.
 User : { name : Str }
 
@@ -37,10 +35,14 @@ events = Object.cell("events")
 
 WebSocketRoutes :: [].{
 
+	room_class : Object.Class
+	room_class = Object.class("Room", { init!: room_init!, fetch!: room_fetch!, web_socket_message!: room_message!, web_socket_close!: room_close!, web_socket_error!: room_error! })
+
 	classes : List(Object.Class)
-	classes = [
-		Object.class("Room", { init!: room_init!, fetch!: room_fetch!, web_socket_message!: room_message!, web_socket_close!: room_close!, web_socket_error!: room_error! }),
-	]
+	classes = [room_class]
+
+	rooms : Object.Namespace
+	rooms = Object.namespace("ROOMS", { class: room_class })
 
 	route! : Request, List(Str) => Response
 	route! = |req, path| match path {
@@ -296,7 +298,7 @@ room_message! = |self, socket, msg| {
 			{}
 		}
 		Text("bcast") => {
-			sent = self.broadcast!(Text("all from ${name}"))
+			sent = self.broadcast_with!({}, Text("all from ${name}"))
 			_ = socket.send!(Text("sent=${sent.to_str()}"))
 			{}
 		}
@@ -306,8 +308,30 @@ room_message! = |self, socket, msg| {
 			for victim in self.sockets_with!({ tag: "victim" }) {
 				victim.close!(1000, "victim")
 			}
-			sent = self.broadcast!(Text("closed from ${name}"))
+			sent = self.broadcast_with!({}, Text("closed from ${name}"))
 			_ = socket.send!(Text("sent=${sent.to_str()}"))
+			{}
+		}
+		# N11: `broadcast!` gives `{}`, `broadcast_json!` sends JSON text, a NaN is `BadData` and nothing is sent.
+		Text("bcast_plain") => {
+			done = self.broadcast!(Text("plain from ${name}"))
+			_ = socket.send!(Text("done=${Str.inspect(done)}"))
+			{}
+		}
+		Text("bcast_json") => {
+			done = self.broadcast_json!({ from: name })
+			_ = socket.send!(Text("done=${Str.inspect(done)}"))
+			{}
+		}
+		Text("bcast_json_tag") => {
+			sent = self.broadcast_json_with!({ tag: name }, { from: name })
+			_ = socket.send!(Text("sent=${Str.inspect(sent)}"))
+			{}
+		}
+		Text("bcast_json_nan") => {
+			one = self.broadcast_json!({ r: 0.0.F64 / 0.0.F64 })
+			two = self.broadcast_json_with!({ tag: name }, { r: 0.0.F64 / 0.0.F64 })
+			_ = socket.send!(Text("one=${Str.inspect(one)} two=${Str.inspect(two)}"))
 			{}
 		}
 		Text("bcast_tag") => {

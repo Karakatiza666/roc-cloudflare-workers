@@ -42,12 +42,22 @@ const TESTS = {
   'entry-test': () => [process.execPath, ['bench/entry-test.mjs', 'bench/out/app_events.wasm']],
   'program-test': () => [process.execPath, ['bench/program-test.mjs']],
   'bindings-test': () => [process.execPath, ['bench/bindings-test.mjs', 'bench/out']],
+  'envread-test': () => [process.execPath, ['bench/envread-test.mjs', 'bench/out']],
   'cli-test': () => [process.execPath, ['bench/cli-test.mjs', 'bench/out']],
   // The build of the conformance app only (exit 2: warnings only), for a revert that crashes the compiler.
   'conformance build': () => ['bash', ['-c', '"$ROC" build --opt=speed --target=wasm32 --no-cache --output=.cache/conformance-reverts/build-check.wasm conformance/app.roc || [ $? -eq 2 ]']],
 };
 // name, the test, the checks that must fail (conformance only), edits: [file, from, to].
 const R = (name, test, checks, ...edits) => ({ name, test, checks, edits });
+// The checks of the 8h wave N reverts (the names of conformance/checks/{objects,kv,websocket}.mjs).
+const NS = 'objects namespace: the class value gives the class name, script is kept, namespace_remote gives the text class and the script';
+const OF = 'objects Object.Cell find!: a missing cell is Ok(Err(NotFound)), a value Ok(Ok(v)), a value of another type Err(BadData)';
+const KF = 'kv find!, find (Io twin): a missing key is Ok(Err(NotFound)), a present key Ok(Ok(v)), a bad stored value Err(BadData)';
+const KC = 'kv Cell find!, find (Io twin): missing is Ok(Err(NotFound)), a value Ok(Ok(v)), a bad stored value Err(BadData)';
+const KD = 'kv Cell declare: the binding of the manifest is the kind kv and the name of the namespace';
+const BA = 'websocket broadcast!, broadcast_json!: all sockets get the message (the JSON text for the second), the result is {} and Ok({})';
+const BT = 'websocket broadcast_json_with!: the count, and only the sockets with the tag get the JSON text';
+const BN = 'websocket broadcast_json!, broadcast_json_with!: a NaN is Err(BadData) and no socket gets anything';
 const reverts = [
   // 8h wave C: the builders of the opaque Request and Response (one route, `/http/builders`).
   R('Response.with_status: keeps the status', 'conformance', ['http wave C builders: Request.new with_body, with_method, with_url, and Response.with_status, with_body'], [BP + 'Response.roc', 'with_status = |r, code| { ..r, status: code }', 'with_status = |r, _code| r']),
@@ -138,7 +148,7 @@ const reverts = [
   R('Cache.get: match is called "matchx"', 'conformance', ['cache get! of a missing key is NotFound', 'cache put! and get!'], [BP + 'Cache.roc', 'Call(Slot(1), "match",', 'Call(Slot(1), "matchx",']),
   // OP7: Get and Fields on null and undefined throw: a missing key is R2Err and CacheErr, not NotFound.
   R('OP7: no ?. in Get and Fields (js/program.js)', 'conformance', ['r2 get! of a missing key is NotFound', 'r2 head! of a missing key is NotFound', 'cache get! of a missing key is NotFound'],
-    ['js/program.js', 'return o === null || o === undefined ? undefined : o[name];', 'return o[name];'],
+    ['js/program.js', 'const v = o === null || o === undefined ? undefined : o[name];', 'const v = o[name];'],
     ['js/program.js', 'if (o === null || o === undefined) return undefined; // OP7', '']),
   // R2.Cond: the module sends only the first field.
   R('R2.put_with: only_if sends only the first field', 'conformance', ['r2 put_with! only_if with two fields'],
@@ -165,9 +175,9 @@ const reverts = [
   R('R2.http_date: the weekday is wrong', 'conformance', ['r2 to_response: 200, the metadata and etag, a missing metadata field is not set'], [BP + 'R2.roc', '.get((days % 7).to_u64())', '.get(((days + 1) % 7).to_u64())']),
   R('R2.to_response: a missing metadata field is set to a default', 'conformance', ['r2 to_response: 200, the metadata and etag, a missing metadata field is not set'], [BP + 'R2.roc', '("content-language", h.?content_language),', '("content-language", Ok(h.?content_language ?? "none")),']),
   R('Object.broadcast!: counts each socket, not each send that works', 'conformance', ['websocket broadcast!: a socket that is closed but still listed is not in the count'], [BP + 'Object.roc', '\t\t\tErr(Closed) => {}\n\t\t}\n\t}\n\t$sent', '\t\t\tErr(Closed) => {\n\t\t\t\t$sent = $sent + 1\n\t\t\t}\n\t\t}\n\t}\n\t$sent']),
-  R('Object.broadcast!: sends to one socket only', 'conformance', ['websocket broadcast!: 3 sockets give sent=3 and each gets the message once'], [BP + 'Object.roc', 'send_each!(sockets_of!([]), msg)', 'send_each!(sockets_of!([]).take_first(1), msg)']),
-  R('Object.broadcast_with!: the tag is ignored', 'conformance', ['websocket broadcast_with!: only the sockets with the tag get the message'], [BP + 'Object.roc', 'send_each!(sockets_of!([Lit(Text(opts.tag))]), msg)', 'send_each!(sockets_of!([]), msg)']),
-  R('Object.broadcast!: sends to the sockets of the tag room only', 'conformance', ['websocket broadcast!: 3 sockets give sent=3 and each gets the message once'], [BP + 'Object.roc', 'broadcast! = |_self, msg| send_each!(sockets_of!([]), msg)', 'broadcast! = |_self, msg| send_each!(sockets_of!([Lit(Text("none"))]), msg)']),
+  R('Object.broadcast_with!: no tag sends to one socket only', 'conformance', ['websocket broadcast!: 3 sockets give sent=3 and each gets the message once'], [BP + 'Object.roc', 'send_each!(sockets_of!(filter), msg)', 'send_each!(sockets_of!(filter).take_first(1), msg)']),
+  R('Object.broadcast_with!: the tag is ignored', 'conformance', ['websocket broadcast_with!: only the sockets with the tag get the message'], [BP + 'Object.roc', '\t\t\t\tOk(t) => [Lit(Text(t))]', '\t\t\t\tOk(_) => []']),
+  R('Object.broadcast_with!: no tag sends to the sockets of a tag room only', 'conformance', ['websocket broadcast!: 3 sockets give sent=3 and each gets the message once'], [BP + 'Object.roc', '\t\t\t\tErr(_) => []\n\t\t\t}\n\t\t\tsend_each!', '\t\t\t\tErr(_) => [Lit(Text("none"))]\n\t\t\t}\n\t\t\tsend_each!']),
   // Multipart: each function of Upload calls createMultipartUpload in place of resumeMultipartUpload.
   R('R2.Upload: createMultipartUpload in place of resumeMultipartUpload', 'conformance', ['r2 multipart: create, upload_part, complete in three requests'],
     [BP + 'R2.roc', 'Call(Slot(0), "resumeMultipartUpload", [Lit(Text(up.key))', 'Call(Slot(0), "createMultipartUpload", [Lit(Text(up.key))']),
@@ -689,6 +699,39 @@ const reverts = [
   R('8h B5: D1.declare gives the kind kv (roc test)', 'roc test', [], ['platform/D1.roc', 'kind: "d1", props: []', 'kind: "kv", props: []']),
   R('8h B5: D1.declare gives the kind kv (the load)', 'conformance', ['start'], [BP + 'D1.roc', 'kind: "d1", props: []', 'kind: "kv", props: []']),
   R('8h B5: checkConfig ignores the migrations', 'cli-test', [], ['js/cli.mjs', 'for (const mig of cfg.migrations ?? []) {', 'for (const mig of []) {']),
+  // 8h wave N (N4, N6, N7, N11). The names start with `8h N` (a filter: `node conformance/reverts.mjs "8h N"`).
+  // N4: `Object.namespace` takes the class value; `namespace_remote` takes the class name as text.
+  R('8h N4: Object.namespace gives a fixed class name, not the name of the class value', 'conformance', [NS], [BP + 'Object.roc', 'class: opts.class.name,', 'class: "Counter",']),
+  R('8h N4: Object.namespace drops script', 'conformance', [NS], [BP + 'Object.roc', 'class: opts.class.name, script: opts.?script ?? ""', 'class: opts.class.name, script: ""']),
+  R('8h N4: Object.namespace_remote swaps the class and the script', 'conformance', [NS], [BP + 'Object.roc', 'class: opts.class, script: opts.script }', 'class: opts.script, script: opts.class }']),
+  R('8h N4: Object.namespace takes a Str class again (must-not-compile)', 'must-not-compile', [], [BP + 'Object.roc', 'namespace : Str, { class : Object.Class, script ?: Str } -> Object.Namespace', 'namespace : Str, { class : Str, script ?: Str } -> Object.Namespace'], [BP + 'Object.roc', 'class: opts.class.name,', 'class: opts.class,'], [BP + 'Worker.roc', 'Object.namespace("ROOMS", { class: Object.class("Room", {}) })', 'Object.namespace("ROOMS", { class: "Room" })'], [BP + 'Worker.roc', 'Object.namespace("FAR2", { class: Object.class("Far2", {}), script: "other" })', 'Object.namespace("FAR2", { class: "Far2", script: "other" })']),
+  // N6: `find!` gives `Ok(Err(NotFound))` for a missing value, `Ok(Ok(v))` for a value, `Err(BadData)` for a bad value.
+  R('8h N6: Object.Cell.find! gives a value as Ok(Err(NotFound))', 'conformance', [OF], [BP + 'Object.roc', 'Ok(v) => Ok(Ok(v))', 'Ok(_) => Ok(Err(NotFound))']),
+  R('8h N6: Object.Cell.find! gives BadData as NotFound', 'conformance', [OF], [BP + 'Object.roc', 'Err(NotFound) => Ok(Err(NotFound))\n\t\t\tErr(BadData(m)) => Err(BadData(m))', 'Err(NotFound) => Ok(Err(NotFound))\n\t\t\tErr(BadData(_)) => Ok(Err(NotFound))']),
+  R('8h N6: Object.Cell.find! gives NotFound as BadData', 'conformance', [OF], [BP + 'Object.roc', 'Err(NotFound) => Ok(Err(NotFound))\n\t\t\tErr(BadData(m))', 'Err(NotFound) => Err(BadData("missing"))\n\t\t\tErr(BadData(m))']),
+  R('8h N6: Object.Cell.find! has NotFound in the outer error (must-not-compile)', 'must-not-compile', [], [BP + 'Object.roc', 'find! : Object.Cell(a), Object.Self => Try(Try(a, [NotFound]), [BadData(Str), StorageErr(Io.Thrown)])', 'find! : Object.Cell(a), Object.Self => Try(Try(a, [NotFound]), [NotFound, BadData(Str), StorageErr(Io.Thrown)])']),
+  R('8h N6: Kv.find! gives NotFound as an error of the outer Try', 'conformance', [KF], [BP + 'Kv.roc', 'NotFound => Ok(Err(NotFound))\n\t\tKvErr(t) => Err(KvErr(t))', 'NotFound => Err(TooLarge)\n\t\tKvErr(t) => Err(KvErr(t))']),
+  R('8h N6: Kv.find! gives BadData as NotFound', 'conformance', [KF], [BP + 'Kv.roc', 'BadData(m) => Err(BadData(m))\n\t\tTooLarge => Err(TooLarge)\n\t})\n\n\tfind!', 'BadData(_) => Ok(Err(NotFound))\n\t\tTooLarge => Err(TooLarge)\n\t})\n\n\tfind!']),
+  R('8h N6: Kv.find! reads another key', 'conformance', [KF], [BP + 'Kv.roc', 'find! = |kv, key| Io.run!(kv.find(key))', 'find! = |kv, key| Io.run!(kv.find("${key}-other"))']),
+  R('8h N6: Kv.Cell.find reads another key', 'conformance', [KC], [BP + 'Kv.roc', 'find = |c| c.kv.find(c.key)', 'find = |c| c.kv.find("${c.key}-other")']),
+  R('8h N6: Kv.Cell.find! gives BadData as NotFound', 'conformance', [KC], [BP + 'Kv.roc', 'find! = |c| Io.run!(c.find())', 'find! = |c| Io.run!(c.get().map(|v| Ok(v)).recover(|e| match e {\n\t\t\tNotFound => Ok(Err(NotFound))\n\t\t\tKvErr(t) => Err(KvErr(t))\n\t\t\tBadData(_) => Ok(Err(NotFound))\n\t\t\tTooLarge => Err(TooLarge)\n\t\t}))']),
+  R('8h N6: Kv.find! and Kv.Cell.find! have NotFound in the outer error (must-not-compile)', 'must-not-compile', [], [BP + 'Kv.roc', 'find! : Kv(a), Str => Try(Try(a, [NotFound]), [KvErr(Io.Thrown), BadData(Str), TooLarge])', 'find! : Kv(a), Str => Try(Try(a, [NotFound]), [NotFound, KvErr(Io.Thrown), BadData(Str), TooLarge])'], [BP + 'Kv.roc', 'find! : Kv.Cell(a) => Try(Try(a, [NotFound]), [KvErr(Io.Thrown), BadData(Str), TooLarge])', 'find! : Kv.Cell(a) => Try(Try(a, [NotFound]), [NotFound, KvErr(Io.Thrown), BadData(Str), TooLarge])']),
+  // N7: `Kv.Cell.declare`.
+  R('8h N7: Kv.Cell.declare gives the key as the name', 'conformance', [KD], [BP + 'Kv.roc', 'declare = |c| c.kv.declare()', 'declare = |c| { name: c.key, kind: "kv", props: [] }']),
+  R('8h N7: Kv.Cell.declare gives the kind d1', 'conformance', [KD], [BP + 'Kv.roc', 'declare = |c| c.kv.declare()', 'declare = |c| { name: c.kv.name, kind: "d1", props: [] }']),
+  // N7: the dev-mode warning of an undeclared binding (bench/envread-test.mjs).
+  R('8h N7: the warning repeats for each read of a name', 'envread-test', [], [IX, 'if (declared.has(name) || warned.has(name)) return;', 'if (declared.has(name)) return;']),
+  R('8h N7: the warning is for a declared binding too', 'envread-test', [], [IX, 'if (declared.has(name) || warned.has(name)) return;', 'if (warned.has(name)) return;']),
+  R('8h N7: the warning is for a text var, a secret and a JSON var', 'envread-test', [], [IX, '      if (!binding) return;\n', '']),
+  R('8h N7: the check is on for an app with no bindings', 'envread-test', [], [IX, 'if (manifest.bindings.length) {\n    const declared', 'if (true) {\n    const declared']),
+  R('8h N7: the read of env gives no call to the check (js/program.js)', 'envread-test', [], ['js/program.js', "if (t[0] === 'root' && t[1] === 'env') f.ctx.envRead?.(name, v);", '']),
+  // N11: `broadcast!`, `broadcast_json!`, `broadcast_json_with!`.
+  R('8h N11: broadcast! sends to one socket only', 'conformance', [BA], [BP + 'Object.roc', '_ = send_each!(sockets_of!([]), msg)\n\t\t\t{}', '_ = send_each!(sockets_of!([]).take_first(1), msg)\n\t\t\t{}']),
+  R('8h N11: broadcast_json! sends the text as a JSON string', 'conformance', [BA], [BP + 'Object.roc', 'Ok(text) => Ok(self.broadcast!(Text(text)))', 'Ok(text) => Ok(self.broadcast!(Text(Str.inspect(text))))']),
+  R('8h N11: broadcast_json! sends a text for BadData', 'conformance', [BN], [BP + 'Object.roc', 'Ok(text) => Ok(self.broadcast!(Text(text)))\n\t\t\tErr(e) => Err(BadData(Str.inspect(e)))', 'Ok(text) => Ok(self.broadcast!(Text(text)))\n\t\t\tErr(e) => {\n\t\t\t\tself.broadcast!(Text("bad"))\n\t\t\t\tErr(BadData(Str.inspect(e)))\n\t\t\t}']),
+  R('8h N11: broadcast_json! gives Ok for BadData', 'conformance', [BN], [BP + 'Object.roc', 'Ok(text) => Ok(self.broadcast!(Text(text)))\n\t\t\tErr(e) => Err(BadData(Str.inspect(e)))', 'Ok(text) => Ok(self.broadcast!(Text(text)))\n\t\t\tErr(_) => Ok({})']),
+  R('8h N11: broadcast_json_with! ignores the tag', 'conformance', [BT], [BP + 'Object.roc', 'Ok(text) => Ok(self.broadcast_with!(opts, Text(text)))', 'Ok(text) => Ok(self.broadcast_with!({}, Text(text)))']),
+  R('8h N11: broadcast_json_with! gives Ok(0) for BadData', 'conformance', [BN], [BP + 'Object.roc', 'Ok(text) => Ok(self.broadcast_with!(opts, Text(text)))\n\t\t\tErr(e) => Err(BadData(Str.inspect(e)))', 'Ok(text) => Ok(self.broadcast_with!(opts, Text(text)))\n\t\t\tErr(_) => Ok(0)']),
   // roc-cbor 0.2.0 (g-cbor02): Dec as tag 4 in JS, Dec parameters, Queue.json, Cbor.Bytes from a BLOB, BadData of a missing column, optional Options.
   // The names start with `dec0.2:` (a filter: `node conformance/reverts.mjs "dec0.2:"`). `P` edits the package in the cache of the build.
   R('dec0.2: JS decoder reads no tag 4', 'conformance', ['dec encode: Roc bytes of the Dec "frac" decode to { $dec } and encode to the same bytes', 'dec Queue.v8: a JS consumer gets the exact { $dec } objects (the marker survives the structured clone)', 'dec RPC: a Dec crosses a call (JS decode, structured clone, encode) exact'],

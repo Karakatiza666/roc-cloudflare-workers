@@ -253,7 +253,7 @@ Bindings and crons (`bindings`, `crons`, step 8h wave B): the names that must ma
 
 ```roc
 db = D1.binding("DB")
-rooms = Object.namespace("ROOMS", { class: "Room" })
+rooms = Object.namespace("ROOMS", { class: room })   # room = Object.class("Room", ...)
 
 worker = Worker.new({
 	fetch!: fetch!,
@@ -265,9 +265,10 @@ worker = Worker.new({
 
 | Item | Rule |
 | --- | --- |
-| `declare` | Each binding type has `declare : T -> Worker.Binding`: `D1`, `Kv`, `R2`, `Object.Namespace`, `Service`, `Queue`, `Email`, `Workflows`, `Vectorize`, `Ai`, `Analytics`, `Assets`, `Hyperdrive`, `RateLimit`, `Version`, `SecretsStore`. The kind is the module (`d1`, `kv`, `r2`, `object`, `service`, `queue`, `email`, `workflows`, `vectorize`, `ai`, `analytics`, `assets`, `hyperdrive`, `ratelimit`, `version`, `secrets_store`). `props`: `class` and `script` of an object namespace (7), `service` and `entrypoint` of `Service.binding_with` (8). |
-| Optional | An app with no `bindings` field is as before: no check of `env`. The list is one line, and it is the only place where the app names its bindings for the config. A binding that is not in the list is not checked. |
+| `declare` | Each binding type has `declare : T -> Worker.Binding`: `D1`, `Kv`, `Kv.Cell` (the binding of its `Kv`: name one cell for each binding, because a binding name twice is refused), `R2`, `Object.Namespace`, `Service`, `Queue`, `Email`, `Workflows`, `Vectorize`, `Ai`, `Analytics`, `Assets`, `Hyperdrive`, `RateLimit`, `Version`, `SecretsStore`. The kind is the module (`d1`, `kv`, `r2`, `object`, `service`, `queue`, `email`, `workflows`, `vectorize`, `ai`, `analytics`, `assets`, `hyperdrive`, `ratelimit`, `version`, `secrets_store`). `props`: `class` and `script` of an object namespace (7), `service` and `entrypoint` of `Service.binding_with` (8). |
+| Optional | An app with no `bindings` field is as before: no check of `env`. The list is one line, and it is the only place where the app names its bindings for the config. A binding that is not in the list is not checked. `sync` prints a note for a part of the Wrangler config that the list does not name. The reverse check runs in the shim, in dev mode (next row). `Kv.Cell.declare()` removes the second handle for `Kv`: the cell names the binding. |
 | Check at load | `makeHandler` refuses a binding name twice, an unknown kind, and an object namespace with no `script` whose `class` is not in `objects`. Then it checks `env`: each binding must be there, with the functions of its kind (`prepare` and `batch` of D1, `idFromName` of a namespace, ...; `js/bindings.js`). It uses the `env` of `cloudflare:workers` at global scope, so the load fails (as for a class with no export). With no such `env` (the Node tests), the check runs at the first event of each `env`, and the event throws the same error. |
+| Undeclared binding (warning) | The manifest has the declared names only, so the check is at run time: at each `Get(Root("env"), name)` the interpreter calls the check of `makeHandler` (`js/program.js`, `js/index.js`). When the app declared at least one binding, and `name` is not declared, and the value is a binding (a function, or an object that is not a plain object, so a D1 database, a namespace or a service stub), the shim writes one line for each name in the isolate: `makeHandler: the app reads the binding env.NAME, but Worker.new bindings does not declare it. Add its declare() to bindings, ...`. It is a warning only: the read goes on. An app with no `bindings` list stays quiet, and `Env.var!` and `Env.secret!` (texts and plain JSON) are never warned. |
 | Message | `makeHandler: the bindings of the app (Worker.new bindings) are not in env:` and one line for each binding: `DB (d1): env has no DB. Add [[d1_databases]] with binding = "DB" to the Wrangler config.` or `DB (d1): env.DB is not a D1 database (it has no prepare).` |
 | Limit of the kind check | A service binding, an assets binding and a local `send_email` binding are RPC stubs: they have a function for each name, so they pass the check of each kind. The check finds each missing binding, and a binding of another kind for the other kinds (`research/b3-sync/kinds`). |
 | `crons` | `Worker.cron(expr, f!)`: the run of `scheduled` with `controller.cron == expr` goes to `f!`. A run of another cron goes to `scheduled!`, and with no `scheduled!` it is `Unhandled` (a failed run). The handler has its own error type, as each field. `scheduled!` stays for an app that wants one handler. |
@@ -668,13 +669,14 @@ Kv(a) :: { ... }.{
 	get_with_metadata! : Kv(a), Str => Try({ value : a, metadata : Try(m, [Missing]) }, [NotFound, KvErr(Thrown), BadData(Str), TooLarge]) where [m.Parseable]
 	get_with_metadata_with! : Kv(a), Str, { cache_ttl_ms ?: U64, max_bytes ?: U64 } => Try({ value : a, metadata : Try(m, [Missing]) }, [NotFound, KvErr(Thrown), BadData(Str), TooLarge]) where [m.Parseable]
 	get_or! : Kv(a), Str, a => Try(a, [KvErr(Thrown), BadData(Str), TooLarge])   # the default for a key that is not there
+	find! : Kv(a), Str => Try(Try(a, [NotFound]), [KvErr(Thrown), BadData(Str), TooLarge])   # a key that is not there is Ok(Err(NotFound))
 	put! : Kv(a), Str, a => Try({}, [KvErr(Thrown), BadData(Str)])
 	put_with! : Kv(a), Str, a, { ttl_ms ?: U64, expires_ms ?: U64, metadata ?: Kv.Metadata } => Try({}, [KvErr(Thrown), BadData(Str)])   # metadata: Kv.Metadata.of(m), see Metadata below
 	delete! : Kv(a), Str => Try({}, [KvErr(Thrown)])
 	list! : Kv(a), { prefix ?: Str, cursor ?: Str, limit ?: U32 } => Try({ keys : List(Kv.Key), next : [More(Str), Done] }, [KvErr(Thrown)])
 
 	cell : Kv(a), Str -> Kv.Cell(a)
-	Cell(a) := { ... }.{ get!, get_or!, set!, set_with!, delete! }
+	Cell(a) := { ... }.{ get!, get_or!, find!, set!, set_with!, delete!, declare }
 	Key : { name : Str, expires_ms : [Never, At(U64)], metadata : Try(Kv.Metadata, [Missing]) }
 	Metadata :: { cbor : List(U8) }.{
 		of : m -> Kv.Metadata where [m.Encodable]                          # typed at the use, for put_with!
@@ -850,7 +852,8 @@ Outside: a stub is plain data, like a binding.
 
 ```roc
 Object :: { ... }.{
-	namespace : Str, { class : Str, script ?: Str } -> Object.Namespace   # the binding, its class_name and script_name
+	namespace : Str, { class : Object.Class, script ?: Str } -> Object.Namespace   # the binding, the class value (its name is class_name), script_name
+	namespace_remote : Str, { class : Str, script : Str } -> Object.Namespace      # a class of another Worker: the app has the name only
 	Namespace := { ... }.{
 		declare : Object.Namespace -> Worker.Binding         # for Worker.new bindings (3): kind object, class, script
 		named : Object.Namespace, Str -> Object             # data: getByName runs in the program of each call
@@ -907,8 +910,10 @@ Inside: a class is a record of handlers, all optional, as for `Worker`.
 		accept_with! : Object.Self, Request, { tags ?: List(Str) } => Try({ socket : Object.Socket, response : Response }, [NotUpgrade, TooLarge])
 		sockets! : Object.Self => List(Object.Socket)                                  # getWebSockets()
 		sockets_with! : Object.Self, { tag : Str } => List(Object.Socket)              # getWebSockets(tag)
-		broadcast! : Object.Self, WebSocket.Message => U64                             # send! to each socket, gives the count sent
-		broadcast_with! : Object.Self, { tag : Str }, WebSocket.Message => U64         # the same, for the sockets with the tag
+		broadcast! : Object.Self, WebSocket.Message => {}                              # send! to each socket
+		broadcast_json! : Object.Self, a => Try({}, [BadData(Str)]) where [a.JsonEncodable]   # the same, the message is the JSON text of a value. BadData: nothing sent
+		broadcast_with! : Object.Self, { tag ?: Str }, WebSocket.Message => U64        # the same, gives the count sent. tag: the sockets with the tag only
+		broadcast_json_with! : Object.Self, { tag ?: Str }, a => Try(U64, [BadData(Str)]) where [a.JsonEncodable]   # JSON text, gives the count
 		set_auto_response! : Object.Self, { request : Str, response : Str } => Try({}, [TooLarge])
 		clear_auto_response! : Object.Self => {}
 	}
@@ -917,7 +922,7 @@ Inside: a class is a record of handlers, all optional, as for `Worker`.
 	SqlInfo : { rows_read : U64, rows_written : U64 }
 
 	cell : Str -> Object.Cell(a) where [a.Encodable, a.Parseable]
-	Cell(a) := { ... }.{ get!, set!, delete! }               # each takes the Object.Self
+	Cell(a) := { ... }.{ get!, get_or!, find!, set!, delete! }   # each takes the Object.Self
 
 	## A WebSocket that the object accepted with the hibernation API (12).
 	Socket := { ... }.{
@@ -933,7 +938,7 @@ Inside: a class is a record of handlers, all optional, as for `Worker`.
 ```
 
 ```roc
-counters = Object.namespace("COUNTERS", { class: "Counter" })
+counters = Object.namespace("COUNTERS", { class: counter })   # counter = Object.class("Counter", ...), below
 increment : Rpc({ by : I64 }, I64, [StorageErr(Thrown)])
 increment = Rpc.method("increment")
 count : Object.Cell(I64)
@@ -976,7 +981,7 @@ As built in `PLAN.md` 8f, part 1 (`platform/Object.roc`, `platform/Remote.roc`, 
 | Item | Built as | Why |
 | --- | --- | --- |
 | Backing | `Object :: { namespace, jurisdiction, target : [Named(Str), Id(Str)], location_hint }`, `Namespace := { binding, jurisdiction, class, script }` (`""` for none; `class` and `script` are for the manifest only, 3), `Self :: { class, id }` | Data only (MC1) |
-| Namespace and class (step 8h wave B) | `Object.namespace(binding, { class, script? })`: the class is in the manifest (3), so the shim and `sync` check the Wrangler config against `objects`. The types do not tie a namespace to its class: an `Rpc` of another class compiles and gives `RpcErr` ("does not implement the method") at the call. A phantom class type (`Object.Namespace(cls)`, `Rpc(cls, arg, ret, err)`) would add one type argument to each `Rpc` and `Object` annotation, a type for each class, and an annotation for each namespace; an `Rpc` used on a service and on an object (`conformance/RpcMethods.roc`) would need a free class variable and get no check. Not built. | Cost against gain |
+| Namespace and class (step 8h wave B) | `Object.namespace(binding, { class, script? })`: `class` is the value of `Object.class`, so the class name is written once. For a class of another Worker, the app has no value: `Object.namespace_remote(binding, { class: "Name", script: "worker" })` takes the name as text. The class is in the manifest (3), so the shim and `sync` check the Wrangler config against `objects`. The types do not tie a namespace to its class: an `Rpc` of another class compiles and gives `RpcErr` ("does not implement the method") at the call. A phantom class type (`Object.Namespace(cls)`, `Rpc(cls, arg, ret, err)`) would add one type argument to each `Rpc` and `Object` annotation, a type for each class, and an annotation for each namespace; an `Rpc` used on a service and on an object (`conformance/RpcMethods.roc`) would need a free class variable and get no check. Not built. | Cost against gain |
 | Twins | `fetch`, `call` (stubs) and `set_alarm_at`, `set_alarm_in`, `get_alarm`, `delete_alarm`, `delete_all` (`Self`) give an `Io`. SQL, cells, `list!` and `id!` do not wait: no twin. | MC3 |
 | `unique!` | A throw of `newUniqueId` is a crash | The type has no error |
 | `id!` | `idFromName(name).toString()` with `call!`. A stub of an id gives its id with no crossing. | |
@@ -986,7 +991,7 @@ As built in `PLAN.md` 8f, part 1 (`platform/Object.roc`, `platform/Remote.roc`, 
 | `sql!` | `pf.sqlExec` (`exec(sql, ...params)`), `.toArray()`, then `pf.pack` with the limit. `sql_rows!`: `columnNames`, `Array.from(raw())`, then `pf.limit`. Both one `call!`. | MC11 |
 | `sql_run!` | `exec`, then `toArray()` (the cursor runs to its end), then `Fields` of `rowsRead` and `rowsWritten`. A cursor that gives other values is `SqlErr` with the name `BadData` (the type has no `BadData`). | `rowsWritten` is 2 for an insert of 2 rows before and after the iteration (probe) |
 | `list!` | `storage.kv.list(options)`, then the new helper `pf.keys(entries, max)`: the keys as a `Js` tree with the limit of MC11 (`TooLarge`). The values stay in JS. Options: `prefix`, `start`, `startAfter`, `end`, `limit`, `reverse`. | OP4: a program has no loop |
-| `Object.Cell` | `get! : Object.Cell(a), Object.Self => Try(a, [NotFound, BadData(Str), StorageErr(Thrown)])`, `get_or! : Object.Cell(a), Object.Self, a => Try(a, [BadData(Str), StorageErr(Thrown)])` (the default for a cell with no value), `set! : Object.Cell(a), Object.Self, a => Try({}, [StorageErr(Thrown)])`, `delete! : Object.Cell(a), Object.Self => Try({}, [StorageErr(Thrown)])` (a key with no value is `Ok`). The value is CBOR bytes (`kv.put(key, Uint8Array)`). | The design gives only the names (9) |
+| `Object.Cell` | `get! : Object.Cell(a), Object.Self => Try(a, [NotFound, BadData(Str), StorageErr(Thrown)])`, `get_or! : Object.Cell(a), Object.Self, a => Try(a, [BadData(Str), StorageErr(Thrown)])` (the default for a cell with no value), `set! : Object.Cell(a), Object.Self, a => Try({}, [StorageErr(Thrown)])`, `find! : Object.Cell(a), Object.Self => Try(Try(a, [NotFound]), [BadData(Str), StorageErr(Thrown)])` (a cell with no value is `Ok(Err(NotFound))`), `delete! : Object.Cell(a), Object.Self => Try({}, [StorageErr(Thrown)])` (a key with no value is `Ok`). The value is CBOR bytes (`kv.put(key, Uint8Array)`). | The design gives only the names (9) |
 | `class` | The fields `init!`, `fetch!`, `rpc`, `alarm!`, and since `PLAN.md` 8f part 3 `web_socket_message!`, `web_socket_close!`, `web_socket_error!` (12.4). `Object.Class` is `{ name, handlers, methods, run! : Str, Object.Event => Outcome }`: `run!` takes the id, so only `Object` makes a `Self`. | |
 | The handlers of one class | Each handler has its own error type (`e1` to `e6` in the record of `class`), so a handler that gives only `Ok` can have `Try(_, [])`. | Step 8h |
 | SQLite check | The constructor reads `ctx.storage.sql.databaseSize`. On a throw it throws `Durable Object class <name>: the platform needs a SQLite-backed class: put "<name>" in new_sqlite_classes ...`, with the text of Workers after it. Local workerd already names `new_sqlite_classes`, but not the class. | 7, "SQLite only" |
@@ -1071,7 +1076,7 @@ As built in `PLAN.md` 8f, part 1 (`platform/Rpc.roc`, `platform/Service.roc`, `p
 
 Three declarations of a typed value with the same shape: a name and a type at the top of a module, then `get!` and `set!`.
 
-`Kv.Cell` and `Object.Cell` also have `get_or!(default)` (`get_or!(self, default)` for `Object.Cell`): the same errors as `get!` without `NotFound`, so a cell that has no value gives the default and no `match` lists the other errors again. `Kv` has `get_or!(key, default)` and an `Io` twin `get_or` (also on `Kv.Cell`). `Memo` has nothing to add: its `load!` is the default. `Memo` across deploys already holds: a pinned value that does not parse as the new type (an older type with the same name) is dropped and `load!` runs again (`Memo.get!`, `platform/Memo.roc`). `Object.Attachment` and `Object.Cell` have no such fallback: a value of an old type that does not parse is `BadData`, and a value of an old type that still parses (a record with more fields) loads. `Object.Attachment` has one slot for each socket: two constants on one socket share it, and the name only shows in the text of `BadData`.
+`Kv.Cell` and `Object.Cell` also have `get_or!(default)` (`get_or!(self, default)` for `Object.Cell`): the same errors as `get!` without `NotFound`, so a cell that has no value gives the default and no `match` lists the other errors again. `Kv` has `get_or!(key, default)` and an `Io` twin `get_or` (also on `Kv.Cell`). `Kv`, `Kv.Cell` and `Object.Cell` also have `find!`: it gives `Try(Try(a, [NotFound]), errs)`, with the other errors of `get!` in `errs`. The caller reads the outer `Try` with `?` and matches the inner one, so a closed error type of the caller has no `NotFound` and no re-match of the other tags: `match cell.find!(self)? { Ok(v) => ..., Err(NotFound) => ... }`. `Kv.Cell.declare()` is the binding of its `Kv` for `bindings` (3). `Memo` has nothing to add: its `load!` is the default. `Memo` across deploys already holds: a pinned value that does not parse as the new type (an older type with the same name) is dropped and `load!` runs again (`Memo.get!`, `platform/Memo.roc`). `Object.Attachment` and `Object.Cell` have no such fallback: a value of an old type that does not parse is `BadData`, and a value of an old type that still parses (a record with more fields) loads. `Object.Attachment` has one slot for each socket: two constants on one socket share it, and the name only shows in the text of `BadData`.
 
 | Wrapper | Where the value is | Readers | Consistency | Cost of `get!` | Lost when |
 | --- | --- | --- | --- | --- | --- |
@@ -1279,7 +1284,7 @@ sequenceDiagram
 ```
 
 ```roc
-rooms = Object.namespace("ROOMS", { class: "Room" })
+rooms = Object.namespace("ROOMS", { class: room })   # room = Object.class("Room", ...)
 
 User : { name : Str }
 Said : { text : Str }
@@ -1328,7 +1333,7 @@ A record with one field is a block: `{ name }` is the value of `name`, not `{ na
 | The Worker | Gives the request to the object with `fetch!` and the 101 response back with no change: `Response.web_socket` carries the client end (4, `web_socket()`). It checks `WebSocket.is_upgrade(req)` first and answers 426, as in the Cloudflare example. An RPC call cannot carry the socket: use `fetch!`. |
 | `accept!` | `new WebSocketPair()`, `ctx.acceptWebSocket(server, tags)` and a 101 response with the client end, in one `call!`. `NotUpgrade` when the request has no `Upgrade: websocket`. |
 | Tags | `accept_with!(req, { tags })`: 10 tags or less, 256 characters or less each, else `TooLarge`. `sockets_with!(self, { tag })` finds the sockets of a tag, for example of one user. |
-| Broadcast | `self.broadcast!(message)` sends the message to each open socket. `self.broadcast_with!({ tag }, message)` sends it to the sockets with the tag. Each gives the number of sockets that got it (`U64`). A socket that is closed (its `send!` is `Err(Closed)`) is skipped. The message is a `WebSocket.Message`: `Text(...)` or `Bytes(...)`. For JSON, make the text with `Json.to_str`. |
+| Broadcast | `self.broadcast!(message)` sends the message to each open socket and gives `{}`. `self.broadcast_json!(value)` sends the JSON text of a value, like `Object.Socket.send_json!`; a value that JSON cannot show (a `NaN`) is `Err(BadData(text))`, and nothing is sent. `self.broadcast_with!({}, message)` gives the number of sockets that got it (`U64`); `self.broadcast_with!({ tag }, message)` does the same for the sockets with the tag. `broadcast_json_with!` is `broadcast_with!` for a value: `Try(U64, [BadData(Str)])`. A socket that is closed (its `send!` is `Err(Closed)`) is skipped and not counted. The message is a `WebSocket.Message`: `Text(...)` or `Bytes(...)`. |
 | Find the sender | The ref table gives one id to one JS object in a task (`API.md` RS1), so `peer == socket` is true for the socket of the message. |
 | Ping without a wake | `set_auto_response!(self, { request: "ping", response: "pong" })`: Workers answers with no event, and the object can stay asleep. 2,048 characters or less each. `socket.auto_response_ms!()` gives the time of the last one. |
 | Limits | 32,768 sockets for each object (Cloudflare docs). |
@@ -1437,7 +1442,7 @@ The code follows 12.1 to 12.3 with these differences and additions, each with it
 | `accept_with!` tags, `set_auto_response!`, `Attachment.set!` | 10 tags, 256 characters, 2,048 characters, 16,384 bytes | No check in Roc: a throw of Workers is `TooLarge`. `accept!` with no tags crashes on a throw. | Workers checks the limits (local: "a Hibernatable WebSocket cannot have more than 10 tags", "A WebSocket 'attachment' cannot be larger than 16384 bytes."). The size of an attachment is its structured clone, not its CBOR bytes. |
 | `Attachment.get!` | `Try(a, [NotFound, BadData(Str)])` | `null` is `NotFound`. A throw is `BadData` with the text. | The type has no other tag |
 | `auto_response_ms!` | `getWebSocketAutoResponseTimestamp` | A `Date` (J4) in ms, `null` is `NotFound` | |
-| `broadcast!`, `broadcast_with!` | not given | `Object.Self`, `{ tag }` for the second (MC4 form of `sockets_with!`), a `WebSocket.Message`. Each is `getWebSockets(...)` and a `send!` for each socket. Gives the count of sockets that got the message. | The app loop dropped the errors and could not count. `sockets_with!` and the auto responses (`set_auto_response!`, `clear_auto_response!`, `auto_response_ms!`) were built in 8f, part 3. |
+| `broadcast!`, `broadcast_json!`, `broadcast_with!`, `broadcast_json_with!` | not given | `Object.Self`, `{ tag ?: Str }` for the `_with` forms (MC4 form of `sockets_with!`), a `WebSocket.Message` (a value for the JSON forms). Each is `getWebSockets(...)` and a `send!` for each socket. `broadcast!` gives `{}`, `broadcast_json!` gives `Try({}, [BadData(Str)])`. `broadcast_with!` gives the count of sockets that got the message (step 8h wave N, N11: the count was in `broadcast!`, and an app had to drop it with `_ =`). | The app loop dropped the errors and could not count. `sockets_with!` and the auto responses (`set_auto_response!`, `clear_auto_response!`, `auto_response_ms!`) were built in 8f, part 3. |
 | The socket events | An `Err` of a handler is a log line | `Err`, `Unhandled` and a trap are a log line `<class>.<handler>: ...`, with no throw | 12.1, "Errors" |
 | `Tcp.read!` | `List(U8)` | At most `Body.default_max` bytes (MC11: the rest comes next). `undefined` at the end is `Closed`. In `Io.race!`, a read that a lost branch started stays for the next call, and bytes that a lost branch took go back (OP8). | |
 | `Tcp.write!` | `[Closed, SocketErr(Thrown)]` | `Closed` after `close!` or the close of the socket. Each other throw is `SocketErr`. | |

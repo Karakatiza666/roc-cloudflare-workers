@@ -133,6 +133,54 @@ export const checks = [
     eq(JSON.stringify([a1.pending(), a2.pending()]), '[[],[]]', 'the sockets a got nothing');
     await Promise.all([a1.close(1000, 'x'), a2.close(1000, 'x'), b.close(1000, 'x')]);
   }],
+  // N11: `broadcast!` gives `{}` and reaches every socket, `broadcast_json!` sends the JSON text.
+  ['websocket broadcast!, broadcast_json!: all sockets get the message (the JSON text for the second), the result is {} and Ok({})', async (t) => {
+    const a = await room(t, 'bc5', 'a');
+    const b = await room(t, 'bc5', 'b');
+    const c = await room(t, 'bc5', 'c');
+    c.send('info');
+    ok((await c.next()).includes('peers=3'), 'peers=3');
+    a.send('bcast_plain');
+    eq(await a.next(), 'plain from a', 'a gets the message');
+    eq(await a.next(), 'done={}', 'broadcast! gives {}');
+    eq(await b.next(), 'plain from a', 'b gets the message');
+    eq(await c.next(), 'plain from a', 'c gets the message');
+    a.send('bcast_json');
+    eq(await a.next(), '{"from":"a"}', 'a gets the JSON text');
+    eq(await a.next(), 'done=Ok({})', 'broadcast_json! gives Ok({})');
+    eq(await b.next(), '{"from":"a"}', 'b gets the JSON text');
+    eq(await c.next(), '{"from":"a"}', 'c gets the JSON text');
+    await sleep(200);
+    eq(JSON.stringify([a.pending(), b.pending(), c.pending()]), '[[],[],[]]', 'no second copy');
+    await Promise.all([a.close(1000, 'x'), b.close(1000, 'x'), c.close(1000, 'x')]);
+  }],
+  ['websocket broadcast_json_with!: the count, and only the sockets with the tag get the JSON text', async (t) => {
+    const a1 = await room(t, 'bc6', 'a');
+    const a2 = await room(t, 'bc6', 'a');
+    const b = await room(t, 'bc6', 'b');
+    b.send('info');
+    ok((await b.next()).includes('peers=3'), 'peers=3');
+    a1.send('bcast_json_tag');
+    eq(await a1.next(), '{"from":"a"}', 'a1 gets the JSON text');
+    eq(await a1.next(), 'sent=Ok(2)', 'the count of the tag a');
+    eq(await a2.next(), '{"from":"a"}', 'a2 gets the JSON text');
+    await sleep(200);
+    eq(JSON.stringify([a1.pending(), a2.pending(), b.pending()]), '[[],[],[]]', 'b got nothing, nobody got a second copy');
+    await Promise.all([a1.close(1000, 'x'), a2.close(1000, 'x'), b.close(1000, 'x')]);
+  }],
+  // A NaN in an F64 is not JSON: `Err(BadData)` and no socket gets a frame (the next frame of `a` is the reply of `send!`).
+  ['websocket broadcast_json!, broadcast_json_with!: a NaN is Err(BadData) and no socket gets anything', async (t) => {
+    const a = await room(t, 'bc7', 'a');
+    const b = await room(t, 'bc7', 'b');
+    b.send('info');
+    ok((await b.next()).includes('peers=2'), 'peers=2');
+    a.send('bcast_json_nan');
+    const reply = await a.next();
+    ok(/^one=Err\(BadData\(".+"\)\) two=Err\(BadData\(".+"\)\)$/.test(reply), `the reply of a: ${reply}`);
+    await sleep(200);
+    eq(JSON.stringify([a.pending(), b.pending()]), '[[],[]]', 'no socket got a frame');
+    await Promise.all([a.close(1000, 'x'), b.close(1000, 'x')]);
+  }],
   ['websocket broadcast!: after a close the count drops', async (t) => {
     const a = await room(t, 'bc3', 'a');
     const b = await room(t, 'bc3', 'b');

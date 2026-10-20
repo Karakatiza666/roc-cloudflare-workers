@@ -14,8 +14,6 @@ self_service = Service.binding("SELF")
 
 admin_service = Service.binding("ADMIN")
 
-counters = Object.namespace("COUNTERS", { class: "Counter" })
-
 RpcErrRoutes :: [].{
 
 	## The callees of the default export and of `Admin`.
@@ -26,8 +24,9 @@ RpcErrRoutes :: [].{
 	object_handlers : List(Rpc.Handler(Object.Self))
 	object_handlers = [RpcMethods.busy.on(busy!), RpcMethods.crashes.on(crashes!), RpcMethods.mismatch.on(mismatch!), RpcMethods.open_lot.on(open_lot!)]
 
-	route! : Request, List(Str) => Response
-	route! = |req, path| {
+	## `counters` is the namespace of `ObjectRoutes` (the class `Counter` has the handlers of this module, so this module cannot import it).
+	route! : Object.Namespace, Request, List(Str) => Response
+	route! = |counters, req, path| {
 		n = Q.num(req, "n").to_i64_try() ?? 0
 		text = match path {
 			["self", "jsbusy"] => busy_text(self_service.call!(RpcMethods.jsbusy, { n: n }))
