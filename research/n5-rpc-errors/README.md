@@ -313,6 +313,7 @@ The user chose G1a. Branch `n5-g1a`.
 | `Rpc` | `Rpc.Infra` (29 tags, written out: #12489), `Rpc.forward`, `reply_of` gives `Infra([BadData])`. `on` still writes the heads by hand (#12482) |
 | `nest_g1a_docs.py` | The same rewrite for the code blocks of `MODULES.md` (93 signatures) |
 | `g1a-check/app.roc` | `Rpc.forward` with `?` (the same domain and a mapped domain), `Io.timeout` on a nested error, an exhaustive caller match. `roc check` and `roc build` pass |
+| `g1a-check/both.roc` | `Io.both!` of a D1 call and an Http call gives one merged `Infra([D1Err, Constraint, HttpErr, Network, TooLarge])` (open point 1, API.md 6.5). `roc check` passes with that exact closed annotation. API.md wrote `D1.rows(db, sql, [])`: a bare `[]` has no type, so the example now uses `Sql.none` |
 
 Wasm of the auction, from the repo root, `--no-cache`:
 
@@ -322,3 +323,12 @@ Wasm of the auction, from the repo root, `--no-cache`:
 | web, `--opt=size` | 1,233,953 | 1,344,258 | +8.9% |
 | ledger, no `--opt` | 868,226 | 973,926 | +12.2% |
 | ledger, `--opt=size` | 723,009 | 804,719 | +11.3% |
+
+Migration of the rest of the repo (step 2 of G1a):
+
+| Area | Change |
+| --- | --- |
+| `conformance/*Routes.roc` | The matches and the helper types use `Infra([..])` (183 type errors before). `RpcMethods.increment` has the err `[Infra(Rpc.Infra)]` |
+| `conformance/checks/*.mjs` | 12 files: the expected `Str.inspect` texts have `Infra(..)` around the tag. Each check keeps its strength |
+| `conformance/must-not-compile/` | 6 files: the annotations are `[Infra([..])]`, so each case still fails or compiles for its own reason |
+| `conformance/reverts.mjs` | 29 stale entries, and the entries whose replacement text had a flat tag (a build error, not a check failure). `node research/revert-static-check/check.mjs`: 0 stale |
