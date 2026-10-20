@@ -17,6 +17,7 @@ import pf.Kv
 import pf.Object
 import pf.Sql
 import pf.R2
+import pf.Rpc
 import pf.Service
 import pf.WebCrypto
 import pf.WebSocket
@@ -61,15 +62,21 @@ route! = |req| {
 	}
 }
 
-error_response! : [NotFound, Unauthorized, BadRequest(Str), BadData(Str), Constraint(_), Remote(Gavel.RoomErr), ..] => Response
+## `Infra(..)`: a platform call of this Worker failed. `Remote(Infra(..))`: a platform call of the lot room failed.
+error_response! : [NotFound, Unauthorized, BadRequest(Str), BadData(Str), Infra(Rpc.Infra), Remote(Gavel.RoomErr), ..] => Response
 error_response! = |e| match e {
 	NotFound => Response.from_text(404, "not found")
 	Remote(NotOpen) => Response.from_text(404, "the lot room is not open")
 	Remote(AlreadyOpen) => Response.from_text(409, "the lot room is open")
+	Remote(StillOpen) => Response.from_text(409, "the lot is still open")
+	Remote(Infra(StorageErr(_))) | Remote(Infra(SqlErr(_))) => {
+		Log.error!("lot room storage failed", Str.inspect(e))
+		Response.from_text(503, "the lot room is not available")
+	}
 	Unauthorized => Response.from_text(401, "admin token needed")
 	BadRequest(msg) => Response.from_text(400, msg)
 	BadData(msg) => Response.from_text(400, msg)
-	Constraint(_) => Response.from_text(409, "the lot exists")
+	Infra(Constraint(_)) => Response.from_text(409, "the lot exists")
 	_ => {
 		Log.error!("request failed", Str.inspect(e))
 		Response.from_text(500, "server error")
@@ -78,7 +85,7 @@ error_response! = |e| match e {
 
 # ---- Admin check ----
 
-require_admin! : Request => Try({}, [Unauthorized, MissingEnv(Str)])
+require_admin! : Request => Try({}, [Unauthorized, Infra([MissingEnv(Str)])])
 require_admin! = |req| {
 	token = Env.secret!("ADMIN_TOKEN")?
 	given = (req.header("authorization") ?? "").drop_prefix("Bearer ")
