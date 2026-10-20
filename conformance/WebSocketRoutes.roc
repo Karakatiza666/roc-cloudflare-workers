@@ -312,6 +312,28 @@ room_message! = |self, socket, msg| {
 			_ = socket.send!(Text("sent=${sent.to_str()}"))
 			{}
 		}
+		# N11: `broadcast!` gives `{}`, `broadcast_json!` sends JSON text, a NaN is `BadData` and nothing is sent.
+		Text("bcast_plain") => {
+			done = self.broadcast!(Text("plain from ${name}"))
+			_ = socket.send!(Text("done=${Str.inspect(done)}"))
+			{}
+		}
+		Text("bcast_json") => {
+			done = self.broadcast_json!({ from: name })
+			_ = socket.send!(Text("done=${Str.inspect(done)}"))
+			{}
+		}
+		Text("bcast_json_tag") => {
+			sent = self.broadcast_json_with!({ tag: name }, { from: name })
+			_ = socket.send!(Text("sent=${Str.inspect(sent)}"))
+			{}
+		}
+		Text("bcast_json_nan") => {
+			one = self.broadcast_json!({ r: 0.0.F64 / 0.0.F64 })
+			two = self.broadcast_json_with!({ tag: name }, { r: 0.0.F64 / 0.0.F64 })
+			_ = socket.send!(Text("one=${Str.inspect(one)} two=${Str.inspect(two)}"))
+			{}
+		}
 		Text("bcast_tag") => {
 			sent = self.broadcast_with!({ tag: name }, Text("tag from ${name}"))
 			_ = socket.send!(Text("sent=${sent.to_str()}"))

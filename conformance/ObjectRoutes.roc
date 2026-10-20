@@ -86,6 +86,12 @@ ObjectRoutes :: [].{
 				inside = text!(counters.named(name).fetch!(Request.get("http://o/id")))
 				Response.from_text(200, "outside=${Str.inspect(outside)} same=${Str.inspect(outside == Ok(inside))}")
 			}
+			# N4: the bindings that the namespaces give to the manifest: a class value, a class value with `script`, and `namespace_remote`.
+			["namespaces"] => {
+				far = Object.namespace("FAR2", { class: store_class, script: "other" })
+				remote = Object.namespace_remote("FAR", { class: "Far", script: "other" })
+				Response.from_text(200, Str.inspect([counters.declare(), far.declare(), remote.declare()]))
+			}
 			["jurisdiction"] => Response.from_text(200, Str.inspect(counters.jurisdiction(Eu).named(name).id!()))
 			# `named_with` and `from_id_with` with a location hint, `unique!`, and `id!` of a stub of an id (no crossing).
 			["location"] => {
@@ -266,6 +272,18 @@ counter_fetch! = |self, req| match req.segments() {
 		got = as_text.get_or!(self, "dflt")
 		_ = count.delete!(self)
 		answer(Str.inspect(got))
+	}
+	# N6: `find!` gives a missing cell as `Ok(Err(NotFound))`, a value as `Ok(Ok(v))`, a value of another type as `Err(BadData)`.
+	["cell_find"] => {
+		_ = count.delete!(self)
+		none = count.find!(self)
+		_ = count.set!(self, 7)
+		some = count.find!(self)
+		as_text : Object.Cell(Str)
+		as_text = Object.cell("count")
+		bad = as_text.find!(self)
+		_ = count.delete!(self)
+		answer("none=${Str.inspect(none)} some=${Str.inspect(some)} bad=${Str.inspect(bad)}")
 	}
 	# roc-cbor 0.2.0: a `Dec` in a cell is exact (a fraction, the lowest `Dec`: a bignum mantissa).
 	["dec_cell"] => {
