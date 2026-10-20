@@ -20,10 +20,15 @@ import cbor.Cbor
 
 Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)], location_hint : Str }.{
 
-	## A namespace: the binding name and the class of its objects (`class_name` in the Wrangler config). `script`: the
-	## Worker that has the class (`script_name`), when it is not this Worker.
-	namespace : Str, { class : Str, script ?: Str } -> Object.Namespace
-	namespace = |binding, opts| Object.Namespace.{ binding, jurisdiction: "", class: opts.class, script: opts.?script ?? "" }
+	## A namespace: the binding name and the class of its objects (`class_name` in the Wrangler config). The class is the
+	## value of `Object.class`, so its name is written once. `script`: the Worker that has the class (`script_name`),
+	## when it is not this Worker. For a class that this app does not have as a value, use `namespace_remote`.
+	namespace : Str, { class : Object.Class, script ?: Str } -> Object.Namespace
+	namespace = |binding, opts| Object.Namespace.{ binding, jurisdiction: "", class: opts.class.name, script: opts.?script ?? "" }
+
+	## A namespace of a class that another Worker has (`script_name`): the app has the class name only, as text.
+	namespace_remote : Str, { class : Str, script : Str } -> Object.Namespace
+	namespace_remote = |binding, opts| Object.Namespace.{ binding, jurisdiction: "", class: opts.class, script: opts.script }
 
 	## A namespace: the binding name, its jurisdiction ("" for none), its class and the Worker of the class ("" for
 	## this Worker). Data.
@@ -325,14 +330,32 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 		sockets_with! : Object.Self, { tag : Str } => List(Object.Socket)
 		sockets_with! = |_self, opts| sockets_of!([Lit(Text(opts.tag))])
 
-		## Sends the message to each open socket of the object. A closed socket is skipped. Gives the number of sockets
-		## that got it.
-		broadcast! : Object.Self, WebSocket.Message => U64
-		broadcast! = |_self, msg| send_each!(sockets_of!([]), msg)
+		## Sends the message to each open socket of the object. A closed socket is skipped. Use `broadcast_with!` for the
+		## number of sockets that got it.
+		broadcast! : Object.Self, WebSocket.Message => {}
+		broadcast! = |_self, msg| {
+			_ = send_each!(sockets_of!([]), msg)
+			{}
+		}
 
-		## `broadcast!` to the open sockets with the tag only.
-		broadcast_with! : Object.Self, { tag : Str }, WebSocket.Message => U64
-		broadcast_with! = |_self, opts, msg| send_each!(sockets_of!([Lit(Text(opts.tag))]), msg)
+		## `broadcast!` of a value as JSON text, like `Object.Socket.send_json!`. A value that JSON cannot show (a `NaN`
+		## in an `F64`) is a crash: the type has no error, and nothing is sent.
+		broadcast_json! : Object.Self, a => {} where [a.Json.Encodable(enc)]
+		broadcast_json! = |self, value| match Json.to_str_try(value) {
+			Ok(text) => self.broadcast!(Text(text))
+			Err(e) => crash "Object.Self.broadcast_json!: the value does not encode: ${Str.inspect(e)}"
+		}
+
+		## `broadcast!` that gives the number of sockets that got the message. `tag`: the sockets with the tag only,
+		## else all open sockets (`broadcast_with!({}, msg)`).
+		broadcast_with! : Object.Self, { tag ?: Str }, WebSocket.Message => U64
+		broadcast_with! = |_self, opts, msg| {
+			filter = match opts.?tag {
+				Ok(t) => [Lit(Text(t))]
+				Err(_) => []
+			}
+			send_each!(sockets_of!(filter), msg)
+		}
 
 		## `ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(request, response))`: Workers answers the text
 		## `request` with `response` and sends no event, so the object can stay asleep. 2,048 characters or less each
@@ -450,6 +473,16 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 		get_or! = |c, self, default| match c.get!(self) {
 			Ok(v) => Ok(v)
 			Err(NotFound) => Ok(default)
+			Err(BadData(m)) => Err(BadData(m))
+			Err(StorageErr(t)) => Err(StorageErr(t))
+		}
+
+		## `get!` that gives a missing value as `Ok(Err(NotFound))`, so the error type of the caller has no `NotFound`:
+		## `match c.find!(self)? { Ok(v) => ..., Err(NotFound) => ... }`.
+		find! : Object.Cell(a), Object.Self => Try(Try(a, [NotFound]), [BadData(Str), StorageErr(Io.Thrown)])
+		find! = |c, self| match c.get!(self) {
+			Ok(v) => Ok(Ok(v))
+			Err(NotFound) => Ok(Err(NotFound))
 			Err(BadData(m)) => Err(BadData(m))
 			Err(StorageErr(t)) => Err(StorageErr(t))
 		}

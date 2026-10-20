@@ -80,7 +80,7 @@ fetch! = |req| {
 		["secretsstore", .. as rest] => SecretsStoreRoutes.route!(req, rest)
 		["objects", .. as rest] => ObjectRoutes.route!(req, rest)
 		["rpc", .. as rest] => RpcRoutes.route!(req, rest)
-		["rpcerr", .. as rest] => RpcErrRoutes.route!(req, rest)
+		["rpcerr", .. as rest] => RpcErrRoutes.route!(ObjectRoutes.counters, req, rest)
 		["cbor", .. as rest] => CborRoutes.route!(req, rest)
 		["dec", .. as rest] => DecRoutes.route!(req, rest)
 		["websocket", .. as rest] => WebSocketRoutes.route!(req, rest)
@@ -109,7 +109,7 @@ cron_a! = |s| {
 }
 
 # Wave B issue 5: the bindings that the shim checks at load (checks/cron.mjs, checks/bindings.mjs): the options of `checks/d1.mjs`, `kv.mjs`, `objects.mjs`.
-bindings = [D1.binding("DB").declare(), Kv.text("KV").declare(), Object.namespace("COUNTERS", { class: "Counter" }).declare()]
+bindings = [D1.binding("DB").declare(), Kv.text("KV").declare(), ObjectRoutes.counters.declare()]
 
 worker = Worker.new({ fetch!, scheduled!, queue!, email!, tail!, rpc: RpcRoutes.rpc.concat(DecRoutes.rpc), entrypoints: RpcRoutes.entrypoints.concat(AfterRoutes.entrypoints), objects: ObjectRoutes.classes.concat(WebSocketRoutes.classes), bindings, crons: [Worker.cron("cron-a", cron_a!)] })
 

@@ -15,12 +15,6 @@ import RpcMethods
 import RpcErrRoutes
 import Q
 
-counters = Object.namespace("COUNTERS", { class: "Counter" })
-stores = Object.namespace("STORES", { class: "Store" })
-flakies = Object.namespace("FLAKY", { class: "Flaky" })
-slows = Object.namespace("SLOW", { class: "Slow" })
-tickers = Object.namespace("TICKERS", { class: "Ticker" })
-kv_only = Object.namespace("KVONLY", { class: "KvOnly" })
 
 count : Object.Cell(I64)
 count = Object.cell("count")
@@ -41,15 +35,45 @@ Big : { x : Str }
 ObjectRoutes :: [].{
 
 	## The classes of the app: the manifest names them, and `conformance/worker.js` exports each one.
+	counter_class : Object.Class
+	counter_class = Object.class("Counter", { fetch!: counter_fetch!, alarm!: counter_alarm!, rpc: [RpcMethods.increment.on(increment!), RpcMethods.ping.on(object_ping!), RpcMethods.boom.on(boom!), RpcMethods.echo.on(echo!), RpcMethods.hello.on(object_hello!)].concat(RpcErrRoutes.object_handlers) })
+
+	store_class : Object.Class
+	store_class = Object.class("Store", { init!: store_init!, fetch!: store_fetch! })
+
+	flaky_class : Object.Class
+	flaky_class = Object.class("Flaky", { init!: flaky_init!, fetch!: plain_fetch! })
+
+	slow_class : Object.Class
+	slow_class = Object.class("Slow", { init!: slow_init!, fetch!: plain_fetch! })
+
+	ticker_class : Object.Class
+	ticker_class = Object.class("Ticker", { fetch!: ticker_fetch!, alarm!: ticker_alarm! })
+
+	kv_only_class : Object.Class
+	kv_only_class = Object.class("KvOnly", { fetch!: kv_only_fetch! })
+
 	classes : List(Object.Class)
-	classes = [
-		Object.class("Counter", { fetch!: counter_fetch!, alarm!: counter_alarm!, rpc: [RpcMethods.increment.on(increment!), RpcMethods.ping.on(object_ping!), RpcMethods.boom.on(boom!), RpcMethods.echo.on(echo!), RpcMethods.hello.on(object_hello!)].concat(RpcErrRoutes.object_handlers) }),
-		Object.class("Store", { init!: store_init!, fetch!: store_fetch! }),
-		Object.class("Flaky", { init!: flaky_init!, fetch!: plain_fetch! }),
-		Object.class("Slow", { init!: slow_init!, fetch!: plain_fetch! }),
-		Object.class("Ticker", { fetch!: ticker_fetch!, alarm!: ticker_alarm! }),
-		Object.class("KvOnly", { fetch!: kv_only_fetch! }),
-	]
+	classes = [counter_class, store_class, flaky_class, slow_class, ticker_class, kv_only_class]
+
+	## The namespaces: each takes the class value, so a class name is written once.
+	counters : Object.Namespace
+	counters = Object.namespace("COUNTERS", { class: counter_class })
+
+	stores : Object.Namespace
+	stores = Object.namespace("STORES", { class: store_class })
+
+	flakies : Object.Namespace
+	flakies = Object.namespace("FLAKY", { class: flaky_class })
+
+	slows : Object.Namespace
+	slows = Object.namespace("SLOW", { class: slow_class })
+
+	tickers : Object.Namespace
+	tickers = Object.namespace("TICKERS", { class: ticker_class })
+
+	kv_only : Object.Namespace
+	kv_only = Object.namespace("KVONLY", { class: kv_only_class })
 
 	route! : Request, List(Str) => Response
 	route! = |req, path| {

@@ -13,14 +13,16 @@ db = D1.binding("DB")
 
 kv = Kv.text("KV")
 
-counters = Object.namespace("COUNTERS", { class: "Counter" })
+counter = Object.class("Counter", {})
+
+counters = Object.namespace("COUNTERS", { class: counter })
 
 fetch! : Request => Try(Response, _)
 fetch! = |_req| Ok(Response.from_text(200, "b3"))
 
 worker = Worker.new({
 	fetch!: fetch!,
-	objects: [Object.class("Counter", {})],
+	objects: [counter],
 	bindings: [db.declare(), kv.declare(), counters.declare()],
 	crons: [Worker.cron("*/5 * * * *", |_s| Err(FromCron))],
 })

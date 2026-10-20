@@ -27,7 +27,7 @@ import LotRoom
 
 db = Gavel.db
 
-lot_rooms = Object.namespace("LOT_ROOM", { class: "LotRoom" })
+lot_rooms = Object.namespace("LOT_ROOM", { class: LotRoom.class })
 
 images = R2.binding("BUCKET")
 
@@ -176,7 +176,7 @@ settle! = |s| {
 worker = Worker.new({
 	fetch!,
 	objects: [LotRoom.class],
-	bindings: [Gavel.db.declare(), Gavel.kv.declare(), images.declare(), lot_rooms.declare(), ledger.declare()],
+	bindings: [Gavel.db.declare(), catalog.declare(), images.declare(), lot_rooms.declare(), ledger.declare()],
 	crons: [Worker.cron("*/5 * * * *", settle!)],
 })
 

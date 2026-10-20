@@ -47,9 +47,7 @@ Gavel :: [].{
 	# Bindings with the same name in both wrangler files. The room namespace is in each Worker (the ledger names the script).
 	db = D1.binding("DB")
 
-	## The KV namespace, for `declare` only: the typed values are the cells below.
-	kv = Kv.text("KV")
-
+	# The KV binding is declared by one cell of it (`Kv.Cell.declare`): `web.roc` and `ledger.roc` name one cell each.
 	config_cell : Kv.Cell(Gavel.Config)
 	config_cell = Kv.json("KV").cell("config")
 

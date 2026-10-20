@@ -79,11 +79,9 @@ fetch! = |self, req| match req.query("bidder") {
 
 ## The state of the lot. A lot with no state is not open. The other errors stay as they are.
 load_state! : Object.Self => Try(State, [NotOpen, BadData(Str), StorageErr(Io.Thrown)])
-load_state! = |self| match state_cell.get!(self) {
+load_state! = |self| match state_cell.find!(self)? {
 	Ok(st) => Ok(st)
 	Err(NotFound) => Err(NotOpen)
-	Err(BadData(s)) => Err(BadData(s))
-	Err(StorageErr(t)) => Err(StorageErr(t))
 }
 
 ## The best bid and the count of bids. One query: the count is also right for an empty table.
@@ -126,7 +124,7 @@ place_bid! = |self, socket, msg| {
 on_message! : Object.Self, Object.Socket, WebSocket.Message => Try({}, _)
 on_message! = |self, socket, msg| match place_bid!(self, socket, msg) {
 	Ok({ bidder, amount_cents }) => {
-		_ = self.broadcast!(Text(Json.to_str({ event: "bid", bidder, amount_cents })))
+		self.broadcast_json!({ event: "bid", bidder, amount_cents })
 		Ok({})
 	}
 	Err(NotOpen) => reject!(socket, "the lot is not open")
@@ -166,15 +164,14 @@ close_now! = |self, st| {
 }
 
 alarm! : Object.Self, { retry_count : U32, is_retry : Bool } => Try({}, _)
-alarm! = |self, _info| match state_cell.get!(self) {
+alarm! = |self, _info| match state_cell.find!(self)? {
 	Err(NotFound) => Ok({})
-	Err(e) => Err(e)
 	Ok(st) =>
 		if st.status == Closed {
 			Ok({})
 		} else {
 			out = close_now!(self, st)?
-			_ = self.broadcast!(Text(Json.to_str({ event: "closed", winner: out.winner, amount_cents: out.amount_cents })))
+			self.broadcast_json!({ event: "closed", winner: out.winner, amount_cents: out.amount_cents })
 			for s in self.sockets!() {
 				s.close!(1000, "lot closed")
 			}
@@ -185,7 +182,7 @@ alarm! = |self, _info| match state_cell.get!(self) {
 # ---- Rpc ----
 
 open! : Object.Self, Gavel.Lot => Try({}, _)
-open! = |self, lot| match state_cell.get!(self) {
+open! = |self, lot| match state_cell.find!(self)? {
 	Ok(_) => Err(AlreadyOpen)
 	Err(NotFound) => {
 		state_cell.set!(
@@ -195,8 +192,6 @@ open! = |self, lot| match state_cell.get!(self) {
 		self.set_alarm_at!(lot.close_ms)?
 		Ok({})
 	}
-	Err(BadData(s)) => Err(BadData(s))
-	Err(StorageErr(t)) => Err(StorageErr(t))
 }
 
 snapshot! : Object.Self, {} => Try(Gavel.Snapshot, _)

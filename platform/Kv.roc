@@ -57,6 +57,18 @@ Kv(a) :: { name : Str, write : a -> Try(Js, Str), read : List(U8) -> Try(a, Str)
 	get_or! : Kv(a), Str, a => Try(a, [KvErr(Io.Thrown), BadData(Str), TooLarge])
 	get_or! = |kv, key, default| Io.run!(kv.get_or(key, default))
 
+	## `get` that gives a missing key as `Ok(Err(NotFound))`, so the error type of the caller has no `NotFound`.
+	find : Kv(a), Str -> Io(Try(a, [NotFound]), [KvErr(Io.Thrown), BadData(Str), TooLarge])
+	find = |kv, key| kv.get(key).map(|v| Ok(v)).recover(|e| match e {
+		NotFound => Ok(Err(NotFound))
+		KvErr(t) => Err(KvErr(t))
+		BadData(m) => Err(BadData(m))
+		TooLarge => Err(TooLarge)
+	})
+
+	find! : Kv(a), Str => Try(Try(a, [NotFound]), [KvErr(Io.Thrown), BadData(Str), TooLarge])
+	find! = |kv, key| Io.run!(kv.find(key))
+
 	## `cache_ttl_ms`: 30 s or more (KV throws for less: `KvErr`). `max_bytes`: the limit of the value.
 	get_with : Kv(a), Str, { cache_ttl_ms ?: U64, max_bytes ?: U64 } -> Io(a, [NotFound, KvErr(Io.Thrown), BadData(Str), TooLarge])
 	get_with = |kv, key, opts| get_io(kv, key, opts.?cache_ttl_ms, opts.?max_bytes ?? Body.default_max)
@@ -166,6 +178,18 @@ Kv(a) :: { name : Str, write : a -> Try(Js, Str), read : List(U8) -> Try(a, Str)
 
 		get! : Kv.Cell(a) => Try(a, [NotFound, KvErr(Io.Thrown), BadData(Str), TooLarge])
 		get! = |c| Io.run!(c.get())
+
+		## `get` that gives a missing key as `Ok(Err(NotFound))`, so the error type of the caller has no `NotFound`.
+		find : Kv.Cell(a) -> Io(Try(a, [NotFound]), [KvErr(Io.Thrown), BadData(Str), TooLarge])
+		find = |c| c.kv.find(c.key)
+
+		find! : Kv.Cell(a) => Try(Try(a, [NotFound]), [KvErr(Io.Thrown), BadData(Str), TooLarge])
+		find! = |c| Io.run!(c.find())
+
+		## The binding of the cell for the manifest, as `Kv.declare` gives it. Name one cell for each binding: the same
+		## binding name twice in `bindings` is an error at load.
+		declare : Kv.Cell(a) -> { name : Str, kind : Str, props : List((Str, Str)) }
+		declare = |c| c.kv.declare()
 
 		## `get`, and `default` for a key that is not there.
 		get_or : Kv.Cell(a), a -> Io(a, [KvErr(Io.Thrown), BadData(Str), TooLarge])
