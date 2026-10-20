@@ -32,15 +32,25 @@ const checkEdits = (list, label, edits, shape) => {
 };
 
 const checkSrc = readdirSync(`${root}conformance/checks`).map((f) => read(`conformance/checks/${f}`)).join('\n');
-// A check name made by a template (`dec encode: ... "${name}" ...`) matches as a pattern.
-const templates = [...checkSrc.matchAll(/`([^`\n]*\$\{[^`\n]*)`/g)].map((m) => new RegExp(`^${m[1].split(/\$\{[^}]*\}/).map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.+')}`));
+// The titles of the checks are the first element of each entry of a `checks` array: a quote, a double quote or a backtick text
+// after `[`, then `, async`, `, (` or `, function`. A title is compared as a whole, as its value (a text in a comment, or a text
+// that is only part of a title, does not count). A title made by a template (`dec encode: ${name}`) matches as a pattern.
+const titles = new Set();
+const templates = [];
+const titleStart = /\[\s*('(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`[^`\n]*`)\s*,\s*(?:async\b|\(|function\b|[A-Za-z_]+\s*=>)/g;
+for (const m of checkSrc.matchAll(titleStart)) {
+  const q = m[1];
+  if (q[0] === '`' && q.includes('${')) templates.push(new RegExp(`^${q.slice(1, -1).split(/\$\{[^}]*\}/).map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.+')}$`));
+  else titles.add(new Function(`return ${q}`)());
+}
+// A name of `checks` is a whole title, or its head before ": " (reverts.mjs matches the line `FAIL <name>: `), or `start` (the runner: the app did not load).
+const known = (c) => c === 'start' || titles.has(c) || [...titles].some((t) => t.startsWith(`${c}: `)) || templates.some((t) => t.test(c) || t.test(`${c}: x`));
 const consts = "const BP = 'bench/platform/', IX = 'js/index.js', CBOR = '.cache/roc/packages/GTUNBR1419Xvgw1eightgb14scrrWkoiTVkBPJ94yHMA/Cbor.roc';\nconst P = CBOR;";
 for (const r of entries('conformance/reverts.mjs', consts)) {
   n++;
   checkEdits(n, `conformance/reverts.mjs: ${r.name}`, r.edits, (e) => [e[0], e[1]]);
   for (const c of r.test === 'conformance' ? r.checks ?? [] : []) {
-    const esc = (q) => c.replaceAll('\\', '\\\\').replaceAll(q, `\\${q}`);
-    if (![c, esc("'"), esc('"'), esc('`')].some((v) => checkSrc.includes(v)) && !templates.some((t) => t.test(c))) stale.push(`conformance/reverts.mjs: ${r.name}: no check named ${JSON.stringify(c.slice(0, 70))}`);
+    if (!known(c)) stale.push(`conformance/reverts.mjs: ${r.name}: no check named ${JSON.stringify(c.slice(0, 70))}`);
   }
 }
 for (const m of entries('bench/cbor-js-reverts.mjs', "const root = '';")) {

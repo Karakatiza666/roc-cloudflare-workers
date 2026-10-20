@@ -93,6 +93,24 @@ export default class extends Handler {
       }
       return new Response(JSON.stringify(out));
     }
+    // N5 G1a: what a JS caller sees of an infra error in the reply of `fail`, `relay` and `relay_map` (RpcMethods.roc): the plain
+    // object `{ Err: { Infra: { <tag>: payload } } }`. `relay` and `relay_map` are on the class `Counter`, they call `fail` of `Store`.
+    if (path === '/__wire_infra') {
+      const out = {};
+      const c = () => this.env.COUNTERS.getByName('wrelay');
+      const calls = [
+        ['store', () => this.env.STORES.getByName('winfra'), 'fail', ['sql', 'constraint', 'storage', 'domain']],
+        ['self', () => this.env.SELF, 'fail', ['d1', 'domain']],
+        ['admin', () => this.env.ADMIN, 'fail', ['d1']],
+        ['relay', c, 'relay', ['sql', 'storage', 'domain']],
+        ['relay_map', c, 'relay_map', ['sql', 'domain']],
+      ];
+      for (const [k, stub, method, kinds] of calls) {
+        out[k] = {};
+        for (const kind of kinds) out[k][kind] = await stub()[method]({ kind });
+      }
+      return new Response(JSON.stringify(out));
+    }
     // 8f: the own names of the prototype of an exported class (`?class=`), or of the default export.
     if (path === '/__proto') {
       const C = exported[new URL(request.url).searchParams.get('class')] ?? Handler;
@@ -122,6 +140,13 @@ export default class extends Handler {
     if (arg.n === 1) return { Ok: 2 };
     if (arg.n === 2) return { Err: { Busy: 'js' } };
     return { Err: 'StillOpen' };
+  }
+  // N5 G1a: a JS callee gives an infra tag in `Err`: `{ Err: { Infra: { StorageErr: { name, message } } } }`. "badtag": a tag that `Rpc.Infra` has not.
+  jsfail(arg) {
+    if (arg.kind === 'storage') return { Err: { Infra: { StorageErr: { name: 'Error', message: 'js storage' } } } };
+    if (arg.kind === 'domain') return { Err: 'NotOpen' };
+    if (arg.kind === 'badtag') return { Err: { Infra: { NoSuchTag: { name: 'Error', message: 'x' } } } };
+    return { Ok: 7 };
   }
   jsthrow() {
     throw new Error('js callee throw');

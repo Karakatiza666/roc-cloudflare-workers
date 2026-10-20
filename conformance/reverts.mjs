@@ -58,6 +58,19 @@ const KD = 'kv Cell declare: the binding of the manifest is the kind kv and the 
 const BA = 'websocket broadcast!, broadcast_json!: all sockets get the message (the JSON text for the second), the result is {} and Ok({})';
 const BT = 'websocket broadcast_json_with!: the count, and only the sockets with the tag get the JSON text';
 const BN = 'websocket broadcast_json!, broadcast_json_with!: a NaN is Err(BadData) and no socket gets anything';
+// The checks of the N5 G1a reverts (the names of conformance/checks/rpcerr.mjs).
+const IS = 'rpcerr infra: a Durable Object callee that ?s a SQL error: the caller gets Remote(Infra(SqlErr)) with name and message';
+const IT = 'rpcerr infra: a Durable Object callee that ?s a storage error: Remote(Infra(StorageErr)) with name and message';
+const IC = 'rpcerr infra: a Durable Object callee that ?s a constraint error: Remote(Infra(Constraint)) with the kind and the message';
+const ID = 'rpcerr infra: a Workers callee (default entry point and Admin) that ?s a D1 error: Remote(Infra(D1Err))';
+const IN = 'rpcerr infra: a domain error of the same callee is still Remote(NotOpen), and Ok is Ok';
+const IR = 'rpcerr infra: a callee that crashes is Infra(RpcErr) of the caller, not Remote';
+const IJ = 'rpcerr infra: a JS callee that gives { Err: { Infra: { StorageErr } } } is Remote(Infra(StorageErr)), a domain tag Remote(NotOpen)';
+const IB = 'rpcerr infra: a reply with an infra tag that Rpc.Infra has not is Infra(BadData)';
+const IF = 'rpcerr forward |e| e: an inner domain error is the same Remote(NotOpen), an inner infra error is Remote(Infra(..)) of the outer caller';
+const IM = 'rpcerr forward with a domain mapping: NotOpen of the inner callee is Remote(Shut), an inner infra error is kept';
+const IK = 'rpcerr forward: a failure of the inner call itself (the inner callee crashes) is Remote(Infra(RpcErr)) of the outer caller';
+const IW = 'rpcerr infra: the reply on the wire for a JS caller is { Err: { Infra: { <tag>: payload } } }, also when forwarded';
 const reverts = [
   // 8h wave C: the builders of the opaque Request and Response (one route, `/http/builders`).
   R('Response.with_status: keeps the status', 'conformance', ['http wave C builders: Request.new with_body, with_method, with_url, and Response.with_status, with_body'], [BP + 'Response.roc', 'with_status = |r, code| { ..r, status: code }', 'with_status = |r, _code| r']),
@@ -766,6 +779,42 @@ const reverts = [
     [CBOR, 'int_from_text: options.?int_from_text ?? Bool.False })\n\t\tparsed', 'int_from_text: Bool.False })\n\t\tparsed']),
   R('dec0.2: Readable has the long error row (a wrapper with the old Parseable form compiles)', 'must-not-compile', [],
     [BP + 'Cbor.roc', 'Try({ value : a, rest : CborPkg.State }, [InvalidCbor(U64), MissingRequiredField(Str), ..errs])),', 'Try({ value : a, rest : CborPkg.State }, [InvalidCbor(U64), ..errs])),']),
+  // N5 G1a (checks/rpcerr.mjs "infra" and "forward", conformance/must-not-compile.sh): the `Infra(Rpc.Infra)` error of an Rpc method.
+  // An infra error of a callee crosses as `{"Err": {"Infra": {<tag>: payload}}}`: the caller gets `Remote(Infra(<tag>))` with the payload intact.
+  R('N5 test: a SQL error of a callee loses its message', 'conformance', [IS, IF, IM, IW],
+    [BP + 'Object.roc', 'SqlErr(e) => Err(Infra(SqlErr(e)))', 'SqlErr(e) => Err(Infra(SqlErr({ name: e.name, message: "" })))']),
+  R('N5 test: a storage error of a callee loses its message', 'conformance', [IT, IF, IW],
+    [BP + 'Object.roc', 'r.map_ok(|_| {}).map_err(|t| Infra(StorageErr(t))),', 'r.map_ok(|_| {}).map_err(|t| Infra(StorageErr({ name: t.name, message: "" }))),']),
+  R('N5 test: a constraint error of a callee loses its message', 'conformance', [IC, IF, IW],
+    [BP + 'Object.roc', 'Constraint(c) => Err(Infra(Constraint(c)))', 'Constraint(c) => Err(Infra(Constraint({ ..c, message: "" })))']),
+  R('N5 test: a D1 error of a Workers callee loses its message', 'conformance', [ID, IF, IM, IW],
+    [BP + 'D1.roc', 'Err(NotConstraint) => D1Err(t)', 'Err(NotConstraint) => D1Err({ name: t.name, message: "" })']),
+  R('N5 test: a domain error of a callee that has Infra in err is not Remote', 'conformance', [IN, IJ, IF, IM, IK],
+    [BP + 'Rpc.roc', 'Ok(Reply.Err(e)) => Err(Remote(e))', 'Ok(Reply.Err(e)) => Err(Infra(BadData(Str.inspect(e))))']),
+  R('N5 test: a crash of a callee is BadData, not RpcErr (caller and forwarded)', 'conformance', [IR, IK],
+    [BP + 'Remote.roc', 'Err(t) => Err(Infra(RpcErr(t)))', 'Err(t) => Err(Infra(BadData(t.message)))']),
+  R('N5 test: a reply that does not parse (an infra tag that Rpc.Infra has not) crashes the caller', 'conformance', [IB],
+    [BP + 'Rpc.roc', 'Err(e) => Err(Infra(BadData(Str.inspect(e))))', 'Err(e) => crash "reply: ${Str.inspect(e)}"']),
+  R('N5 test: Rpc.forward maps the inner RpcErr to BadData', 'conformance', [IK],
+    [BP + 'Rpc.roc', 'Infra(RpcErr(t)) => Infra(RpcErr(t))', 'Infra(RpcErr(t)) => Infra(BadData(t.message))']),
+  R('N5 test: Rpc.forward gives TimedOut for a domain error of the callee (f is not used)', 'conformance', [IF, IM],
+    [BP + 'Rpc.roc', 'Remote(e) => f(e)', 'Remote(e) => if (Bool.False) f(e) else Infra(TimedOut)']),
+  // The wire form of a reply with an infra error (MODULES.md 8): a JS caller reads `{ Err: { Infra: { <tag>: payload } } }`.
+  R('N5 test: the Infra tag of an err is written without the Infra wrapper by a JS callee', 'conformance', [IJ],
+    ['conformance/worker.js', "if (arg.kind === 'storage') return { Err: { Infra: { StorageErr: { name: 'Error', message: 'js storage' } } } };", "if (arg.kind === 'storage') return { Err: { StorageErr: { name: 'Error', message: 'js storage' } } };"]),
+  // The must-not-compile pairs.
+  R('N5 test: delete_all! gives a flat StorageErr (a flat infra tag in err compiles)', 'must-not-compile', ['rpc_infra_flat_bad.roc'],
+    [BP + 'Object.roc', 'delete_all : Object.Self -> Io({}, [Infra([StorageErr(Io.Thrown)])])', 'delete_all : Object.Self -> Io({}, [StorageErr(Io.Thrown)])'],
+    [BP + 'Object.roc', '"deleteAll", [])],\n\t\t\t|r| r.map_ok(|_| {}).map_err(|t| Infra(StorageErr(t))),', '"deleteAll", [])],\n\t\t\t|r| r.map_ok(|_| {}).map_err(|t| StorageErr(t)),'],
+    [BP + 'Object.roc', 'delete_all! : Object.Self => Try({}, [Infra([StorageErr(Io.Thrown)])])', 'delete_all! : Object.Self => Try({}, [StorageErr(Io.Thrown)])']),
+  R('N5 test: accept_with! gives TooLarge inside Infra', 'must-not-compile', ['infra_flat_kept_bad.roc'],
+    [BP + 'Object.roc', 'accept_with! : Object.Self, Request, { tags ?: List(Str) } => Try({ socket : Object.Socket, response : Response }, [NotUpgrade, TooLarge])\n\t\taccept_with! = |self, req, opts| accept_tags!(self, req, opts.?tags ?? [])',
+      'accept_with! : Object.Self, Request, { tags ?: List(Str) } => Try({ socket : Object.Socket, response : Response }, [NotUpgrade, Infra([TooLarge])])\n\t\taccept_with! = |self, req, opts| match accept_tags!(self, req, opts.?tags ?? []) {\n\t\t\tOk(r) => Ok(r)\n\t\t\tErr(NotUpgrade) => Err(NotUpgrade)\n\t\t\tErr(TooLarge) => Err(Infra(TooLarge))\n\t\t}']),
+  R('N5 test: Request.json! gives its errors inside Infra', 'must-not-compile', ['infra_flat_body_bad.roc'],
+    [BP + 'Request.roc', 'json! : Request => Try(a, [TooLarge, BadData(Str), BodyErr(Io.Thrown)]) where [a.Json.Parseable([InvalidJson(Str), ..errs])]\n\tjson! = |r| r.body.json!()',
+      'json! : Request => Try(a, [Infra([TooLarge, BadData(Str), BodyErr(Io.Thrown)])]) where [a.Json.Parseable([InvalidJson(Str), ..errs])]\n\tjson! = |r| r.body.json!().map_err(|e| Infra(e))']),
+  R('N5 test: Kv.get! has SqlErr in its Infra tags (the closed describe does not fit)', 'must-not-compile', ['infra_precise_ok.roc'],
+    [BP + 'Kv.roc', 'get! : Kv(a), Str => Try(a, [NotFound, Infra([KvErr(Io.Thrown), BadData(Str), TooLarge])])', 'get! : Kv(a), Str => Try(a, [NotFound, Infra([KvErr(Io.Thrown), BadData(Str), TooLarge, SqlErr(Io.Thrown)])])']),
 ];
 
 // The filter: texts of names, joined by `|` (a revert runs when its name has one of them).
