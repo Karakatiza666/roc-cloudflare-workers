@@ -19,7 +19,7 @@ Rpc(arg, ret, err) :: { name : Str }.{
 	## The callee. `self` is `Object.Self` in a Durable Object (a Worker uses `on_worker`). The result of the
 	## handler is the reply (`Reply`), also an `Err`. A tag that is not in `err` does not compile. An argument that
 	## does not parse is a throw with the text `bad argument: <error>` (the caller gets `RpcErr`).
-	on : Rpc(arg, ret, err), (self, arg => Try(ret, err)) -> Rpc.Handler(self) where [arg.Cbor.Parseable([InvalidCbor(U64), ..errs]), ret.Cbor.Encodable([]), err.Cbor.Encodable([])]
+	on : Rpc(arg, ret, err), (self, arg => Try(ret, err)) -> Rpc.Handler(self) where [arg.Cbor.Readable(errs), ret.Cbor.Writable, err.Cbor.Writable]
 	on = |m, f!| {
 		name: m.name,
 		run!: |self, bytes| match Cbor.parse(bytes) {
@@ -33,12 +33,12 @@ Rpc(arg, ret, err) :: { name : Str }.{
 
 	## The callee in a Worker (the `rpc` of `Worker.new` and of `Rpc.entrypoint`): `on` with no `self`, as a Worker
 	## entry point has none.
-	on_worker : Rpc(arg, ret, err), (arg => Try(ret, err)) -> Rpc.Handler({}) where [arg.Cbor.Parseable([InvalidCbor(U64), ..errs]), ret.Cbor.Encodable([]), err.Cbor.Encodable([])]
+	on_worker : Rpc(arg, ret, err), (arg => Try(ret, err)) -> Rpc.Handler({}) where [arg.Cbor.Readable(errs), ret.Cbor.Writable, err.Cbor.Writable]
 	on_worker = |m, f!| Rpc.on(m, |_, a| f!(a))
 
 	## The bytes of a reply as the result of `call!`: an `Err` of the callee is `Remote(err)`, a reply that does not fit
 	## is `BadData`.
-	reply_of : List(U8) -> Try(ret, [BadData(Str), Remote(err)]) where [ret.Cbor.Parseable([InvalidCbor(U64), ..e1]), err.Cbor.Parseable([InvalidCbor(U64), ..e2])]
+	reply_of : List(U8) -> Try(ret, [BadData(Str), Remote(err)]) where [ret.Cbor.Readable(e1), err.Cbor.Readable(e2)]
 	reply_of = |bytes| {
 		r : Try(Reply(ret, err), _)
 		r = Cbor.parse(bytes)

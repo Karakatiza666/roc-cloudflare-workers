@@ -1,6 +1,6 @@
 app [event!] {
 	pf: platform "../../platform/main.roc",
-	cbor: "https://github.com/Karakatiza666/roc-cbor/releases/download/0.1.0/9QL2dCyq7bcmvAEZfDFwi8kBvWLCZpEMS4WQYnZisezw.tar.zst",
+	cbor: "https://github.com/Karakatiza666/roc-cbor/releases/download/0.2.0/GTUNBR1419Xvgw1eightgb14scrrWkoiTVkBPJ94yHMA.tar.zst",
 }
 
 ## An app that also adds the roc-cbor URL of the platform header (PLAN.md 11a test). It builds and runs the same as hello.

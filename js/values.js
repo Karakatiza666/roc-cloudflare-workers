@@ -1,8 +1,8 @@
 // JS values to and from the `Js` bytes (API.md 5, rules J1 to J7), and `Packed` values (API.md 5.2).
 // The CBOR profile is in cbor.js. The ref table of a task (API.md RS1) is `Refs`.
-import { Writer, MAX_DEPTH, depthError, decode } from './cbor.js';
+import { Writer, MAX_DEPTH, depthError, decode, isDec } from './cbor.js';
 
-export { Writer, TooLarge, BufferFull, decode, MAX_DEPTH } from './cbor.js';
+export { Writer, TooLarge, BufferFull, decode, MAX_DEPTH, DEC_KEY, isDec, decNumber, plain } from './cbor.js';
 
 // The ref table of one task. One id for each object: the same object gives the same id (RS1).
 // Ids start at 1. The table keeps its objects until `clear()` (the end, the trap or the cancel of the task).
@@ -84,6 +84,8 @@ function put(w, v, refs, level, typed) {
   const proto = Object.getPrototypeOf(v);
   if (proto === Object.prototype || proto === null) {
     if (level >= MAX_DEPTH) throw depthError();
+    // `{ $dec: [exponent, mantissa] }` is the tag 4 value of the reader (cbor.js).
+    if (isDec(v)) return w.dec(v);
     const keys = Object.keys(v);
     w.map(keys.length);
     for (let i = 0; i < keys.length; i++) { w.key(keys[i]); put(w, v[keys[i]], refs, level + 1, typed); }

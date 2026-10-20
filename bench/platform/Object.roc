@@ -94,13 +94,13 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 
 	## `stub[method](arg)` with an `Rpc` constant: the reply is read to the RPC limit of Workers (32 MiB). An `Err` of
 	## the callee is `Remote(err)`.
-	call : Object, Rpc(arg, ret, err), arg -> Io(ret, [RpcErr(Io.Thrown), BadData(Str), Remote(err)]) where [arg.Cbor.Encodable([]), ret.Cbor.Parseable([InvalidCbor(U64), ..e1]), err.Cbor.Parseable([InvalidCbor(U64), ..e2])]
+	call : Object, Rpc(arg, ret, err), arg -> Io(ret, [RpcErr(Io.Thrown), BadData(Str), Remote(err)]) where [arg.Cbor.Writable, ret.Cbor.Readable(e1), err.Cbor.Readable(e2)]
 	call = |obj, m, a| {
 		s = stub_ops(obj)
 		Remote.call(s.ops, s.slot, m, a, Remote.rpc_max)
 	}
 
-	call! : Object, Rpc(arg, ret, err), arg => Try(ret, [RpcErr(Io.Thrown), BadData(Str), Remote(err)]) where [arg.Cbor.Encodable([]), ret.Cbor.Parseable([InvalidCbor(U64), ..e1]), err.Cbor.Parseable([InvalidCbor(U64), ..e2])]
+	call! : Object, Rpc(arg, ret, err), arg => Try(ret, [RpcErr(Io.Thrown), BadData(Str), Remote(err)]) where [arg.Cbor.Writable, ret.Cbor.Readable(e1), err.Cbor.Readable(e2)]
 	call! = |obj, m, a| Io.run!(call(obj, m, a))
 
 	## The id of the object (`id.toString()`). The runtime makes the id of a named object from the name and the namespace
@@ -180,14 +180,14 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 
 		## Rows as the type of the call (`rows : List(Row)`), to `Body.default_max` bytes of CBOR: `sql.exec(...).toArray()`,
 		## then `pf.pack`. The integer rules of `D1.all!` (MODULES.md 5.1): `CAST(x AS TEXT)` reads into an `I64`.
-		sql! : Object.Self, Str, params => Try(rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs]), params.Cbor.Encodable([])]
+		sql! : Object.Self, Str, params => Try(rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
 		sql! = |self, sql, params| sql_typed!(self, sql, Cbor.encode(params), Body.default_max)
 
-		sql_with! : Object.Self, Str, params, { max_bytes : U64 } => Try(rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs]), params.Cbor.Encodable([])]
+		sql_with! : Object.Self, Str, params, { max_bytes : U64 } => Try(rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
 		sql_with! = |self, sql, params, opts| sql_typed!(self, sql, Cbor.encode(params), opts.max_bytes)
 
 		## A write: `rowsRead` and `rowsWritten` of the cursor (an object cursor has no `changes` and no last row id).
-		sql_run! : Object.Self, Str, params => Try(Object.SqlInfo, [SqlErr(Io.Thrown), Constraint(Sql.Constraint)]) where [params.Cbor.Encodable([])]
+		sql_run! : Object.Self, Str, params => Try(Object.SqlInfo, [SqlErr(Io.Thrown), Constraint(Sql.Constraint)]) where [params.Cbor.Writable]
 		sql_run! = |_self, sql, params| match Js.call!(sql_ops(sql, Cbor.encode(params)).concat([Call(Slot(2), "toArray", []), Fields(Slot(2), ["rowsRead", "rowsWritten"])])) {
 			Ok(Obj(fields)) => match (field(fields, "rowsRead"), field(fields, "rowsWritten")) {
 				(Int(r), Int(w)) => Ok({ rows_read: r.to_u64_try() ?? 0, rows_written: w.to_u64_try() ?? 0 })
@@ -202,10 +202,10 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 		}
 
 		## Rows with no types: the column names, then the values (`raw()`), to `Body.default_max` bytes.
-		sql_rows! : Object.Self, Str, params => Try(Sql.Rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), TooLarge]) where [params.Cbor.Encodable([])]
+		sql_rows! : Object.Self, Str, params => Try(Sql.Rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), TooLarge]) where [params.Cbor.Writable]
 		sql_rows! = |self, sql, params| sql_raw!(self, sql, Cbor.encode(params), Body.default_max)
 
-		sql_rows_with! : Object.Self, Str, params, { max_bytes : U64 } => Try(Sql.Rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), TooLarge]) where [params.Cbor.Encodable([])]
+		sql_rows_with! : Object.Self, Str, params, { max_bytes : U64 } => Try(Sql.Rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), TooLarge]) where [params.Cbor.Writable]
 		sql_rows_with! = |self, sql, params, opts| sql_raw!(self, sql, Cbor.encode(params), opts.max_bytes)
 
 		## `storage.setAlarm(epoch_ms)`: a promise, one wait. `epoch_ms` is a time of the clock (`Time.now_ms!`), not a
@@ -428,7 +428,7 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 	Class : { name : Str, handlers : List(Str), methods : List(Str), run! : Str, Object.Event => [Respond(Response), Reply(Js), Done, Failed(Str), Unhandled] }
 
 	## A typed value in the sync KV storage of the object (MODULES.md 9): CBOR bytes under one key. A constant (WR1).
-	cell : Str -> Object.Cell(a) where [a.Cbor.Encodable([]), a.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+	cell : Str -> Object.Cell(a) where [a.Cbor.Writable, a.Cbor.Readable(errs)]
 	cell = |key| Object.Cell.{ key, write: |v| Cbor.encode(v), read: |bytes| Cbor.parse(bytes).map_err(|e| Str.inspect(e)) }
 
 	## Each function takes the `Object.Self` and is one `call!` (no wait).
@@ -469,7 +469,7 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 	## A typed attachment of a socket (MODULES.md 12.1): CBOR bytes in `ws.serializeAttachment`. A constant (WR1), like
 	## `Object.Cell`: the same constant writes and reads, so the stored type and the read type are one. A socket has one
 	## attachment slot: two constants on one socket share it. `name` shows in the `BadData` text only.
-	attachment : Str -> Object.Attachment(a) where [a.Cbor.Encodable([]), a.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+	attachment : Str -> Object.Attachment(a) where [a.Cbor.Writable, a.Cbor.Readable(errs)]
 	attachment = |name| Object.Attachment.{ name, write: |v| Cbor.encode(v), read: |bytes| Cbor.parse(bytes).map_err(|e| Str.inspect(e)) }
 
 	Attachment(a) :: { name : Str, write : a -> List(U8), read : List(U8) -> Try(a, Str) }.{
@@ -570,7 +570,7 @@ sql_ops = |sql, params| [
 	Call(Root("pf"), "sqlExec", [Slot(1), Lit(Text(sql)), Lit(Packed(params))]),
 ]
 
-sql_typed! : Object.Self, Str, List(U8), U64 => Try(rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+sql_typed! : Object.Self, Str, List(U8), U64 => Try(rows, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Readable(errs)]
 sql_typed! = |_self, sql, params, max| match Js.call!(sql_ops(sql, params).concat([Call(Slot(2), "toArray", []), Call(Root("pf"), "pack", [Slot(3), Lit(Int(limit(max)))])])) {
 	Ok(Packed(bytes)) => match SqlRules.typed(bytes) {
 		Ok(v) => Ok(v)

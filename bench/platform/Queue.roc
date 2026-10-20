@@ -12,7 +12,7 @@ import cbor.Cbor
 Queue(a) :: { name : Str, content_type : Str, write : a -> Js, read : List(U8) -> Try(a, Str) }.{
 
 	## The content type "json": a JS consumer gets the message as an object. No `BigInt` (use `Queue.v8`).
-	json : Str -> Queue(a) where [a.Cbor.Encodable([]), a.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+	json : Str -> Queue(a) where [a.Cbor.Writable, a.Cbor.Readable(errs)]
 	json = |name| Queue.{
 		name,
 		content_type: "json",
@@ -26,7 +26,7 @@ Queue(a) :: { name : Str, content_type : Str, write : a -> Js, read : List(U8) -
 
 	## The content type "v8" (the structured clone of Workers): also a `BigInt`, and a `Cbor.Bytes` field reaches a
 	## JS consumer as a `Uint8Array`.
-	v8 : Str -> Queue(a) where [a.Cbor.Encodable([]), a.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+	v8 : Str -> Queue(a) where [a.Cbor.Writable, a.Cbor.Readable(errs)]
 	v8 = |name| Queue.{
 		name,
 		content_type: "v8",
@@ -63,13 +63,20 @@ Queue(a) :: { name : Str, content_type : Str, write : a -> Js, read : List(U8) -
 	send_with : Queue(a), a, { delay_ms ?: U64 } -> Io({}, [QueueErr(Io.Thrown)])
 	send_with = |q, v, opts| {
 		write = q.write
-		Io.new(
+		send_ops = if q.content_type == "json" {
+			# JSON has no exact Dec: JS makes each tag 4 value a Number
+			[
+				Get(Root("env"), q.name),
+				Call(Root("pf"), "plain", [Lit(write(v))]),
+				Call(Slot(0), "send", [Slot(1), Lit(Obj(options(q.content_type, opts.?delay_ms)))]),
+			]
+		} else {
 			[
 				Get(Root("env"), q.name),
 				Call(Slot(0), "send", [Lit(write(v)), Lit(Obj(options(q.content_type, opts.?delay_ms)))]),
-			],
-			done,
-		)
+			]
+		}
+		Io.new(send_ops, done)
 	}
 
 	send_with! : Queue(a), a, { delay_ms ?: U64 } => Try({}, [QueueErr(Io.Thrown)])
@@ -90,13 +97,19 @@ Queue(a) :: { name : Str, content_type : Str, write : a -> Js, read : List(U8) -
 			Ok(ms) => [("delaySeconds", Int(Time.seconds_up(ms).to_i64_try() ?? I64.highest))]
 			Err(_) => []
 		}
-		Io.new(
+		send_ops = if q.content_type == "json" {
+			[
+				Get(Root("env"), q.name),
+				Call(Root("pf"), "plain", [Lit(Arr(items))]),
+				Call(Slot(0), "sendBatch", [Slot(1), Lit(Obj(batch_options))]),
+			]
+		} else {
 			[
 				Get(Root("env"), q.name),
 				Call(Slot(0), "sendBatch", [Lit(Arr(items)), Lit(Obj(batch_options))]),
-			],
-			done,
-		)
+			]
+		}
+		Io.new(send_ops, done)
 	}
 
 	send_batch_with! : Queue(a), List(a), { delay_ms ?: U64 } => Try({}, [QueueErr(Io.Thrown)])

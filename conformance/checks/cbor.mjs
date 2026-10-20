@@ -1,4 +1,4 @@
-// The platform module `Cbor` (a wrapper of roc-cbor 0.1.0): routes of conformance/CborRoutes.roc. The app has no `cbor`
+// The platform module `Cbor` (a wrapper of roc-cbor 0.2.0): routes of conformance/CborRoutes.roc. The app has no `cbor`
 // entry in its header, so these checks also show that an app needs none.
 import { answer } from '../assert.mjs';
 

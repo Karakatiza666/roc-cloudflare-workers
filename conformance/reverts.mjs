@@ -30,8 +30,8 @@ for (const d of readdirSync(`${root}.cache/tmp`)) {
 }
 const BP = 'bench/platform/';
 const IX = 'js/index.js';
-// The roc-cbor 0.1.0 package in the cache of the build (XDG_CACHE_HOME=.cache): a revert of `Cbor.Bytes` edits it.
-const CBOR = '.cache/roc/packages/9QL2dCyq7bcmvAEZfDFwi8kBvWLCZpEMS4WQYnZisezw/Cbor.roc';
+// The roc-cbor 0.2.0 package in the cache of the build (XDG_CACHE_HOME=.cache): a revert of `Cbor.Bytes` edits it.
+const CBOR = '.cache/roc/packages/GTUNBR1419Xvgw1eightgb14scrrWkoiTVkBPJ94yHMA/Cbor.roc';
 // The tests. `conformance`: run.mjs, which prints `FAIL <name>`; the others: a command whose exit code is the result.
 const TESTS = {
   conformance: () => [process.execPath, ['conformance/run.mjs', `${out}/conformance.wasm`]],
