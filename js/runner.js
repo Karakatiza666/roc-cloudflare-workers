@@ -97,7 +97,7 @@ export function makeRunner(module, opts = {}) {
   const tasks = makeTaskTable({ ...opts, log, onCancel: (t) => hostCancel(t.inst.x, t, cancelTrap) });
   // API.md 6.4: the JS functions of the app (root `ops`), the pin table of the isolate (RS2, `pinLimit`).
   // `crossings`: the calls of `js_await` and `js_call` of all instances (PLAN.md 8c: "one crossing" tests).
-  const shim = { ops: opts.ops ?? {}, pins: makePins(opts.pinLimit ?? 1000, opts.now), log, crossings: { await: 0, call: 0 } };
+  const shim = { ops: opts.ops ?? {}, pins: makePins(opts.pinLimit ?? 1000, opts.now), log, crossings: { await: 0, call: 0 }, envRead: opts.envRead };
   stats.pins = shim.pins.stats;
   stats.crossings = shim.crossings;
   const seen = (x) => {

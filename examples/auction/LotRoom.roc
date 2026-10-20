@@ -124,7 +124,7 @@ place_bid! = |self, socket, msg| {
 on_message! : Object.Self, Object.Socket, WebSocket.Message => Try({}, _)
 on_message! = |self, socket, msg| match place_bid!(self, socket, msg) {
 	Ok({ bidder, amount_cents }) => {
-		self.broadcast_json!({ event: "bid", bidder, amount_cents })
+		self.broadcast_json!({ event: "bid", bidder, amount_cents })?
 		Ok({})
 	}
 	Err(NotOpen) => reject!(socket, "the lot is not open")
@@ -171,7 +171,7 @@ alarm! = |self, _info| match state_cell.find!(self)? {
 			Ok({})
 		} else {
 			out = close_now!(self, st)?
-			self.broadcast_json!({ event: "closed", winner: out.winner, amount_cents: out.amount_cents })
+			self.broadcast_json!({ event: "closed", winner: out.winner, amount_cents: out.amount_cents })?
 			for s in self.sockets!() {
 				s.close!(1000, "lot closed")
 			}

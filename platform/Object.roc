@@ -339,11 +339,11 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 		}
 
 		## `broadcast!` of a value as JSON text, like `Object.Socket.send_json!`. A value that JSON cannot show (a `NaN`
-		## in an `F64`) is a crash: the type has no error, and nothing is sent.
-		broadcast_json! : Object.Self, a => {} where [a.Json.Encodable(enc)]
+		## in an `F64`) is `BadData`, and nothing is sent.
+		broadcast_json! : Object.Self, a => Try({}, [BadData(Str)]) where [a.Json.Encodable(enc)]
 		broadcast_json! = |self, value| match Json.to_str_try(value) {
-			Ok(text) => self.broadcast!(Text(text))
-			Err(e) => crash "Object.Self.broadcast_json!: the value does not encode: ${Str.inspect(e)}"
+			Ok(text) => Ok(self.broadcast!(Text(text)))
+			Err(e) => Err(BadData(Str.inspect(e)))
 		}
 
 		## `broadcast!` that gives the number of sockets that got the message. `tag`: the sockets with the tag only,
@@ -355,6 +355,13 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 				Err(_) => []
 			}
 			send_each!(sockets_of!(filter), msg)
+		}
+
+		## `broadcast_with!` of a value as JSON text. `BadData` as for `broadcast_json!`: nothing is sent.
+		broadcast_json_with! : Object.Self, { tag ?: Str }, a => Try(U64, [BadData(Str)]) where [a.Json.Encodable(enc)]
+		broadcast_json_with! = |self, opts, value| match Json.to_str_try(value) {
+			Ok(text) => Ok(self.broadcast_with!(opts, Text(text)))
+			Err(e) => Err(BadData(Str.inspect(e)))
 		}
 
 		## `ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(request, response))`: Workers answers the text

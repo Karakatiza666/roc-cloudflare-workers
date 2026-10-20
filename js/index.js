@@ -88,7 +88,10 @@ export function makeHandler(module, opts = {}) {
   // checks it again with `set_sum` at the first instance.
   if (runnerOpts.resumeCheck === 'off' && !isBenchHost(module)) throw new Error('resumeCheck "off" needs the bench host: the production host refuses it');
   let runner = null;
-  const runnerOf = () => (runner ??= makeRunner(module, runnerOpts));
+  // MODULES.md 3: the dev-mode check of `bindings`. Set after the manifest is read (below); the runner calls it at each
+  // `Get(Root("env"), name)`.
+  let envRead = null;
+  const runnerOf = () => (runner ??= makeRunner(module, { ...runnerOpts, envRead: (name, v) => envRead?.(name, v) }));
 
   // Run one event as a task. A trap gives `{ trap, status }`; its log line has the text of a Roc `crash` (8a O2).
   // `ro`: the task context (PLAN.md 9b, API.md 6.2 OP3): `kind`, `signal`, `env`, `ctx` and `event` (the root `event`).
@@ -193,6 +196,21 @@ export function makeHandler(module, opts = {}) {
   const manifest = checkManifest(got ?? { objects: {}, entrypoints: {} });
   // MODULES.md 3: each binding of the manifest must be in `env` with its kind. At load when workerd gives `env` at
   // global scope, else at the first event of each `env` (the error of the load, as a throw of the event).
+  // A read of an `env` name that `bindings` does not declare: one warning for each name in this isolate. Only for an app
+  // that declared a binding, and only for a value that is a binding (a function, or an object that is not a plain one):
+  // `Env.var!` and `Env.secret!` read texts and plain JSON, and they need no declaration.
+  if (manifest.bindings.length) {
+    const declared = new Set(manifest.bindings.map((b) => b.name));
+    const warned = new Set();
+    envRead = (name, v) => {
+      if (declared.has(name) || warned.has(name)) return;
+      const proto = v !== null && typeof v === 'object' ? Object.getPrototypeOf(v) : null;
+      const binding = typeof v === 'function' || (v !== null && typeof v === 'object' && proto !== Object.prototype && proto !== Array.prototype && proto !== null);
+      if (!binding) return;
+      warned.add(name);
+      log(`makeHandler: the app reads the binding env.${name}, but Worker.new bindings does not declare it. Add its declare() to bindings, so the shim checks it at load and sync checks the Wrangler config.`);
+    };
+  }
   const envChecked = new WeakSet();
   const envError = (env) => {
     const problems = bindingProblems(manifest.bindings, env);

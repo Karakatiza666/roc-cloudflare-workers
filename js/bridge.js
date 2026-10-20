@@ -66,7 +66,7 @@ export function makeBridge(cell, tasks, shim) {
     if (t?.pctx) return t.pctx;
     const ctl = new AbortController();
     const roots = { env: t?.env, ctx: t?.ctx, event: t?.event, global: globalThis, ops: shim.ops ?? {}, signal: ctl.signal };
-    const c = { roots, refs: t?.refs ?? new Refs(), signal: ctl.signal, ctl };
+    const c = { roots, refs: t?.refs ?? new Refs(), signal: ctl.signal, ctl, envRead: shim.envRead };
     roots.pf = makeHelpers(t, c, shim, tasks);
     if (t) t.pctx = c;
     return c;
