@@ -459,6 +459,10 @@ export function makeHelpers(t, c, shim, tasks) {
       const { EmailMessage } = await import('cloudflare:email');
       return new EmailMessage(from, to, raw);
     },
+    // `Io.timeout_at` (MODULES.md 11): `scheduler.wait` until `deadlineMs` of `Date.now()`; 0 ms when it has passed.
+    waitUntil(deadlineMs, signal) {
+      return globalThis.scheduler.wait(Math.max(0, Number(deadlineMs) - Date.now()), { signal });
+    },
     // The pin table (RS2): `Js.pin!`, `pinned!`, `unpin!` (8c).
     pin(name, value, maxAgeMs) {
       shim.pins.pin(name, value, maxAgeMs);
