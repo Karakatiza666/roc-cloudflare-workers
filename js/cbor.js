@@ -380,7 +380,7 @@ class Reader {
     this.need(1);
     if (this.u8[this.at++] !== 0x82) this.fail('tag 4 needs an array of 2 items');
     const exp = this.int('the exponent of tag 4');
-    if (typeof exp !== 'number') this.fail('the exponent of tag 4 is too large');
+    if (!Number.isSafeInteger(exp)) this.fail('the exponent of tag 4 is too large');
     this.need(1);
     const ib = this.u8[this.at];
     let mant;
@@ -399,6 +399,8 @@ class Reader {
       if (mant >= -0x1fffffffffffffn && mant <= 0x1fffffffffffffn) mant = Number(mant);
     } else {
       mant = this.int('the mantissa of tag 4');
+      // int() gives 2^53 and -2^53 as Numbers, but isDec needs a safe integer: a BigInt from there.
+      if (typeof mant === 'number' && !Number.isSafeInteger(mant)) mant = BigInt(mant);
     }
     return { [DEC_KEY]: [exp, mant] };
   }
