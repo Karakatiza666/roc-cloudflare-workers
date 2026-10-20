@@ -299,3 +299,26 @@ The app code of C: `Err(Fail(AlreadyOpen))` at each domain error, and a helper t
 | 3 | Names: `Rpc.Infra`, the tag `Infra` | As written |
 | 4 | Q4 and Q5 are compiler limits. Report them upstream? | Yes, Q5 first |
 | 5 | A caller `_` arm still catches a new domain tag. Show an exhaustive `Remote(r) => room_response(r)` form in MODULES.md 8? | Yes, one sentence |
+
+## 9. As built: G1a in `platform/` (2026-10-20)
+
+The user chose G1a. Branch `n5-g1a`.
+
+| Item | Built as |
+| --- | --- |
+| Signatures | `nest_g1a.py` rewrites each error union of `Try(ok, [..])` and `Io(ok, [..])` in 23 modules (294 signatures; `Io` and `Rpc` by hand): the tags of `Rpc.Infra` go into `Infra([..])`. `--bodies` wraps the tags that the bodies make. The rest by hand (helpers `error_of`, `Err(Infra(error(t)))`, the re-raise `Infra(i) => Err(Infra(i))`) |
+| Bodies | The nested tags are written in the bodies. No generated `map_err` layer. `Response.text!`, `json!`, `bytes!`, `bytes_with!` are `body.x!().map_err(\|e\| Infra(e))`: `Body` stays flat |
+| Flat (bad input) | `Request` and `Body` (all), `Request.post_json`, `WebSocket.Message.json`, `Object.Self.accept!`, `accept_with!` and `set_auto_response!` (`TooLarge` of the arguments), the internal `SqlRules.typed` |
+| `Io.timeout`, `timeout_at` | `Io(a, [Infra([TimedOut]), ..e])` (q10) |
+| `Rpc` | `Rpc.Infra` (29 tags, written out: #12489), `Rpc.forward`, `reply_of` gives `Infra([BadData])`. `on` still writes the heads by hand (#12482) |
+| `nest_g1a_docs.py` | The same rewrite for the code blocks of `MODULES.md` (93 signatures) |
+| `g1a-check/app.roc` | `Rpc.forward` with `?` (the same domain and a mapped domain), `Io.timeout` on a nested error, an exhaustive caller match. `roc check` and `roc build` pass |
+
+Wasm of the auction, from the repo root, `--no-cache`:
+
+| Build | Before (flat) | G1a | Change |
+| --- | --- | --- | --- |
+| web, no `--opt` | 1,449,602 | 1,595,628 | +10.1% |
+| web, `--opt=size` | 1,233,953 | 1,344,258 | +8.9% |
+| ledger, no `--opt` | 868,226 | 973,926 | +12.2% |
+| ledger, `--opt=size` | 723,009 | 804,719 | +11.3% |

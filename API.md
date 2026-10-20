@@ -324,7 +324,7 @@ Op : [
 Example, inside `D1` (all names are module code, not app code). Each function that waits has a pure twin that gives an `Io` (6.5):
 
 ```roc
-rows : D1, Str, params -> Io(Sql.Rows, [D1Err(Thrown)]) where [params.Encodable([])]
+rows : D1, Str, params -> Io(Sql.Rows, [Infra([D1Err(Thrown)])]) where [params.Encodable([])]
 rows = |db, sql, params| Io.new(
 	[
 		Get(Root("env"), db.name),                                            # slot 0: the binding
@@ -334,11 +334,11 @@ rows = |db, sql, params| Io.new(
 	],
 	|result| match result {
 		Ok(value) => Sql.rows_from_js(value)    # ["col", ...] then rows as arrays
-		Err(thrown) => Err(D1Err(thrown))
+		Err(thrown) => Err(Infra(D1Err(thrown)))
 	},
 )
 
-rows! : D1, Str, params => Try(Sql.Rows, [D1Err(Thrown)]) where [params.Encodable([])]
+rows! : D1, Str, params => Try(Sql.Rows, [Infra([D1Err(Thrown)])]) where [params.Encodable([])]
 rows! = |db, sql, params| Io.run!(rows(db, sql, params))
 ```
 
@@ -403,9 +403,9 @@ Thrown : { name : Str, message : Str }
 | `Io.all!(List(Io(a, e))) => List(Try(a, e))` | 1 (`Par`) | Many operations at the same time: R2 tiles, cache reads |
 | `Io.start!(Io(a, e)) => Js.Ref` | 1, no wait | Start an operation and get its promise as a ref, for `Ctx.wait_until!`. It is `call!` of `Start(Root("pf"), "spawn", [Lit(ops)])` and `Keep`: the helper runs the ops as an async program of the task. The result is dropped: the Roc reader of the `Io` does not run, so a Roc-level `Err` (`PreconditionFailed`, `BadData`) is not seen. A JS throw goes to the log (`Log`). The context of the task (its ref table and its roots) stays alive until each started program settles, or until the 30 s limit of `waitUntil` (RS1). Work whose result matters runs in the work of `Response.after` (10.2). `Ctx.wait_until!` takes only an `Io({}, e)`: an operation with a result (`cache.put`) does not fit. |
 | `Io.race!(List(Io(a, e))) => { index : U64, result : Try(a, e) }` | 1 (`Race`, OP8) | The first operation to settle wins (`Promise.race`). `index` is its place in the list. The others are aborted. A timeout is `io.timeout(ms)` (`MODULES.md` 11): `ws.receive().timeout(5_000).run!()` gives `Err(TimedOut)`. It is a race with `Time.sleep(ms)`. `Promise.race([])` never settles, so a `Race` with no branch is a bad program (status 3). |
-| `Io.timeout(Io(a, e), U64) -> Io(a, [TimedOut, ..e])` | 1 (`Race`, OP8) | The operation, or `Err(TimedOut)` when the time passes first. One program: a `Race` of the operation and a `scheduler.wait`. The loser is aborted as in `race!`. `Io.timeout_at(Io(a, e), U64) -> Io(a, [TimedOut, ..e])` is the same with a deadline in ms on the clock of `Time.now_ms!`: the sleep is the helper `pf.waitUntil(deadlineMs, signal)`, `scheduler.wait(max(0, deadlineMs - Date.now()), { signal })`, so the time left is computed when the program runs, and one deadline serves many reads. A deadline in the past waits 0 ms: `Err(TimedOut)` at once, unless the operation has its result already. `Io.recover(Io(a, e), (e -> Try(a, f))) -> Io(a, f)` handles an error (`Try.on_err`). |
+| `Io.timeout(Io(a, e), U64) -> Io(a, [Infra([TimedOut]), ..e])` | 1 (`Race`, OP8) | The operation, or `Err(Infra(TimedOut))` when the time passes first. One program: a `Race` of the operation and a `scheduler.wait`. The loser is aborted as in `race!`. `Io.timeout_at(Io(a, e), U64) -> Io(a, [Infra([TimedOut]), ..e])` is the same with a deadline in ms on the clock of `Time.now_ms!`: the sleep is the helper `pf.waitUntil(deadlineMs, signal)`, `scheduler.wait(max(0, deadlineMs - Date.now()), { signal })`, so the time left is computed when the program runs, and one deadline serves many reads. A deadline in the past waits 0 ms: `Err(TimedOut)` at once, unless the operation has its result already. `Io.recover(Io(a, e), (e -> Try(a, f))) -> Io(a, f)` handles an error (`Try.on_err`). |
 
-The error types join as tag unions, so `Io.both!(D1.rows(db, sql, []), Http.get(jwks_url))` gives `Try((Sql.Rows, Response), [D1Err(_), HttpErr(_), TooLarge])`.
+The error types join as tag unions, so `Io.both!(D1.rows(db, sql, []), Http.get(jwks_url))` gives `Try((Sql.Rows, Response), [Infra([D1Err(_), HttpErr(_), Network(_), TooLarge])])`: each function gives its errors in `Infra(..)`, and the payloads merge (MODULES.md MC9).
 
 ## 7. Modules
 
