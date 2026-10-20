@@ -37,10 +37,10 @@ ObjectRoutes :: [].{
 
 	## The classes of the app: the manifest names them, and `conformance/worker.js` exports each one.
 	counter_class : Object.Class
-	counter_class = Object.class("Counter", { fetch!: counter_fetch!, alarm!: counter_alarm!, rpc: [RpcMethods.increment.on(increment!), RpcMethods.ping.on(object_ping!), RpcMethods.boom.on(boom!), RpcMethods.echo.on(echo!), RpcMethods.hello.on(object_hello!)].concat(RpcErrRoutes.object_handlers) })
+	counter_class = Object.class("Counter", { fetch!: counter_fetch!, alarm!: counter_alarm!, rpc: [RpcMethods.increment.on(increment!), RpcMethods.ping.on(object_ping!), RpcMethods.boom.on(boom!), RpcMethods.echo.on(echo!), RpcMethods.hello.on(object_hello!), RpcMethods.relay.on(relay!), RpcMethods.relay_map.on(relay_map!)].concat(RpcErrRoutes.object_handlers) })
 
 	store_class : Object.Class
-	store_class = Object.class("Store", { init!: store_init!, fetch!: store_fetch! })
+	store_class = Object.class("Store", { init!: store_init!, fetch!: store_fetch!, rpc: [RpcMethods.fail.on(store_fail!)] })
 
 	flaky_class : Object.Class
 	flaky_class = Object.class("Flaky", { init!: flaky_init!, fetch!: plain_fetch! })
@@ -151,7 +151,7 @@ forward! = |o, op, req| {
 }
 
 ## The body of a response of an object as text, or the error.
-text! : Try(Response, [ObjectErr(Io.Thrown)]) => Str
+text! : Try(Response, [Infra([ObjectErr(Io.Thrown)])]) => Str
 text! = |r| match r {
 	Ok(res) => match res.text!() {
 		Ok(t) => if (res.status() == 200) t else "status ${res.status().to_str()} ${t}"
@@ -374,7 +374,7 @@ counter_alarm! = |self, _info| {
 	Ok({})
 }
 
-increment! : Object.Self, { by : I64 } => Try(I64, [StorageErr(Io.Thrown)])
+increment! : Object.Self, { by : I64 } => Try(I64, [Infra(Rpc.Infra)])
 increment! = |self, { by }| {
 	n = (count.get!(self) ?? 0) + by
 	count.set!(self, n)?
@@ -393,9 +393,52 @@ boom! = |_self, { n }| Err(Nope(n))
 echo! : Object.Self, { big : U64 } => Try({ big : U64 }, Rpc.NoErr)
 echo! = |_self, v| Ok(v)
 
+# N5 G1a (checks/rpcerr.mjs, "infra"): the callee `fail` in `Store` `?`s a platform error: SqlErr, Constraint, StorageErr (the class
+# has no `alarm!`). The `Counter` callees `relay` and `relay_map` call it and pass its errors on with `Rpc.forward`.
+store_ns = Object.namespace_remote("STORES", { class: "Store", script: "" })
+
+store_fail! : Object.Self, { kind : Str } => Try(I64, [NotOpen, Infra(Rpc.Infra)])
+store_fail! = |self, { kind }| match kind {
+	"sql" => {
+		_ = self.sql_run!("SELEC 1", Sql.none)?
+		Ok(1)
+	}
+	"constraint" => {
+		_ = self.sql_run!("CREATE TABLE IF NOT EXISTS uniq (k TEXT PRIMARY KEY)", Sql.none)?
+		_ = self.sql_run!("DELETE FROM uniq", Sql.none)?
+		_ = self.sql_run!("INSERT INTO uniq (k) VALUES ('a')", Sql.none)?
+		_ = self.sql_run!("INSERT INTO uniq (k) VALUES ('a')", Sql.none)?
+		Ok(1)
+	}
+	"storage" => {
+		self.set_alarm_at!(Time.now_ms!() + 60_000)?
+		Ok(1)
+	}
+	"domain" => Err(NotOpen)
+	"crash" => crash "fail callee crash"
+	_ => Ok(7)
+}
+
+relay! : Object.Self, { kind : Str } => Try(I64, [NotOpen, Infra(Rpc.Infra)])
+relay! = |_self, arg| {
+	v = store_ns.named("relay").call!(RpcMethods.fail, arg) ? Rpc.forward(|e| e)
+	Ok(v)
+}
+
+relay_map! : Object.Self, { kind : Str } => Try(I64, [Shut, Infra(Rpc.Infra)])
+relay_map! = |_self, arg| {
+	v = store_ns.named("relay").call!(RpcMethods.fail, arg) ? Rpc.forward(
+		|e| match e {
+			NotOpen => Shut
+			Infra(i) => Infra(i)
+		},
+	)
+	Ok(v)
+}
+
 # Store: `init!` waits 100 ms, then makes a table (PLAN.md 8f). No `alarm!`: `set_alarm_at!` gives `StorageErr`.
 
-store_init! : Object.Self => Try({}, [SqlErr(Io.Thrown), Constraint(Sql.Constraint)])
+store_init! : Object.Self => Try({}, [Infra([SqlErr(Io.Thrown), Constraint(Sql.Constraint)])])
 store_init! = |self| {
 	Time.sleep!(100)
 	_ = self.sql_run!("CREATE TABLE IF NOT EXISTS items (k TEXT)", Sql.none)?
@@ -442,7 +485,7 @@ ticker_alarm! = |_self, info| {
 }
 
 # KvOnly: a class in a `new_classes` migration (KV-backed). The shim stops its first event with the class name.
-kv_only_fetch! : Object.Self, Request => Try(Response, [SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])
+kv_only_fetch! : Object.Self, Request => Try(Response, [Infra([SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])])
 kv_only_fetch! = |self, _req| {
 	rows : List({ x : I64 })
 	rows = self.sql!("SELECT 1 AS x", Sql.none)?

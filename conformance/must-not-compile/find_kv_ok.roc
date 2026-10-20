@@ -9,7 +9,7 @@ import pf.Io
 cell : Kv.Cell(Str)
 cell = Kv.text("KV").cell("c")
 
-read! : {} => Try(Str, [KvErr(Io.Thrown), BadData(Str), TooLarge])
+read! : {} => Try(Str, [Infra([KvErr(Io.Thrown), BadData(Str), TooLarge])])
 read! = |{}| match cell.find!()? {
 	Ok(v) => Ok(v)
 	Err(NotFound) => Ok("")

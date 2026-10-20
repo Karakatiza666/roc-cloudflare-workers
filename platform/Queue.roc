@@ -53,14 +53,14 @@ Queue(a) :: { name : Str, content_type : Str, write : a -> Js, read : List(U8) -
 	}
 
 	## `send`: 128 KB or less for a message. One wait.
-	send : Queue(a), a -> Io({}, [QueueErr(Io.Thrown)])
+	send : Queue(a), a -> Io({}, [Infra([QueueErr(Io.Thrown)])])
 	send = |q, v| q.send_with(v, {})
 
-	send! : Queue(a), a => Try({}, [QueueErr(Io.Thrown)])
+	send! : Queue(a), a => Try({}, [Infra([QueueErr(Io.Thrown)])])
 	send! = |q, v| Io.run!(q.send(v))
 
 	## `delay_ms` goes to `delaySeconds` (MC10): whole seconds, rounded up. More than 24 h is `QueueErr` (Workers throws).
-	send_with : Queue(a), a, { delay_ms ?: U64 } -> Io({}, [QueueErr(Io.Thrown)])
+	send_with : Queue(a), a, { delay_ms ?: U64 } -> Io({}, [Infra([QueueErr(Io.Thrown)])])
 	send_with = |q, v, opts| {
 		write = q.write
 		send_ops = if q.content_type == "json" {
@@ -79,17 +79,17 @@ Queue(a) :: { name : Str, content_type : Str, write : a -> Js, read : List(U8) -
 		Io.new(send_ops, done)
 	}
 
-	send_with! : Queue(a), a, { delay_ms ?: U64 } => Try({}, [QueueErr(Io.Thrown)])
+	send_with! : Queue(a), a, { delay_ms ?: U64 } => Try({}, [Infra([QueueErr(Io.Thrown)])])
 	send_with! = |q, v, opts| Io.run!(q.send_with(v, opts))
 
 	## `sendBatch`: 100 messages and 256 KB or less (Workers throws for more: `QueueErr`).
-	send_batch : Queue(a), List(a) -> Io({}, [QueueErr(Io.Thrown)])
+	send_batch : Queue(a), List(a) -> Io({}, [Infra([QueueErr(Io.Thrown)])])
 	send_batch = |q, vs| q.send_batch_with(vs, {})
 
-	send_batch! : Queue(a), List(a) => Try({}, [QueueErr(Io.Thrown)])
+	send_batch! : Queue(a), List(a) => Try({}, [Infra([QueueErr(Io.Thrown)])])
 	send_batch! = |q, vs| Io.run!(q.send_batch(vs))
 
-	send_batch_with : Queue(a), List(a), { delay_ms ?: U64 } -> Io({}, [QueueErr(Io.Thrown)])
+	send_batch_with : Queue(a), List(a), { delay_ms ?: U64 } -> Io({}, [Infra([QueueErr(Io.Thrown)])])
 	send_batch_with = |q, vs, opts| {
 		write = q.write
 		items = vs.map(|v| Obj([("body", write(v)), ("contentType", Text(q.content_type))]))
@@ -112,7 +112,7 @@ Queue(a) :: { name : Str, content_type : Str, write : a -> Js, read : List(U8) -
 		Io.new(send_ops, done)
 	}
 
-	send_batch_with! : Queue(a), List(a), { delay_ms ?: U64 } => Try({}, [QueueErr(Io.Thrown)])
+	send_batch_with! : Queue(a), List(a), { delay_ms ?: U64 } => Try({}, [Infra([QueueErr(Io.Thrown)])])
 	send_batch_with! = |q, vs, opts| Io.run!(q.send_batch_with(vs, opts))
 
 	## Read each message of the batch as `a`, and give the handler the message too (`id`, `timestamp_ms`, `attempts`,
@@ -233,10 +233,10 @@ drop! = |ops| {
 	{}
 }
 
-done : Try(Js, Io.Thrown) -> Try({}, [QueueErr(Io.Thrown)])
+done : Try(Js, Io.Thrown) -> Try({}, [Infra([QueueErr(Io.Thrown)])])
 done = |r| match r {
 	Ok(_) => Ok({})
-	Err(t) => Err(QueueErr(t))
+	Err(t) => Err(Infra(QueueErr(t)))
 }
 
 expect retry_options(0) == [("delaySeconds", Int(0))]

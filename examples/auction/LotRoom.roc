@@ -78,7 +78,7 @@ fetch! = |self, req| match req.query("bidder") {
 # ---- Bids ----
 
 ## The state of the lot. A lot with no state is not open. The other errors stay as they are.
-load_state! : Object.Self => Try(State, [NotOpen, BadData(Str), StorageErr(Io.Thrown)])
+load_state! : Object.Self => Try(State, [NotOpen, Infra([BadData(Str), StorageErr(Io.Thrown)])])
 load_state! = |self| match state_cell.find!(self)? {
 	Ok(st) => Ok(st)
 	Err(NotFound) => Err(NotOpen)

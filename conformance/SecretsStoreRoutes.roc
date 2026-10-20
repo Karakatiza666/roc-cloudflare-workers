@@ -19,11 +19,11 @@ SecretsStoreRoutes :: [].{
 	}
 }
 
-show : Try(Secret, [SecretsStoreErr({ name : Str, message : Str })]) -> Response
+show : Try(Secret, [Infra([SecretsStoreErr({ name : Str, message : Str })])]) -> Response
 show = |r| Response.from_text(
 	200,
 	match r {
 		Ok(s) => "Ok inspect=${Str.inspect(s)} reveal=${s.reveal()}"
-		Err(SecretsStoreErr(t)) => "SecretsStoreErr ${t.name}: ${t.message}"
+		Err(Infra(SecretsStoreErr(t))) => "SecretsStoreErr ${t.name}: ${t.message}"
 	},
 )

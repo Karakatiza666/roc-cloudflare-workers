@@ -9,7 +9,7 @@ import pf.Io
 count : Object.Cell(I64)
 count = Object.cell("count")
 
-read! : Object.Self => Try(I64, [BadData(Str), StorageErr(Io.Thrown)])
+read! : Object.Self => Try(I64, [Infra([BadData(Str), StorageErr(Io.Thrown)])])
 read! = |self| match count.find!(self)? {
 	Ok(v) => Ok(v)
 	Err(NotFound) => Ok(0)

@@ -15,7 +15,7 @@ const sqlp = (t, c) => counter(t, `sql_params/${c}`);
 const has = (r, part) => ok(r.status === 200 && r.body.includes(part), `got ${r.status} ${JSON.stringify(r.body.slice(0, 400))}, want a text with ${JSON.stringify(part)}`);
 const ticks = (t) => t.logs.filter((l) => String(l.message).includes('"msg":"ticker alarm"')).map((l) => JSON.parse(String(l.message).slice(String(l.message).indexOf('{'))));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const constraint = (kind, message) => `Err(Constraint({ kind: ${kind}, message: ${JSON.stringify(message)} }))`;
+const constraint = (kind, message) => `Err(Infra(Constraint({ kind: ${kind}, message: ${JSON.stringify(message)} })))`;
 
 // A second Miniflare that must not start: the error names `name`.
 async function loadFails(t, entry, name) {
@@ -46,10 +46,10 @@ export const checks = [
   ['objects SQL: a foreign key gives Constraint ForeignKey', async (t) => answer(await counter(t, 'sql_constraint/fk'), constraint('ForeignKey', 'FOREIGN KEY constraint failed'))],
   ['objects SQL: a STRICT column gives Constraint Datatype', async (t) => answer(await counter(t, 'sql_constraint/datatype'), constraint('Datatype', 'cannot store TEXT value in INTEGER column s.v'))],
   ["objects SQL: a trigger RAISE(ABORT, 'label-conflict') gives Constraint Trigger", async (t) => answer(await counter(t, 'sql_constraint/trigger'), constraint('Trigger', 'label-conflict'))],
-  ['objects SQL: a syntax error is SqlErr', async (t) => answer(await counter(t, 'sql_syntax'), 'Err(SqlErr({ message: "near \\"SELEC\\": syntax error at offset 0: SQLITE_ERROR", name: "Error" }))')],
+  ['objects SQL: a syntax error is SqlErr', async (t) => answer(await counter(t, 'sql_syntax'), 'Err(Infra(SqlErr({ message: "near \\"SELEC\\": syntax error at offset 0: SQLITE_ERROR", name: "Error" })))')],
   ['objects sql!: rows of the type of the call', async (t) => answer(await counter(t, 'sql_all'), 'Ok([{ id: 1, u: "a" }])')],
   ['objects sql!: the integer rules of D1 (an Int parameter as text, CAST(v AS TEXT) into an I64, BadData with no cast)', async (t) =>
-    answer(await counter(t, 'sql_int'), 'cast=Ok([{ v: 9223372036854775807 }, { v: -2687166099708853831 }]) plain=Err(BadData("column v: integer of 2^53 or more, read it with CAST(v AS TEXT) into an I64, U64 or Id64 field"))')],
+    answer(await counter(t, 'sql_int'), 'cast=Ok([{ v: 9223372036854775807 }, { v: -2687166099708853831 }]) plain=Err(Infra(BadData("column v: integer of 2^53 or more, read it with CAST(v AS TEXT) into an I64, U64 or Id64 field")))')],
   // PLAN.md 8h item 3: parameters as an `Encodable` tuple or list for object SQL (conformance/ObjectRoutes.roc, `sql_params!`).
   ['objects SQL params: a tuple of (Str, I64, F64, blob) is stored as text, integer, real, blob', async (t) =>
     answer(await sqlp(t, 'tuple'), 'Ok([{ a: "héllo", b: 42, c: 1.5, hd: "010203", ta: "text", tb: "integer", tc: "real", td: "blob" }])')],
@@ -80,10 +80,10 @@ export const checks = [
     answer(await sqlp(t, 'runtime_list'), 'Ok([{ a: "text", b: 5, c: 2.5, hd: "09", ta: "text", tb: "integer", tc: "real", td: "blob" }])')],
   ['objects sql_rows!, sql_rows_with!: columns and Sql values', async (t) => {
     answer(await counter(t, 'sql_rows'), 'Ok({ columns: ["id", "u", "b", "r", "z"], rows: [[Int(1), Text("a"), Blob([1, 2, 3]), Real(1.5), Null]] })');
-    answer(await counter(t, 'sql_rows_with'), 'Err(TooLarge)');
+    answer(await counter(t, 'sql_rows_with'), 'Err(Infra(TooLarge))');
   }],
   ['objects sql! of 2 MiB of rows is TooLarge, sql_with! with max_bytes of 4 MiB gives the rows', async (t) =>
-    answer(await counter(t, 'sql_big'), 'default=Err TooLarge two=Err TooLarge four=Ok rows=22 rows=Err TooLarge')],
+    answer(await counter(t, 'sql_big'), 'default=Err Infra(TooLarge) two=Err Infra(TooLarge) four=Ok rows=22 rows=Err Infra(TooLarge)')],
   ['objects cells a1, a2, b1: list_with! with prefix "a" gives ["a1", "a2"]', async (t) =>
     answer(await counter(t, 'cells', 'cells'), 'prefix=Ok(["a1", "a2"]) all=Ok(["a1", "a2", "b1"]) after=Ok(["a2"])')],
   ['objects Object.Cell get!, set!, delete!', async (t) =>
@@ -93,7 +93,7 @@ export const checks = [
   // N6: `find!` has `NotFound` as a value of the inner `Try`.
   ['objects Object.Cell find!: a missing cell is Ok(Err(NotFound)), a value Ok(Ok(v)), a value of another type Err(BadData)', async (t) => {
     const r = await counter(t, 'cell_find', 'cell_find');
-    ok(r.status === 200 && r.body.startsWith('none=Ok(Err(NotFound)) some=Ok(Ok(7)) bad=Err(BadData('), `got ${r.status} ${r.body}`);
+    ok(r.status === 200 && r.body.startsWith('none=Ok(Err(NotFound)) some=Ok(Ok(7)) bad=Err(Infra(BadData('), `got ${r.status} ${r.body}`);
     return r.body.slice(0, 120);
   }],
   // N4: the bindings that the namespaces give to the manifest (the same values as the string form gave: the class name, `script`).
@@ -102,7 +102,7 @@ export const checks = [
       '[{ kind: "object", name: "COUNTERS", props: [("class", "Counter")] }, { kind: "object", name: "FAR2", props: [("class", "Store"), ("script", "other")] }, { kind: "object", name: "FAR", props: [("class", "Far"), ("script", "other")] }]')],
   ['objects Object.Cell get_or!: a value of another type is BadData, not the default', async (t) => {
     const r = await counter(t, 'cell_or_bad', 'cell_or_bad');
-    ok(r.status === 200 && r.body.startsWith('Err(BadData('), `got ${r.status} ${r.body}`);
+    ok(r.status === 200 && r.body.startsWith('Err(Infra(BadData('), `got ${r.status} ${r.body}`);
   }],
   ['objects get_alarm! after set_alarm!(t) gives t (and the Io twins)', async (t) =>
     answer(await counter(t, 'alarm', 'alarm'), 'set=Ok({}) same=True twin=True del=Ok({}) after=Err(NotFound) set2=Ok({}) del2=Ok({})')],
@@ -126,7 +126,7 @@ export const checks = [
   // the id of the same name with no jurisdiction.
   ['objects jurisdiction(Eu): id! gives ObjectErr in Miniflare, a different id on the edge', async (t) => {
     const r = await t.get('/objects/jurisdiction?name=x');
-    if (!t.edge) return answer(r, 'Err(ObjectErr({ message: "Jurisdiction restrictions are not implemented in workerd.", name: "Error" }))');
+    if (!t.edge) return answer(r, 'Err(Infra(ObjectErr({ message: "Jurisdiction restrictions are not implemented in workerd.", name: "Error" })))');
     const plain = /outside=Ok\("([0-9a-f]{64})"\)/.exec((await t.get('/objects/id?name=x')).body);
     const eu = /^Ok\("([0-9a-f]{64})"\)$/.exec(r.body);
     ok(plain && eu, `got ${r.body} and the id ${plain && plain[1]}`);
@@ -140,7 +140,7 @@ export const checks = [
   ['objects init! in blockConcurrencyWhile: two fetch! at the same time to a new object both read its table', async (t) =>
     answer(await t.get('/objects/store_pair?name=pair'), 'Ok([{ n: 0 }]) | Ok([{ n: 0 }])')],
   ['objects a class with no alarm!: set_alarm! gives StorageErr', async (t) =>
-    answer(await t.get('/objects/store_alarm?name=na'), 'Err(StorageErr({ message: "Your Durable Object class must have an alarm() handler in order to call setAlarm()", name: "TypeError" }))')],
+    answer(await t.get('/objects/store_alarm?name=na'), 'Err(Infra(StorageErr({ message: "Your Durable Object class must have an alarm() handler in order to call setAlarm()", name: "TypeError" })))')],
   ['objects the manifest: alarm only on a class with alarm!, the RPC methods on the prototype', async (t) => {
     const names = async (c) => JSON.parse((await t.get(`/__proto?class=${c}`)).body);
     const ticker = await names('Ticker'), store = await names('Store'), counterP = await names('Counter'), admin = await names('Admin'), dflt = await names('default');
@@ -161,7 +161,7 @@ export const checks = [
     const kv = await t.mf.getKVNamespace('OBJFLAGS');
     await kv.put('fail-init', '1');
     const first = await t.get('/objects/flaky?name=f1');
-    has(first, 'Err ObjectErr');
+    has(first, 'Err Infra(ObjectErr(');
     has(first, 'Flaky.init: failed: InitFailed');
     await kv.delete('fail-init');
     const second = await t.get('/objects/flaky?name=f1');
@@ -170,7 +170,7 @@ export const checks = [
   }],
   ['objects init! past the Init deadline is cancelled: ObjectErr with the name of the task', async (t) => {
     const r = await t.get('/objects/slow?name=s1');
-    answer(r, 'Err ObjectErr({ message: "Slow.init: cancelled: deadline", name: "Error" })');
+    answer(r, 'Err Infra(ObjectErr({ message: "Slow.init: cancelled: deadline", name: "Error" }))');
     // The deadline is 1 s and init! sleeps 6 s: a cancel at the deadline, with room for a slow load.
     ok(r.ms < 4500, `took ${r.ms} ms`);
     return `${r.ms} ms`;
@@ -187,7 +187,7 @@ export const checks = [
       return [d, await p];
     }));
     for (const [d, r] of rs) {
-      answer(r, 'Err ObjectErr({ message: "Slow.init: cancelled: deadline", name: "Error" })');
+      answer(r, 'Err Infra(ObjectErr({ message: "Slow.init: cancelled: deadline", name: "Error" }))');
       // About 1060 to 1115 ms when the wait ends at the cancel, 6000 ms or more when it ends with the sleep.
       ok(r.ms < 2500, `offset ${d} ms: the wait ended after ${r.ms} ms`);
     }
@@ -195,7 +195,7 @@ export const checks = [
   }],
   ['objects a KV-backed class: its first event names the class and new_sqlite_classes', async (t) => {
     const r = await t.get('/objects/kvonly?name=k');
-    has(r, 'Err ObjectErr');
+    has(r, 'Err Infra(ObjectErr(');
     has(r, 'Durable Object class KvOnly');
     has(r, 'new_sqlite_classes');
   }],
@@ -210,7 +210,7 @@ export const checks = [
   ['objects rpc: a callee that gives Err(Nope(3)): the caller gets Err(Remote(Nope(3)))', async (t) =>
     answer(await t.get('/objects/rpc/boom?name=b'), 'Err(Remote(Nope(3)))')],
   ['objects rpc: an unknown method throws (RpcErr)', async (t) =>
-    answer(await t.get('/objects/rpc/nothere?name=b'), 'Err(RpcErr({ message: "The RPC receiver does not implement the method \\"nothere\\".", name: "TypeError" }))')],
+    answer(await t.get('/objects/rpc/nothere?name=b'), 'Err(Infra(RpcErr({ message: "The RPC receiver does not implement the method \\"nothere\\".", name: "TypeError" })))')],
   ['objects rpc: a U64 of 2^60 in an argument and a reply comes back exact', async (t) => answer(await t.get('/objects/rpc/echo?name=b'), 'Ok({ big: 1152921504606846976 })')],
   // API.md AQ10: a class in Roc with no export, and an export with no class in Roc, stop the load with the name.
   ['objects load: a class in Roc with no export stops the load with its name', async (t) => {

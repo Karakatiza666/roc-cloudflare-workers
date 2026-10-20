@@ -5,7 +5,7 @@ import pf.Cbor
 import pf.Io
 
 RpcMethods :: [].{
-	increment : Rpc({ by : I64 }, I64, [StorageErr(Io.Thrown)])
+	increment : Rpc({ by : I64 }, I64, [Infra(Rpc.Infra)])
 	increment = Rpc.method("increment")
 
 	ping : Rpc({ n : I64 }, Str, Rpc.NoErr)
@@ -72,4 +72,22 @@ RpcMethods :: [].{
 	## and `Err(AlreadyOpen)` for others. Three callees: the default export, `Admin` and `Counter` (RpcErrRoutes.roc).
 	open_lot : Rpc({ id : Str, close_ms : U64 }, {}, [AlreadyOpen])
 	open_lot = Rpc.method("open_lot")
+
+	## N5 G1a (checks/rpcerr.mjs, "infra"): the callee `?`s a platform error. The `err` has a domain tag and `Infra(Rpc.Infra)`:
+	## the caller gets `Remote(NotOpen)` or `Remote(Infra(<tag>))`, and `Infra(RpcErr)` or `Infra(BadData)` when its own call failed.
+	## `kind`: "domain", "crash" and, for the Durable Object `Store`: "sql", "constraint", "storage"; for the Workers: "d1".
+	fail : Rpc({ kind : Str }, I64, [NotOpen, Infra(Rpc.Infra)])
+	fail = Rpc.method("fail")
+
+	## A JS callee (`conformance/worker.js`) that gives the plain objects of the wire form, with an infra tag in `Err`.
+	jsfail : Rpc({ kind : Str }, I64, [NotOpen, Infra(Rpc.Infra)])
+	jsfail = Rpc.method("jsfail")
+
+	## `Rpc.forward` with `|e| e`: the callee calls `fail` and passes its errors on. The same `err` as `fail`.
+	relay : Rpc({ kind : Str }, I64, [NotOpen, Infra(Rpc.Infra)])
+	relay = Rpc.method("relay")
+
+	## `Rpc.forward` with a domain mapping: the callee calls `fail` and maps `NotOpen` to `Shut`.
+	relay_map : Rpc({ kind : Str }, I64, [Shut, Infra(Rpc.Infra)])
+	relay_map = Rpc.method("relay_map")
 }

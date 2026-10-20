@@ -68,7 +68,7 @@ R2Routes :: [].{
 # ---- Answers ----
 
 ## The response of `respond!` as it is, or a 500 for an R2 error.
-respond! : Try(Response, [R2Err(Io.Thrown)]) => Response
+respond! : Try(Response, [Infra([R2Err(Io.Thrown)])]) => Response
 respond! = |r| match r {
 	Ok(resp) => resp
 	Err(e) => Response.from_text(500, Str.inspect(e))

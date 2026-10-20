@@ -16,9 +16,9 @@ Assets :: { name : Str }.{
 	declare = |b| { name: b.name, kind: "assets", props: [] }
 
 	## Each status is `Ok` (a 404 is an answer of the assets): only a throw is `AssetsErr`.
-	fetch : Assets, Request -> Io(Response, [AssetsErr(Io.Thrown)])
-	fetch = |a, req| Remote.fetch([Get(Root("env"), a.name)], 0, req, |t| AssetsErr(t))
+	fetch : Assets, Request -> Io(Response, [Infra([AssetsErr(Io.Thrown)])])
+	fetch = |a, req| Remote.fetch([Get(Root("env"), a.name)], 0, req, |t| Infra(AssetsErr(t)))
 
-	fetch! : Assets, Request => Try(Response, [AssetsErr(Io.Thrown)])
+	fetch! : Assets, Request => Try(Response, [Infra([AssetsErr(Io.Thrown)])])
 	fetch! = |a, req| Io.run!(fetch(a, req))
 }

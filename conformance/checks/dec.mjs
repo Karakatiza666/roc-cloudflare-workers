@@ -133,7 +133,7 @@ export const checks = [
   }],
   // Item 8: the text of a missing column.
   ['dec D1 a missing column x of a typed row is BadData("column x: missing") (all! and first!)', async (t) => {
-    answer(await t.get('/dec/d1_missing'), 'all=Err(BadData("column x: missing")) first=Err(BadData("column x: missing"))');
+    answer(await t.get('/dec/d1_missing'), 'all=Err(Infra(BadData("column x: missing"))) first=Err(Infra(BadData("column x: missing")))');
   }],
   // Item 9: Dec exact, Roc to Roc.
   ['dec Object.Cell: a Dec is exact (a fraction and the lowest Dec)', async (t) => {

@@ -17,11 +17,11 @@ AnalyticsRoutes :: [].{
 	}
 }
 
-show : Try({}, [AnalyticsErr({ name : Str, message : Str })]) -> Response
+show : Try({}, [Infra([AnalyticsErr({ name : Str, message : Str })])]) -> Response
 show = |r| Response.from_text(
 	200,
 	match r {
 		Ok({}) => "Ok"
-		Err(AnalyticsErr(t)) => "AnalyticsErr ${t.name}"
+		Err(Infra(AnalyticsErr(t))) => "AnalyticsErr ${t.name}"
 	},
 )

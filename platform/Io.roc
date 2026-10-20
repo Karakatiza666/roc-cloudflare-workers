@@ -96,9 +96,9 @@ Io(a, e) := { ops : List(Js.Op), waits : Bool, read : Try(Js, Io.Thrown) -> Try(
 		}
 	}
 
-	## The operation, or `Err(TimedOut)` when `ms` pass first: a race with a sleep (`Race`, OP8). The loser is aborted
+	## The operation, or `Err(Infra(TimedOut))` when `ms` pass first: a race with a sleep (`Race`, OP8). The loser is aborted
 	## as in `race!` (a receive that lost takes no message). The sleep is the one of `Time.sleep`.
-	timeout : Io(a, e), U64 -> Io(a, [TimedOut, ..e])
+	timeout : Io(a, e), U64 -> Io(a, [Infra([TimedOut]), ..e])
 	timeout = |io, ms| {
 		read = io.read
 		sleep = [
@@ -117,8 +117,8 @@ Io(a, e) := { ops : List(Js.Op), waits : Bool, read : Try(Js, Io.Thrown) -> Try(
 	## The same as `timeout`, with a point in time: `deadline_ms` is on the clock of `Time.now_ms!` (`Date.now()`).
 	## One deadline for many reads needs no sum of the time left. The wait is `max(0, deadline_ms - Date.now())` at
 	## the time the program runs (`pf.waitUntil`), not when the `Io` is made. A deadline in the past waits 0 ms:
-	## the operation wins only when it has a result already, else the answer is `Err(TimedOut)` at once.
-	timeout_at : Io(a, e), U64 -> Io(a, [TimedOut, ..e])
+	## the operation wins only when it has a result already, else the answer is `Err(Infra(TimedOut))` at once.
+	timeout_at : Io(a, e), U64 -> Io(a, [Infra([TimedOut]), ..e])
 	timeout_at = |io, deadline_ms| {
 		read = io.read
 		sleep = [
@@ -143,12 +143,12 @@ Io(a, e) := { ops : List(Js.Op), waits : Bool, read : Try(Js, Io.Thrown) -> Try(
 }
 
 ## The result of the `Race` of `timeout`: `[0, branch]` is the operation, `[1, branch]` the sleep. The `?` widens the
-## error type of `read` with `TimedOut` (a `match` that passes `Err(x)` on does not compile).
-timeout_read : (Try(Js, Io.Thrown) -> Try(a, e)), Try(Js, Io.Thrown) -> Try(a, [TimedOut, ..e])
+## error type of `read` with `Infra([TimedOut])` (a `match` that passes `Err(x)` on does not compile).
+timeout_read : (Try(Js, Io.Thrown) -> Try(a, e)), Try(Js, Io.Thrown) -> Try(a, [Infra([TimedOut]), ..e])
 timeout_read = |read, r| {
 	got = match r {
 		Ok(Arr([Int(0), b])) => read(branch(b))
-		Ok(Arr([Int(_), _])) => return Err(TimedOut)
+		Ok(Arr([Int(_), _])) => return Err(Infra(TimedOut))
 		Ok(_) => crash "Io.timeout: the Race result is not [index, branch]"
 		Err(t) => read(Err(t))
 	}

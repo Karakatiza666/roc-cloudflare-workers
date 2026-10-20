@@ -91,7 +91,7 @@ export const checks = [
     eq(await b.next(), '{"n":4,"user":"b"}', 'send_json!');
     // `send_json!` of a NaN is BadData: no frame, so the next frame is the reply of `send!`.
     b.send('json_nan');
-    ok((await b.next()).startsWith('bad=Err(BadData("'), 'Object.Socket send_json! of a NaN');
+    ok((await b.next()).startsWith('bad=Err(Infra(BadData("'), 'Object.Socket send_json! of a NaN');
     await a.close(1000, 'a leaves');
     await b.close(4001, 'b leaves');
   }],
@@ -168,7 +168,7 @@ export const checks = [
     eq(JSON.stringify([a1.pending(), a2.pending(), b.pending()]), '[[],[],[]]', 'b got nothing, nobody got a second copy');
     await Promise.all([a1.close(1000, 'x'), a2.close(1000, 'x'), b.close(1000, 'x')]);
   }],
-  // A NaN in an F64 is not JSON: `Err(BadData)` and no socket gets a frame (the next frame of `a` is the reply of `send!`).
+  // A NaN in an F64 is not JSON: `Err(Infra(BadData))` and no socket gets a frame (the next frame of `a` is the reply of `send!`).
   ['websocket broadcast_json!, broadcast_json_with!: a NaN is Err(BadData) and no socket gets anything', async (t) => {
     const a = await room(t, 'bc7', 'a');
     const b = await room(t, 'bc7', 'b');
@@ -176,7 +176,7 @@ export const checks = [
     ok((await b.next()).includes('peers=2'), 'peers=2');
     a.send('bcast_json_nan');
     const reply = await a.next();
-    ok(/^one=Err\(BadData\(".+"\)\) two=Err\(BadData\(".+"\)\)$/.test(reply), `the reply of a: ${reply}`);
+    ok(/^one=Err\(Infra\(BadData\(".+"\)\)\) two=Err\(Infra\(BadData\(".+"\)\)\)$/.test(reply), `the reply of a: ${reply}`);
     await sleep(200);
     eq(JSON.stringify([a.pending(), b.pending()]), '[[],[]]', 'no socket got a frame');
     await Promise.all([a.close(1000, 'x'), b.close(1000, 'x')]);
@@ -271,7 +271,7 @@ export const checks = [
   ['websocket connect! to a server that answers 200 gives NotUpgrade (OP7)', async (t) =>
     answer(await t.get(`/websocket/client?url=${encodeURIComponent(`${t.server}/hello`)}`), 'Err NotUpgrade')],
   ['websocket Io.timeout: receive().timeout(50) is TimedOut, the next one gets the message at 100 ms', async (t) =>
-    answer(await t.get(`/websocket/timeout?url=${encodeURIComponent(await echoServer(t))}`), 'first=Err(TimedOut) next=Ok(Text("echo m"))')],
+    answer(await t.get(`/websocket/timeout?url=${encodeURIComponent(await echoServer(t))}`), 'first=Err(Infra(TimedOut)) next=Ok(Text("echo m"))')],
   ['websocket Io.race! of receive and Time.sleep(50), the message at 100 ms: the sleep wins, the next receive! gets it', async (t) =>
     answer(await t.get(`/websocket/race?url=${encodeURIComponent(await echoServer(t))}`), 'first=1 Ok(TimedOut) next=Ok(Got(Text("echo m")))')],
   ['websocket OP8 in the same turn: a receive that loses to a branch with no wait gives its message back, the next receive gets it', async (t) =>
@@ -316,7 +316,7 @@ export const checks = [
   }],
   ['websocket send_json! of a NaN is BadData and no frame goes out', async (t) => {
     const r = await t.get(`/websocket/send_json_nan?url=${encodeURIComponent(await echoServer(t))}`);
-    ok(r.status === 200 && r.body.startsWith('bad=Err(BadData("'), `got ${r.body}`);
+    ok(r.status === 200 && r.body.startsWith('bad=Err(Infra(BadData("'), `got ${r.body}`);
     ok(r.body.endsWith(' good=Ok({}) first=Ok(Text("echo {\\"r\\":0.5}")) second=Ok(Text("echo after"))'), `got ${r.body}`);
   }],
   // The typed attachment `Object.Attachment` (MODULES.md 12.1).
@@ -328,12 +328,12 @@ export const checks = [
     eq(await a.next(), 'set=Ok({}) same=True', 'a record of Str, U64 of 2^60, List, Bool, I64');
     a.send('att_wrong');
     const wrong = await a.next();
-    ok(wrong.startsWith('Err(BadData("the attachment count: ') && !wrong.includes('Ok('), `read as U64: ${wrong}`);
+    ok(wrong.startsWith('Err(Infra(BadData("the attachment count: ') && !wrong.includes('Ok('), `read as U64: ${wrong}`);
     await a.close(1000, 'done');
     // The `user` slot set at the join is read back with the same slot (and as another type: BadData).
     const b = await room(t, 'rb', 'b');
     b.send('att_wrong');
-    ok((await b.next()).startsWith('Err(BadData("the attachment count: '), 'a socket that has a user record, read as U64');
+    ok((await b.next()).startsWith('Err(Infra(BadData("the attachment count: '), 'a socket that has a user record, read as U64');
     b.send('info');
     ok((await b.next()).startsWith('user=b '), 'the same slot still reads it');
     await b.close(1000, 'done');

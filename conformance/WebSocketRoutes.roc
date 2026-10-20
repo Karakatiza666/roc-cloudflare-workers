@@ -249,11 +249,11 @@ serve! = |socket| match socket.receive!() {
 	Err(Closed(c)) => c
 }
 
-room_init! : Object.Self => Try({}, [StorageErr(Io.Thrown)])
+room_init! : Object.Self => Try({}, [Infra([StorageErr(Io.Thrown)])])
 room_init! = |self| starts.set!(self, (starts.get!(self) ?? 0) + 1)
 
 ## `op=join` (the default): `accept_with!` with the tags `room` and the user, and the user as the attachment.
-room_fetch! : Object.Self, Request => Try(Response, [StorageErr(Io.Thrown)])
+room_fetch! : Object.Self, Request => Try(Response, [Infra([StorageErr(Io.Thrown)])])
 room_fetch! = |self, req| match Q.text(req, "op") {
 	"auto" => answer(Str.inspect(self.set_auto_response!({ request: "ping", response: "pong" })))
 	"noauto" => {
@@ -279,7 +279,7 @@ answer = |t| Ok(Response.from_text(200, t))
 
 ## "info": the state that the socket sees. "json": `send_json!`. Bytes: the bytes back, reversed. Each other text goes
 ## to each other socket of the room (not to the sender: `peer != socket`).
-room_message! : Object.Self, Object.Socket, WebSocket.Message => Try({}, [StorageErr(Io.Thrown)])
+room_message! : Object.Self, Object.Socket, WebSocket.Message => Try({}, [Infra([StorageErr(Io.Thrown)])])
 room_message! = |self, socket, msg| {
 	n = (events.get!(self) ?? 0) + 1
 	events.set!(self, n)?
@@ -383,14 +383,14 @@ room_message! = |self, socket, msg| {
 	Ok({})
 }
 
-room_close! : Object.Self, Object.Socket, WebSocket.Closed => Try({}, [StorageErr(Io.Thrown)])
+room_close! : Object.Self, Object.Socket, WebSocket.Closed => Try({}, [Infra([StorageErr(Io.Thrown)])])
 room_close! = |_self, socket, closed| {
 	Log.info!("room close", closed)
 	socket.close!(closed.code, closed.reason)
 	Ok({})
 }
 
-room_error! : Object.Self, Object.Socket, Io.Thrown => Try({}, [StorageErr(Io.Thrown)])
+room_error! : Object.Self, Object.Socket, Io.Thrown => Try({}, [Infra([StorageErr(Io.Thrown)])])
 room_error! = |_self, _socket, thrown| {
 	Log.warn!("room error", thrown)
 	Ok({})

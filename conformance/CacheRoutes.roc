@@ -50,7 +50,7 @@ made = |req| {
 }
 
 ## A hit: its status, its `cache-control` header and its body (a stream, `text!` is one more wait).
-show_get! : Try(Response, [NotFound, CacheErr(Io.Thrown)]) => Response
+show_get! : Try(Response, [NotFound, Infra([CacheErr(Io.Thrown)])]) => Response
 show_get! = |r| match r {
 	Ok(res) => match res.text!() {
 		Ok(text) => Response.from_text(200, "Ok ${res.status().to_str()} cc=${res.header("cache-control") ?? "none"} text=${text}")

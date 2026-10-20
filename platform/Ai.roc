@@ -17,15 +17,15 @@ Ai :: { name : Str }.{
 	declare = |b| { name: b.name, kind: "ai", props: [] }
 
 	## `run(model, input)`: the output as the type of the call (MC7).
-	run : Ai, Str, input -> Io(out, [AiErr(Io.Thrown), BadData(Str), TooLarge]) where [input.Cbor.Writable, out.Cbor.Readable(errs)]
+	run : Ai, Str, input -> Io(out, [Infra([AiErr(Io.Thrown), BadData(Str), TooLarge])]) where [input.Cbor.Writable, out.Cbor.Readable(errs)]
 	run = |ai, model, input| run_io(ai, model, input, { gateway: Err(NoGateway), max_bytes: Body.default_max })
 
-	run! : Ai, Str, input => Try(out, [AiErr(Io.Thrown), BadData(Str), TooLarge]) where [input.Cbor.Writable, out.Cbor.Readable(errs)]
+	run! : Ai, Str, input => Try(out, [Infra([AiErr(Io.Thrown), BadData(Str), TooLarge])]) where [input.Cbor.Writable, out.Cbor.Readable(errs)]
 	run! = |ai, model, input| Io.run!(run(ai, model, input))
 
 	## `gateway`: the `gateway` option of `run` (AI Gateway). `cache_ttl_ms` is `cacheTtl` in seconds, rounded up (MC10).
 	## `max_bytes`: the limit of the output (default `Body.default_max`, MC11).
-	run_with : Ai, Str, input, Ai.Options -> Io(out, [AiErr(Io.Thrown), BadData(Str), TooLarge]) where [input.Cbor.Writable, out.Cbor.Readable(errs)]
+	run_with : Ai, Str, input, Ai.Options -> Io(out, [Infra([AiErr(Io.Thrown), BadData(Str), TooLarge])]) where [input.Cbor.Writable, out.Cbor.Readable(errs)]
 	run_with = |ai, model, input, opts| run_io(
 		ai,
 		model,
@@ -33,7 +33,7 @@ Ai :: { name : Str }.{
 		{ gateway: opts.?gateway.map_err(|_| NoGateway), max_bytes: opts.?max_bytes ?? Body.default_max },
 	)
 
-	run_with! : Ai, Str, input, Ai.Options => Try(out, [AiErr(Io.Thrown), BadData(Str), TooLarge]) where [input.Cbor.Writable, out.Cbor.Readable(errs)]
+	run_with! : Ai, Str, input, Ai.Options => Try(out, [Infra([AiErr(Io.Thrown), BadData(Str), TooLarge])]) where [input.Cbor.Writable, out.Cbor.Readable(errs)]
 	run_with! = |ai, model, input, opts| Io.run!(run_with(ai, model, input, opts))
 
 	Options : { gateway ?: Ai.Gateway, max_bytes ?: U64 }
@@ -43,7 +43,7 @@ Ai :: { name : Str }.{
 
 	## `run(model, { ..input, stream: true })`: the output stays a stream in JS (a `Body`, MC13), the server-sent events of
 	## the model. The input must be a record.
-	stream : Ai, Str, input -> Io(Body, [AiErr(Io.Thrown)]) where [input.Cbor.Writable]
+	stream : Ai, Str, input -> Io(Body, [Infra([AiErr(Io.Thrown)])]) where [input.Cbor.Writable]
 	stream = |ai, model, input| Io.new(
 		[
 			Get(Root("env"), ai.name),
@@ -56,16 +56,16 @@ Ai :: { name : Str }.{
 		|r| match r {
 			Ok(Ref(ref)) => Ok(Stream(ref))
 			Ok(other) => crash "Ai.stream: run gave ${Str.inspect(other)}"
-			Err(t) => Err(AiErr(t))
+			Err(t) => Err(Infra(AiErr(t)))
 		},
 	)
 
-	stream! : Ai, Str, input => Try(Body, [AiErr(Io.Thrown)]) where [input.Cbor.Writable]
+	stream! : Ai, Str, input => Try(Body, [Infra([AiErr(Io.Thrown)])]) where [input.Cbor.Writable]
 	stream! = |ai, model, input| Io.run!(stream(ai, model, input))
 }
 
 ## Slots: 0 the binding, 1 the call (waits), 2 `pf.pack`. With options, the options are an argument of `run`.
-run_io : Ai, Str, input, { gateway : Try(Ai.Gateway, [NoGateway]), max_bytes : U64 } -> Io(out, [AiErr(Io.Thrown), BadData(Str), TooLarge]) where [input.Cbor.Writable, out.Cbor.Readable(errs)]
+run_io : Ai, Str, input, { gateway : Try(Ai.Gateway, [NoGateway]), max_bytes : U64 } -> Io(out, [Infra([AiErr(Io.Thrown), BadData(Str), TooLarge])]) where [input.Cbor.Writable, out.Cbor.Readable(errs)]
 run_io = |ai, model, input, o| {
 	args = match o.gateway {
 		Ok(g) => [Lit(Text(model)), Lit(Packed(Cbor.encode(input))), Lit(Obj([("gateway", gateway_js(g))]))]
@@ -80,10 +80,10 @@ run_io = |ai, model, input, o| {
 		|r| match r {
 			Ok(Packed(bytes)) => match Cbor.parse(bytes) {
 				Ok(v) => Ok(v)
-				Err(e) => Err(BadData(Str.inspect(e)))
+				Err(e) => Err(Infra(BadData(Str.inspect(e))))
 			}
 			Ok(other) => crash "Ai.run: pf.pack gave ${Str.inspect(other)}"
-			Err(t) => if (t.name == "TooLarge") Err(TooLarge) else Err(AiErr(t))
+			Err(t) => if (t.name == "TooLarge") Err(Infra(TooLarge)) else Err(Infra(AiErr(t)))
 		},
 	)
 }

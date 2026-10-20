@@ -122,7 +122,7 @@ refresh_rates! = || {
 					Err(_) => {}
 				}
 			}
-			Err(TimedOut) => break
+			Err(Infra(TimedOut)) => break
 			Err(Closed(_)) => break
 		}
 	}

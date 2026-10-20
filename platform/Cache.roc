@@ -18,7 +18,7 @@ Cache :: { which : [Default, Named(Str)] }.{
 
 	## `cache.match(url)`. The body is a stream (`Http.open!`): `res.text!()` is one more wait. A key that is not
 	## cached: `NotFound` (OP7: `Fields` of the `undefined` result).
-	get : Cache, Str -> Io(Response, [NotFound, CacheErr(Io.Thrown)])
+	get : Cache, Str -> Io(Response, [NotFound, Infra([CacheErr(Io.Thrown)])])
 	get = |cache, url| Io.new(
 		cache_ops(cache).concat([
 			Call(Slot(1), "match", [Lit(Text(url))]),
@@ -29,11 +29,11 @@ Cache :: { which : [Default, Named(Str)] }.{
 				Undefined | Null => Err(NotFound)
 				_ => Ok(response_of(v))
 			}
-			Err(t) => Err(CacheErr(t))
+			Err(t) => Err(Infra(CacheErr(t)))
 		},
 	)
 
-	get! : Cache, Str => Try(Response, [NotFound, CacheErr(Io.Thrown)])
+	get! : Cache, Str => Try(Response, [NotFound, Infra([CacheErr(Io.Thrown)])])
 	get! = |cache, url| Io.run!(get(cache, url))
 
 	## `cache.put(url, response)`, then the response to send. A `Stream` body is read by the put, so the program tees it
@@ -42,7 +42,7 @@ Cache :: { which : [Default, Named(Str)] }.{
 	## whole body in JS until it is sent: for a large stream use `put_after!`. Other bodies: the same response.
 	## A 206 response or a response with `Vary: *` is `CacheErr` (a throw). A response that is not cached
 	## (`Set-Cookie`, `no-store`, too large) is `Ok`: `put` does not say it (Cloudflare docs).
-	put : Cache, Str, Response -> Io(Response, [CacheErr(Io.Thrown)])
+	put : Cache, Str, Response -> Io(Response, [Infra([CacheErr(Io.Thrown)])])
 	put = |cache, url, res| {
 		init = Record([
 			("status", Lit(Int(res.status().to_i64()))),
@@ -62,7 +62,7 @@ Cache :: { which : [Default, Named(Str)] }.{
 				|got| match got {
 					Ok(Ref(b)) => Ok(res.with_body(Stream(b)))
 					Ok(other) => crash "Cache.put: the branch of the tee is ${Str.inspect(other)}"
-					Err(t) => Err(CacheErr(t))
+					Err(t) => Err(Infra(CacheErr(t)))
 				},
 			)
 			body => {
@@ -75,40 +75,40 @@ Cache :: { which : [Default, Named(Str)] }.{
 					cache_ops(cache).concat([init, New(Root("global"), "Response", [Lit(arg), Slot(2)]), Call(Slot(1), "put", [Lit(Text(url)), Slot(3)])]),
 					|got| match got {
 						Ok(_) => Ok(res)
-						Err(t) => Err(CacheErr(t))
+						Err(t) => Err(Infra(CacheErr(t)))
 					},
 				)
 			}
 		}
 	}
 
-	put! : Cache, Str, Response => Try(Response, [CacheErr(Io.Thrown)])
+	put! : Cache, Str, Response => Try(Response, [Infra([CacheErr(Io.Thrown)])])
 	put! = |cache, url, res| Io.run!(put(cache, url, res))
 
 	## Put after the response (API.md 10.2): tee a `Stream` body now (one `call!`, no wait), and give the response to
 	## send, with `Response.after` work that puts the other branch. The client and the cache read at the same time, so
 	## the tee holds only the bytes that one reads before the other. An `Err` of the put is the log line
 	## `fetch: after respond: failed: ...`. Only for the response of a `fetch!` handler: elsewhere the work does not run.
-	put_after! : Cache, Str, Response => Try(Response, [CacheErr(Io.Thrown)])
+	put_after! : Cache, Str, Response => Try(Response, [Infra([CacheErr(Io.Thrown)])])
 	put_after! = |cache, url, res| {
-		(mine, theirs) = res.body().tee!() ? |BodyErr(t)| CacheErr(t)
+		(mine, theirs) = res.body().tee!() ? |BodyErr(t)| Infra(CacheErr(t))
 		copy = res.with_body(theirs)
 		Ok(res.with_body(mine).after(|| cache.put!(url, copy).map_ok(|_| {})))
 	}
 
 	## `cache.delete(url)`: `false` is `NotFound`.
-	delete : Cache, Str -> Io({}, [NotFound, CacheErr(Io.Thrown)])
+	delete : Cache, Str -> Io({}, [NotFound, Infra([CacheErr(Io.Thrown)])])
 	delete = |cache, url| Io.new(
 		cache_ops(cache).append(Call(Slot(1), "delete", [Lit(Text(url))])),
 		|r| match r {
 			Ok(Bool(Bool.True)) => Ok({})
 			Ok(Bool(Bool.False)) => Err(NotFound)
 			Ok(other) => crash "Cache.delete: delete gave ${Str.inspect(other)}"
-			Err(t) => Err(CacheErr(t))
+			Err(t) => Err(Infra(CacheErr(t)))
 		},
 	)
 
-	delete! : Cache, Str => Try({}, [NotFound, CacheErr(Io.Thrown)])
+	delete! : Cache, Str => Try({}, [NotFound, Infra([CacheErr(Io.Thrown)])])
 	delete! = |cache, url| Io.run!(delete(cache, url))
 }
 

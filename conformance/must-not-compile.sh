@@ -195,4 +195,12 @@ done
 out=$("$ROC" check "$dir/handler_methods_ok.roc" 2>&1)
 if [ $? -eq 0 ]; then echo "PASS handler_methods_ok.roc compiles (an unannotated fetch! with methods)"
 else echo "FAIL handler_methods_ok.roc: the control does not compile"; echo "$out" | head -20; rc=1; fi
+# N5 G1a (MODULES.md 1, "Nested and flat errors"). The error of an Rpc method has `Infra(Rpc.Infra)`, not a flat infra tag
+# (a handler that `?`s a storage call does not fit the flat form). The errors of bad input stay flat (`accept_with!`, `Request.json!`:
+# a closed error with `Infra([..])` around them does not fit). Each platform function has its own `Infra([..])` tags (a closed
+# `describe` for the error of `Kv.get!` has no arm for a tag of another function).
+pair rpc_infra_flat_bad.roc 'I need it to have the type: Object.Self -> Try({}, [NotOpen, StorageErr(Io.Thrown)])' rpc_infra_flat_ok.roc
+pair infra_flat_kept_bad.roc 'This expression produces the tag TooLarge but the annotated tag union does not list it' infra_flat_kept_ok.roc
+pair infra_flat_body_bad.roc 'This expression produces the tag BadData but the annotated tag union does not list it' infra_flat_body_ok.roc
+pair infra_precise_bad.roc 'These can never match' infra_precise_ok.roc
 exit "$rc"

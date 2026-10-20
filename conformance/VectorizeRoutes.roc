@@ -61,7 +61,7 @@ VectorizeRoutes :: [].{
 			["query_wrong"] => ok(
 				match wrong.query_with!(q, { return_metadata: All }) {
 					Ok(_) => "Ok"
-					Err(BadData(text)) => "BadData ${text}"
+					Err(Infra(BadData(text))) => "BadData ${text}"
 					Err(e) => Str.inspect(e)
 				},
 			)
@@ -87,35 +87,35 @@ VectorizeRoutes :: [].{
 ok : Str -> Response
 ok = |text| Response.from_text(200, text)
 
-mutation : Try(Vectorize.Mutation, [VectorizeErr({ name : Str, message : Str }), BadData(Str)]) -> Response
+mutation : Try(Vectorize.Mutation, [Infra([VectorizeErr({ name : Str, message : Str }), BadData(Str)])]) -> Response
 mutation = |r| ok(
 	match r {
 		Ok(m) => "Ok ${m.mutation_id}"
-		Err(VectorizeErr(t)) => "VectorizeErr ${t.name}: ${t.message}"
-		Err(BadData(text)) => "BadData ${text}"
+		Err(Infra(VectorizeErr(t))) => "VectorizeErr ${t.name}: ${t.message}"
+		Err(Infra(BadData(text))) => "BadData ${text}"
 	},
 )
 
-matches : Try({ matches : List(Vectorize.Match(Meta)), count : U64 }, [VectorizeErr({ name : Str, message : Str }), BadData(Str), TooLarge]) -> Response
+matches : Try({ matches : List(Vectorize.Match(Meta)), count : U64 }, [Infra([VectorizeErr({ name : Str, message : Str }), BadData(Str), TooLarge])]) -> Response
 matches = |r| ok(
 	match r {
 		Ok(res) => "count=${res.count.to_str()} ${Str.join_with(res.matches.map(match_text), " ")}"
-		Err(VectorizeErr(t)) => "VectorizeErr ${t.name}: ${t.message}"
-		Err(BadData(text)) => "BadData ${text}"
-		Err(TooLarge) => "TooLarge"
+		Err(Infra(VectorizeErr(t))) => "VectorizeErr ${t.name}: ${t.message}"
+		Err(Infra(BadData(text))) => "BadData ${text}"
+		Err(Infra(TooLarge)) => "TooLarge"
 	},
 )
 
 match_text : Vectorize.Match(Meta) -> Str
 match_text = |m| "[${m.id} score=${m.score.to_str()} values=${values(m.values)} ns=${m.namespace ?? "-"} meta=${meta(m.metadata)}]"
 
-stored : Try(List(Vectorize.Stored(Meta)), [VectorizeErr({ name : Str, message : Str }), BadData(Str), TooLarge]) -> Response
+stored : Try(List(Vectorize.Stored(Meta)), [Infra([VectorizeErr({ name : Str, message : Str }), BadData(Str), TooLarge])]) -> Response
 stored = |r| ok(
 	match r {
 		Ok(vs) => "count=${vs.len().to_str()} ${Str.join_with(vs.map(|v| "[${v.id} values=${values(v.values)} ns=${v.namespace ?? "-"} meta=${meta(v.metadata)}]"), " ")}"
-		Err(VectorizeErr(t)) => "VectorizeErr ${t.name}: ${t.message}"
-		Err(BadData(text)) => "BadData ${text}"
-		Err(TooLarge) => "TooLarge"
+		Err(Infra(VectorizeErr(t))) => "VectorizeErr ${t.name}: ${t.message}"
+		Err(Infra(BadData(text))) => "BadData ${text}"
+		Err(Infra(TooLarge)) => "TooLarge"
 	},
 )
 

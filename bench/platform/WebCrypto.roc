@@ -9,55 +9,55 @@ import Js
 WebCrypto :: [].{
 
 	## `subtle.sign`. `key` is data (`Raw`, `Pkcs8`, `Jwk`) or `Imported`.
-	sign : { alg : WebCrypto.Alg, key : WebCrypto.Key, data : List(U8) } -> Io(List(U8), [CryptoErr(Io.Thrown)])
+	sign : { alg : WebCrypto.Alg, key : WebCrypto.Key, data : List(U8) } -> Io(List(U8), [Infra([CryptoErr(Io.Thrown)])])
 	sign = |a| {
 		(ops, key) = with_key(a.key, import_algo(a.alg), ["sign"], Bool.False, [])
 		Io.new(ops.append(Call(Slot(1), "sign", [Lit(sign_algo(a.alg)), arg_of(key), Lit(Bytes(a.data))])), bytes_read)
 	}
 
-	sign! : { alg : WebCrypto.Alg, key : WebCrypto.Key, data : List(U8) } => Try(List(U8), [CryptoErr(Io.Thrown)])
+	sign! : { alg : WebCrypto.Alg, key : WebCrypto.Key, data : List(U8) } => Try(List(U8), [Infra([CryptoErr(Io.Thrown)])])
 	sign! = |a| Io.run!(sign(a))
 
 	## `subtle.verify`. A signature that does not match is `BadSignature`.
-	verify : { alg : WebCrypto.Alg, key : WebCrypto.Key, signature : List(U8), data : List(U8) } -> Io({}, [BadSignature, CryptoErr(Io.Thrown)])
+	verify : { alg : WebCrypto.Alg, key : WebCrypto.Key, signature : List(U8), data : List(U8) } -> Io({}, [BadSignature, Infra([CryptoErr(Io.Thrown)])])
 	verify = |a| {
 		(ops, key) = with_key(a.key, import_algo(a.alg), ["verify"], Bool.False, [])
 		Io.new(
 			ops.append(Call(Slot(1), "verify", [Lit(sign_algo(a.alg)), arg_of(key), Lit(Bytes(a.signature)), Lit(Bytes(a.data))])),
 			|r| match r {
 				Ok(Bool(ok)) => if (ok) Ok({}) else Err(BadSignature)
-				Ok(other) => Err(CryptoErr(bad_data("verify gave ${Str.inspect(other)}")))
-				Err(t) => Err(CryptoErr(t))
+				Ok(other) => Err(Infra(CryptoErr(bad_data("verify gave ${Str.inspect(other)}"))))
+				Err(t) => Err(Infra(CryptoErr(t)))
 			},
 		)
 	}
 
-	verify! : { alg : WebCrypto.Alg, key : WebCrypto.Key, signature : List(U8), data : List(U8) } => Try({}, [BadSignature, CryptoErr(Io.Thrown)])
+	verify! : { alg : WebCrypto.Alg, key : WebCrypto.Key, signature : List(U8), data : List(U8) } => Try({}, [BadSignature, Infra([CryptoErr(Io.Thrown)])])
 	verify! = |a| Io.run!(verify(a))
 
 	## `subtle.encrypt`. `RsaOaep` takes a public key (`Spki`), the AES ciphers the one key.
-	encrypt : { cipher : WebCrypto.Cipher, key : WebCrypto.Key, data : List(U8) } -> Io(List(U8), [CryptoErr(Io.Thrown)])
+	encrypt : { cipher : WebCrypto.Cipher, key : WebCrypto.Key, data : List(U8) } -> Io(List(U8), [Infra([CryptoErr(Io.Thrown)])])
 	encrypt = |a| {
 		(ops, key) = with_key(a.key, cipher_import_algo(a.cipher), ["encrypt"], Bool.False, [])
 		Io.new(ops.append(Call(Slot(1), "encrypt", [Lit(cipher_algo(a.cipher)), arg_of(key), Lit(Bytes(a.data))])), bytes_read)
 	}
 
-	encrypt! : { cipher : WebCrypto.Cipher, key : WebCrypto.Key, data : List(U8) } => Try(List(U8), [CryptoErr(Io.Thrown)])
+	encrypt! : { cipher : WebCrypto.Cipher, key : WebCrypto.Key, data : List(U8) } => Try(List(U8), [Infra([CryptoErr(Io.Thrown)])])
 	encrypt! = |a| Io.run!(encrypt(a))
 
 	## `subtle.decrypt`. `RsaOaep` takes a private key (`Pkcs8`).
-	decrypt : { cipher : WebCrypto.Cipher, key : WebCrypto.Key, data : List(U8) } -> Io(List(U8), [CryptoErr(Io.Thrown)])
+	decrypt : { cipher : WebCrypto.Cipher, key : WebCrypto.Key, data : List(U8) } -> Io(List(U8), [Infra([CryptoErr(Io.Thrown)])])
 	decrypt = |a| {
 		(ops, key) = with_key(a.key, cipher_import_algo(a.cipher), ["decrypt"], Bool.False, [])
 		Io.new(ops.append(Call(Slot(1), "decrypt", [Lit(cipher_algo(a.cipher)), arg_of(key), Lit(Bytes(a.data))])), bytes_read)
 	}
 
-	decrypt! : { cipher : WebCrypto.Cipher, key : WebCrypto.Key, data : List(U8) } => Try(List(U8), [CryptoErr(Io.Thrown)])
+	decrypt! : { cipher : WebCrypto.Cipher, key : WebCrypto.Key, data : List(U8) } => Try(List(U8), [Infra([CryptoErr(Io.Thrown)])])
 	decrypt! = |a| Io.run!(decrypt(a))
 
 	## `subtle.deriveBits`. `length_bits` is in bits (MC10). For `Ecdh` and `X25519`, `key` is the private key of the app
 	## and `public` the public key of the peer (both imported in the same program).
-	derive_bits : { alg : WebCrypto.Derive, key : WebCrypto.Key, length_bits : U32 } -> Io(List(U8), [CryptoErr(Io.Thrown)])
+	derive_bits : { alg : WebCrypto.Derive, key : WebCrypto.Key, length_bits : U32 } -> Io(List(U8), [Infra([CryptoErr(Io.Thrown)])])
 	derive_bits = |a| {
 		(ops, key) = with_key(a.key, derive_import_algo(a.alg), ["deriveBits"], Bool.False, [])
 		(ops2, algo) = match a.alg {
@@ -68,30 +68,30 @@ WebCrypto :: [].{
 		Io.new(ops2.append(Call(Slot(1), "deriveBits", [algo, arg_of(key), Lit(Int(a.length_bits.to_i64()))])), bytes_read)
 	}
 
-	derive_bits! : { alg : WebCrypto.Derive, key : WebCrypto.Key, length_bits : U32 } => Try(List(U8), [CryptoErr(Io.Thrown)])
+	derive_bits! : { alg : WebCrypto.Derive, key : WebCrypto.Key, length_bits : U32 } => Try(List(U8), [Infra([CryptoErr(Io.Thrown)])])
 	derive_bits! = |a| Io.run!(derive_bits(a))
 
 	## `subtle.importKey` with `extractable: true`: an `Imported` key, for many operations in one task. The usages follow
 	## the algorithm and the form of the key (a private key signs, a public key verifies).
-	import_key : WebCrypto.KeyAlg, WebCrypto.Key -> Io(WebCrypto.Key, [CryptoErr(Io.Thrown)])
+	import_key : WebCrypto.KeyAlg, WebCrypto.Key -> Io(WebCrypto.Key, [Infra([CryptoErr(Io.Thrown)])])
 	import_key = |alg, key| {
 		(ops, at) = with_key(key, import_key_algo(alg), import_usages(alg, key), Bool.True, [])
 		Io.new(
 			ops.append(Keep(at)),
 			|r| match r {
 				Ok(Ref(ref)) => Ok(Imported(ref))
-				Ok(other) => Err(CryptoErr(bad_data("importKey gave ${Str.inspect(other)}")))
-				Err(t) => Err(CryptoErr(t))
+				Ok(other) => Err(Infra(CryptoErr(bad_data("importKey gave ${Str.inspect(other)}"))))
+				Err(t) => Err(Infra(CryptoErr(t)))
 			},
 		)
 	}
 
-	import_key! : WebCrypto.KeyAlg, WebCrypto.Key => Try(WebCrypto.Key, [CryptoErr(Io.Thrown)])
+	import_key! : WebCrypto.KeyAlg, WebCrypto.Key => Try(WebCrypto.Key, [Infra([CryptoErr(Io.Thrown)])])
 	import_key! = |alg, key| Io.run!(import_key(alg, key))
 
 	## `subtle.exportKey` of an `Imported` key as data: `Raw`, `Pkcs8`, `Spki` or `Jwk` (the JSON text). A key that is
 	## data already has no algorithm, so it can only give its own form (no crossing): another form is `CryptoErr`.
-	export_key : WebCrypto.Key, [Raw, Pkcs8, Spki, Jwk] -> Io(WebCrypto.Key, [CryptoErr(Io.Thrown)])
+	export_key : WebCrypto.Key, [Raw, Pkcs8, Spki, Jwk] -> Io(WebCrypto.Key, [Infra([CryptoErr(Io.Thrown)])])
 	export_key = |key, form| match key {
 		Imported(ref) => {
 			ops = [
@@ -110,31 +110,31 @@ WebCrypto :: [].{
 					(Ok(Bytes(b)), Pkcs8) => Ok(Pkcs8(b))
 					(Ok(Bytes(b)), Spki) => Ok(Spki(b))
 					(Ok(Text(s)), Jwk) => Ok(Jwk(s))
-					(Ok(other), _) => Err(CryptoErr(bad_data("exportKey gave ${Str.inspect(other)}")))
-					(Err(t), _) => Err(CryptoErr(t))
+					(Ok(other), _) => Err(Infra(CryptoErr(bad_data("exportKey gave ${Str.inspect(other)}"))))
+					(Err(t), _) => Err(Infra(CryptoErr(t)))
 				},
 			)
 		}
 		_ => match (key, form) {
 			(Raw(_), Raw) | (Pkcs8(_), Pkcs8) | (Spki(_), Spki) | (Jwk(_), Jwk) => Io.sync([], |_| Ok(key))
-			_ => Io.sync([], |_| Err(CryptoErr(bad_data("export_key!: a key as data has no algorithm: import_key! it first"))))
+			_ => Io.sync([], |_| Err(Infra(CryptoErr(bad_data("export_key!: a key as data has no algorithm: import_key! it first")))))
 		}
 	}
 
-	export_key! : WebCrypto.Key, [Raw, Pkcs8, Spki, Jwk] => Try(WebCrypto.Key, [CryptoErr(Io.Thrown)])
+	export_key! : WebCrypto.Key, [Raw, Pkcs8, Spki, Jwk] => Try(WebCrypto.Key, [Infra([CryptoErr(Io.Thrown)])])
 	export_key! = |key, form| Io.run!(export_key(key, form))
 
 	## `subtle.generateKey` with `extractable: true`, then `exportKey` of each key, in one program: the key is data
 	## (`One(Raw)` for an AES or HMAC key, `Pair({ private: Pkcs8, public: Spki })` for the others).
-	generate_key : WebCrypto.KeyAlg -> Io(WebCrypto.Generated, [CryptoErr(Io.Thrown)])
+	generate_key : WebCrypto.KeyAlg -> Io(WebCrypto.Generated, [Infra([CryptoErr(Io.Thrown)])])
 	generate_key = |alg| generate_key_with(alg, {})
 
-	generate_key! : WebCrypto.KeyAlg => Try(WebCrypto.Generated, [CryptoErr(Io.Thrown)])
+	generate_key! : WebCrypto.KeyAlg => Try(WebCrypto.Generated, [Infra([CryptoErr(Io.Thrown)])])
 	generate_key! = |alg| Io.run!(generate_key(alg))
 
 	## `modulus_bits`: RSA (default 2048, the public exponent is 65537). `length_bits`: AES (default 256) and HMAC (default:
 	## the block size of the hash). PBKDF2 and HKDF have no `generateKey`: `CryptoErr`.
-	generate_key_with : WebCrypto.KeyAlg, { modulus_bits ?: U32, length_bits ?: U32 } -> Io(WebCrypto.Generated, [CryptoErr(Io.Thrown)])
+	generate_key_with : WebCrypto.KeyAlg, { modulus_bits ?: U32, length_bits ?: U32 } -> Io(WebCrypto.Generated, [Infra([CryptoErr(Io.Thrown)])])
 	generate_key_with = |alg, opts| {
 		gen = Call(Slot(1), "generateKey", [Lit(generate_algo(alg, opts.?modulus_bits ?? 2048, opts.?length_bits)), Lit(Bool(Bool.True)), Lit(generate_usages(alg))])
 		prelude = [Get(Root("global"), "crypto"), Get(Slot(0), "subtle"), gen]
@@ -149,8 +149,8 @@ WebCrypto :: [].{
 				]),
 				|r| match r {
 					Ok(Obj([("private", Bytes(p)), ("public", Bytes(q))])) => Ok(Pair({ private: Pkcs8(p), public: Spki(q) }))
-					Ok(other) => Err(CryptoErr(bad_data("generateKey gave ${Str.inspect(other)}")))
-					Err(t) => Err(CryptoErr(t))
+					Ok(other) => Err(Infra(CryptoErr(bad_data("generateKey gave ${Str.inspect(other)}"))))
+					Err(t) => Err(Infra(CryptoErr(t)))
 				},
 			)
 		} else {
@@ -158,14 +158,14 @@ WebCrypto :: [].{
 				prelude.append(Call(Slot(1), "exportKey", [Lit(Text("raw")), Slot(2)])),
 				|r| match r {
 					Ok(Bytes(b)) => Ok(One(Raw(b)))
-					Ok(other) => Err(CryptoErr(bad_data("generateKey gave ${Str.inspect(other)}")))
-					Err(t) => Err(CryptoErr(t))
+					Ok(other) => Err(Infra(CryptoErr(bad_data("generateKey gave ${Str.inspect(other)}"))))
+					Err(t) => Err(Infra(CryptoErr(t)))
 				},
 			)
 		}
 	}
 
-	generate_key_with! : WebCrypto.KeyAlg, { modulus_bits ?: U32, length_bits ?: U32 } => Try(WebCrypto.Generated, [CryptoErr(Io.Thrown)])
+	generate_key_with! : WebCrypto.KeyAlg, { modulus_bits ?: U32, length_bits ?: U32 } => Try(WebCrypto.Generated, [Infra([CryptoErr(Io.Thrown)])])
 	generate_key_with! = |alg, opts| Io.run!(generate_key_with(alg, opts))
 
 	## HMAC-SHA256 in Roc over the builtin SHA-256 (RFC 2104): no crossing, no wait (RN9: the webhook signature).
@@ -181,7 +181,7 @@ WebCrypto :: [].{
 	## SHA-256 of bytes in wasm memory: the builtin `Crypto.SHA256` below `sha256_crossover_bytes` (no crossing), else
 	## `crypto.subtle.digest` (one crossing, one wait, the isolate runs other tasks meanwhile). The result is the 32 bytes of
 	## the digest. For a body that is not in wasm memory yet, use `Body.sha256!`.
-	sha256! : List(U8) => Try(List(U8), [CryptoErr(Io.Thrown)])
+	sha256! : List(U8) => Try(List(U8), [Infra([CryptoErr(Io.Thrown)])])
 	sha256! = |bytes|
 		if use_builtin(bytes) {
 			Ok(Crypto.SHA256.hash(bytes).to_bytes())
@@ -191,7 +191,7 @@ WebCrypto :: [].{
 
 	## The twin of `sha256!` (MC3). Below the crossover its program has no op: a `Io.run!` of it is one `call!` of an
 	## empty program, and inside `Io.both!` it is a branch with no op.
-	sha256 : List(U8) -> Io(List(U8), [CryptoErr(Io.Thrown)])
+	sha256 : List(U8) -> Io(List(U8), [Infra([CryptoErr(Io.Thrown)])])
 	sha256 = |bytes|
 		if use_builtin(bytes) {
 			Io.sync([], |_| Ok(Crypto.SHA256.hash(bytes).to_bytes()))
@@ -299,18 +299,18 @@ use_builtin : List(U8) -> Bool
 use_builtin = |bytes| bytes.len() < sha256_crossover_bytes
 
 ## `crypto.subtle.digest('SHA-256', bytes)`: the bytes cross once, the digest comes back as an `ArrayBuffer`.
-digest_io : List(U8) -> Io(List(U8), [CryptoErr(Io.Thrown)])
+digest_io : List(U8) -> Io(List(U8), [Infra([CryptoErr(Io.Thrown)])])
 digest_io = |bytes| Io.new(
 	[Get(Root("global"), "crypto"), Get(Slot(0), "subtle"), Call(Slot(1), "digest", [Lit(Text("SHA-256")), Lit(Bytes(bytes))])],
 	bytes_read,
 )
 
 ## The result of a function that gives bytes (an `ArrayBuffer` is `Bytes`, J rules).
-bytes_read : Try(Js, Io.Thrown) -> Try(List(U8), [CryptoErr(Io.Thrown)])
+bytes_read : Try(Js, Io.Thrown) -> Try(List(U8), [Infra([CryptoErr(Io.Thrown)])])
 bytes_read = |r| match r {
 	Ok(Bytes(b)) => Ok(b)
-	Ok(other) => Err(CryptoErr(bad_data("the result is ${Str.inspect(other)}, not bytes")))
-	Err(t) => Err(CryptoErr(t))
+	Ok(other) => Err(Infra(CryptoErr(bad_data("the result is ${Str.inspect(other)}, not bytes"))))
+	Err(t) => Err(Infra(CryptoErr(t)))
 }
 
 named : Str -> Js

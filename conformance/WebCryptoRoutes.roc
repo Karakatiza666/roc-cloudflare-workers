@@ -7,7 +7,7 @@ import pf.Io
 import pf.Js
 import Q
 
-E : [CryptoErr(Io.Thrown), BadSignature, Odd(Str)]
+E : [Infra([CryptoErr(Io.Thrown)]), BadSignature, Odd(Str)]
 
 Pair : { private : WebCrypto.Key, public : WebCrypto.Key }
 
@@ -47,7 +47,7 @@ WebCryptoRoutes :: [].{
 show : Try(Str, E) -> Str
 show = |r| match r {
 	Ok(s) => s
-	Err(CryptoErr(t)) => "CryptoErr ${t.name}: ${t.message}"
+	Err(Infra(CryptoErr(t))) => "CryptoErr ${t.name}: ${t.message}"
 	Err(BadSignature) => "BadSignature"
 	Err(Odd(s)) => "Odd ${s}"
 }
@@ -94,11 +94,11 @@ ed25519! = || {
 	Ok("sig=${signature.len().to_str()} verify=${show_unit(good)} changed=${show_unit(changed)}")
 }
 
-show_unit : Try({}, [BadSignature, CryptoErr(Io.Thrown)]) -> Str
+show_unit : Try({}, [BadSignature, Infra([CryptoErr(Io.Thrown)])]) -> Str
 show_unit = |r| match r {
 	Ok({}) => "Ok"
 	Err(BadSignature) => "BadSignature"
-	Err(CryptoErr(t)) => "CryptoErr ${t.name}"
+	Err(Infra(CryptoErr(t))) => "CryptoErr ${t.name}"
 }
 
 rsa_oaep! : () => Try(Str, E)
@@ -177,7 +177,7 @@ raw_roundtrip! = || {
 generate_err! : () => Try(Str, E)
 generate_err! = || match WebCrypto.generate_key!(Pbkdf2) {
 	Ok(_) => Ok("Ok")
-	Err(CryptoErr(t)) => Ok("CryptoErr ${t.name}: ${t.message}")
+	Err(Infra(CryptoErr(t))) => Ok("CryptoErr ${t.name}: ${t.message}")
 }
 
 ## Every function through its `Io` twin: one wait each (`calls=` is the number of them).
@@ -263,7 +263,7 @@ pin! = |name| {
 	}
 	match Js.pin!(name, Ref(key), { max_age_ms: 600_000 }) {
 		Ok({}) => Ok("pinned")
-		Err(PinErr(t)) => Err(CryptoErr(t))
+		Err(PinErr(t)) => Err(Infra(CryptoErr(t)))
 	}
 }
 

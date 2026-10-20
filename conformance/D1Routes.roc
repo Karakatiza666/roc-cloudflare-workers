@@ -199,7 +199,7 @@ all_tuples! = |ty, sql, p, how| match ty {
 	}
 }
 
-all_tuples_by! : Str, List(Sql), How => Try(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Readable(errs)]
+all_tuples_by! : Str, List(Sql), How => Try(rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs)]
 all_tuples_by! = |sql, p, how| match how {
 	Direct => db.all_tuples!(sql, p)
 	Twin => Io.run!(db.all_tuples(sql, p))
@@ -258,7 +258,7 @@ first! = |ty, sql, p, how| match ty {
 	}
 }
 
-all_by! : Str, List(Sql), How => Try(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Readable(errs)]
+all_by! : Str, List(Sql), How => Try(rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs)]
 all_by! = |sql, p, how| match how {
 	Direct => db.all!(sql, p)
 	Twin => Io.run!(db.all(sql, p))
@@ -266,7 +266,7 @@ all_by! = |sql, p, how| match how {
 	WithTwin(m) => Io.run!(db.all_with(sql, p, { max_bytes: m }))
 }
 
-first_by! : Str, List(Sql), How => Try(row, [NotFound, D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [row.Cbor.Readable(errs)]
+first_by! : Str, List(Sql), How => Try(row, [NotFound, Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [row.Cbor.Readable(errs)]
 first_by! = |sql, p, how| match how {
 	Direct => db.first!(sql, p)
 	Twin => Io.run!(db.first(sql, p))

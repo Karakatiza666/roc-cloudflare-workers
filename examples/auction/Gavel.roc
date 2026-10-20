@@ -25,10 +25,11 @@ Gavel :: [].{
 	Receipt : { lot_id : Str, winner : Str, amount_cents : U64, fee_cents : U64, converted : List({ currency : Str, amount_cents : U64 }), settled_ms : U64 }
 
 	## What a lot room can answer. Each Rpc method of the room has this error type, and the callee cannot give another tag.
-	RoomErr : [NotOpen, AlreadyOpen, StillOpen, StorageErr(Io.Thrown), SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]
+	## `Infra`: a platform call of the room failed (storage, SQL).
+	RoomErr : [NotOpen, AlreadyOpen, StillOpen, Infra(Rpc.Infra)]
 
-	## What `settle_due` can answer.
-	SettleErr : [D1Err(Io.Thrown), Constraint(Sql.Constraint), KvErr(Io.Thrown), BadData(Str), TooLarge]
+	## What `settle_due` can answer: only platform errors (D1, KV).
+	SettleErr : [Infra(Rpc.Infra)]
 
 	# The Rpc methods. The Roc callee and the Roc caller both use these values.
 	## `open` is a command: its answer is `{}`.
@@ -75,7 +76,7 @@ Gavel :: [].{
 	]
 }
 
-create_tables! : () => Try({}, [D1Err(Io.Thrown), Constraint(Sql.Constraint)])
+create_tables! : () => Try({}, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint)])])
 create_tables! = || {
 	for sql in Gavel.schema {
 		_ = Gavel.db.run!(sql, Sql.none)?

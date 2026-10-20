@@ -59,6 +59,19 @@ const KD = 'kv Cell declare: the binding of the manifest is the kind kv and the 
 const BA = 'websocket broadcast!, broadcast_json!: all sockets get the message (the JSON text for the second), the result is {} and Ok({})';
 const BT = 'websocket broadcast_json_with!: the count, and only the sockets with the tag get the JSON text';
 const BN = 'websocket broadcast_json!, broadcast_json_with!: a NaN is Err(BadData) and no socket gets anything';
+// The checks of the N5 G1a reverts (the names of conformance/checks/rpcerr.mjs).
+const IS = 'rpcerr infra: a Durable Object callee that ?s a SQL error: the caller gets Remote(Infra(SqlErr)) with name and message';
+const IT = 'rpcerr infra: a Durable Object callee that ?s a storage error: Remote(Infra(StorageErr)) with name and message';
+const IC = 'rpcerr infra: a Durable Object callee that ?s a constraint error: Remote(Infra(Constraint)) with the kind and the message';
+const ID = 'rpcerr infra: a Workers callee (default entry point and Admin) that ?s a D1 error: Remote(Infra(D1Err))';
+const IN = 'rpcerr infra: a domain error of the same callee is still Remote(NotOpen), and Ok is Ok';
+const IR = 'rpcerr infra: a callee that crashes is Infra(RpcErr) of the caller, not Remote';
+const IJ = 'rpcerr infra: a JS callee that gives { Err: { Infra: { StorageErr } } } is Remote(Infra(StorageErr)), a domain tag Remote(NotOpen)';
+const IB = 'rpcerr infra: a reply with an infra tag that Rpc.Infra has not is Infra(BadData)';
+const IF = 'rpcerr forward |e| e: an inner domain error is the same Remote(NotOpen), an inner infra error is Remote(Infra(..)) of the outer caller';
+const IM = 'rpcerr forward with a domain mapping: NotOpen of the inner callee is Remote(Shut), an inner infra error is kept';
+const IK = 'rpcerr forward: a failure of the inner call itself (the inner callee crashes) is Remote(Infra(RpcErr)) of the outer caller';
+const IW = 'rpcerr infra: the reply on the wire for a JS caller is { Err: { Infra: { <tag>: payload } } }, also when forwarded';
 const reverts = [
   // 8h wave C: the builders of the opaque Request and Response (one route, `/http/builders`).
   R('Response.with_status: keeps the status', 'conformance', ['http wave C builders: Request.new with_body, with_method, with_url, and Response.with_status, with_body'], [BP + 'Response.roc', 'with_status = |r, code| { ..r, status: code }', 'with_status = |r, _code| r']),
@@ -169,7 +182,7 @@ const reverts = [
   R('R2.respond: the range of the request is not sent to R2', 'conformance', ['r2 respond!: one range is 206 with content-range and the bytes (a-b, a-, -n, past the end)'], [BP + 'R2.roc', 'Ok(range) => { ..opts0, range }', 'Ok(_) => opts0']),
   R('R2.respond: If-Range does not give the whole object', 'conformance', ['r2 respond!: more than one range, a wrong range and If-Range give 200 with the whole object'], [BP + 'R2.roc', '(Err(_), Ok(text)) => parse_range(text)', '(_, Ok(text)) => parse_range(text)']),
   R('R2.respond!: the 416 of the error 10039 has no content-range', 'conformance', ['r2 respond!: a range after the end is 416 (R2 error 10039)'], [BP + 'R2.roc', 'Ok(meta) => Ok(res.with_headers([Header.{ name: "content-range", value: "bytes */${meta.size_bytes.to_str()}" }]))', 'Ok(_) => Ok(res)']),
-  R('R2.respond: no 416 mapping of the R2 error 10039', 'conformance', ['r2 respond!: a range after the end is 416 (R2 error 10039)'], [BP + 'R2.roc', 'if (t.message.contains("(10039)")) Ok(Response.from_status(416)) else Err(R2Err(t))', 'Err(R2Err(t))']),
+  R('R2.respond: no 416 mapping of the R2 error 10039', 'conformance', ['r2 respond!: a range after the end is 416 (R2 error 10039)'], [BP + 'R2.roc', 'if (t.message.contains("(10039)")) Ok(Response.from_status(416)) else Err(Infra(R2Err(t)))', 'Err(Infra(R2Err(t)))']),
   R('R2.respond: a missing key is 200', 'conformance', ['r2 respond!: a key that is not there is 404 "Not found"'], [BP + 'R2.roc', 'Ok(Absent) => Ok(Response.from_text(404, "Not found"))', 'Ok(Absent) => Ok(Response.from_text(200, "Not found"))']),
   R('R2.to_response: no etag header', 'conformance', ['r2 to_response: 200, the metadata and etag, a missing metadata field is not set', 'r2 respond!: 200 with the metadata, etag and accept-ranges'], [BP + 'R2.roc', '("etag", Ok(meta.http_etag)),', '']),
   R('R2.to_response: no expires header', 'conformance', ['r2 to_response: 200, the metadata and etag, a missing metadata field is not set', 'r2 respond!: 200 with the metadata, etag and accept-ranges'], [BP + 'R2.roc', '("expires", h.?cache_expiry_ms.map_ok(http_date)),', '']),
@@ -271,7 +284,7 @@ const reverts = [
   R('Queue event: attempts is always 1 (8f2)', 'conformance', ['queue each!: msg.attempts is 1, then 2 after an Err'], ['js/events.js', 'attempts: Number(m.attempts),', 'attempts: 1,']),
   R('Queue.Batch.retry_all_with!: no delay (8f2)', 'conformance', ['queue Message.retry_with! and the batch functions: delaySeconds rounds up'], [BP + 'Queue.roc', '[Call(Root("event"), "retryAll", [Lit(Obj(retry_options(delay_ms)))])]', '[Call(Root("event"), "retryAll", [])]']),
   R('Queue.send_batch_with!: no delay (8f2)', 'conformance', ['queue send_batch! and send_batch_with! with delay_ms'], [BP + 'Queue.roc', 'Call(Slot(0), "sendBatch", [Lit(Arr(items)), Lit(Obj(batch_options))])', 'Call(Slot(0), "sendBatch", [Lit(Arr(items))])']),
-  R('Queue.send_batch!: an error of Workers is Ok (8f2)', 'conformance', ['queue send_batch! of 101 messages is QueueErr'], [BP + 'Queue.roc', 'Err(t) => Err(QueueErr(t))', 'Err(_t) => Ok({})']),
+  R('Queue.send_batch!: an error of Workers is Ok (8f2)', 'conformance', ['queue send_batch! of 101 messages is QueueErr'], [BP + 'Queue.roc', 'Err(t) => Err(Infra(QueueErr(t)))', 'Err(_t) => Ok({})']),
   R('Queue.v8: the content type is "json" (8f2)', 'conformance', ['queue v8: a Cbor.Bytes field reaches a JS consumer as Uint8Array'], [BP + 'Queue.roc', 'content_type: "v8",', 'content_type: "json",']),
   R('queue entry: an Err of queue! does not throw (8f2)', 'conformance', ['queue queue!: an Err is a throw, so Workers retries the batch'], ['js/index.js', "      log(`queue: ${reason(r.outcome)}`);\n      throw new Error(`queue: ${reason(r.outcome)}`);", "      log(`queue: ${reason(r.outcome)}`);"]),
   R('Kv.get: the binding method is called "getx" (8f2)', 'conformance', ['kv get!, get (Io twin), put!, delete!, and the twins: text', 'kv json: a record with a U64 of 2^60 is exact, and JS reads it as JSON'], [BP + 'Kv.roc', 'Call(Slot(0), "get", [Lit(Text(key))', 'Call(Slot(0), "getx", [Lit(Text(key))']),
@@ -313,8 +326,8 @@ const reverts = [
   R("Ai.Gateway: cache_key is not sent", "conformance", ["ai run_with!, run_with (Io twin): the gateway with all its fields, cache_ttl_ms in whole seconds, rounded up"], [BP + "Ai.roc", "(\"cacheKey\", Text(k))", "(\"cacheKeyx\", Text(k))"]),
   R("Ai.run: no limit in pf.pack", "conformance", ["ai run!: an output above 1 MiB is TooLarge, run_with! with max_bytes of 2 MiB gives it"], [BP + "Ai.roc", "[Slot(1), Lit(Int(o.max_bytes.to_i64_try() ?? I64.highest))]", "[Slot(1)]"]),
   R("Ai.run_with: max_bytes is ignored", "conformance", ["ai run!: an output above 1 MiB is TooLarge, run_with! with max_bytes of 2 MiB gives it"], [BP + "Ai.roc", "max_bytes: opts.?max_bytes ?? Body.default_max", "max_bytes: Body.default_max"]),
-  R("Ai.run: TooLarge is AiErr", "conformance", ["ai run!: an output above 1 MiB is TooLarge, run_with! with max_bytes of 2 MiB gives it"], [BP + "Ai.roc", "if (t.name == \"TooLarge\") Err(TooLarge) else Err(AiErr(t))", "Err(AiErr(t))"]),
-  R("Ai.run: a parse error is TooLarge, not BadData", "conformance", ["ai run!: an output that does not fit its type is BadData"], [BP + "Ai.roc", "Err(e) => Err(BadData(Str.inspect(e)))", "Err(_) => Err(TooLarge)"]),
+  R("Ai.run: TooLarge is AiErr", "conformance", ["ai run!: an output above 1 MiB is TooLarge, run_with! with max_bytes of 2 MiB gives it"], [BP + "Ai.roc", "if (t.name == \"TooLarge\") Err(Infra(TooLarge)) else Err(Infra(AiErr(t)))", "Err(Infra(AiErr(t)))"]),
+  R("Ai.run: a parse error is TooLarge, not BadData", "conformance", ["ai run!: an output that does not fit its type is BadData"], [BP + "Ai.roc", "Err(e) => Err(Infra(BadData(Str.inspect(e))))", "Err(_) => Err(Infra(TooLarge))"]),
   R("Vectorize.query: query is called \"queryx\"", "conformance", ["vectorize query!, query (Io twin): the matches with ids and scores, no values and no metadata by default", "vectorize query_with!, query_with (Io twin): all options, the typed metadata and the values come back", "vectorize query_with!: an option that the app leaves out is not sent", "vectorize query_with!: return_metadata Indexed and None"], [BP + "Vectorize.roc", "Call(Slot(0), \"query\", [", "Call(Slot(0), \"queryx\", ["]),
   R("Vectorize.upsert: upsert is called \"upsertx\"", "conformance", ["vectorize upsert!, upsert (Io twin): the vectors, with metadata and namespace only where the app gives them"], [BP + "Vectorize.roc", "write_io(index, \"upsert\", vectors)", "write_io(index, \"upsertx\", vectors)"]),
   R("Vectorize.insert: insert is called \"insertx\"", "conformance", ["vectorize insert!, insert (Io twin): the same vectors; an id that exists keeps its vector"], [BP + "Vectorize.roc", "write_io(index, \"insert\", vectors)", "write_io(index, \"insertx\", vectors)"]),
@@ -384,10 +397,10 @@ const reverts = [
   R("Workflows.State: \"paused\" is Queued", "conformance", ["workflows pause!, resume!, send_event!: a waiting instance, then its output has the event"], [BP + "Workflows.roc", "Text(\"paused\") => Paused", "Text(\"paused\") => Queued"]),
   R("Workflows.Status: the output is not read", "conformance", ["workflows status!, status (Io twin): the state, no error, the output as JSON text and typed"], [BP + "Workflows.roc", "output_json = match field(fs, \"output\") {\n\t\t\tText(s) => Ok(s)", "output_json = match field(fs, \"output\") {\n\t\t\tText(_) => Err(NotSet)"]),
   R("Workflows.Status (roc test): the state \"waitingForPause\" is Unknown", "roc test", [], ["platform/Workflows.roc", "Text(\"waitingForPause\") => WaitingForPause", "Text(\"waitingForPause\") => Unknown"]),
-  R("Ai.run: a throw is TooLarge", "conformance", ["ai run!: a throw of the binding is AiErr"], [BP + "Ai.roc", "Err(t) => if (t.name == \"TooLarge\") Err(TooLarge) else Err(AiErr(t))", "Err(_) => Err(TooLarge)"]),
-  R("Ai.stream: a throw is a crash", "conformance", ["ai stream!: a throw is AiErr"], [BP + "Ai.roc", "Ok(other) => crash \"Ai.stream: run gave ${Str.inspect(other)}\"\n\t\t\tErr(t) => Err(AiErr(t))", "Ok(other) => crash \"Ai.stream: run gave ${Str.inspect(other)}\"\n\t\t\tErr(_) => crash \"a throw\""]),
-  R("Assets.fetch: a throw is a crash", "conformance", ["assets fetch!: a binding that is not in the config, and a url with no host, are AssetsErr"], [BP + "Assets.roc", "|t| AssetsErr(t))", "|_t| crash \"a throw\")"]),
-  R("Vectorize.query: a throw is TooLarge", "conformance", ["vectorize query!: a binding that is not in the config is VectorizeErr"], [BP + "Vectorize.roc", "Ok(js) => matches_of(read, js).map_err(|why| BadData(why))\n\t\t\tErr(t) => Err(read_error(t))", "Ok(js) => matches_of(read, js).map_err(|why| BadData(why))\n\t\t\tErr(_) => Err(TooLarge)"]),
+  R("Ai.run: a throw is TooLarge", "conformance", ["ai run!: a throw of the binding is AiErr"], [BP + "Ai.roc", "Err(t) => if (t.name == \"TooLarge\") Err(Infra(TooLarge)) else Err(Infra(AiErr(t)))", "Err(_) => Err(Infra(TooLarge))"]),
+  R("Ai.stream: a throw is a crash", "conformance", ["ai stream!: a throw is AiErr"], [BP + "Ai.roc", "Ok(other) => crash \"Ai.stream: run gave ${Str.inspect(other)}\"\n\t\t\tErr(t) => Err(Infra(AiErr(t)))", "Ok(other) => crash \"Ai.stream: run gave ${Str.inspect(other)}\"\n\t\t\tErr(_) => crash \"a throw\""]),
+  R("Assets.fetch: a throw is a crash", "conformance", ["assets fetch!: a binding that is not in the config, and a url with no host, are AssetsErr"], [BP + "Assets.roc", "|t| Infra(AssetsErr(t)))", "|_t| crash \"a throw\")"]),
+  R("Vectorize.query: a throw is TooLarge", "conformance", ["vectorize query!: a binding that is not in the config is VectorizeErr"], [BP + "Vectorize.roc", "Ok(js) => matches_of(read, js).map_err(|why| Infra(BadData(why)))\n\t\t\tErr(t) => Err(Infra(read_error(t)))", "Ok(js) => matches_of(read, js).map_err(|why| Infra(BadData(why)))\n\t\t\tErr(_) => Err(Infra(TooLarge))"]),
   // PLAN.md 8f, part 1: Objects, RPC, Manifest. The shim (js/index.js, js/events.js, js/tasks.js) and the Roc modules.
   R('8f manifest: no check of a class in Roc with no export', 'conformance', ['objects load: a class in Roc with no export stops the load with its name'],
     [IX, 'if (!classes[kind].has(name)) throw new Error(', 'if (false) throw new Error(']),
@@ -446,11 +459,11 @@ const reverts = [
   R('8h B Object.set_alarm_in!: the delay is divided by 1000', 'conformance', ['objects set_alarm_in! and its Io twin: get_alarm! is about now + delay, and the alarm fires after the delay, not at once'],
     [BP + 'Object.roc', 'Call(Root("pf"), "alarmIn", [Slot(0), Lit(Int(delay_ms.to_i64_try() ?? I64.highest))])', 'Call(Root("pf"), "alarmIn", [Slot(0), Lit(Int((delay_ms.to_i64_try() ?? I64.highest) // 1000))])']),
   R('8h B Attachment.get!: no attachment is BadData, not NotFound', 'conformance', ['websocket Attachment: NotFound before set!, a record round trip, and a read as another type is BadData'],
-    [BP + 'Object.roc', 'Ok(Null) | Ok(Undefined) => Err(NotFound)\n\t\t\t\tOk(other) => Err(BadData("the attachment', 'Ok(Null) | Ok(Undefined) => Err(BadData("none"))\n\t\t\t\tOk(other) => Err(BadData("the attachment']),
+    [BP + 'Object.roc', 'Ok(Null) | Ok(Undefined) => Err(NotFound)\n\t\t\t\tOk(other) => Err(Infra(BadData("the attachment', 'Ok(Null) | Ok(Undefined) => Err(Infra(BadData("none")))\n\t\t\t\tOk(other) => Err(Infra(BadData("the attachment']),
   R('8h B Attachment.set!: no value is written', 'conformance', ['websocket Attachment: NotFound before set!, a record round trip, and a read as another type is BadData'],
     [BP + 'Object.roc', '"serializeAttachment", [Lit(Bytes(write(value)))]', '"serializeAttachment", [Lit(Bytes([]))]']),
   R('8h B Attachment.get!: the BadData text has no slot name', 'conformance', ['websocket Attachment: NotFound before set!, a record round trip, and a read as another type is BadData'],
-    [BP + 'Object.roc', 'read(bytes).map_err(|m| BadData("the attachment ${att.name}: ${m}"))', 'read(bytes).map_err(|m| BadData(m))']),
+    [BP + 'Object.roc', 'read(bytes).map_err(|m| Infra(BadData("the attachment ${att.name}: ${m}")))', 'read(bytes).map_err(|m| Infra(BadData(m)))']),
   R('8h B Http.cloudflare_error: a status of 399 is an error', 'conformance', ['http cloudflare_error: a 404 with a normal body, and a status under 400, are NotCloudflareError', 'http cloudflare_error: a text body, the prefix, the digits and the status'],
     [BP + 'Http.roc', 'if res.status() < 400 {', 'if res.status() < 200 {']),
   // No revert for the 64-byte limit of a Bytes body alone: the limit of the text (the same 64 bytes) after the decode gives the same result.
@@ -549,7 +562,7 @@ const reverts = [
   R('8f3 pf.tcpRead: the lost branch takes the bytes', 'conformance', ['tcp Io.race! of read and Time.sleep(50), the bytes at 100 ms: the sleep wins, the next read gets them'],
     ['js/helpers.js', 'if (!signal?.aborted && st.pending === read) st.pending = null;', 'if (st.pending === read) st.pending = null;']),
   R('8f3 Tcp.read: the end of the stream is SocketErr', 'conformance', ['tcp read! after the end of the peer is Closed, write! after close! is Closed'],
-    [BP + 'Tcp.roc', 'Ok(Undefined) | Ok(Null) => Err(Closed)', 'Ok(Undefined) | Ok(Null) => Err(SocketErr({ name: "End", message: "" }))']),
+    [BP + 'Tcp.roc', 'Ok(Undefined) | Ok(Null) => Err(Closed)', 'Ok(Undefined) | Ok(Null) => Err(Infra(SocketErr({ name: "End", message: "" })))']),
   R('8f3 pf.tcpWrite: a closed socket is a throw', 'conformance', ['tcp read! after the end of the peer is Closed, write! after close! is Closed'],
     ['js/helpers.js', "      if (st.closed) return 'closed';\n      st.writer ??=", '      st.writer ??='],
     ['js/helpers.js', "        if (st.closed) return 'closed';\n        throw e;", '        throw e;']),
@@ -572,27 +585,27 @@ const reverts = [
     [IX, "if (got && !manifest.handlers.includes(h))", "if (got !== undefined && !manifest.handlers.includes(h))"]),
   // PLAN.md 8h: get_or, Io.recover, Io.timeout, and the open error of Json.Encodable (a NaN is BadData).
   R("8h Kv.get_or: NotFound is not the default", "conformance", ["kv get_or!: the default for a key that is not there, the value for one that is"],
-    [BP + "Kv.roc", "NotFound => Ok(default)", "NotFound => Err(TooLarge)"]),
+    [BP + "Kv.roc", "NotFound => Ok(default)", "NotFound => Err(Infra(TooLarge))"]),
   R("8h Kv.get_or: BadData gives the default", "conformance", ["kv get_or!: only NotFound gets the default, a value that does not parse stays BadData"],
-    [BP + "Kv.roc", "BadData(m) => Err(BadData(m))\n\t\t\tTooLarge => Err(TooLarge)", "BadData(_) => Ok(default)\n\t\t\tTooLarge => Err(TooLarge)"]),
+    [BP + "Kv.roc", "NotFound => Ok(default)\n\t\t\tInfra(i) => Err(Infra(i))", "NotFound => Ok(default)\n\t\t\tInfra(BadData(_)) => Ok(default)\n\t\t\tInfra(i) => Err(Infra(i))"]),
   R("8h Kv.Cell.get_or: the value is dropped", "conformance", ["kv get_or!: the default for a key that is not there, the value for one that is"],
     [BP + "Kv.roc", "get_or = |c, default| c.kv.get_or(c.key, default)", "get_or = |c, default| c.kv.get_or(c.key, default).map(|_| default)"]),
   R("8h Object.Cell.get_or!: the value is dropped", "conformance", ["objects Object.Cell get_or!: the default, then the value"],
     [BP + "Object.roc", "Ok(v) => Ok(v)\n\t\t\tErr(NotFound) => Ok(default)", "Ok(_) => Ok(default)\n\t\t\tErr(NotFound) => Ok(default)"]),
   R("8h Object.Cell.get_or!: BadData gives the default", "conformance", ["objects Object.Cell get_or!: a value of another type is BadData, not the default"],
-    [BP + "Object.roc", "Err(BadData(m)) => Err(BadData(m))\n\t\t\tErr(StorageErr(t)) => Err(StorageErr(t))", "Err(BadData(_)) => Ok(default)\n\t\t\tErr(StorageErr(t)) => Err(StorageErr(t))"]),
+    [BP + "Object.roc", "Err(NotFound) => Ok(default)\n\t\t\tErr(Infra(i)) => Err(Infra(i))", "Err(NotFound) => Ok(default)\n\t\t\tErr(Infra(BadData(_))) => Ok(default)\n\t\t\tErr(Infra(i)) => Err(Infra(i))"]),
   R("8h Io.recover: a recovered value is a crash", "conformance", ["io recover: NotFound is a value, a BadData goes to the new error, a value stays (one crossing)"],
     [BP + "Io.roc", "read: |r| read(r).on_err(f) }", "read: |r| match read(r) {\n\t\t\tOk(v) => Ok(v)\n\t\t\tErr(e) => match f(e) {\n\t\t\t\tOk(_) => crash \"recover dropped\"\n\t\t\t\tErr(x) => Err(x)\n\t\t\t}\n\t\t} }"]),
   R("8h Io.timeout: never TimedOut", "conformance", ["time Io.timeout: Ok when the sleep ends in time, TimedOut after the limit, the sleep is aborted", "websocket Io.timeout: receive().timeout(50) is TimedOut, the next one gets the message at 100 ms"],
-    [BP + "Io.roc", "Ok(Arr([Int(_), _])) => return Err(TimedOut)", "Ok(Arr([Int(_), b])) => read(branch(b))"]),
+    [BP + "Io.roc", "Ok(Arr([Int(_), _])) => return Err(Infra(TimedOut))", "Ok(Arr([Int(_), b])) => read(branch(b))"]),
   R("8h Io.timeout: always TimedOut", "conformance", ["websocket Io.timeout that does not fire: Ok at once, the sleep is aborted", "io timeout keeps the error of the operation: NotFound is not TimedOut, a value is Ok"],
-    [BP + "Io.roc", "Ok(Arr([Int(0), b])) => read(branch(b))", "Ok(Arr([Int(0), _])) => return Err(TimedOut)"]),
+    [BP + "Io.roc", "Ok(Arr([Int(0), b])) => read(branch(b))", "Ok(Arr([Int(0), _])) => return Err(Infra(TimedOut))"]),
   R("8h Kv.put: a NaN is Ok and nothing is stored", "conformance", ["kv json of a record with an F64 field: a value is stored, a NaN is BadData and nothing is sent", "kv F64 field: the twin, put_with! and Cell set! give BadData for a NaN and send nothing, a value is stored"],
-    [BP + "Kv.roc", "Err(text) => Io.sync([], |_| Err(BadData(\"the value does not encode: ${text}\")))", "Err(_) => Io.sync([], |_| Ok({}))"]),
+    [BP + "Kv.roc", "Err(text) => Io.sync([], |_| Err(Infra(BadData(\"the value does not encode: ${text}\"))))", "Err(_) => Io.sync([], |_| Ok({}))"]),
   R("8h WebSocket.send_json!: a NaN is Ok", "conformance", ["websocket send_json! of a NaN is BadData and no frame goes out"],
-    [BP + "WebSocket.roc", "Err(e) => Err(BadData(Str.inspect(e)))", "Err(_) => Ok({})"]),
+    [BP + "WebSocket.roc", "Err(e) => Err(Infra(BadData(Str.inspect(e))))", "Err(_) => Ok({})"]),
   R("8h Object.Socket.send_json!: a NaN is Ok", "conformance", ["websocket two clients in one room: a message of one reaches the other and not the sender"],
-    [BP + "Object.roc", "Err(e) => Err(BadData(Str.inspect(e)))", "Err(_) => Ok({})"]),
+    [BP + "Object.roc", "Err(e) => Err(Infra(BadData(Str.inspect(e))))", "Err(_) => Ok({})"]),
   R("8h Request.post_json: a NaN is a request with no body", "conformance", ["http Request.post_json: JSON with the content type; a NaN is BadData and nothing is sent"],
     [BP + "Request.roc", "Err(e) => Err(BadData(Str.inspect(e)))", "Err(_) => Ok(Request.get(url))"]),
   R("8h Vectorize: a NaN in the metadata is sent as 0", "conformance", ["vectorize an F64 field in the metadata is sent; a NaN is BadData and no call is made (and the Io twin)"],
@@ -600,7 +613,7 @@ const reverts = [
   R("8h Workflows.json: a NaN in the params is sent as null", "conformance", ["workflows F64 params and payload: a value is sent as JSON, a NaN is BadData and no call is made"],
     [BP + "Workflows.roc", "write: |v| Json.to_str_try(v).map_err(|e| Str.inspect(e))", "write: |v| Json.to_str_try(v).on_err(|_| Ok(\"null\"))"]),
   R("8h Workflows.send_event!: a NaN is Ok", "conformance", ["workflows F64 params and payload: a value is sent as JSON, a NaN is BadData and no call is made"],
-    [BP + "Workflows.roc", "Err(e) => Io.sync([], |_| Err(BadData(\"the payload does not encode: ${Str.inspect(e)}\")))", "Err(_) => Io.sync([], |_| Ok({}))"]),
+    [BP + "Workflows.roc", "Err(e) => Io.sync([], |_| Err(Infra(BadData(\"the payload does not encode: ${Str.inspect(e)}\"))))", "Err(_) => Io.sync([], |_| Ok({}))"]),
   R("8h Response.from_json: a NaN gives a 200", "conformance", ["kv json of a record with an F64 field: a value is stored, a NaN is BadData and nothing is sent"],
     [BP + "Response.roc", "Response.from_text(500, \"the response", "Response.from_text(200, \"the response"]),
   R("8h Log: a NaN gives an empty line of fields", "conformance", ["log a NaN field: one line with fields_error, the call does not fail"],
@@ -633,7 +646,7 @@ const reverts = [
     [BP + 'Rpc.roc', 'err_head = [0xa1, 0x63, 0x45, 0x72, 0x72]', 'err_head = [0xa1, 0x63, 0x65, 0x72, 0x72]']),
   R('8h: reply_of maps a Remote reply to BadData', 'conformance',
     ['rpcerr Err with a payload tag: the caller matches Busy(Str)', 'rpcerr Err with a tag with no payload: the caller matches StillOpen', 'rpcerr a JS callee: the plain objects { Ok } and { Err } are Ok, Busy and StillOpen', 'objects rpc: a callee that gives Err(Nope(3)): the caller gets Err(Remote(Nope(3)))'],
-    [BP + 'Rpc.roc', 'Ok(Reply.Err(e)) => Err(Remote(e))', 'Ok(Reply.Err(e)) => Err(BadData(Str.inspect(e)))']),
+    [BP + 'Rpc.roc', 'Ok(Reply.Err(e)) => Err(Remote(e))', 'Ok(Reply.Err(e)) => Err(Infra(BadData(Str.inspect(e))))']),
   R('8h: the parser of Rpc.NoErr does not fail (a stray Err reply is not BadData)', 'conformance',
     ['rpcerr a reply { Err } for a method with Rpc.NoErr is BadData'],
     [BP + 'Rpc.roc', 'parser_for = |_| |_state| Err(InvalidCbor(0))', 'parser_for = |_| |state| Ok({ value: crash "NoErr parsed", rest: state })']),
@@ -642,7 +655,7 @@ const reverts = [
     [BP + 'Rpc.roc', 'Err("bad argument: ${Str.inspect(e)}")', 'Err("bad: ${Str.inspect(e)}")']),
   R('8h: a throw of the callee is BadData, not RpcErr', 'conformance',
     ['rpcerr a Roc callee that crashes: RpcErr', 'rpcerr a JS callee that throws: RpcErr with the message', 'rpcerr an argument that does not parse is RpcErr with "bad argument"', 'rpc an unknown method of a service throws (RpcErr)'],
-    [BP + 'Remote.roc', 'Err(t) => Err(RpcErr(t))', 'Err(t) => Err(BadData(t.message))']),
+    [BP + 'Remote.roc', 'Err(t) => Err(Infra(RpcErr(t)))', 'Err(t) => Err(Infra(BadData(t.message)))']),
   R('8h: a crash of a Roc callee is a reply, not a throw', 'conformance', ['rpcerr a Roc callee that crashes: RpcErr'],
     [IX, 'if (r.trap) throw new Error(`${tag}: ${r.cancelled ? `cancelled: ${r.cancelled}` : `trap ${r.trap}`}`);\n    if (r.outcome.outcome === \'reply\')', 'if (r.trap) return { Ok: 0 };\n    if (r.outcome.outcome === \'reply\')']),
   // PLAN.md 8h item 1: each handler of Worker.new has its own error type and its own text.
@@ -692,7 +705,7 @@ const reverts = [
   R('pf.r2put: only_if goes to a multipart upload (no R2Err)', 'conformance', ['r2 put_with! only_if with a stream of unknown length over 5 MiB is R2Err (no upload, no object)'],
     ['js/helpers.js', '  if (options?.onlyIf || R2_SUM_KEYS.some((k) => options?.[k] !== undefined)) {', '  if (false) {']),
   R('8h wave B: Cache.put! gives {} (a statement that drops the response compiles)', 'must-not-compile', ['after/put put! as a statement'],
-    [BP + 'Cache.roc', 'put! : Cache, Str, Response => Try(Response, [CacheErr(Io.Thrown)])\n', 'put! : Cache, Str, Response => Try({}, [CacheErr(Io.Thrown)])\n'],
+    [BP + 'Cache.roc', 'put! : Cache, Str, Response => Try(Response, [Infra([CacheErr(Io.Thrown)])])\n', 'put! : Cache, Str, Response => Try({}, [Infra([CacheErr(Io.Thrown)])])\n'],
     [BP + 'Cache.roc', 'put! = |cache, url, res| Io.run!(put(cache, url, res))', 'put! = |cache, url, res| Io.run!(put(cache, url, res)).map_ok(|_| {})']),
   R('8h wave B: Ctx.wait_until! takes any Io (the cache.put twin compiles)', 'must-not-compile', ['after/put wait_until! of cache.put'],
     [BP + 'Ctx.roc', 'wait_until! : Io({}, e) => {}', 'wait_until! : Io(a, e) => {}']),
@@ -723,15 +736,15 @@ const reverts = [
   R('8h N4: Object.namespace takes a Str class again (must-not-compile)', 'must-not-compile', [], [BP + 'Object.roc', 'namespace : Str, { class : Object.Class, script ?: Str } -> Object.Namespace', 'namespace : Str, { class : Str, script ?: Str } -> Object.Namespace'], [BP + 'Object.roc', 'class: opts.class.name,', 'class: opts.class,'], [BP + 'Worker.roc', 'Object.namespace("ROOMS", { class: Object.class("Room", {}) })', 'Object.namespace("ROOMS", { class: "Room" })'], [BP + 'Worker.roc', 'Object.namespace("FAR2", { class: Object.class("Far2", {}), script: "other" })', 'Object.namespace("FAR2", { class: "Far2", script: "other" })']),
   // N6: `find!` gives `Ok(Err(NotFound))` for a missing value, `Ok(Ok(v))` for a value, `Err(BadData)` for a bad value.
   R('8h N6: Object.Cell.find! gives a value as Ok(Err(NotFound))', 'conformance', [OF], [BP + 'Object.roc', 'Ok(v) => Ok(Ok(v))', 'Ok(_) => Ok(Err(NotFound))']),
-  R('8h N6: Object.Cell.find! gives BadData as NotFound', 'conformance', [OF], [BP + 'Object.roc', 'Err(NotFound) => Ok(Err(NotFound))\n\t\t\tErr(BadData(m)) => Err(BadData(m))', 'Err(NotFound) => Ok(Err(NotFound))\n\t\t\tErr(BadData(_)) => Ok(Err(NotFound))']),
-  R('8h N6: Object.Cell.find! gives NotFound as BadData', 'conformance', [OF], [BP + 'Object.roc', 'Err(NotFound) => Ok(Err(NotFound))\n\t\t\tErr(BadData(m))', 'Err(NotFound) => Err(BadData("missing"))\n\t\t\tErr(BadData(m))']),
-  R('8h N6: Object.Cell.find! has NotFound in the outer error (must-not-compile)', 'must-not-compile', [], [BP + 'Object.roc', 'find! : Object.Cell(a), Object.Self => Try(Try(a, [NotFound]), [BadData(Str), StorageErr(Io.Thrown)])', 'find! : Object.Cell(a), Object.Self => Try(Try(a, [NotFound]), [NotFound, BadData(Str), StorageErr(Io.Thrown)])']),
-  R('8h N6: Kv.find! gives NotFound as an error of the outer Try', 'conformance', [KF], [BP + 'Kv.roc', 'NotFound => Ok(Err(NotFound))\n\t\t\tKvErr(t) => Err(KvErr(t))', 'NotFound => Err(TooLarge)\n\t\t\tKvErr(t) => Err(KvErr(t))']),
-  R('8h N6: Kv.find! gives BadData as NotFound', 'conformance', [KF], [BP + 'Kv.roc', 'BadData(m) => Err(BadData(m))\n\t\t\tTooLarge => Err(TooLarge)\n\t\t},\n\t)\n\n\tfind!', 'BadData(_) => Ok(Err(NotFound))\n\t\t\tTooLarge => Err(TooLarge)\n\t\t},\n\t)\n\n\tfind!']),
+  R('8h N6: Object.Cell.find! gives BadData as NotFound', 'conformance', [OF], [BP + 'Object.roc', 'Err(NotFound) => Ok(Err(NotFound))\n\t\t\tErr(Infra(i)) => Err(Infra(i))', 'Err(NotFound) => Ok(Err(NotFound))\n\t\t\tErr(Infra(BadData(_))) => Ok(Err(NotFound))\n\t\t\tErr(Infra(i)) => Err(Infra(i))']),
+  R('8h N6: Object.Cell.find! gives NotFound as BadData', 'conformance', [OF], [BP + 'Object.roc', 'Err(NotFound) => Ok(Err(NotFound))\n\t\t\tErr(Infra(i))', 'Err(NotFound) => Err(Infra(BadData("missing")))\n\t\t\tErr(Infra(i))']),
+  R('8h N6: Object.Cell.find! has NotFound in the outer error (must-not-compile)', 'must-not-compile', [], [BP + 'Object.roc', 'find! : Object.Cell(a), Object.Self => Try(Try(a, [NotFound]), [Infra([BadData(Str), StorageErr(Io.Thrown)])])', 'find! : Object.Cell(a), Object.Self => Try(Try(a, [NotFound]), [NotFound, Infra([BadData(Str), StorageErr(Io.Thrown)])])']),
+  R('8h N6: Kv.find! gives NotFound as an error of the outer Try', 'conformance', [KF], [BP + 'Kv.roc', 'NotFound => Ok(Err(NotFound))\n\t\t\tInfra(i) => Err(Infra(i))', 'NotFound => Err(Infra(TooLarge))\n\t\t\tInfra(i) => Err(Infra(i))']),
+  R('8h N6: Kv.find! gives BadData as NotFound', 'conformance', [KF], [BP + 'Kv.roc', 'NotFound => Ok(Err(NotFound))\n\t\t\tInfra(i) => Err(Infra(i))\n\t\t},\n\t)\n\n\tfind!', 'NotFound => Ok(Err(NotFound))\n\t\t\tInfra(BadData(_)) => Ok(Err(NotFound))\n\t\t\tInfra(i) => Err(Infra(i))\n\t\t},\n\t)\n\n\tfind!']),
   R('8h N6: Kv.find! reads another key', 'conformance', [KF], [BP + 'Kv.roc', 'find! = |kv, key| Io.run!(kv.find(key))', 'find! = |kv, key| Io.run!(kv.find("${key}-other"))']),
   R('8h N6: Kv.Cell.find reads another key', 'conformance', [KC], [BP + 'Kv.roc', 'find = |c| c.kv.find(c.key)', 'find = |c| c.kv.find("${c.key}-other")']),
-  R('8h N6: Kv.Cell.find! gives BadData as NotFound', 'conformance', [KC], [BP + 'Kv.roc', 'find! = |c| Io.run!(c.find())', 'find! = |c| Io.run!(c.get().map(|v| Ok(v)).recover(|e| match e {\n\t\t\tNotFound => Ok(Err(NotFound))\n\t\t\tKvErr(t) => Err(KvErr(t))\n\t\t\tBadData(_) => Ok(Err(NotFound))\n\t\t\tTooLarge => Err(TooLarge)\n\t\t}))']),
-  R('8h N6: Kv.find! and Kv.Cell.find! have NotFound in the outer error (must-not-compile)', 'must-not-compile', [], [BP + 'Kv.roc', 'find! : Kv(a), Str => Try(Try(a, [NotFound]), [KvErr(Io.Thrown), BadData(Str), TooLarge])', 'find! : Kv(a), Str => Try(Try(a, [NotFound]), [NotFound, KvErr(Io.Thrown), BadData(Str), TooLarge])'], [BP + 'Kv.roc', 'find! : Kv.Cell(a) => Try(Try(a, [NotFound]), [KvErr(Io.Thrown), BadData(Str), TooLarge])', 'find! : Kv.Cell(a) => Try(Try(a, [NotFound]), [NotFound, KvErr(Io.Thrown), BadData(Str), TooLarge])']),
+  R('8h N6: Kv.Cell.find! gives BadData as NotFound', 'conformance', [KC], [BP + 'Kv.roc', 'find! = |c| Io.run!(c.find())', 'find! = |c| Io.run!(c.get().map(|v| Ok(v)).recover(|e| match e {\n\t\t\tNotFound => Ok(Err(NotFound))\n\t\t\tInfra(BadData(_)) => Ok(Err(NotFound))\n\t\t\tInfra(i) => Err(Infra(i))\n\t\t}))']),
+  R('8h N6: Kv.find! and Kv.Cell.find! have NotFound in the outer error (must-not-compile)', 'must-not-compile', [], [BP + 'Kv.roc', 'find! : Kv(a), Str => Try(Try(a, [NotFound]), [Infra([KvErr(Io.Thrown), BadData(Str), TooLarge])])', 'find! : Kv(a), Str => Try(Try(a, [NotFound]), [NotFound, Infra([KvErr(Io.Thrown), BadData(Str), TooLarge])])'], [BP + 'Kv.roc', 'find! : Kv.Cell(a) => Try(Try(a, [NotFound]), [Infra([KvErr(Io.Thrown), BadData(Str), TooLarge])])', 'find! : Kv.Cell(a) => Try(Try(a, [NotFound]), [NotFound, Infra([KvErr(Io.Thrown), BadData(Str), TooLarge])])']),
   // N7: `Kv.Cell.declare`.
   R('8h N7: Kv.Cell.declare gives the key as the name', 'conformance', [KD], [BP + 'Kv.roc', 'declare = |c| c.kv.declare()', 'declare = |c| { name: c.key, kind: "kv", props: [] }']),
   R('8h N7: Kv.Cell.declare gives the kind d1', 'conformance', [KD], [BP + 'Kv.roc', 'declare = |c| c.kv.declare()', 'declare = |c| { name: c.kv.name, kind: "d1", props: [] }']),
@@ -744,10 +757,10 @@ const reverts = [
   // N11: `broadcast!`, `broadcast_json!`, `broadcast_json_with!`.
   R('8h N11: broadcast! sends to one socket only', 'conformance', [BA], [BP + 'Object.roc', '_ = send_each!(sockets_of!([]), msg)\n\t\t\t{}', '_ = send_each!(sockets_of!([]).take_first(1), msg)\n\t\t\t{}']),
   R('8h N11: broadcast_json! sends the text as a JSON string', 'conformance', [BA], [BP + 'Object.roc', 'Ok(text) => Ok(self.broadcast!(Text(text)))', 'Ok(text) => Ok(self.broadcast!(Text(Str.inspect(text))))']),
-  R('8h N11: broadcast_json! sends a text for BadData', 'conformance', [BN], [BP + 'Object.roc', 'Ok(text) => Ok(self.broadcast!(Text(text)))\n\t\t\tErr(e) => Err(BadData(Str.inspect(e)))', 'Ok(text) => Ok(self.broadcast!(Text(text)))\n\t\t\tErr(e) => {\n\t\t\t\tself.broadcast!(Text("bad"))\n\t\t\t\tErr(BadData(Str.inspect(e)))\n\t\t\t}']),
-  R('8h N11: broadcast_json! gives Ok for BadData', 'conformance', [BN], [BP + 'Object.roc', 'Ok(text) => Ok(self.broadcast!(Text(text)))\n\t\t\tErr(e) => Err(BadData(Str.inspect(e)))', 'Ok(text) => Ok(self.broadcast!(Text(text)))\n\t\t\tErr(_) => Ok({})']),
+  R('8h N11: broadcast_json! sends a text for BadData', 'conformance', [BN], [BP + 'Object.roc', 'Ok(text) => Ok(self.broadcast!(Text(text)))\n\t\t\tErr(e) => Err(Infra(BadData(Str.inspect(e))))', 'Ok(text) => Ok(self.broadcast!(Text(text)))\n\t\t\tErr(e) => {\n\t\t\t\tself.broadcast!(Text("bad"))\n\t\t\t\tErr(Infra(BadData(Str.inspect(e))))\n\t\t\t}']),
+  R('8h N11: broadcast_json! gives Ok for BadData', 'conformance', [BN], [BP + 'Object.roc', 'Ok(text) => Ok(self.broadcast!(Text(text)))\n\t\t\tErr(e) => Err(Infra(BadData(Str.inspect(e))))', 'Ok(text) => Ok(self.broadcast!(Text(text)))\n\t\t\tErr(_) => Ok({})']),
   R('8h N11: broadcast_json_with! ignores the tag', 'conformance', [BT], [BP + 'Object.roc', 'Ok(text) => Ok(self.broadcast_with!(opts, Text(text)))', 'Ok(text) => Ok(self.broadcast_with!({}, Text(text)))']),
-  R('8h N11: broadcast_json_with! gives Ok(0) for BadData', 'conformance', [BN], [BP + 'Object.roc', 'Ok(text) => Ok(self.broadcast_with!(opts, Text(text)))\n\t\t\tErr(e) => Err(BadData(Str.inspect(e)))', 'Ok(text) => Ok(self.broadcast_with!(opts, Text(text)))\n\t\t\tErr(_) => Ok(0)']),
+  R('8h N11: broadcast_json_with! gives Ok(0) for BadData', 'conformance', [BN], [BP + 'Object.roc', 'Ok(text) => Ok(self.broadcast_with!(opts, Text(text)))\n\t\t\tErr(e) => Err(Infra(BadData(Str.inspect(e))))', 'Ok(text) => Ok(self.broadcast_with!(opts, Text(text)))\n\t\t\tErr(_) => Ok(0)']),
   // roc-cbor 0.2.0 (g-cbor02): Dec as tag 4 in JS, Dec parameters, Queue.json, Cbor.Bytes from a BLOB, BadData of a missing column, optional Options.
   // The names start with `dec0.2:` (a filter: `node conformance/reverts.mjs "dec0.2:"`). `P` edits the package in the cache of the build.
   R('dec0.2: JS decoder reads no tag 4', 'conformance', ['dec encode: Roc bytes of the Dec "frac" decode to { $dec } and encode to the same bytes', 'dec Queue.v8: a JS consumer gets the exact { $dec } objects (the marker survives the structured clone)', 'dec RPC: a Dec crosses a call (JS decode, structured clone, encode) exact'],
@@ -782,6 +795,42 @@ const reverts = [
     [CBOR, 'int_from_text: options.?int_from_text ?? Bool.False })\n\t\tparsed', 'int_from_text: Bool.False })\n\t\tparsed']),
   R('dec0.2: Readable has the long error row (a wrapper with the old Parseable form compiles)', 'must-not-compile', [],
     [BP + 'Cbor.roc', 'Try({ value : a, rest : CborPkg.State }, [InvalidCbor(U64), MissingRequiredField(Str), ..errs])),', 'Try({ value : a, rest : CborPkg.State }, [InvalidCbor(U64), ..errs])),']),
+  // N5 G1a (checks/rpcerr.mjs "infra" and "forward", conformance/must-not-compile.sh): the `Infra(Rpc.Infra)` error of an Rpc method.
+  // An infra error of a callee crosses as `{"Err": {"Infra": {<tag>: payload}}}`: the caller gets `Remote(Infra(<tag>))` with the payload intact.
+  R('N5 test: a SQL error of a callee loses its message', 'conformance', [IS, IF, IM, IW],
+    [BP + 'Object.roc', 'SqlErr(e) => Err(Infra(SqlErr(e)))', 'SqlErr(e) => Err(Infra(SqlErr({ name: e.name, message: "" })))']),
+  R('N5 test: a storage error of a callee loses its message', 'conformance', [IT, IF, IW],
+    [BP + 'Object.roc', 'r.map_ok(|_| {}).map_err(|t| Infra(StorageErr(t))),', 'r.map_ok(|_| {}).map_err(|t| Infra(StorageErr({ name: t.name, message: "" }))),']),
+  R('N5 test: a constraint error of a callee loses its message', 'conformance', [IC, IF, IW],
+    [BP + 'Object.roc', 'Constraint(c) => Err(Infra(Constraint(c)))', 'Constraint(c) => Err(Infra(Constraint({ ..c, message: "" })))']),
+  R('N5 test: a D1 error of a Workers callee loses its message', 'conformance', [ID, IF, IM, IW],
+    [BP + 'D1.roc', 'Err(NotConstraint) => D1Err(t)', 'Err(NotConstraint) => D1Err({ name: t.name, message: "" })']),
+  R('N5 test: a domain error of a callee that has Infra in err is not Remote', 'conformance', [IN, IJ, IF, IM, IK],
+    [BP + 'Rpc.roc', 'Ok(Reply.Err(e)) => Err(Remote(e))', 'Ok(Reply.Err(e)) => Err(Infra(BadData(Str.inspect(e))))']),
+  R('N5 test: a crash of a callee is BadData, not RpcErr (caller and forwarded)', 'conformance', [IR, IK],
+    [BP + 'Remote.roc', 'Err(t) => Err(Infra(RpcErr(t)))', 'Err(t) => Err(Infra(BadData(t.message)))']),
+  R('N5 test: a reply that does not parse (an infra tag that Rpc.Infra has not) crashes the caller', 'conformance', [IB],
+    [BP + 'Rpc.roc', 'Err(e) => Err(Infra(BadData(Str.inspect(e))))', 'Err(e) => crash "reply: ${Str.inspect(e)}"']),
+  R('N5 test: Rpc.forward maps the inner RpcErr to BadData', 'conformance', [IK],
+    [BP + 'Rpc.roc', 'Infra(RpcErr(t)) => Infra(RpcErr(t))', 'Infra(RpcErr(t)) => Infra(BadData(t.message))']),
+  R('N5 test: Rpc.forward gives TimedOut for a domain error of the callee (f is not used)', 'conformance', [IF, IM],
+    [BP + 'Rpc.roc', 'Remote(e) => f(e)', 'Remote(e) => if (Bool.False) f(e) else Infra(TimedOut)']),
+  // The wire form of a reply with an infra error (MODULES.md 8): a JS caller reads `{ Err: { Infra: { <tag>: payload } } }`.
+  R('N5 test: the Infra tag of an err is written without the Infra wrapper by a JS callee', 'conformance', [IJ],
+    ['conformance/worker.js', "if (arg.kind === 'storage') return { Err: { Infra: { StorageErr: { name: 'Error', message: 'js storage' } } } };", "if (arg.kind === 'storage') return { Err: { StorageErr: { name: 'Error', message: 'js storage' } } };"]),
+  // The must-not-compile pairs.
+  R('N5 test: delete_all! gives a flat StorageErr (a flat infra tag in err compiles)', 'must-not-compile', ['rpc_infra_flat_bad.roc'],
+    [BP + 'Object.roc', 'delete_all : Object.Self -> Io({}, [Infra([StorageErr(Io.Thrown)])])', 'delete_all : Object.Self -> Io({}, [StorageErr(Io.Thrown)])'],
+    [BP + 'Object.roc', '"deleteAll", [])],\n\t\t\t|r| r.map_ok(|_| {}).map_err(|t| Infra(StorageErr(t))),', '"deleteAll", [])],\n\t\t\t|r| r.map_ok(|_| {}).map_err(|t| StorageErr(t)),'],
+    [BP + 'Object.roc', 'delete_all! : Object.Self => Try({}, [Infra([StorageErr(Io.Thrown)])])', 'delete_all! : Object.Self => Try({}, [StorageErr(Io.Thrown)])']),
+  R('N5 test: accept_with! gives TooLarge inside Infra', 'must-not-compile', ['infra_flat_kept_bad.roc'],
+    [BP + 'Object.roc', 'accept_with! : Object.Self, Request, { tags ?: List(Str) } => Try({ socket : Object.Socket, response : Response }, [NotUpgrade, TooLarge])\n\t\taccept_with! = |self, req, opts| accept_tags!(self, req, opts.?tags ?? [])',
+      'accept_with! : Object.Self, Request, { tags ?: List(Str) } => Try({ socket : Object.Socket, response : Response }, [NotUpgrade, Infra([TooLarge])])\n\t\taccept_with! = |self, req, opts| match accept_tags!(self, req, opts.?tags ?? []) {\n\t\t\tOk(r) => Ok(r)\n\t\t\tErr(NotUpgrade) => Err(NotUpgrade)\n\t\t\tErr(TooLarge) => Err(Infra(TooLarge))\n\t\t}']),
+  R('N5 test: Request.json! gives its errors inside Infra', 'must-not-compile', ['infra_flat_body_bad.roc'],
+    [BP + 'Request.roc', 'json! : Request => Try(a, [TooLarge, BadData(Str), BodyErr(Io.Thrown)]) where [a.Json.Parseable([InvalidJson(Str), ..errs])]\n\tjson! = |r| r.body.json!()',
+      'json! : Request => Try(a, [Infra([TooLarge, BadData(Str), BodyErr(Io.Thrown)])]) where [a.Json.Parseable([InvalidJson(Str), ..errs])]\n\tjson! = |r| r.body.json!().map_err(|e| Infra(e))']),
+  R('N5 test: Kv.get! has SqlErr in its Infra tags (the closed describe does not fit)', 'must-not-compile', ['infra_precise_ok.roc'],
+    [BP + 'Kv.roc', 'get! : Kv(a), Str => Try(a, [NotFound, Infra([KvErr(Io.Thrown), BadData(Str), TooLarge])])', 'get! : Kv(a), Str => Try(a, [NotFound, Infra([KvErr(Io.Thrown), BadData(Str), TooLarge, SqlErr(Io.Thrown)])])']),
 ];
 
 // The filter: texts of names, joined by `|` (a revert runs when its name has one of them).

@@ -18,11 +18,11 @@ AssetsRoutes :: [].{
 			["fetch_io"] => show!(Io.run!(assets.fetch(r)))
 			["pass"] => match assets.fetch!(r) {
 				Ok(res) => res
-				Err(AssetsErr(t)) => Response.from_text(200, "AssetsErr ${t.name}")
+				Err(Infra(AssetsErr(t))) => Response.from_text(200, "AssetsErr ${t.name}")
 			}
 			["pass_io"] => match Io.run!(assets.fetch(r)) {
 				Ok(res) => res
-				Err(AssetsErr(t)) => Response.from_text(200, "AssetsErr ${t.name}")
+				Err(Infra(AssetsErr(t))) => Response.from_text(200, "AssetsErr ${t.name}")
 			}
 			# A binding that is not in the config: the `Call` on undefined throws (OP7).
 			["missing"] => show!(Assets.binding("NO_SUCH_ASSETS").fetch!(r))
@@ -41,7 +41,7 @@ request = |req| {
 	if (etag == "") base else base.with_header("if-none-match", etag)
 }
 
-show! : Try(Response, [AssetsErr({ name : Str, message : Str })]) => Response
+show! : Try(Response, [Infra([AssetsErr({ name : Str, message : Str })])]) => Response
 show! = |r| match r {
 	Ok(res) => {
 		type = res.header("content-type") ?? "-"
@@ -51,5 +51,5 @@ show! = |r| match r {
 		}
 		Response.from_text(200, "status=${res.status().to_str()} type=${type} body=${body}")
 	}
-	Err(AssetsErr(t)) => Response.from_text(200, "AssetsErr ${t.name}")
+	Err(Infra(AssetsErr(t))) => Response.from_text(200, "AssetsErr ${t.name}")
 }

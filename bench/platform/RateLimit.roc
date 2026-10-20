@@ -11,7 +11,7 @@ RateLimit :: { name : Str }.{
 	declare = |b| { name: b.name, kind: "ratelimit", props: [] }
 
 	## `Ok({})` when the key is under the limit, else `RateLimited`, so `limiter.limit!(ip)?` stops the handler.
-	limit : RateLimit, Str -> Io({}, [RateLimited, LimitErr(Io.Thrown)])
+	limit : RateLimit, Str -> Io({}, [RateLimited, Infra([LimitErr(Io.Thrown)])])
 	limit = |rl, key| Io.new(
 		[
 			Get(Root("env"), rl.name),
@@ -20,11 +20,11 @@ RateLimit :: { name : Str }.{
 		],
 		|r| match r {
 			Ok(Bool(b)) => if (b) Ok({}) else Err(RateLimited)
-			Ok(other) => Err(LimitErr({ name: "BadData", message: "limit gave success ${Str.inspect(other)}" }))
-			Err(t) => Err(LimitErr(t))
+			Ok(other) => Err(Infra(LimitErr({ name: "BadData", message: "limit gave success ${Str.inspect(other)}" })))
+			Err(t) => Err(Infra(LimitErr(t)))
 		},
 	)
 
-	limit! : RateLimit, Str => Try({}, [RateLimited, LimitErr(Io.Thrown)])
+	limit! : RateLimit, Str => Try({}, [RateLimited, Infra([LimitErr(Io.Thrown)])])
 	limit! = |rl, key| Io.run!(limit(rl, key))
 }

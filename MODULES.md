@@ -22,7 +22,7 @@ In the signatures, `a.Encodable` stands for `a.Cbor.Writable` (the short alias o
 | MC6 | When all values of a binding have one type, the declaration gives the type and the format. The same constant writes and reads. | `jobs : Queue(Job)`, `jobs = Queue.json("JOBS")` |
 | MC7 | When the type changes from call to call (a D1 query), the annotation at the call gives it. | `pkg : Pkg`, `pkg = db.first!(sql, params)?` |
 | MC8 | There is no null. A missing value is `Err(NotFound)`, so `?` returns it and `??` gives a default. | `theme.get!() ?? default_prefs` |
-| MC9 | Errors are open tag unions, so the errors of two modules join (`?`, `Io.both!`). A throw in JS is `<Module>Err(Thrown)`. A value that does not fit its type is `BadData(Str)`. A known result has its own tag. A known throw has its own tag too: the module maps it by the `name` and `message` of the JS error (table "Named error tags" below). Each other throw stays `<Module>Err(Thrown)`. | `D1Err(t)`, `Constraint({ kind: Unique, message })`, `Network(t)`, `PreconditionFailed`, `RateLimited`, `TooLarge`, `BadSignature` |
+| MC9 | Errors are open tag unions, so the errors of two modules join (`?`, `Io.both!`). The errors of storage, bindings and calls (all tags of `Rpc.Infra`, 8) are in one tag: a function gives `Infra([its own tags])` (`kv.get!` gives `[NotFound, Infra([KvErr(Thrown), BadData(Str), TooLarge])]`), and the payloads of two calls merge at `?`. Bad input stays flat: the body reads of `Request` and `Body`, `WebSocket.Message.json`, `Request.post_json`, the `TooLarge` of `accept_with!`, `set_auto_response!` and `Attachment.set!`. A domain result stays flat (`NotFound`, `Closed`, `PreconditionFailed`, `RateLimited`, `BadSignature`). A throw in JS is `<Module>Err(Thrown)`. A value that does not fit its type is `BadData(Str)`. A known result has its own tag. A known throw has its own tag too: the module maps it by the `name` and `message` of the JS error (table "Named error tags" below). Each other throw stays `<Module>Err(Thrown)`. | `Infra(D1Err(t))`, `Infra(Constraint({ kind: Unique, message }))`, `Infra(Network(t))`, `PreconditionFailed`, `RateLimited`, `Infra(TooLarge)`, `BadSignature` |
 | MC10 | A time or a duration is a `U64` of milliseconds, in a field whose name ends in `_ms` (a module converts to seconds with `Time.seconds_up`, rounded up). A size, an offset or a length of data is in bytes, in a field whose name ends in `_bytes`. A length that the Workers API gives in bits (WebCrypto) stays in bits, in a field whose name ends in `_bits`. The module converts (KV `expirationTtl` is in seconds). Exceptions: table "Exceptions to MC10 and MC12" below. | `{ ttl_ms: 60_000 }`, `size_bytes`, `length_bits` |
 | MC11 | A read into wasm memory has a limit, because wasm memory never gets smaller (`PLAN.md` problem 4). The default limit is 1 MiB (`Body.default_max`). A larger read names its limit. Large data stays a `Body` stream in JS. Each typed read has the default limit: a body, `Kv.get!`, `D1.all!`, `first!`, `rows!` and `batch!`, `Object.Self.sql!` and `sql_rows!`. JS checks the size before the copy, and a read above the limit is `Err(TooLarge)`. The `_with` form takes `max_bytes`. A queue batch has the limit of the Queues config (6). A tail batch drops log lines past the limit (3). | `req.json!()`, `req.bytes_with!({ max_bytes: 30_000_000 })`, `db.all_with!(sql, params, { max_bytes: 8_000_000 })` |
 | MC12 | Names are the Workers names in snake_case, so the Workers docs apply. A name changes only for a Roc reason. Each name that changes is in the table "Exceptions to MC10 and MC12" below, with its reason. | `kv.get_with_metadata!` for `getWithMetadata`, `queue.send_batch!` for `sendBatch`, `cache.get!` for `match` (a keyword) |
@@ -98,18 +98,28 @@ Exceptions to MC10 and MC12 (each other name is the Workers name in snake_case, 
 | `D1.all_tuples!` (and `all_tuples_with!`, the twins, the `D1.Session` forms) | `raw()` | Two functions read one D1 call with two result shapes, and `rows!` already has `raw({ columnNames: true })`: the name says what the app gets (all rows, as tuples), as `Http.send!` and `open!` do for `fetch` |
 | `WebCrypto.sha256!` | `crypto.subtle.digest('SHA-256', ...)` | The algorithm is in the name, and the function picks the builtin or `digest` by size (section 10) |
 
-Named error tags (MC9). The read function of the `Io` of the module maps the `Error(name, message)` of a throw, in Roc:
+Named error tags (MC9). The read function of the `Io` of the module maps the `Error(name, message)` of a throw, in Roc. A tag of `Rpc.Infra` is inside `Infra(..)`. In prose a tag name with no `Infra(..)` around it (`BadData`, `TooLarge`, `KvErr`) names the tag inside it:
 
 | Module | JS throw | Tag | Source of the text |
 | --- | --- | --- | --- |
-| `D1`, `D1.Session`, `Object.Self` SQL | The message ends in `: SQLITE_CONSTRAINT`, or in `: SQLITE_CONSTRAINT (extended: <code>)` | `Constraint({ kind, message })`, with `kind` from the extended code (5.1, table "Constraint kinds") | SQLite text after `D1_ERROR: ` (workerd source, `d1-api.ts`). The error has no code field: its own properties are `message` and `cause` (an `Error` with the text after `D1_ERROR: `). Local D1 gives `UNIQUE constraint failed: t.k: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)` (wrangler 4.151.0), and for a trigger `RAISE(ABORT, 'label-conflict')` it gives `label-conflict: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)` (Miniflare 5.20261012.0-beta, 2026-10-16). |
-| `Http` | `name` is `TypeError` | `HttpErr(Thrown)`: the request is bad (URL, scheme, header) | workerd source, `api/http.c++`, `api/headers.c++` |
-| `Http` | Any other throw of `fetch` | `Network(Thrown)`: no response | workerd source, `jsg/util.c++` ("Network connection lost."). The Cloudflare docs name only this text. Local (Miniflare 5, workerd 2026-10-12, `PLAN.md` 8d): a closed port is `Error: Network connection lost.`, a host that does not exist is `Error: internal error; reference = <id>`, `timeout_ms` is `TimeoutError: The operation was aborted due to timeout`, and `"not a url"` is `TypeError: Invalid URL: not a url` (`HttpErr`). Edge, 2026-10-17 (`PLAN.md` 11c, E17 to E21): a DNS failure and a blocked address do not throw. `fetch` gives a Cloudflare error response, so `send!` gives `Ok`: a host that does not exist is status 530 with the body `error code: 1016`, a closed port of `127.0.0.1` and a private address are status 403 with `error code: 1003`. An app that must tell these from an answer of the origin checks the status and the body. `TimeoutError` and `TypeError` are as local. A host that never answers keeps `fetch` waiting: the task deadline (`API.md` 10.2) ends it. A `fetch` of a Worker of the same account on workers.dev is 404 `error code: 1042` unless the flag `global_fetch_strictly_public` is set. |
+| `D1`, `D1.Session`, `Object.Self` SQL | The message ends in `: SQLITE_CONSTRAINT`, or in `: SQLITE_CONSTRAINT (extended: <code>)` | `Infra(Constraint({ kind, message }))`, with `kind` from the extended code (5.1, table "Constraint kinds") | SQLite text after `D1_ERROR: ` (workerd source, `d1-api.ts`). The error has no code field: its own properties are `message` and `cause` (an `Error` with the text after `D1_ERROR: `). Local D1 gives `UNIQUE constraint failed: t.k: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)` (wrangler 4.151.0), and for a trigger `RAISE(ABORT, 'label-conflict')` it gives `label-conflict: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)` (Miniflare 5.20261012.0-beta, 2026-10-16). |
+| `Http` | `name` is `TypeError` | `Infra(HttpErr(Thrown))`: the request is bad (URL, scheme, header) | workerd source, `api/http.c++`, `api/headers.c++` |
+| `Http` | Any other throw of `fetch` | `Infra(Network(Thrown))`: no response | workerd source, `jsg/util.c++` ("Network connection lost."). The Cloudflare docs name only this text. Local (Miniflare 5, workerd 2026-10-12, `PLAN.md` 8d): a closed port is `Error: Network connection lost.`, a host that does not exist is `Error: internal error; reference = <id>`, `timeout_ms` is `TimeoutError: The operation was aborted due to timeout`, and `"not a url"` is `TypeError: Invalid URL: not a url` (`HttpErr`). Edge, 2026-10-17 (`PLAN.md` 11c, E17 to E21): a DNS failure and a blocked address do not throw. `fetch` gives a Cloudflare error response, so `send!` gives `Ok`: a host that does not exist is status 530 with the body `error code: 1016`, a closed port of `127.0.0.1` and a private address are status 403 with `error code: 1003`. An app that must tell these from an answer of the origin checks the status and the body. `TimeoutError` and `TypeError` are as local. A host that never answers keeps `fetch` waiting: the task deadline (`API.md` 10.2) ends it. A `fetch` of a Worker of the same account on workers.dev is 404 `error code: 1042` unless the flag `global_fetch_strictly_public` is set. |
 | `Workflows` | The message has `instance.not_found` | `NotFound` (`get!`, each function of an `Instance`) | Local (Miniflare 5): `Error: instance.not_found` |
 | `Workflows` | The message has `instance.already_exists` | `AlreadyExists` (`create_with!`) | Local: `Error: (instance.already_exists) Workflow instance with id "x" already exists`. The edge text is for 11c. |
-| Each module | Any other throw | `<Module>Err(Thrown)` | |
+| Each module | Any other throw | `Infra(<Module>Err(Thrown))` | |
 
 `PLAN.md` 8d tests each row locally and on the edge, because the docs do not give the texts.
+
+Nested and flat errors (MC9, N5 G1a). An error is `Infra(..)` when the platform or a binding failed, and flat when the caller can decide it alone:
+
+| Error | Form | Why |
+| --- | --- | --- |
+| Storage, binding, call and size errors (`KvErr`, `D1Err`, `StorageErr`, `RpcErr`, `Constraint`, `TooLarge`, `BadData` of a stored value, `TimedOut`, and the rest of `Rpc.Infra`) | `Infra([own tags])` | A handler lets them pass with `?` (they join into `Infra(Rpc.Infra)`), and a caller has one arm for all of them |
+| `Request` and `Body` reads (`text!`, `json!`, `bytes!`, `chunk!`, `BodyErr`, `TooLarge`, `BadData`), `Request.post_json`, `WebSocket.Message.json` | flat | The caller gave bad input: a handler answers 400, it does not pass the error on |
+| `accept_with!`, `set_auto_response!` and `Attachment.set!` (`TooLarge`) | flat | The tags, the pair or the value that the app gave are too large |
+| `NotFound`, `AlreadyExists`, `Closed`, `PreconditionFailed`, `RateLimited`, `BadSignature`, `NotUpgrade`, `Missing` | flat | A domain result: the app matches it and acts on it |
+| The `err` of an `Rpc` method | The domain tags, and `Infra(Rpc.Infra)` | The caller gets `Remote(domain tag)`, `Remote(Infra(..))` or `Infra(..)` (8) |
 
 ## 2. An app
 
@@ -399,7 +409,7 @@ Response :: { status : U16, headers : List(Header) ?? [], body : Body ?? Empty, 
 	text!, json!, bytes!, bytes_with!                 # as for Request
 
 	from_http : http.Response -> Response             # for packages that use roc-lang/http
-	to_http! : Response => Try(http.Response, [TooLarge, BodyErr(Thrown)])
+	to_http! : Response => Try(http.Response, [Infra([TooLarge, BodyErr(Thrown)])])
 }
 
 Body := [Empty, Text(Str), Bytes(List(U8)), Stream(Js.Ref)].{
@@ -424,10 +434,10 @@ Body := [Empty, Text(Str), Bytes(List(U8)), Stream(Js.Ref)].{
 }
 
 Http :: [].{
-	send! : Request => Try(Response, [Network(Thrown), HttpErr(Thrown), TooLarge])
-	send_with! : Request, { max_bytes ?: U64, timeout_ms ?: U64, cf ?: Js } => Try(Response, [Network(Thrown), HttpErr(Thrown), TooLarge])   # cf: the cf options of fetch
-	open! : Request => Try(Response, [Network(Thrown), HttpErr(Thrown)])
-	get! : Str => Try(Response, [Network(Thrown), HttpErr(Thrown), TooLarge])
+	send! : Request => Try(Response, [Infra([Network(Thrown), HttpErr(Thrown), TooLarge])])
+	send_with! : Request, { max_bytes ?: U64, timeout_ms ?: U64, cf ?: Js } => Try(Response, [Infra([Network(Thrown), HttpErr(Thrown), TooLarge])])   # cf: the cf options of fetch
+	open! : Request => Try(Response, [Infra([Network(Thrown), HttpErr(Thrown)])])
+	get! : Str => Try(Response, [Infra([Network(Thrown), HttpErr(Thrown), TooLarge])])
 }
 ```
 
@@ -501,16 +511,16 @@ As built in `PLAN.md` 8h, wave C (`platform/Request.roc`, `Response.roc`, `Entry
 ```roc
 D1 :: { name : Str }.{
 	binding : Str -> D1
-	all! : D1, Str, params => Try(rows, [D1Err(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Parseable, params.Encodable([])]
-	all_with! : D1, Str, params, { max_bytes : U64 } => Try(rows, [D1Err(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Parseable, params.Encodable([])]
-	first! : D1, Str, params => Try(row, [NotFound, D1Err(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [row.Parseable, params.Encodable([])]
-	run! : D1, Str, params => Try(Sql.Info, [D1Err(Thrown), Constraint(Sql.Constraint)]) where [params.Encodable([])]
-	rows! : D1, Str, params => Try(Sql.Rows, [D1Err(Thrown), Constraint(Sql.Constraint), TooLarge]) where [params.Encodable([])]
-	batch! : D1, List(Sql.Stmt) => Try(List(D1.Result), [D1Err(Thrown), Constraint(Sql.Constraint), TooLarge])
-	all_tuples! : D1, Str, params => Try(rows, [D1Err(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Parseable, params.Encodable([])]   # rows as tuples (`raw()`)
+	all! : D1, Str, params => Try(rows, [Infra([D1Err(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Parseable, params.Encodable([])]
+	all_with! : D1, Str, params, { max_bytes : U64 } => Try(rows, [Infra([D1Err(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Parseable, params.Encodable([])]
+	first! : D1, Str, params => Try(row, [NotFound, Infra([D1Err(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [row.Parseable, params.Encodable([])]
+	run! : D1, Str, params => Try(Sql.Info, [Infra([D1Err(Thrown), Constraint(Sql.Constraint)])]) where [params.Encodable([])]
+	rows! : D1, Str, params => Try(Sql.Rows, [Infra([D1Err(Thrown), Constraint(Sql.Constraint), TooLarge])]) where [params.Encodable([])]
+	batch! : D1, List(Sql.Stmt) => Try(List(D1.Result), [Infra([D1Err(Thrown), Constraint(Sql.Constraint), TooLarge])])
+	all_tuples! : D1, Str, params => Try(rows, [Infra([D1Err(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Parseable, params.Encodable([])]   # rows as tuples (`raw()`)
 	first_with!, rows_with!, batch_with!, all_tuples_with!   # as all_with!: the same, with a last { max_bytes : U64 }
-	exec! : D1, Str => Try({}, [D1Err(Thrown), Constraint(Sql.Constraint)])
-	with_session! : D1, [Primary, Any, After(Str)] => Try(D1.Session, [D1Err(Thrown)])   # withSession, sync
+	exec! : D1, Str => Try({}, [Infra([D1Err(Thrown), Constraint(Sql.Constraint)])])
+	with_session! : D1, [Primary, Any, After(Str)] => Try(D1.Session, [Infra([D1Err(Thrown)])])   # withSession, sync
 
 	## A D1 session (Sessions API). It holds a ref, so it is good for one task (MC13).
 	Session :: { ... }.{
@@ -520,8 +530,8 @@ D1 :: { name : Str }.{
 
 	Result :: { info : Sql.Info, rows : List(U8) }.{      # rows: the row objects as CBOR
 		info : D1.Result -> Sql.Info
-		all : D1.Result -> Try(rows, [BadData(Str)]) where [rows.Parseable]
-		first : D1.Result -> Try(row, [NotFound, BadData(Str)]) where [row.Parseable]
+		all : D1.Result -> Try(rows, [Infra([BadData(Str)])]) where [rows.Parseable]
+		first : D1.Result -> Try(row, [NotFound, Infra([BadData(Str)])]) where [row.Parseable]
 	}
 }
 
@@ -664,23 +674,23 @@ Kv(a) :: { ... }.{
 	text : Str -> Kv(Str)
 	bytes : Str -> Kv(List(U8))
 
-	get! : Kv(a), Str => Try(a, [NotFound, KvErr(Thrown), BadData(Str), TooLarge])
-	get_with! : Kv(a), Str, { cache_ttl_ms ?: U64, max_bytes ?: U64 } => Try(a, [NotFound, KvErr(Thrown), BadData(Str), TooLarge])
-	get_with_metadata! : Kv(a), Str => Try({ value : a, metadata : Try(m, [Missing]) }, [NotFound, KvErr(Thrown), BadData(Str), TooLarge]) where [m.Parseable]
-	get_with_metadata_with! : Kv(a), Str, { cache_ttl_ms ?: U64, max_bytes ?: U64 } => Try({ value : a, metadata : Try(m, [Missing]) }, [NotFound, KvErr(Thrown), BadData(Str), TooLarge]) where [m.Parseable]
-	get_or! : Kv(a), Str, a => Try(a, [KvErr(Thrown), BadData(Str), TooLarge])   # the default for a key that is not there
-	find! : Kv(a), Str => Try(Try(a, [NotFound]), [KvErr(Thrown), BadData(Str), TooLarge])   # a key that is not there is Ok(Err(NotFound))
-	put! : Kv(a), Str, a => Try({}, [KvErr(Thrown), BadData(Str)])
-	put_with! : Kv(a), Str, a, { ttl_ms ?: U64, expires_ms ?: U64, metadata ?: Kv.Metadata } => Try({}, [KvErr(Thrown), BadData(Str)])   # metadata: Kv.Metadata.of(m), see Metadata below
-	delete! : Kv(a), Str => Try({}, [KvErr(Thrown)])
-	list! : Kv(a), { prefix ?: Str, cursor ?: Str, limit ?: U32 } => Try({ keys : List(Kv.Key), next : [More(Str), Done] }, [KvErr(Thrown)])
+	get! : Kv(a), Str => Try(a, [NotFound, Infra([KvErr(Thrown), BadData(Str), TooLarge])])
+	get_with! : Kv(a), Str, { cache_ttl_ms ?: U64, max_bytes ?: U64 } => Try(a, [NotFound, Infra([KvErr(Thrown), BadData(Str), TooLarge])])
+	get_with_metadata! : Kv(a), Str => Try({ value : a, metadata : Try(m, [Missing]) }, [NotFound, Infra([KvErr(Thrown), BadData(Str), TooLarge])]) where [m.Parseable]
+	get_with_metadata_with! : Kv(a), Str, { cache_ttl_ms ?: U64, max_bytes ?: U64 } => Try({ value : a, metadata : Try(m, [Missing]) }, [NotFound, Infra([KvErr(Thrown), BadData(Str), TooLarge])]) where [m.Parseable]
+	get_or! : Kv(a), Str, a => Try(a, [Infra([KvErr(Thrown), BadData(Str), TooLarge])])   # the default for a key that is not there
+	find! : Kv(a), Str => Try(Try(a, [NotFound]), [Infra([KvErr(Thrown), BadData(Str), TooLarge])])   # a key that is not there is Ok(Err(NotFound))
+	put! : Kv(a), Str, a => Try({}, [Infra([KvErr(Thrown), BadData(Str)])])
+	put_with! : Kv(a), Str, a, { ttl_ms ?: U64, expires_ms ?: U64, metadata ?: Kv.Metadata } => Try({}, [Infra([KvErr(Thrown), BadData(Str)])])   # metadata: Kv.Metadata.of(m), see Metadata below
+	delete! : Kv(a), Str => Try({}, [Infra([KvErr(Thrown)])])
+	list! : Kv(a), { prefix ?: Str, cursor ?: Str, limit ?: U32 } => Try({ keys : List(Kv.Key), next : [More(Str), Done] }, [Infra([KvErr(Thrown)])])
 
 	cell : Kv(a), Str -> Kv.Cell(a)
 	Cell(a) := { ... }.{ get!, get_or!, find!, set!, set_with!, delete!, declare }
 	Key : { name : Str, expires_ms : [Never, At(U64)], metadata : Try(Kv.Metadata, [Missing]) }
 	Metadata :: { cbor : List(U8) }.{
 		of : m -> Kv.Metadata where [m.Encodable]                          # typed at the use, for put_with!
-		parse : Kv.Metadata -> Try(m, [BadData(Str)]) where [m.Parseable]   # typed at the use (MC7)
+		parse : Kv.Metadata -> Try(m, [Infra([BadData(Str)])]) where [m.Parseable]   # typed at the use (MC7)
 	}
 }
 ```
@@ -701,18 +711,18 @@ Kv(a) :: { ... }.{
 ```roc
 R2 :: { name : Str }.{
 	binding : Str -> R2
-	get! : R2, Str => Try(R2.Object, [NotFound, R2Err(Thrown)])
-	get_with! : R2, Str, { range ?: R2.Range, only_if ?: R2.Cond } => Try(R2.Object, [NotFound, PreconditionFailed, R2Err(Thrown)])
-	respond! : R2, Str, Request => Try(Response, [R2Err(Thrown)])   # a GET request answered: 200, 206, 304, 404, 412, 416
+	get! : R2, Str => Try(R2.Object, [NotFound, Infra([R2Err(Thrown)])])
+	get_with! : R2, Str, { range ?: R2.Range, only_if ?: R2.Cond } => Try(R2.Object, [NotFound, PreconditionFailed, Infra([R2Err(Thrown)])])
+	respond! : R2, Str, Request => Try(Response, [Infra([R2Err(Thrown)])])   # a GET request answered: 200, 206, 304, 404, 412, 416
 	to_response : R2.Object -> Response                           # 200, the body, the HTTP metadata and etag
-	head! : R2, Str => Try(R2.Meta, [NotFound, R2Err(Thrown)])
-	put! : R2, Str, Body => Try(R2.Meta, [R2Err(Thrown)])          # any body: a stream of unknown length too (Known length)
-	put_with! : R2, Str, Body, { only_if ?: R2.Cond, http ?: R2.Http, custom ?: List((Str, Str)), checksum ?: R2.Checksum, length_bytes ?: U64 } => Try(R2.Meta, [PreconditionFailed, R2Err(Thrown)])
-	delete! : R2, List(Str) => Try({}, [R2Err(Thrown)])
-	list! : R2, { prefix ?: Str, cursor ?: Str, limit ?: U32, delimiter ?: Str, start_after ?: Str, include ?: List([Http, Custom]) } => Try({ objects : List(R2.Meta), prefixes : List(Str), next : [More(Str), Done] }, [R2Err(Thrown)])
+	head! : R2, Str => Try(R2.Meta, [NotFound, Infra([R2Err(Thrown)])])
+	put! : R2, Str, Body => Try(R2.Meta, [Infra([R2Err(Thrown)])])          # any body: a stream of unknown length too (Known length)
+	put_with! : R2, Str, Body, { only_if ?: R2.Cond, http ?: R2.Http, custom ?: List((Str, Str)), checksum ?: R2.Checksum, length_bytes ?: U64 } => Try(R2.Meta, [PreconditionFailed, Infra([R2Err(Thrown)])])
+	delete! : R2, List(Str) => Try({}, [Infra([R2Err(Thrown)])])
+	list! : R2, { prefix ?: Str, cursor ?: Str, limit ?: U32, delimiter ?: Str, start_after ?: Str, include ?: List([Http, Custom]) } => Try({ objects : List(R2.Meta), prefixes : List(Str), next : [More(Str), Done] }, [Infra([R2Err(Thrown)])])
 
-	create_multipart_upload! : R2, Str => Try(R2.Upload, [R2Err(Thrown)])
-	create_multipart_upload_with! : R2, Str, { http ?: R2.Http, custom ?: List((Str, Str)) } => Try(R2.Upload, [R2Err(Thrown)])
+	create_multipart_upload! : R2, Str => Try(R2.Upload, [Infra([R2Err(Thrown)])])
+	create_multipart_upload_with! : R2, Str, { http ?: R2.Http, custom ?: List((Str, Str)) } => Try(R2.Upload, [Infra([R2Err(Thrown)])])
 	resume_multipart_upload : R2, Str, Str -> R2.Upload      # key, upload id: data, no crossing
 
 	## A multipart upload as data, so a later request can go on with it (MC1: no ref).
@@ -720,10 +730,10 @@ R2 :: { name : Str }.{
 		parser_for : _
 		encoder_for : _
 		is_eq : _
-		upload_part! : R2.Upload, U32, Body => Try(R2.Part, [R2Err(Thrown)])                    # part number 1 to 10,000
-		upload_part_with! : R2.Upload, U32, Body, { length_bytes ?: U64 } => Try(R2.Part, [R2Err(Thrown)])
-		complete! : R2.Upload, List(R2.Part) => Try(R2.Meta, [R2Err(Thrown)])
-		abort! : R2.Upload => Try({}, [R2Err(Thrown)])
+		upload_part! : R2.Upload, U32, Body => Try(R2.Part, [Infra([R2Err(Thrown)])])                    # part number 1 to 10,000
+		upload_part_with! : R2.Upload, U32, Body, { length_bytes ?: U64 } => Try(R2.Part, [Infra([R2Err(Thrown)])])
+		complete! : R2.Upload, List(R2.Part) => Try(R2.Meta, [Infra([R2Err(Thrown)])])
+		abort! : R2.Upload => Try({}, [Infra([R2Err(Thrown)])])
 	}
 	Part : { part_number : U32, etag : Str }
 
@@ -764,10 +774,10 @@ R2 :: { name : Str }.{
 Cache :: { ... }.{
 	default : Cache
 	named : Str -> Cache                                     # caches.open, in the same crossing as the op
-	get! : Cache, Str => Try(Response, [NotFound, CacheErr(Thrown)])   # cache.match
-	put! : Cache, Str, Response => Try(Response, [CacheErr(Thrown)])   # the put now; gives the response to send
-	put_after! : Cache, Str, Response => Try(Response, [CacheErr(Thrown)])   # the put in the work of Response.after
-	delete! : Cache, Str => Try({}, [NotFound, CacheErr(Thrown)])   # false from delete: NotFound
+	get! : Cache, Str => Try(Response, [NotFound, Infra([CacheErr(Thrown)])])   # cache.match
+	put! : Cache, Str, Response => Try(Response, [Infra([CacheErr(Thrown)])])   # the put now; gives the response to send
+	put_after! : Cache, Str, Response => Try(Response, [Infra([CacheErr(Thrown)])])   # the put in the work of Response.after
+	delete! : Cache, Str => Try({}, [NotFound, Infra([CacheErr(Thrown)])])   # false from delete: NotFound
 }
 ```
 
@@ -821,10 +831,10 @@ Queue(a) :: { ... }.{
 	text : Str -> Queue(Str)
 	bytes : Str -> Queue(List(U8))
 
-	send! : Queue(a), a => Try({}, [QueueErr(Thrown)])
-	send_with! : Queue(a), a, { delay_ms ?: U64 } => Try({}, [QueueErr(Thrown)])
-	send_batch! : Queue(a), List(a) => Try({}, [QueueErr(Thrown)])   # sendBatch: 100 messages and 256 KB or less
-	send_batch_with! : Queue(a), List(a), { delay_ms ?: U64 } => Try({}, [QueueErr(Thrown)])
+	send! : Queue(a), a => Try({}, [Infra([QueueErr(Thrown)])])
+	send_with! : Queue(a), a, { delay_ms ?: U64 } => Try({}, [Infra([QueueErr(Thrown)])])
+	send_batch! : Queue(a), List(a) => Try({}, [Infra([QueueErr(Thrown)])])   # sendBatch: 100 messages and 256 KB or less
+	send_batch_with! : Queue(a), List(a), { delay_ms ?: U64 } => Try({}, [Infra([QueueErr(Thrown)])])
 
 	each! : Queue(a), Queue.Batch, (Queue.Message, a => Try({}, e)) => { acked : U64, retried : U64 }
 
@@ -861,14 +871,14 @@ Object :: { ... }.{
 		from_id : Object.Namespace, Str -> Object
 		from_id_with : Object.Namespace, Str, { location_hint ?: Object.Location } -> Object
 		unique! : Object.Namespace => Object                 # newUniqueId, sync
-		unique_with! : Object.Namespace, { jurisdiction ?: Object.Jurisdiction, location_hint ?: Object.Location } => Try(Object, [ObjectErr(Thrown)])
+		unique_with! : Object.Namespace, { jurisdiction ?: Object.Jurisdiction, location_hint ?: Object.Location } => Try(Object, [Infra([ObjectErr(Thrown)])])
 		jurisdiction : Object.Namespace, Object.Jurisdiction -> Object.Namespace   # namespace.jurisdiction(j), data
 	}
 	Jurisdiction : [Eu, Us, Fedramp]                                     # "eu", "us", "fedramp"
 	Location : [Wnam, Enam, Sam, Weur, Eeur, Apac, ApacNe, ApacSe, Oc, Afr, Me]   # "apac-ne" for ApacNe
-	fetch! : Object, Request => Try(Response, [ObjectErr(Thrown)])
-	call! : Object, Rpc(arg, ret, err), arg => Try(ret, [RpcErr(Thrown), BadData(Str), Remote(err)]) where [arg.Encodable, ret.Parseable, err.Parseable]
-	id! : Object => Try(Str, [ObjectErr(Thrown)])         # one call!: idFromName(name).toString() for a named object
+	fetch! : Object, Request => Try(Response, [Infra([ObjectErr(Thrown)])])
+	call! : Object, Rpc(arg, ret, err), arg => Try(ret, [Remote(err), Infra([RpcErr(Thrown), BadData(Str)])]) where [arg.Encodable, ret.Parseable, err.Parseable]
+	id! : Object => Try(Str, [Infra([ObjectErr(Thrown)])])         # one call!: idFromName(name).toString() for a named object
 }
 ```
 
@@ -894,26 +904,26 @@ Inside: a class is a record of handlers, all optional, as for `Worker`.
 
 	Self := { ... }.{
 		id : Object.Self -> Str
-		sql! : Object.Self, Str, params => Try(rows, [SqlErr(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Parseable, params.Encodable([])]
-		sql_with! : Object.Self, Str, params, { max_bytes : U64 } => Try(rows, [SqlErr(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Parseable, params.Encodable([])]
-		sql_run! : Object.Self, Str, params => Try(Object.SqlInfo, [SqlErr(Thrown), Constraint(Sql.Constraint)]) where [params.Encodable([])]
-		sql_rows! : Object.Self, Str, params => Try(Sql.Rows, [SqlErr(Thrown), Constraint(Sql.Constraint), TooLarge]) where [params.Encodable([])]
-		sql_rows_with! : Object.Self, Str, params, { max_bytes : U64 } => Try(Sql.Rows, [SqlErr(Thrown), Constraint(Sql.Constraint), TooLarge]) where [params.Encodable([])]
-		set_alarm_at! : Object.Self, U64 => Try({}, [StorageErr(Thrown)])              # setAlarm(epoch_ms): a time of the clock, one wait
-		set_alarm_in! : Object.Self, U64 => Try({}, [StorageErr(Thrown)])              # setAlarm(Date.now() + delay_ms), one wait
-		get_alarm! : Object.Self => Try(U64, [NotFound, StorageErr(Thrown)])           # getAlarm: a promise, one wait
-		delete_alarm! : Object.Self => Try({}, [StorageErr(Thrown)])                   # deleteAlarm: a promise, one wait
-		list! : Object.Self => Try(List(Str), [TooLarge, StorageErr(Thrown)])          # kv.list(): the keys, sync
-		list_with! : Object.Self, { prefix ?: Str, start ?: Str, start_after ?: Str, end ?: Str, limit ?: U32, reverse ?: Bool } => Try(List(Str), [TooLarge, StorageErr(Thrown)])
-		delete_all! : Object.Self => Try({}, [StorageErr(Thrown)])                     # deleteAlarm and deleteAll: one wait
+		sql! : Object.Self, Str, params => Try(rows, [Infra([SqlErr(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Parseable, params.Encodable([])]
+		sql_with! : Object.Self, Str, params, { max_bytes : U64 } => Try(rows, [Infra([SqlErr(Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Parseable, params.Encodable([])]
+		sql_run! : Object.Self, Str, params => Try(Object.SqlInfo, [Infra([SqlErr(Thrown), Constraint(Sql.Constraint)])]) where [params.Encodable([])]
+		sql_rows! : Object.Self, Str, params => Try(Sql.Rows, [Infra([SqlErr(Thrown), Constraint(Sql.Constraint), TooLarge])]) where [params.Encodable([])]
+		sql_rows_with! : Object.Self, Str, params, { max_bytes : U64 } => Try(Sql.Rows, [Infra([SqlErr(Thrown), Constraint(Sql.Constraint), TooLarge])]) where [params.Encodable([])]
+		set_alarm_at! : Object.Self, U64 => Try({}, [Infra([StorageErr(Thrown)])])              # setAlarm(epoch_ms): a time of the clock, one wait
+		set_alarm_in! : Object.Self, U64 => Try({}, [Infra([StorageErr(Thrown)])])              # setAlarm(Date.now() + delay_ms), one wait
+		get_alarm! : Object.Self => Try(U64, [NotFound, Infra([StorageErr(Thrown)])])           # getAlarm: a promise, one wait
+		delete_alarm! : Object.Self => Try({}, [Infra([StorageErr(Thrown)])])                   # deleteAlarm: a promise, one wait
+		list! : Object.Self => Try(List(Str), [Infra([TooLarge, StorageErr(Thrown)])])          # kv.list(): the keys, sync
+		list_with! : Object.Self, { prefix ?: Str, start ?: Str, start_after ?: Str, end ?: Str, limit ?: U32, reverse ?: Bool } => Try(List(Str), [Infra([TooLarge, StorageErr(Thrown)])])
+		delete_all! : Object.Self => Try({}, [Infra([StorageErr(Thrown)])])                     # deleteAlarm and deleteAll: one wait
 		accept! : Object.Self, Request => Try({ socket : Object.Socket, response : Response }, [NotUpgrade])
 		accept_with! : Object.Self, Request, { tags ?: List(Str) } => Try({ socket : Object.Socket, response : Response }, [NotUpgrade, TooLarge])
 		sockets! : Object.Self => List(Object.Socket)                                  # getWebSockets()
 		sockets_with! : Object.Self, { tag : Str } => List(Object.Socket)              # getWebSockets(tag)
 		broadcast! : Object.Self, WebSocket.Message => {}                              # send! to each socket
-		broadcast_json! : Object.Self, a => Try({}, [BadData(Str)]) where [a.JsonEncodable]   # the same, the message is the JSON text of a value. BadData: nothing sent
+		broadcast_json! : Object.Self, a => Try({}, [Infra([BadData(Str)])]) where [a.JsonEncodable]   # the same, the message is the JSON text of a value. BadData: nothing sent
 		broadcast_with! : Object.Self, { tag ?: Str }, WebSocket.Message => U64        # the same, gives the count sent. tag: the sockets with the tag only
-		broadcast_json_with! : Object.Self, { tag ?: Str }, a => Try(U64, [BadData(Str)]) where [a.JsonEncodable]   # JSON text, gives the count
+		broadcast_json_with! : Object.Self, { tag ?: Str }, a => Try(U64, [Infra([BadData(Str)])]) where [a.JsonEncodable]   # JSON text, gives the count
 		set_auto_response! : Object.Self, { request : Str, response : Str } => Try({}, [TooLarge])
 		clear_auto_response! : Object.Self => {}
 	}
@@ -927,19 +937,19 @@ Inside: a class is a record of handlers, all optional, as for `Worker`.
 	## A WebSocket that the object accepted with the hibernation API (12).
 	Socket := { ... }.{
 		send! : Object.Socket, WebSocket.Message => Try({}, [Closed])
-		send_json! : Object.Socket, a => Try({}, [Closed, BadData(Str)]) where [a.JsonEncodable]
+		send_json! : Object.Socket, a => Try({}, [Closed, Infra([BadData(Str)])]) where [a.JsonEncodable]
 		close! : Object.Socket, U16, Str => {}
 		tags! : Object.Socket => List(Str)                                          # getTags
 		# Object.attachment : Str -> Object.Attachment(a) where [a.Encodable, a.Parseable]   (a constant, like Object.cell)
 		Attachment.set! : Object.Attachment(a), Object.Socket, a => Try({}, [TooLarge])   # serializeAttachment: CBOR bytes
-		Attachment.get! : Object.Attachment(a), Object.Socket => Try(a, [NotFound, BadData(Str)])
+		Attachment.get! : Object.Attachment(a), Object.Socket => Try(a, [NotFound, Infra([BadData(Str)])])
 		auto_response_ms! : Object.Socket => Try(U64, [NotFound])                   # getWebSocketAutoResponseTimestamp
 	}
 ```
 
 ```roc
 counters = Object.namespace("COUNTERS", { class: counter })   # counter = Object.class("Counter", ...), below
-increment : Rpc({ by : I64 }, I64, [StorageErr(Thrown)])
+increment : Rpc({ by : I64 }, I64, [Infra(Rpc.Infra)])
 increment = Rpc.method("increment")
 count : Object.Cell(I64)
 count = Object.cell("count")
@@ -991,7 +1001,7 @@ As built in `PLAN.md` 8f, part 1 (`platform/Object.roc`, `platform/Remote.roc`, 
 | `sql!` | `pf.sqlExec` (`exec(sql, ...params)`), `.toArray()`, then `pf.pack` with the limit. `sql_rows!`: `columnNames`, `Array.from(raw())`, then `pf.limit`. Both one `call!`. | MC11 |
 | `sql_run!` | `exec`, then `toArray()` (the cursor runs to its end), then `Fields` of `rowsRead` and `rowsWritten`. A cursor that gives other values is `SqlErr` with the name `BadData` (the type has no `BadData`). | `rowsWritten` is 2 for an insert of 2 rows before and after the iteration (probe) |
 | `list!` | `storage.kv.list(options)`, then the new helper `pf.keys(entries, max)`: the keys as a `Js` tree with the limit of MC11 (`TooLarge`). The values stay in JS. Options: `prefix`, `start`, `startAfter`, `end`, `limit`, `reverse`. | OP4: a program has no loop |
-| `Object.Cell` | `get! : Object.Cell(a), Object.Self => Try(a, [NotFound, BadData(Str), StorageErr(Thrown)])`, `get_or! : Object.Cell(a), Object.Self, a => Try(a, [BadData(Str), StorageErr(Thrown)])` (the default for a cell with no value), `set! : Object.Cell(a), Object.Self, a => Try({}, [StorageErr(Thrown)])`, `find! : Object.Cell(a), Object.Self => Try(Try(a, [NotFound]), [BadData(Str), StorageErr(Thrown)])` (a cell with no value is `Ok(Err(NotFound))`), `delete! : Object.Cell(a), Object.Self => Try({}, [StorageErr(Thrown)])` (a key with no value is `Ok`). The value is CBOR bytes (`kv.put(key, Uint8Array)`). | The design gives only the names (9) |
+| `Object.Cell` | `get! : Object.Cell(a), Object.Self => Try(a, [NotFound, Infra([BadData(Str), StorageErr(Thrown)])])`, `get_or! : Object.Cell(a), Object.Self, a => Try(a, [Infra([BadData(Str), StorageErr(Thrown)])])` (the default for a cell with no value), `set! : Object.Cell(a), Object.Self, a => Try({}, [Infra([StorageErr(Thrown)])])`, `find! : Object.Cell(a), Object.Self => Try(Try(a, [NotFound]), [Infra([BadData(Str), StorageErr(Thrown)])])` (a cell with no value is `Ok(Err(NotFound))`), `delete! : Object.Cell(a), Object.Self => Try({}, [Infra([StorageErr(Thrown)])])` (a key with no value is `Ok`). The value is CBOR bytes (`kv.put(key, Uint8Array)`). | The design gives only the names (9) |
 | `class` | The fields `init!`, `fetch!`, `rpc`, `alarm!`, and since `PLAN.md` 8f part 3 `web_socket_message!`, `web_socket_close!`, `web_socket_error!` (12.4). `Object.Class` is `{ name, handlers, methods, run! : Str, Object.Event => Outcome }`: `run!` takes the id, so only `Object` makes a `Self`. | |
 | The handlers of one class | Each handler has its own error type (`e1` to `e6` in the record of `class`), so a handler that gives only `Ok` can have `Try(_, [])`. | Step 8h |
 | SQLite check | The constructor reads `ctx.storage.sql.databaseSize`. On a throw it throws `Durable Object class <name>: the platform needs a SQLite-backed class: put "<name>" in new_sqlite_classes ...`, with the text of Workers after it. Local workerd already names `new_sqlite_classes`, but not the class. | 7, "SQLite only" |
@@ -1008,7 +1018,9 @@ Rpc(arg, ret, err) :: { name : Str }.{
 	on : Rpc(arg, ret, err), (self, arg => Try(ret, err)) -> Rpc.Handler(self) where [arg.Parseable, ret.Encodable, err.Encodable]   # a Durable Object: self is Object.Self
 	on_worker : Rpc(arg, ret, err), (arg => Try(ret, err)) -> Rpc.Handler({}) where [arg.Parseable, ret.Encodable, err.Encodable]  # a Worker: no self
 	entrypoint : Str, { fetch! ?: Request => Try(Response, e), rpc ?: List(Rpc.Handler({})) } -> Rpc.Entrypoint
-	reply_of : List(U8) -> Try(ret, [BadData(Str), Remote(err)]) where [ret.Parseable, err.Parseable]
+	reply_of : List(U8) -> Try(ret, [Remote(err), Infra([BadData(Str)])]) where [ret.Parseable, err.Parseable]
+	Infra : [StorageErr(Thrown), SqlErr(Thrown), Constraint(Sql.Constraint), D1Err(Thrown), KvErr(Thrown), R2Err(Thrown), CacheErr(Thrown), QueueErr(Thrown), ObjectErr(Thrown), ServiceErr(Thrown), RpcErr(Thrown), HttpErr(Thrown), Network(Thrown), SocketErr(Thrown), BodyErr(Thrown), CryptoErr(Thrown), AiErr(Thrown), VectorizeErr(Thrown), WorkflowsErr(Thrown), EmailErr(Thrown), AnalyticsErr(Thrown), AssetsErr(Thrown), SecretsStoreErr(Thrown), LimitErr(Thrown), BadData(Str), InvalidJson(Str), MissingEnv(Str), TooLarge, TimedOut]   # MC9: the closed union of all Infra tags
+	forward : (err -> [Infra(Rpc.Infra), ..e]) -> ([Infra([RpcErr(Thrown), BadData(Str)]), Remote(err)] -> [Infra(Rpc.Infra), ..e])   # a nested call in a handler: call!(...) ? Rpc.forward(f)
 	NoErr := []                                               # the err of a method with no errors, with its own codec
 	Handler(self) : { ... }                                  # types erased: CBOR in, CBOR out
 }
@@ -1020,20 +1032,36 @@ Service :: { name : Str, service : Str, entrypoint : Str }.{
 	binding : Str -> Service
 	binding_with : Str, { service ?: Str, entrypoint ?: Str } -> Service   # the Worker and entry point, for the manifest only
 	declare : Service -> Worker.Binding                                   # for Worker.new bindings (3): kind service
-	fetch! : Service, Request => Try(Response, [ServiceErr(Thrown)])
-	call! : Service, Rpc(arg, ret, err), arg => Try(ret, [RpcErr(Thrown), BadData(Str), Remote(err)]) where [arg.Encodable, ret.Parseable, err.Parseable]
+	fetch! : Service, Request => Try(Response, [Infra([ServiceErr(Thrown)])])
+	call! : Service, Rpc(arg, ret, err), arg => Try(ret, [Remote(err), Infra([RpcErr(Thrown), BadData(Str)])]) where [arg.Encodable, ret.Parseable, err.Parseable]
 }
 ```
 
 ```roc
-close_out : Rpc({ id : U64 }, { total : U64 }, [StillOpen, NotFound])
+RoomErr : [StillOpen, NotFound, Infra(Rpc.Infra)]
+
+close_out : Rpc({ id : U64 }, { total : U64 }, RoomErr)
 close_out = Rpc.method("close_out")
 
-close_out! : Object.Self, { id : U64 } => Try({ total : U64 }, [StillOpen, NotFound])   # the callee
-match auctions.named("a").call!(close_out, { id: 7 }) {                                 # the caller
+close_out! : Object.Self, { id : U64 } => Try({ total : U64 }, RoomErr)   # the callee
+close_out! = |self, { id }| {
+	total = total_cell.get!(self)?                                       # Infra([BadData, StorageErr]) fits Infra(Rpc.Infra)
+	if (total == 0) Err(NotFound) else Ok({ total })                     # a domain error is a plain tag
+}
+
+match auctions.named("a").call!(close_out, { id: 7 }) {                 # the caller
 	Ok({ total }) => ...
-	Err(Remote(StillOpen)) => ...
-	Err(Remote(NotFound)) | Err(RpcErr(_)) | Err(BadData(_)) => ...
+	Err(Remote(StillOpen)) => ...                                        # a domain error of the callee
+	Err(Remote(NotFound)) => ...
+	Err(Remote(Infra(_))) => ...                                         # a platform call of the callee failed
+	Err(Infra(RpcErr(_))) | Err(Infra(BadData(_))) => ...                # this call failed
+}
+
+## A nested call in a handler: the errors of this call stay in Infra, forward maps the err of the callee.
+relay! : Object.Self, { id : U64 } => Try({ total : U64 }, RoomErr)
+relay! = |_self, arg| {
+	out = auctions.named("b").call!(close_out, arg) ? Rpc.forward(|e| e)   # the same err type: |e| e
+	Ok(out)
 }
 ```
 
@@ -1041,7 +1069,9 @@ match auctions.named("a").call!(close_out, { id: 7 }) {                         
 | --- | --- |
 | Interface | A package of `Rpc` constants is the interface of a service. The caller and the callee import the same package, so their types agree. |
 | On the wire | The table "Formats of typed data" (1). One argument. The module sends it as CBOR, and JS gives the callee the JS value, so a JS callee gets a plain object (a `BigInt` above 2^53, a `Uint8Array` for a `Cbor.Bytes` field, an `Array` of numbers for a `List(U8)` field, MC5). JS sends the reply of a JS callee back as CBOR. |
-| Errors | `err` is a tag union that the callee can give: a handler that gives another tag does not compile. An `Err(e)` of the callee is a normal reply, and the caller gets `Remote(e)`, the same tag. A method with no errors has `err` `Rpc.NoErr`: `[]` has no derived codec (`research/e1-errors/rpc_empty.roc`). A throw (a crash, a JS throw, a bad argument with "bad argument", a missing method) is `RpcErr(Thrown)`. A reply that does not fit `ret` or `err` is `BadData`. |
+| Errors | `err` is a tag union that the callee can give: a handler that gives another tag does not compile. An `Err(e)` of the callee is a normal reply, and the caller gets `Remote(e)`, the same tag. A method with no errors has `err` `Rpc.NoErr`: `[]` has no derived codec (`research/e1-errors/rpc_empty.roc`). A throw (a crash, a JS throw, a bad argument with "bad argument", a missing method) is `Infra(RpcErr(Thrown))`. A reply that does not fit `ret` or `err` is `Infra(BadData)`. |
+| Infrastructure errors (MC9) | Each platform function gives its storage, binding and call errors in one tag, `Infra([its own tags])`. The domain errors of a handler stay plain (`Err(NotFound)`). The `err` of a method closes the platform errors with `Infra(Rpc.Infra)`: the payloads of each `?` merge, and the closed `Rpc.Infra` has a CBOR codec. The caller gets one shape: `Infra(..)` when this call failed, `Remote(Infra(..))` when a platform call of the callee failed, `Remote(<domain tag>)` for a domain error. A match with an arm for each domain tag and one `Remote(Infra(_))` arm needs no `_`, so a new domain tag of the callee does not compile until the caller has an arm for it. |
+| `Rpc.forward` | A nested call in a handler: `x = call!(...) ? Rpc.forward(f)`. `Infra(RpcErr)` and `Infra(BadData)` of this call stay `Infra`, `f` maps the `err` of the callee into the `err` of the handler (`\|e\| e` when the two have one type). Evidence: `research/n5-rpc-errors` (q9, `g1a-check/`). |
 | A JS method with many arguments | `Js` (`API.md` 6.4) |
 | `self` | `Object.Self` in a Durable Object (`on`). A Worker entry point has no `self`: `on_worker(\|arg\| ...)` (MC14). `on` with a `{}` self still compiles for a Worker. |
 | The default entry point | The `rpc` field of `Worker` (3). `makeHandler` gives a subclass of `WorkerEntrypoint`, because Workers sends RPC only to a class that extends it (Cloudflare docs, service bindings RPC). |
@@ -1056,7 +1086,7 @@ Limits: Workers RPC can carry more than this module. The module keeps to typed d
 | Callbacks to the caller (a function in the argument) | No | The same: a callback is a stub |
 | `ReadableStream`, `WritableStream`, `Request`, `Response` | No. Use `fetch!` of the `Object` or the `Service`: a `Body` stream passes with no copy. | CBOR has no stream |
 | Promise pipelining | No. Each `call!` is one wait. | A pipelined call needs a stub |
-| An error with its name, message and own properties (Cloudflare docs, RPC error handling) | A throw is text only: the caller gets `RpcErr({ name, message })`. A typed error is the `Err` of the reply: `Remote(err)`. | A thrown error crosses as `Error(name, message)` (`API.md` 5, J6) |
+| An error with its name, message and own properties (Cloudflare docs, RPC error handling) | A throw is text only: the caller gets `Infra(RpcErr({ name, message }))`. A typed error is the `Err` of the reply: `Remote(err)`. | A thrown error crosses as `Error(name, message)` (`API.md` 5, J6) |
 | 32 MiB for one call (Cloudflare docs) | The same limit. The reply is a read into wasm memory (MC11). | |
 
 As built in `PLAN.md` 8f, part 1 (`platform/Rpc.roc`, `platform/Service.roc`, `platform/Remote.roc`, `js/index.js`, `js/events.js`):
@@ -1065,11 +1095,11 @@ As built in `PLAN.md` 8f, part 1 (`platform/Rpc.roc`, `platform/Service.roc`, `p
 | --- | --- | --- |
 | `Rpc.name` | Public: `Rpc(arg, ret, err) -> Str`, the method name | `Object` and `Service` build the call in `Remote` (not exposed), and `Rpc` is opaque |
 | `Handler(self)` | `{ name : Str, run! : self, List(U8) => Try(List(U8), Str) }`: `run!` parses the argument with `Cbor.parse`, a parse error is `Err("bad argument: <error>")`. `Ok(r)` and `Err(e)` of the handler are both `Ok(bytes)`: the CBOR of `{"Ok": r}` or `{"Err": e}` | The prototype (15) |
-| The reply on the wire | `{"Ok": value}` or `{"Err": tag}`, the derived CBOR of a tag `Ok(ret)` or `Err(err)`. The type `Reply(ret, err) := [Ok(ret), Err(err)]` (private) has the derived codec. `Rpc.reply_of` (the parser of `call!`) parses it. `on` writes the first bytes by hand (`ok_head`, `err_head`: a map of one entry and its key) and then `Cbor.encode` of the value only, because `Cbor.encode(Reply.Ok(r))` in `on` crashes the compiler when a type module of the app uses `on` (`research/e1-errors/mod`, still on nightly-2026-10-19). The parser of a tag with a `{}` value crashed too, so each `Rpc(_, {}, _)` did (`research/rpc-unit-crash`, fixed in nightly-2026-10-19). A reply that does not parse is `BadData`. In JS the reply is a plain object `{ Ok: value }` or `{ Err: tag }` (a tag with no payload is text, `{ Err: "StillOpen" }`), so it passes through to the caller as any reply. A JS callee gives the same shape. | `research/rpc-err-sql-params` (form B) |
-| `Rpc.NoErr` | `NoErr := []` with its own `encoder_for` (writes nothing: it has no values) and `parser_for` (always `InvalidCbor(0)`, so a reply `{"Err": ...}` is `BadData`). | The compiler derives no codec for `[]` |
+| The reply on the wire | `{"Ok": value}` or `{"Err": tag}`, the derived CBOR of a tag `Ok(ret)` or `Err(err)`. The type `Reply(ret, err) := [Ok(ret), Err(err)]` (private) has the derived codec. `Rpc.reply_of` (the parser of `call!`) parses it. `on` writes the first bytes by hand (`ok_head`, `err_head`: a map of one entry and its key) and then `Cbor.encode` of the value only, because `Cbor.encode(Reply.Ok(r))` in `on` crashes the compiler when a type module of the app uses `on` (`research/e1-errors/mod`, still on nightly-2026-10-19). The parser of a tag with a `{}` value crashed too, so each `Rpc(_, {}, _)` did (`research/rpc-unit-crash`, fixed in nightly-2026-10-19). A reply that does not parse is `Infra(BadData)`. In JS the reply is a plain object `{ Ok: value }` or `{ Err: tag }` (a tag with no payload is text, `{ Err: "StillOpen" }`), so it passes through to the caller as any reply. A JS callee gives the same shape. | `research/rpc-err-sql-params` (form B) |
+| `Rpc.NoErr` | `NoErr := []` with its own `encoder_for` (writes nothing: it has no values) and `parser_for` (always `InvalidCbor(0)`, so a reply `{"Err": ...}` is `Infra(BadData)`). | The compiler derives no codec for `[]` |
 | `Entrypoint` | `{ name, handlers : List(Str), rpc, fetch! : Request => [Respond(Response), Failed(Str), Unhandled] }` | The manifest needs the handlers |
-| `call!` | One `await!`: the stub or the binding, `Call(target, name, [Lit(Packed(Cbor.encode(arg)))])` (JS gives the callee the plain value), then `pf.pack` of the reply with the limit 32 MiB. `{"Err": e}` is `Remote(e)`. A reply that does not fit `ret` or `err` is `BadData(Str.inspect(error))`. A throw (of the callee, of Workers, `TooLarge` of `pf.pack`) is `RpcErr`. Twins `call` and `fetch` (MC3). | Locally Workers stops a reply above 32 MiB first: "Serialized RPC arguments or return values are limited to 32MiB, but the size of this value was: 33554440 bytes." |
-| `fetch!` | `target.fetch(url, init)` with the method, the headers and the body (a stream is its ref), then `Fields` of `status`, `headers`, `body` and `webSocket` (a 101 keeps its socket). A throw is `ObjectErr` or `ServiceErr`. | The same `RequestInit` as `Http` |
+| `call!` | One `await!`: the stub or the binding, `Call(target, name, [Lit(Packed(Cbor.encode(arg)))])` (JS gives the callee the plain value), then `pf.pack` of the reply with the limit 32 MiB. `{"Err": e}` is `Remote(e)`. A reply that does not fit `ret` or `err` is `Infra(BadData(Str.inspect(error)))`. A throw (of the callee, of Workers, `TooLarge` of `pf.pack`) is `Infra(RpcErr)`. Twins `call` and `fetch` (MC3). | Locally Workers stops a reply above 32 MiB first: "Serialized RPC arguments or return values are limited to 32MiB, but the size of this value was: 33554440 bytes." |
+| `fetch!` | `target.fetch(url, init)` with the method, the headers and the body (a stream is its ref), then `Fields` of `status`, `headers`, `body` and `webSocket` (a 101 keeps its socket). A throw is `Infra(ObjectErr)` or `Infra(ServiceErr)`. | The same `RequestInit` as `Http` |
 | Typed bytes (MC5) | A `Cbor.Bytes` field reaches a JS callee as a `Uint8Array`, a `List(U8)` field as an `Array` | `checks/rpc.mjs` |
 
 ## 9. State: `Memo`, `Kv.Cell`, `Object.Cell`
@@ -1110,17 +1140,17 @@ A value with one field: `cell.set!({ name: name })`. `{ name }` is a block, not 
 
 ```roc
 WebCrypto :: [].{
-	sign! : { alg : WebCrypto.Alg, key : WebCrypto.Key, data : List(U8) } => Try(List(U8), [CryptoErr(Thrown)])
-	verify! : { alg : WebCrypto.Alg, key : WebCrypto.Key, signature : List(U8), data : List(U8) } => Try({}, [BadSignature, CryptoErr(Thrown)])
-	encrypt! : { cipher : WebCrypto.Cipher, key : WebCrypto.Key, data : List(U8) } => Try(List(U8), [CryptoErr(Thrown)])
-	decrypt! : { cipher : WebCrypto.Cipher, key : WebCrypto.Key, data : List(U8) } => Try(List(U8), [CryptoErr(Thrown)])
-	derive_bits! : { alg : WebCrypto.Derive, key : WebCrypto.Key, length_bits : U32 } => Try(List(U8), [CryptoErr(Thrown)])
-	import_key! : WebCrypto.KeyAlg, WebCrypto.Key => Try(WebCrypto.Key, [CryptoErr(Thrown)])   # gives Imported, for many ops in one task
-	export_key! : WebCrypto.Key, [Raw, Pkcs8, Spki, Jwk] => Try(WebCrypto.Key, [CryptoErr(Thrown)])   # an Imported key as data (a key that is data gives its own form only)
-	generate_key! : WebCrypto.KeyAlg => Try(WebCrypto.Generated, [CryptoErr(Thrown)])
-	generate_key_with! : WebCrypto.KeyAlg, { modulus_bits ?: U32, length_bits ?: U32 } => Try(WebCrypto.Generated, [CryptoErr(Thrown)])
+	sign! : { alg : WebCrypto.Alg, key : WebCrypto.Key, data : List(U8) } => Try(List(U8), [Infra([CryptoErr(Thrown)])])
+	verify! : { alg : WebCrypto.Alg, key : WebCrypto.Key, signature : List(U8), data : List(U8) } => Try({}, [BadSignature, Infra([CryptoErr(Thrown)])])
+	encrypt! : { cipher : WebCrypto.Cipher, key : WebCrypto.Key, data : List(U8) } => Try(List(U8), [Infra([CryptoErr(Thrown)])])
+	decrypt! : { cipher : WebCrypto.Cipher, key : WebCrypto.Key, data : List(U8) } => Try(List(U8), [Infra([CryptoErr(Thrown)])])
+	derive_bits! : { alg : WebCrypto.Derive, key : WebCrypto.Key, length_bits : U32 } => Try(List(U8), [Infra([CryptoErr(Thrown)])])
+	import_key! : WebCrypto.KeyAlg, WebCrypto.Key => Try(WebCrypto.Key, [Infra([CryptoErr(Thrown)])])   # gives Imported, for many ops in one task
+	export_key! : WebCrypto.Key, [Raw, Pkcs8, Spki, Jwk] => Try(WebCrypto.Key, [Infra([CryptoErr(Thrown)])])   # an Imported key as data (a key that is data gives its own form only)
+	generate_key! : WebCrypto.KeyAlg => Try(WebCrypto.Generated, [Infra([CryptoErr(Thrown)])])
+	generate_key_with! : WebCrypto.KeyAlg, { modulus_bits ?: U32, length_bits ?: U32 } => Try(WebCrypto.Generated, [Infra([CryptoErr(Thrown)])])
 	hmac_sha256 : List(U8), List(U8) -> List(U8)            # pure Roc over the builtin SHA-256: no crossing
-	sha256! : List(U8) => Try(List(U8), [CryptoErr(Thrown)])  # SHA-256 of bytes in wasm: the builtin below 4,096 bytes (no crossing), else `digest` (one wait)
+	sha256! : List(U8) => Try(List(U8), [Infra([CryptoErr(Thrown)])])  # SHA-256 of bytes in wasm: the builtin below 4,096 bytes (no crossing), else `digest` (one wait)
 	timing_safe_equal! : List(U8), List(U8) => Bool        # timingSafeEqual, sync
 	random! : U64 => List(U8)                              # getRandomValues, sync
 	random_uuid! : () => Str                               # randomUUID, sync
@@ -1136,9 +1166,9 @@ WebCrypto :: [].{
 }
 
 Env :: [].{
-	var! : Str => Try(Str, [MissingEnv(Str)])
-	json! : Str => Try(a, [MissingEnv(Str), BadData(Str)]) where [a.JsonParseable]   # a JSON var of the Wrangler config
-	secret! : Str => Try(Secret, [MissingEnv(Str)])
+	var! : Str => Try(Str, [Infra([MissingEnv(Str)])])
+	json! : Str => Try(a, [Infra([MissingEnv(Str), BadData(Str)])]) where [a.JsonParseable]   # a JSON var of the Wrangler config
+	secret! : Str => Try(Secret, [Infra([MissingEnv(Str)])])
 }
 
 Secret :: { text : Str }.{
@@ -1149,7 +1179,7 @@ Secret :: { text : Str }.{
 
 RateLimit :: { name : Str }.{
 	binding : Str -> RateLimit
-	limit! : RateLimit, Str => Try({}, [RateLimited, LimitErr(Thrown)])
+	limit! : RateLimit, Str => Try({}, [RateLimited, Infra([LimitErr(Thrown)])])
 }
 ```
 
@@ -1228,8 +1258,8 @@ Log :: [].{
 | Respond now, work after | Not in `Ctx`: a `fetch!` handler gives `Ok(res.after(work!))` (`Response.after`, 4, `API.md` 10.2). The deadlines after the response and the rule for the request body are in `API.md` 10.2. |
 | `wait_until!` | `Io.start!` and `ctx.waitUntil` in one `call!`, with no wait. The Roc reader of the `Io` does not run, so a Roc-level `Err` (`PreconditionFailed`, `BadData`) is not seen. Only a JS throw goes to the log. The context of the task (refs and roots) stays until the operation settles, or until the 30 s limit of `waitUntil` (`API.md` 6.5, RS1). Only an `Io({}, e)` fits: the result is dropped, so an operation with a result is a type error (`wait_until!(cache.put(url, res))` would drop the response to send, 5.4; use `cache.put_after!`). Work whose result matters (a write that can fail, a check) runs in the work of `Response.after`. |
 | `pass_through!` | `ctx.passThroughOnException()`. Only in the `Fetch` of a Worker. Elsewhere the shim gives status 1, and the function gives `InvalidState`. After it, an `Err` of `fetch!` makes the shim throw, and Workers sends the request to the origin (`API.md` 10.1). Workers cannot send a request body that the handler already read (Cloudflare docs, Context API). |
-| `Io.timeout` | `io.timeout(ms)` gives `Io(a, [TimedOut, ..e])`: the operation, or `Err(TimedOut)` when `ms` pass first. It is a `Race` of the operation and the sleep of `Time.sleep` in one program, so the loser is aborted as in `Io.race!`. `ws.receive().timeout(5_000).run!()` replaces `Io.race!([ws.receive().map(Got), Time.sleep(5_000).map(\|_\| TimedOut)])` and its `match`. No `receive_within!`: the call above has the same length and works for each `Io` (a `Tcp` read, a fetch). |
-| `Io.timeout_at` | `io.timeout_at(deadline_ms)`: the same as `timeout`, with a point in time on the clock of `Time.now_ms!` (`Date.now()`) in place of a length. A loop with one limit for many reads writes `deadline = Time.now_ms!() + limit_ms` once, then `ws.receive().timeout_at(deadline).run!()` in each turn: no `deadline - now`, no second clock read. The wait is `max(0, deadline_ms - Date.now())` at the time the program runs (the helper `pf.waitUntil`). A deadline in the past waits 0 ms: the answer is `Err(TimedOut)` at once, unless the operation has its result already. |
+| `Io.timeout` | `io.timeout(ms)` gives `Io(a, [Infra([TimedOut]), ..e])`: the operation, or `Err(Infra(TimedOut))` when `ms` pass first. It is a `Race` of the operation and the sleep of `Time.sleep` in one program, so the loser is aborted as in `Io.race!`. `ws.receive().timeout(5_000).run!()` replaces `Io.race!([ws.receive().map(Got), Time.sleep(5_000).map(\|_\| TimedOut)])` and its `match`. No `receive_within!`: the call above has the same length and works for each `Io` (a `Tcp` read, a fetch). |
+| `Io.timeout_at` | `io.timeout_at(deadline_ms)`: the same as `timeout`, with a point in time on the clock of `Time.now_ms!` (`Date.now()`) in place of a length. A loop with one limit for many reads writes `deadline = Time.now_ms!() + limit_ms` once, then `ws.receive().timeout_at(deadline).run!()` in each turn: no `deadline - now`, no second clock read. The wait is `max(0, deadline_ms - Date.now())` at the time the program runs (the helper `pf.waitUntil`). A deadline in the past waits 0 ms: the answer is `Err(Infra(TimedOut))` at once, unless the operation has its result already. |
 | `sleep!`, `sleep` | `scheduler.wait(ms)`. On the edge, a timer does not move during CPU work, only at I/O (Cloudflare docs, scheduler). A sleep is a wait, so the deadlines of `API.md` 10.2 apply. A timeout is `Io.timeout` (`op.timeout(ms)`, `API.md` 6.5). |
 
 As built in `PLAN.md` 8b (second half) and 9c (`platform/Ctx.roc`, `js/helpers.js`, `js/index.js`). `Time` and `Log` are 8c (the table after this one).
@@ -1333,7 +1363,7 @@ A record with one field is a block: `{ name }` is the value of `name`, not `{ na
 | The Worker | Gives the request to the object with `fetch!` and the 101 response back with no change: `Response.web_socket` carries the client end (4, `web_socket()`). It checks `WebSocket.is_upgrade(req)` first and answers 426, as in the Cloudflare example. An RPC call cannot carry the socket: use `fetch!`. |
 | `accept!` | `new WebSocketPair()`, `ctx.acceptWebSocket(server, tags)` and a 101 response with the client end, in one `call!`. `NotUpgrade` when the request has no `Upgrade: websocket`. |
 | Tags | `accept_with!(req, { tags })`: 10 tags or less, 256 characters or less each, else `TooLarge`. `sockets_with!(self, { tag })` finds the sockets of a tag, for example of one user. |
-| Broadcast | `self.broadcast!(message)` sends the message to each open socket and gives `{}`. `self.broadcast_json!(value)` sends the JSON text of a value, like `Object.Socket.send_json!`; a value that JSON cannot show (a `NaN`) is `Err(BadData(text))`, and nothing is sent. `self.broadcast_with!({}, message)` gives the number of sockets that got it (`U64`); `self.broadcast_with!({ tag }, message)` does the same for the sockets with the tag. `broadcast_json_with!` is `broadcast_with!` for a value: `Try(U64, [BadData(Str)])`. A socket that is closed (its `send!` is `Err(Closed)`) is skipped and not counted. The message is a `WebSocket.Message`: `Text(...)` or `Bytes(...)`. |
+| Broadcast | `self.broadcast!(message)` sends the message to each open socket and gives `{}`. `self.broadcast_json!(value)` sends the JSON text of a value, like `Object.Socket.send_json!`; a value that JSON cannot show (a `NaN`) is `Err(Infra(BadData(text)))`, and nothing is sent. `self.broadcast_with!({}, message)` gives the number of sockets that got it (`U64`); `self.broadcast_with!({ tag }, message)` does the same for the sockets with the tag. `broadcast_json_with!` is `broadcast_with!` for a value: `Try(U64, [Infra([BadData(Str)])])`. A socket that is closed (its `send!` is `Err(Closed)`) is skipped and not counted. The message is a `WebSocket.Message`: `Text(...)` or `Bytes(...)`. |
 | Find the sender | The ref table gives one id to one JS object in a task (`API.md` RS1), so `peer == socket` is true for the socket of the message. |
 | Ping without a wake | `set_auto_response!(self, { request: "ping", response: "pong" })`: Workers answers with no event, and the object can stay asleep. 2,048 characters or less each. `socket.auto_response_ms!()` gives the time of the last one. |
 | Limits | 32,768 sockets for each object (Cloudflare docs). |
@@ -1345,10 +1375,10 @@ A record with one field is a block: `{ name }` is the value of `name`, not `{ na
 WebSocket :: { ... }.{
 	is_upgrade : Request -> Bool                                 # Upgrade: websocket
 	accept! : Request => Try({ socket : WebSocket, response : Response }, [NotUpgrade])
-	connect! : Str => Try(WebSocket, [NotUpgrade, SocketErr(Thrown)])
-	connect_with! : Str, { headers ?: List(Header), protocols ?: List(Str) } => Try(WebSocket, [NotUpgrade, SocketErr(Thrown)])
+	connect! : Str => Try(WebSocket, [NotUpgrade, Infra([SocketErr(Thrown)])])
+	connect_with! : Str, { headers ?: List(Header), protocols ?: List(Str) } => Try(WebSocket, [NotUpgrade, Infra([SocketErr(Thrown)])])
 	send! : WebSocket, WebSocket.Message => Try({}, [Closed])
-	send_json! : WebSocket, a => Try({}, [Closed, BadData(Str)]) where [a.JsonEncodable]
+	send_json! : WebSocket, a => Try({}, [Closed, Infra([BadData(Str)])]) where [a.JsonEncodable]
 	receive! : WebSocket => Try(WebSocket.Message, [Closed(WebSocket.Closed)])
 	close! : WebSocket, U16, Str => {}
 
@@ -1383,17 +1413,17 @@ fetch! = |req| {
 | A client | `connect!(url)`: a `fetch` with `Upgrade: websocket`, then `accept()` of the `webSocket` of the response: one wait for the `fetch`, then one `call!` with no wait for `accept()` (`API.md` OP7). `NotUpgrade` when the server does not answer 101. It counts as an outbound connection (6 at the same time). In an object, a client socket keeps the object in memory: it has no hibernation. |
 | One API | `Object.Socket` and `WebSocket` have the same `send!`, `send_json!` and `close!`, so a function with a `where` clause on `send!` takes both. Only `WebSocket` has `receive!`: an object gets messages as events. |
 | Text or bytes | `Message` is the frame. `msg.json()` parses a text frame as JSON, the format of most WebSocket clients. |
-| Timeout, proxy | `ws.receive().timeout(ms).run!()` gives `Err(TimedOut)` after `ms` (`Io.timeout`, `API.md` 6.5). `Io.race!` with `Time.sleep(ms)` (11) does the same with more code, and the `receive` of two sockets is a proxy. A branch that lost takes no message (`API.md` OP8). |
+| Timeout, proxy | `ws.receive().timeout(ms).run!()` gives `Err(Infra(TimedOut))` after `ms` (`Io.timeout`, `API.md` 6.5). `Io.race!` with `Time.sleep(ms)` (11) does the same with more code, and the `receive` of two sockets is a proxy. A branch that lost takes no message (`API.md` OP8). |
 
 ### 12.3 `Tcp`
 
 ```roc
 Tcp :: { ... }.{
-	connect! : Str, U16 => Try(Tcp, [SocketErr(Thrown)])
-	connect_with! : Str, U16, { tls ?: [Off, On, StartTls] } => Try(Tcp, [SocketErr(Thrown)])
-	read! : Tcp => Try(List(U8), [Closed, SocketErr(Thrown)])
-	write! : Tcp, List(U8) => Try({}, [Closed, SocketErr(Thrown)])
-	start_tls! : Tcp => Try(Tcp, [SocketErr(Thrown)])
+	connect! : Str, U16 => Try(Tcp, [Infra([SocketErr(Thrown)])])
+	connect_with! : Str, U16, { tls ?: [Off, On, StartTls] } => Try(Tcp, [Infra([SocketErr(Thrown)])])
+	read! : Tcp => Try(List(U8), [Closed, Infra([SocketErr(Thrown)])])
+	write! : Tcp, List(U8) => Try({}, [Closed, Infra([SocketErr(Thrown)])])
+	start_tls! : Tcp => Try(Tcp, [Infra([SocketErr(Thrown)])])
 	close! : Tcp => {}
 }
 ```
@@ -1432,20 +1462,20 @@ The code follows 12.1 to 12.3 with these differences and additions, each with it
 | `connect!` | A wait for `fetch`, then `accept()` in a second program (`API.md` OP7) | One program, one wait: `fetch`, `Get` of `webSocket`, then `pf.wsAccept`, which gives `undefined` for a `null` socket (`NotUpgrade`) | One program can be an `Io`, so the function has its twin |
 | A `ws://` or `wss://` URL | not given | Sent as `http://` or `https://` | The `fetch` of Workers refuses them: "Fetch API cannot load: ws://..." |
 | Bytes frames | not given | `pf.wsPair` and `wsAccept` set `binaryType` to `arraybuffer` | With the compatibility date 2026-10-01 the bytes of a socket of a Worker came as a `Blob` (the conformance check found it). A socket of the hibernation API gives an `ArrayBuffer`. |
-| `send!`, `send_json!` | `Try({}, [Closed])`, and `send_json!` also `BadData(Str)` | Each throw of `send` is `Closed`. A value that JSON cannot show (`NaN` in an `F64`) is `BadData`, and nothing is sent | `send!` has one tag. Local text: "Can't call WebSocket send() after close()." |
+| `send!`, `send_json!` | `Try({}, [Closed])`, and `send_json!` also `Infra([BadData(Str)])` | Each throw of `send` is `Closed`. A value that JSON cannot show (`NaN` in an `F64`) is `Infra(BadData)`, and nothing is sent | `send!` has one tag. Local text: "Can't call WebSocket send() after close()." |
 | `close!` | `{}` | A throw is dropped (a code that the app cannot send, as 1005) | The type has no error |
 | `receive!` | One wait | One wait with no deadline (`API.md` 10.2): the helper marks the wait as a socket wait. After the close each call gives `Closed`. | |
 | A 101 response of `WebSocket.accept!` with `Response.after` (8h wave B; built with `Ctx.respond!`) | The task stays until the socket closes, then the task ends | The response is open while the socket is open (no deadline), and complete at the close (30 s more, `afterRespondMs`). No cancel at the close: the task ends when the handler returns (decided 2026-10-17). | A close that cut the handler short would lose its cleanup work, and a cancel would win against the `Closed` of the `receive!` that waits (`API.md` 10.2) |
 | `Message` | `[Text(Str), Bytes(List(U8))]` with `json` | Also `is_eq`. `json` of a bytes frame is `BadData` | "`msg.json()` parses a text frame" |
 | `WebSocket`, `Object.Socket` | `==` on sockets | `WebSocket :: { ref }` with the derived `is_eq`. `Object.Socket := { ref }` (`:=` as in 7) with `is_eq` that compares the refs. | `Entry` makes an `Object.Socket` from the socket of an event, so its backing must be visible. A ref is good for one task (MC13), and the ref table gives one id to one JS object (RS1): `getWebSockets()` gives the same JS object as the event (probe: `same: true`, also after a hibernation). |
 | `Tcp` | `Tcp :: { ... }` | `Tcp := { ref : Js.Ref }`, `Tcp.Tls : [Off, On, StartTls]` | `Hyperdrive.connect!` makes a `Tcp` from the socket of its binding |
-| `accept_with!` tags, `set_auto_response!`, `Attachment.set!` | 10 tags, 256 characters, 2,048 characters, 16,384 bytes | No check in Roc: a throw of Workers is `TooLarge`. `accept!` with no tags crashes on a throw. | Workers checks the limits (local: "a Hibernatable WebSocket cannot have more than 10 tags", "A WebSocket 'attachment' cannot be larger than 16384 bytes."). The size of an attachment is its structured clone, not its CBOR bytes. |
-| `Attachment.get!` | `Try(a, [NotFound, BadData(Str)])` | `null` is `NotFound`. A throw is `BadData` with the text. | The type has no other tag |
+| `accept_with!` tags, `set_auto_response!`, `Attachment.set!` | 10 tags, 256 characters, 2,048 characters, 16,384 bytes | No check in Roc: a throw of Workers is `TooLarge`. It is flat for each of the three (bad input: the app gave the tags, the pair or the value). `accept!` with no tags crashes on a throw. | Workers checks the limits (local: "a Hibernatable WebSocket cannot have more than 10 tags", "A WebSocket 'attachment' cannot be larger than 16384 bytes."). The size of an attachment is its structured clone, not its CBOR bytes. |
+| `Attachment.get!` | `Try(a, [NotFound, Infra([BadData(Str)])])` | `null` is `NotFound`. A throw is `Infra(BadData)` with the text. | The type has no other tag |
 | `auto_response_ms!` | `getWebSocketAutoResponseTimestamp` | A `Date` (J4) in ms, `null` is `NotFound` | |
-| `broadcast!`, `broadcast_json!`, `broadcast_with!`, `broadcast_json_with!` | not given | `Object.Self`, `{ tag ?: Str }` for the `_with` forms (MC4 form of `sockets_with!`), a `WebSocket.Message` (a value for the JSON forms). Each is `getWebSockets(...)` and a `send!` for each socket. `broadcast!` gives `{}`, `broadcast_json!` gives `Try({}, [BadData(Str)])`. `broadcast_with!` gives the count of sockets that got the message (step 8h wave N, N11: the count was in `broadcast!`, and an app had to drop it with `_ =`). | The app loop dropped the errors and could not count. `sockets_with!` and the auto responses (`set_auto_response!`, `clear_auto_response!`, `auto_response_ms!`) were built in 8f, part 3. |
+| `broadcast!`, `broadcast_json!`, `broadcast_with!`, `broadcast_json_with!` | not given | `Object.Self`, `{ tag ?: Str }` for the `_with` forms (MC4 form of `sockets_with!`), a `WebSocket.Message` (a value for the JSON forms). Each is `getWebSockets(...)` and a `send!` for each socket. `broadcast!` gives `{}`, `broadcast_json!` gives `Try({}, [Infra([BadData(Str)])])`. `broadcast_with!` gives the count of sockets that got the message (step 8h wave N, N11: the count was in `broadcast!`, and an app had to drop it with `_ =`). | The app loop dropped the errors and could not count. `sockets_with!` and the auto responses (`set_auto_response!`, `clear_auto_response!`, `auto_response_ms!`) were built in 8f, part 3. |
 | The socket events | An `Err` of a handler is a log line | `Err`, `Unhandled` and a trap are a log line `<class>.<handler>: ...`, with no throw | 12.1, "Errors" |
 | `Tcp.read!` | `List(U8)` | At most `Body.default_max` bytes (MC11: the rest comes next). `undefined` at the end is `Closed`. In `Io.race!`, a read that a lost branch started stays for the next call, and bytes that a lost branch took go back (OP8). | |
-| `Tcp.write!` | `[Closed, SocketErr(Thrown)]` | `Closed` after `close!` or the close of the socket. Each other throw is `SocketErr`. | |
+| `Tcp.write!` | `[Closed, Infra([SocketErr(Thrown)])]` | `Closed` after `close!` or the close of the socket. Each other throw is `SocketErr`. | |
 | `Tcp.close!` | `{}` | `socket.close()` with no wait, a rejection dropped | The type has no error and no wait |
 | `connect_with!` with `tls: On` | | Built, not tested locally | The local echo server has no TLS: `PLAN.md` 11c |
 | `start_tls!` | | Tested locally with a STARTTLS server and a test certificate (`conformance/starttls-server.mjs`) | The rules are in 12.3 (`PLAN.md` EP11) |
@@ -1459,14 +1489,14 @@ Each follows MC1 to MC13. Most functions are one `Call` op.
 | Module | Declaration | Functions | Phase |
 | --- | --- | --- | --- |
 | `Email` | `Email.binding("EMAIL")`; incoming mail is the `email!` field | `send!({ from, to, subject, text ?, html ?, cc ?, bcc ?, reply_to ? })` (the structured send that the docs recommend), `send_raw!({ from, to, raw })` (`EmailMessage`, MIME). `Email.Mail` (opaque, MC15: `mail.from()`, ...): `from`, `to`, `headers`, `header`, `raw : Body`, `raw_size_bytes` (MC10), `can_be_forwarded`, `new` (plain data, for a test), `forward!(to)`, `forward_with!(to, { headers ? })` (Workers keeps only `X-` headers, Cloudflare docs), `reply!(raw)`, `set_reject!(reason)`. As built (`PLAN.md` 8f, part 2): `send!` takes `to : List(Str)`, `cc` and `bcc : List(Str)`, `reply_to : Str`, and gives `{ message_id : Str }`. `send_raw!` gives it too (`raw : Str`, made into an `EmailMessage` by `pf.emailMessage`, a dynamic import of `cloudflare:email`). `Mail :: { from, to, headers, raw, raw_size_bytes, can_be_forwarded }` is plain data (MC13): its functions reach the message through the root `event`. `can_be_forwarded` is not in the Workers API: the shim gives `message.canBeForwarded !== false`. `set_reject!` waits (`await!`): the local runtime gives the message as an RPC stub, so a sync call would be status 2. Each function has its `Io` twin. An `Err` of `email!` is a throw: the mail is rejected | B |
-| `Ai` | `Ai.binding("AI")` | `run!(model, input) => Try(out, [AiErr(Thrown), BadData(Str), TooLarge])`, typed in and out (MC5), the output to `Body.default_max` (MC11). `run_with!(model, input, { gateway ?, max_bytes ? })` with `gateway : { id : Str, skip_cache ?: Bool, cache_ttl_ms ?: U64, cache_key ?: Str }` (AI Gateway, Cloudflare docs; `cacheTtl` is in seconds, rounded up, MC10). `stream!(model, input) => Try(Body, [AiErr(Thrown)])`: `run` with `stream: true` in the input, the stream stays in JS. Each has an `Io` twin. | B, built (`PLAN.md` 8f part 4) |
+| `Ai` | `Ai.binding("AI")` | `run!(model, input) => Try(out, [Infra([AiErr(Thrown), BadData(Str), TooLarge])])`, typed in and out (MC5), the output to `Body.default_max` (MC11). `run_with!(model, input, { gateway ?, max_bytes ? })` with `gateway : { id : Str, skip_cache ?: Bool, cache_ttl_ms ?: U64, cache_key ?: Str }` (AI Gateway, Cloudflare docs; `cacheTtl` is in seconds, rounded up, MC10). `stream!(model, input) => Try(Body, [Infra([AiErr(Thrown)])])`: `run` with `stream: true` in the input, the stream stays in JS. Each has an `Io` twin. | B, built (`PLAN.md` 8f part 4) |
 | `Vectorize` | `index : Vectorize(Meta)`, `Vectorize.json("INDEX")` (the metadata is JSON at rest) | `query!(values)`, `query_with!(values, { top_k ?, namespace ?, return_values ?, return_metadata ?, filter ?, max_bytes ? })` (MC4: the options are in the `_with` form), `upsert!`, `insert!` (a list of `Vector(Meta)`: `{ id, values, namespace ?, metadata ? }`), `get!(ids)`, `delete!(ids)`. Each has an `Io` twin. A match has `metadata : Try(Meta, [Missing])`. | B, built |
-| `Analytics` | `Analytics.binding("STATS")` | `write!({ blobs, doubles, indexes }) => Try({}, [AnalyticsErr(Thrown)])`, sync, so no twin (MC3) | B, built |
-| `Hyperdrive` | `Hyperdrive.binding("PG")` | `config!() => Hyperdrive.Config`, sync: `{ connection_string : Secret, host, port : U16, user, password : Secret, database }`. `connect!() => Try(Tcp, _)` (the `connect` of the binding). As built (`PLAN.md` 8f, part 3): `connect! : Hyperdrive => Try(Tcp, [SocketErr(Thrown)])` and its twin `connect` (one wait for `opened`). | B, built |
+| `Analytics` | `Analytics.binding("STATS")` | `write!({ blobs, doubles, indexes }) => Try({}, [Infra([AnalyticsErr(Thrown)])])`, sync, so no twin (MC3) | B, built |
+| `Hyperdrive` | `Hyperdrive.binding("PG")` | `config!() => Hyperdrive.Config`, sync: `{ connection_string : Secret, host, port : U16, user, password : Secret, database }`. `connect!() => Try(Tcp, _)` (the `connect` of the binding). As built (`PLAN.md` 8f, part 3): `connect! : Hyperdrive => Try(Tcp, [Infra([SocketErr(Thrown)])])` and its twin `connect` (one wait for `opened`). | B, built |
 | `Workflows` | `Workflows(Params)`, `Workflows.json("PUBLISH")` | `create!(params)`, `create_with!(params, { id ? })` (`AlreadyExists`, `BadData` for params that do not encode), `get!(id)` (`NotFound`). `Instance` is data (the binding name and the id, MC13): `id`, `status!` (gives `Workflows.Status`: `state`, `error`, `output_json`, and `output()` typed), `pause!`, `resume!`, `terminate!`, `send_event!(type, payload)`. Each has an `Io` twin. Params and payloads are JSON. | B, built. The workflow class is phase C (AQ1). |
-| `Assets` | `Assets.binding("ASSETS")` | `fetch!(req) => Try(Response, [AssetsErr(Thrown)])`: the body of the response is a stream (MC13), so `Assets.fetch!(req)` as the response copies nothing into wasm. Twin `fetch`. | B, built |
+| `Assets` | `Assets.binding("ASSETS")` | `fetch!(req) => Try(Response, [Infra([AssetsErr(Thrown)])])`: the body of the response is a stream (MC13), so `Assets.fetch!(req)` as the response copies nothing into wasm. Twin `fetch`. | B, built |
 | `Version` | `Version.binding("CF_VERSION_METADATA")` | `metadata!() => { id, tag, timestamp_ms }`, sync (a binding that is not in the config is a crash with its name) | B, built |
-| `SecretsStore` | `SecretsStore.binding("KEY")` | `get!() => Try(Secret, [SecretsStoreErr(Thrown)])`. Twin `get`. | B, built |
+| `SecretsStore` | `SecretsStore.binding("KEY")` | `get!() => Try(Secret, [Infra([SecretsStoreErr(Thrown)])])`. Twin `get`. | B, built |
 | Images, Browser Rendering, mTLS, dispatch namespaces | | `Js` (`API.md` 6.4) until a module exists (AG2) | |
 
 ### 13.1 As built (`PLAN.md` 8f, part 4)
@@ -1568,7 +1598,7 @@ Lessons from the compiler (nightlies 10-09 and 10-12):
 | A `where` clause cannot name a record with a type variable inside: `Res(m) : { matches : List(Match(m)) }` with `m.Json.Parseable(...)` is "does not have a method parser_for". The same as the row for `List(a)`. | `Vectorize(meta)` keeps the codec of `meta` as a function in the constant, and reads a `Js` tree in Roc (13.1) |
 | `Js.Op` and `Response` have no `is_eq`, so an `expect` cannot compare a list of ops. | The `expect`s of `Assets` match a list pattern and check parts |
 | `Json.to_str` of an `F64` can fail (`NaN`, infinity): the encoder error type is not empty. As built (`PLAN.md` 8h): the platform takes `a.Json.Encodable(enc)` with an open `enc` and calls `Json.to_str_try`, so a record with an `F64` field compiles. The builtin encoder cannot write `NaN` as `null`, so a value that does not encode is `BadData(Str)` of `Kv.put!` (and `put_with!`, `Kv.Cell.set!`), `WebSocket.send_json!`, `Object.Socket.send_json!`, `Request.post_json`, `Vectorize.upsert!` and `insert!` (the metadata), `Workflows.create!` and `send_event!`; nothing is sent. `Response.from_json` gives a 500 text response, and `Log` writes `"fields_error": "NaN"` in place of the fields: a response and a log line have no error to return. A `where` clause cannot be in a type alias ("where clause not allowed in type declaration"), so a generic helper writes `where [a.Json.Encodable(enc)]`. | `Vectorize` writes the numbers of a vector with `F64.to_str` (`1` for `1.0`, valid JSON) |
-| A tag union with a type variable tail does not widen: `Try(a, e) -> Try(a, [TimedOut, ..e])` with `Err(x) => Err(x)` is a type mismatch, also with `[..e]` in the argument. `?` does widen it (`Io.timeout_read`, `platform/Io.roc`). | `Io.timeout : Io(a, e), U64 -> Io(a, [TimedOut, ..e])` compiles with a reader that uses `?` |
+| A tag union with a type variable tail does not widen: `Try(a, e) -> Try(a, [Infra([TimedOut]), ..e])` with `Err(x) => Err(x)` is a type mismatch, also with `[..e]` in the argument. `?` does widen it (`Io.timeout_read`, `platform/Io.roc`). | `Io.timeout : Io(a, e), U64 -> Io(a, [Infra([TimedOut]), ..e])` compiles with a reader that uses `?` |
 | A nominal type nested in the block of the format (`Cbor.Bytes := List(U8)`) takes a hand-written `parser_for` and `encoder_for` with `where` clauses on `parse_bytes` and `encode_bytes`, and the derived codec of a record uses them for a field (`research/api-probe/cbor/`) | Bytes cross as a CBOR byte string (MC5) |
 | An optional field with a type variable of a `where` clause (`metadata ?: m`) compiles when the caller leaves it out. A parsed type variable with no annotation at the call is "type not determined" (`research/api-probe/options-check/`). | `put_with!` takes typed metadata. `Kv.Key` keeps it as CBOR, parsed at the use (5.2). |
 | A format in a module of the app (`Cbor`, with its own `Parseable` and `Encodable` aliases) works with derived codecs, also through a `where` clause in another module (`D1.all!`, `Rpc.call!`) | The platform ships `Cbor` as an ordinary module. As built (`PLAN.md` 8c, DO1 decided 2026-10-16): `platform/Cbor.roc` is a local platform module that wraps `Cbor` of the package `roc-cbor` 0.2.1 (by release URL, in the `packages` of the platform header). A platform cannot list a module of a package in `exposes` ("package module is private", `research/cbor-in-platform/`), but it can list a module of its own, so an app writes `import pf.Cbor` with no `cbor` entry in its header: `Cbor.Bytes`, `Cbor.bytes`, `Cbor.parse`, `Cbor.parse_camel`, `Cbor.parse_with`, `Cbor.path_at`, `Cbor.encode`, the aliases `Cbor.Parseable`, `Cbor.Encodable`, `Cbor.Readable`, `Cbor.Writable`, `Cbor.Options`, `Cbor.Step`, and `Cbor.Format` and `Cbor.State` for a custom `parser_for`. Each type is an alias of the type of the package, so an app that also adds the same URL gets the same types (`research/cbor-in-platform/app_pf_and_pkg.roc`). |

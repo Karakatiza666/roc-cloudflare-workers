@@ -2838,6 +2838,7 @@ Input: a review of the example app `examples/auction/` (two Workers, a Durable O
 | C | Opaque handler types | `Request`, `Response`, `Scheduled`, queue and email types read through methods (MC15) |
 | C | Low-level modules | raw runs and pins in `Js`; `MODULES.md` 1 has a module index and a formats table |
 | C | Build cache | `--no-cache` is a reproducibility rule (`research/no-cache-repro/`) |
+| N | N5 G1a: the errors of the platform in one tag | Each platform function gives `Infra([its own tags])` (`kv.get!`: `[NotFound, Infra([KvErr(..), BadData(..), TooLarge])]`); `Rpc.Infra`, `Rpc.forward`; an Rpc caller gets `Remote(err)` or `Infra([RpcErr, BadData])`. Bad input and domain results stay flat (`MODULES.md` 1, "Nested and flat errors"). Evidence: `research/n5-rpc-errors/` (section 9: as built; `g1a-check/both.roc`: `Io.both!` merges the payloads) |
 
 Found on the way:
 
