@@ -632,7 +632,7 @@ const reverts = [
     [BP + 'Worker.roc', 'Ok(f!) => match f!(req) {', 'Ok(f!) => match f!(Str.inspect(req)) {']),
   // PLAN.md 8h wave B (b1-body): `Response.after`, `Cache.put!` tee, `pf.r2put`, the types of `put!` and `wait_until!`.
   R('after: the work runs before the response (Entry.finish!)', 'conformance', ['after: Response.after in a Worker fetch! answers before the work ends, and the work runs after', 'after: Response.after in a named entry point fetch! answers before the work ends, and the work runs after'],
-    [BP + 'Entry.roc', '\t\t\t\tmatch Js.call!([Call(Root("pf"), "respond", [Lit(Entry.outcome(o))])]) {', '\t\t\t\t_ = work!({})\n\t\t\t\tmatch Js.call!([Call(Root("pf"), "respond", [Lit(Entry.outcome(o))])]) {']),
+    [BP + 'Entry.roc', '\t\t\t\tmatch Js.call!([Call(Root("pf"), "respond", [Lit(Entry.outcome(o))])]) {', '\t\t\t\t_ = work!()\n\t\t\t\tmatch Js.call!([Call(Root("pf"), "respond", [Lit(Entry.outcome(o))])]) {']),
   R('Cache.put: no tee (the response to send has the stream that the put read)', 'conformance', ['cache put! of a stream body gives the response to send: the client body is complete and the cache holds it'],
     [BP + 'Cache.roc', 'Ok(Ref(b)) => Ok(res.with_body(Stream(b)))', 'Ok(Ref(_)) => Ok(res)']),
   R('Cache.put_after!: no tee (the response to send has the stream that the work reads)', 'conformance', ['cache put_after! of a stream body: the client body is complete and the cache holds it'],
