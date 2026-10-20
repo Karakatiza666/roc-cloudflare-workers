@@ -2,10 +2,11 @@
 
 Item N5 of `examples/auction/REVIEW.md` (line 69). Analysis and prototypes only. This study does not change `platform/`, `bench/`, `conformance/` or `examples/`.
 
-Compiler: `bench/get-roc.sh` (nightly-2026-10-19-601b54c), always `--no-cache`. Platform: `../../platform/main.roc` as it is on main (read only). Run all probes from the submodule root:
+Compiler: `bench/get-roc.sh` (nightly-2026-10-19-601b54c), always `--no-cache`. Base: main at `4367d73` (the auction with `Dec`). Run all probes and builds from the submodule root:
 
 ```sh
-research/n5-rpc-errors/run.sh
+research/n5-rpc-errors/run.sh            # wasm with no --opt
+OPT=size research/n5-rpc-errors/run.sh   # wasm with --opt=size
 ```
 
 ## 1. The problem
@@ -26,7 +27,62 @@ RoomErr : [NotOpen, AlreadyOpen, StillOpen, StorageErr(Io.Thrown), SqlErr(Io.Thr
 
 The constraint of the user: an infrastructure error must not become text. The caller must tell a storage error from a SQL error by its tag. The types stay strong from the handler to the caller.
 
-## 2. What the platform gives today
+## 2. Final result
+
+| | C: domain in `Fail` | E: `? Infra` at each call | G1a: platform gives `Infra([own tags])` | G2: platform gives `Infra(Rpc.Infra)` |
+| --- | --- | --- | --- | --- |
+| Handler, domain error | `Err(Fail(AlreadyOpen))` | `Err(AlreadyOpen)` | `Err(AlreadyOpen)` | `Err(AlreadyOpen)` |
+| Handler, platform call | `x!(...)?` | `x!(...) ? Infra` (8 sites in the auction) | `x!(...)?` | `x!(...)?` |
+| Handler, re-raise after a match (`NotFound` of a cell) | 2 arms (`BadData`, `StorageErr`) | 2 arms, each wrapped in `Infra` | 1 arm: `Err(Infra(i)) => Err(Infra(i))` | 1 arm |
+| Caller, domain | `Remote(NotOpen)`, exhaustive | `Remote(NotOpen)` | `Remote(NotOpen)` | `Remote(NotOpen)` |
+| Caller, infrastructure of the callee | `Infra(StorageErr(t))` | `Remote(Infra(StorageErr(t)))` | `Remote(Infra(StorageErr(t)))` | `Remote(Infra(StorageErr(t)))` |
+| Caller, this hop failed | `RpcErr(t)`, `BadData(s)` (flat) | `RpcErr(t)`, `BadData(s)` (flat) | `Infra(RpcErr(t))`, `Infra(BadData(s))` | as G1a |
+| One shape for all infrastructure errors | No: the hop is flat, the callee is in `Infra` | No: the hop is flat | Yes: `Infra(..)` here, `Remote(Infra(..))` there | Yes |
+| Code outside Rpc | No change | No change (helpers on the Rpc paths get `Infra`) | Each match on an infrastructure tag gets `Infra(..)` (auction: 2 arms) | As G1a, and an exhaustive match needs `Infra(_)` |
+| Type of a platform function | Flat and precise (as today) | Flat and precise | Nested and precise: `Kv.Cell.get!` says `Infra([KvErr, BadData, TooLarge])` | Nested, not precise: a Kv call says that it can give `SqlErr` |
+| Wire | New third form `{"Infra": tag}` | No change | No change (`{"Err": {"Infra": tag}}`) | No change |
+| Platform change | `Rpc.on`, `Reply`, `call!` (about 10 signatures) | One alias `Rpc.Infra` | Each public function with an infrastructure tag (294 signature lines in `platform/`), `call!`, `Io.timeout` | As G1a |
+| App lines changed (auction, 4 files) | 30 | 23 | 18 | not built |
+| wasm web, no `--opt` (base 1,459,868) | 1,496,483 (+2.5%) | 1,597,426 (+9.4%) | 1,544,113 (+5.8%) | not built |
+| wasm web, `--opt=size` (base 1,240,680) | 1,253,862 (+1.1%) | 1,344,929 (+8.4%) | 1,302,127 (+5.0%) | not built |
+| wasm ledger, no `--opt` (base 868,142) | 994,482 (+14.6%) | 974,540 (+12.3%) | 971,813 (+11.9%) | not built |
+| wasm ledger, `--opt=size` (base 722,893) | 822,593 (+13.8%) | 802,991 (+11.1%) | 799,812 (+10.6%) | not built |
+| Compile risks | Q4 and #12482: solved with a nominal `Reply` and heads by hand (proved) | None found | Q8, Q9, Q10 pass. A row inside the payload (`[Infra([TimedOut, ..i]), ..e]`) does not compile (Q10): a combinator adds `Infra([TimedOut])` as its own row tag, and the payloads merge at the use site | As G1a |
+
+Notes on the sizes:
+
+| Item | Value |
+| --- | --- |
+| The G prototype | Generated wrappers (`gen_g.py`): `x!` is `x_flat!(...).map_err(nest_k)`. A real G writes the nested tags in the bodies |
+| The control G0 | The same wrappers with the flat errors, and the example with no change: web 1,351,519 (no `--opt`), 1,146,472 (`--opt=size`); ledger 864,353, 718,728. The wrappers alone make web 7% to 8% smaller than the base, so the layout moves the size by more than the error design |
+| G against its control | web +14% (no `--opt`), +14% (`--opt=size`); ledger +12%, +11% |
+| The C prototype | `RpcX.call!` wraps the `call!` of the platform (`RpcX.from_wire`). A real C parses the reply once |
+| Option B (old base `6e3c461`) | web 1,798,425 (+24%), ledger 1,009,547 (+13%), no `--opt` |
+
+### Recommendation: G1a
+
+G1a is the cleanest end state for the app code:
+
+| Reason | Evidence |
+| --- | --- |
+| The handler writes domain errors plainly and uses `?` on each platform call | `option-g/LotRoom.roc` |
+| The caller has one shape: `Infra(..)` for this hop, `Remote(Infra(..))` for the callee, `Remote(<domain>)` | `option-g/web.roc` |
+| Each platform function keeps its precise error type. The payloads merge at `?` and close at the Rpc type | Q8 |
+| The re-match of `NotFound` (N6) gets shorter: 1 arm in place of 1 arm for each infrastructure tag | `load_state!`, `open!` |
+| `Rpc.on`, `Reply` and the wire do not change. No hand-written reply head is added | `platform-g/` has the old `Rpc.on` |
+| The fewest app lines changed | 18 against 30 (C) and 23 (E) |
+
+Costs and limits of G1a:
+
+| Cost | Size |
+| --- | --- |
+| A breaking change for each app, also outside Rpc: each match on an infrastructure tag gets `Infra(..)` | Auction: 2 arms outside Rpc. Conformance: 229 uses of infrastructure tags in 27 files. MODULES.md: 216 lines |
+| Wasm | Web: +4% against C (`--opt=size`). Ledger: 3% smaller than C |
+| Some tags are not always infrastructure: `BadData` of `Request.json!` is a bad request (400), `Constraint` can be a domain conflict (409), `TooLarge` of `accept_with!` is a bad request | A decision for each function (open question 1). The prototype nests only Object, Kv, D1, R2 and Service |
+
+If the breaking change outside Rpc is not acceptable, use C (section 7). It has the smallest web wasm and changes only Rpc code.
+
+## 3. What the platform gives today
 
 All infrastructure errors of the platform have one of 4 payload forms, all CBOR data: `Io.Thrown` (`{ name : Str, message : Str }`), `Str`, `Sql.Constraint` (a record with a closed tag), or none.
 
@@ -38,64 +94,53 @@ All infrastructure errors of the platform have one of 4 payload forms, all CBOR 
 | Calls | `ObjectErr` (4), `ServiceErr` (2), `RpcErr` (5), `HttpErr` (10), `Network` (10), `SocketErr` (17), all `(Io.Thrown)` |
 | Data and limits | `BadData(Str)` (109), `InvalidJson(Str)` (8), `BodyErr(Io.Thrown)` (23), `CryptoErr(Io.Thrown)` (22), `MissingEnv(Str)` (3), `TooLarge`, `TimedOut` |
 
-These 29 tags can be one closed union. No two of them have the same name with different payloads. The domain-like tags (`NotFound`, `Closed`, `PreconditionFailed`, `NotUpgrade`) are not in it: the handler must decide what they mean.
+These 29 tags are `Rpc.Infra`. The user decided: `RpcErr`, `TimedOut`, `MissingEnv` and `InvalidJson` are in it. No two of the tags have the same name with different payloads. The domain-like tags (`NotFound`, `Closed`, `PreconditionFailed`, `NotUpgrade`) are not in it.
 
-## 3. Probes
+## 4. Probes
 
 | File | Question | Result |
 | --- | --- | --- |
-| `q1_extend.roc` | Option B: an alias with a row variable `Infra(e) : [..., ..e]`, given a closed union. Does `?` fit? Does the derived codec work? | Yes and yes |
-| `q2_fault.roc` | Option C: `Fault(err) : [Fail(err), <infra tags>]`. `?` direct, `? Fail` for a domain function, an `on` that returns a lambda, a split into `Remote(err)` and `Infra(Infra)` | Works |
-| `q3_narrow.roc` | Option D: can a `match` take the infrastructure tags out of a flat open union and give the rest as `..e`? | No. The rest keeps all tags (`type mismatch`) |
-| `q4_codec.roc` | Is there a derived CBOR codec for `Fail(e)` when `e` is a constrained type variable (generic code)? | No: `missing method encoder_for`. The type variable alone has one |
-| `q5_empty_row.roc` | Is there a derived codec for `InfraOr([])` (a row variable closed with `[]`)? | No: `missing method encoder_for`, but the same union written out has one. Compiler defect candidate |
-| `q6_widen.roc`, `q6_widen_fail.roc` | Can a value of the closed `Infra` be a `Fault(err)` with no match? A forward helper for a nested call | No (`type mismatch`): a match is necessary. With a match, the forward helper works |
-| `q7_wrap_infra.roc` | Option E: the domain tags flat, `? Infra` at each platform call | Works |
-| `option-b/` | The auction example with option B (`RpcB.roc`: one alias, the platform `Rpc` as it is) | `web.roc` and `ledger.roc` build |
-| `option-c/` | The auction example with option C (`RpcX.roc`: the proposal as an app module over the platform of today) | `web.roc` and `ledger.roc` build. 5 `expect` tests of the wire bytes pass (a broken `infra_head` fails 2 of them) |
+| `q1_extend.roc` | Option B: an alias with a row variable `Infra(e) : [..., ..e]`, given a closed union | Works |
+| `q2_fault.roc` | Option C: `Fault(err) : [Fail(err), <infra tags>]`, an `on` that returns a lambda, a split into `Remote(err)` and `Infra(Infra)` | Works |
+| `q3_narrow.roc` | Option D: can a `match` take tags out of a flat open union and give the rest as `..e`? | No (`type mismatch`) |
+| `q4_codec.roc` | A derived CBOR codec for `Fail(e)`, `e` a constrained type variable, in generic code | No: `missing method encoder_for` |
+| `q5_empty_row.roc` | A derived codec for `InfraOr([])` (a row variable closed with `[]`) | No, but the same union written out has one. Compiler defect candidate |
+| `q6_widen.roc`, `q6_widen_fail.roc` | Can a parameter of the closed `Infra` be a `Fault(err)` with no match? | No: a match is necessary. Option C `forward` works with it |
+| `q7_wrap_infra.roc` | Option E: domain flat, `? Infra` at each call | Works |
+| `q8_nested.roc` | Option G: G1a (precise closed payload), G1b (payload with an open row), G2 (whole `Infra`). `?` of two functions, a re-raise `Err(Infra(i)) => Err(Infra(i))`, a helper with no annotation, an exhaustive match outside Rpc | All work. G1a needs no row variable: the closed payload of a function result widens at `?` and at a re-raise |
+| `q9_forward_g.roc` | Option G `forward` for a nested call: the same domain (`forward(\|e\| e)`) and a mapped domain | Works |
+| `q10_row_infra.roc`, `q10_fail.roc` | Option G: a combinator that adds `TimedOut` with a row (`Io.timeout`) | `[Infra([TimedOut]), ..e]` works, also when `e` has its own `Infra(..)`: the payloads merge, and a match with no `_` is exhaustive. A row inside the payload does not compile (3 errors) |
+| `option-b/` | The auction with option B (old base) | Builds |
+| `option-c/` | The auction with option C (`RpcX.roc`: the proposal as an app module) | Builds. 5 `expect` tests of the wire bytes pass (a broken `infra_head` fails 2) |
+| `option-e/` | The auction with option E (`RpcE.roc`: the alias only) | Builds |
+| `option-g/` | The auction with option G1a on `platform-g/` | Builds |
+| `option-g0/` | The control: the example with no change on `platform-g0/` | Builds |
+| `gen_g.py`, `make-platform-g.sh` | Make `platform-g/` and `platform-g0/`: a copy of `platform/` with G1a in Object, Kv, D1, R2, Service (79 functions, 29 error unions) and `Rpc.Infra`. Not in git | `roc check` of `platform-g/main.roc`: no errors |
 
-Two findings set the shape of the implementation:
+## 5. Options
 
-| Finding | Effect on the design |
+| Option | Status |
 | --- | --- |
-| Q4: a structural union with a payload of a constrained type variable has no derived codec in generic code | The wire type of the platform must be nominal with `parser_for : _` (as `Reply` is today). `RpcX.Reply3` shows it |
-| roc-lang/roc#12482: a generic nominal encoded inside a returned lambda crashes | `on` must write the reply heads by hand (as today) and encode only `ret`, `err` or the closed `Infra`. `RpcX.on` does this, and the build has no crash |
+| A. Today: list all tags in `err` | The problem |
+| B. Flat row alias `Rpc.InfraOr([NotOpen, ...])` | Works. No single caller arm for the infrastructure (Q3), name clashes are silent, Q5, web +24% |
+| C. Domain in `Fail`, split for the caller | Works. Section 7 |
+| D. A flat handler error, `on` splits it | Not possible (Q3) |
+| E. Domain flat, `? Infra` at each call | Works. Per-call code |
+| F. Infrastructure errors as text | Rejected by the user |
+| G1a. Each platform function gives `Infra([its own tags])` | Works. Recommended. Section 6 |
+| G1b. As G1a, with an open row in the payload | Works for plain functions (Q8). Not necessary: G1a widens with no row. A row inside the payload fails in a generic combinator (Q10) |
+| G2. Each platform function gives `Infra(Rpc.Infra)` | Works (Q8). Loses the precise type of each function |
 
-## 4. Options
+## 6. Option G1a in detail
 
-| Option | App code at the handler | App code at the caller | Type size | Breaking changes | Compile risks |
-| --- | --- | --- | --- | --- | --- |
-| A. Today: list all tags in `err` | None. `err` lists each infrastructure tag that a `?` adds | `Remote(<each tag>)` or `_` | `err` grows with each platform module; wasm: base | None | None |
-| B. Flat row alias: `RoomErr : Rpc.InfraOr([NotOpen, ...])` | None. `Err(NotOpen)`, `?` direct | `Remote(NotOpen)`, `Remote(SqlErr(t))`. No single arm for all infrastructure tags (Q3). `Remote(_)` also hides a new domain tag | 32 tags in each `err`. wasm of web +24%, ledger +13% | None: one new alias | Q5: `InfraOr([])` has no codec, so a second list for "no domain error". A domain tag with an infrastructure name (`BadData`) merges with it silently |
-| C. Domain in `Fail`, infrastructure flat in the handler, split for the caller (recommended) | `Err(Fail(AlreadyOpen))` at each domain error. `? Fail` for a domain-only function. `?` direct on each platform call | `Remote(e)` has the domain tags only: exhaustive. `Infra(i)`: one arm, or one arm for each tag (`Infra(SqlErr(t))`) | `err` has the domain tags only. One shared `Rpc.Infra`. wasm of web +2.5%, ledger +14% | Each handler's domain errors, each `err` type, each caller arm of an infrastructure tag. The wire gets a third form `{"Infra": tag}` | Q4 and #12482: solved by a nominal `Reply` with a derived parser and heads by hand (proved in `option-c/`) |
-| D. Flat handler error, `on` splits it | None | As C | As C | As C | Not possible: no narrowing in Roc (Q3) |
-| E. Domain flat, `? Infra` at each platform call | `? Infra` at each platform call (about 12 in the auction, against 3 domain sites for C) | `Remote(NotOpen)`, `Remote(Infra(SqlErr(t)))` | As C | App only: the platform adds the alias `Rpc.Infra` | None found (Q7) |
-| F. Infrastructure errors as text | None | Text compare | Small | As C | Rejected by the user |
-| G. Each platform function gives `Infra(...)` | None | As C | As C | Each error match of each app, also outside Rpc (`KvErr` becomes `Infra(KvErr)`) | Not prototyped |
-
-## 5. Recommendation: option C
-
-Option C is the only option with all of these:
-
-| Property | A | B | C | E |
-| --- | --- | --- | --- | --- |
-| `?` on a platform call needs no per-call code | Yes | Yes | Yes | No |
-| `err` names only the domain | No | Yes | Yes | Yes |
-| The caller can match all infrastructure errors in one arm | No | No | Yes | Yes (`Remote(Infra(_))`) |
-| The caller can match the domain exhaustively | Yes | No | Yes | Yes |
-| Each infrastructure kind is a typed tag at the caller | Yes | Yes | Yes | Yes |
-| The domain and the infrastructure cannot have a name clash | No | No | Yes | Yes |
-
-The cost of C: each domain error in a handler is `Err(Fail(X))`, and a helper that both an Rpc handler and other code use gives `Fail(X)` (see `on_message!` in section 7).
-
-### 5.1 Proposed signatures (`platform/Rpc.roc`)
+### 6.1 Proposed signatures
 
 ```roc
+# platform/Rpc.roc
 Rpc(arg, ret, err) :: { name : Str }.{
-	method : Str -> Rpc(arg, ret, err)                                  # no change
-	name : Rpc(arg, ret, err) -> Str                                    # no change
+	method, name, on, on_worker, reply_of, entrypoint     # no change: the handler err is closed, e.g. [NotOpen, Infra(Rpc.Infra)]
 
-	## New. The infrastructure errors of the platform: one closed union, the tags as the platform functions give them.
+	## New. The infrastructure errors of the platform: one closed union.
 	Infra : [
 		StorageErr(Io.Thrown), SqlErr(Io.Thrown), Constraint(Sql.Constraint), D1Err(Io.Thrown), KvErr(Io.Thrown),
 		R2Err(Io.Thrown), CacheErr(Io.Thrown), QueueErr(Io.Thrown), ObjectErr(Io.Thrown), ServiceErr(Io.Thrown),
@@ -105,77 +150,42 @@ Rpc(arg, ret, err) :: { name : Str }.{
 		BadData(Str), InvalidJson(Str), MissingEnv(Str), TooLarge, TimedOut,
 	]
 
-	## New. The error of a handler: a domain error in `Fail`, or a tag of `Infra` as it is.
-	Fault(err) : [Fail(err), <the 29 tags of Infra>]
+	## New. A nested call in a handler, for `?`: the errors of this hop stay in `Infra`, `f` maps the error of the
+	## callee (`forward(|e| e)` when both have the same type). q9_forward_g.roc.
+	forward : (err -> [Infra(Rpc.Infra), ..e]) -> ([Infra([RpcErr(Io.Thrown), BadData(Str)]), Remote(err)] -> [Infra(Rpc.Infra), ..e])
 
-	on : Rpc(arg, ret, err), (self, arg => Try(ret, Rpc.Fault(err))) -> Rpc.Handler(self) where [arg.Cbor.Readable(errs), ret.Cbor.Writable, err.Cbor.Writable]
-	on_worker : Rpc(arg, ret, err), (arg => Try(ret, Rpc.Fault(err))) -> Rpc.Handler({}) where [arg.Cbor.Readable(errs), ret.Cbor.Writable, err.Cbor.Writable]
-	reply_of : List(U8) -> Try(ret, [BadData(Str), Remote(err), Infra(Rpc.Infra)]) where [ret.Cbor.Readable(e1), err.Cbor.Readable(e2)]
-
-	## New, optional (open question 3). A nested call in a handler: the callee's domain error mapped, the rest as it is.
-	forward : Try(ret, [RpcErr(Io.Thrown), BadData(Str), Remote(err), Infra(Rpc.Infra)]), (err -> e2) -> Try(ret, Rpc.Fault(e2))
-
-	NoErr := [] ...                                                     # no change: the err of a method with no domain error
-	Handler(self), entrypoint, Entrypoint                               # no change
+	NoErr                                                 # no change: a method with no error at all
 }
 
-Reply(ret, err) := [Ok(ret), Err(err), Infra(Rpc.Infra)].{ parser_for : _, encoder_for : _, is_eq : _ }   # a third form
-infra_head : List(U8)
-infra_head = [0xa1, 0x65, 0x49, 0x6e, 0x66, 0x72, 0x61]              # {"Infra": ...}, checked by an expect in RpcX.roc
+# The callers (and the twins `call` in platform/Remote.roc)
+Object.call!  : Object, Rpc(arg, ret, err), arg => Try(ret, [Infra([RpcErr(Io.Thrown), BadData(Str)]), Remote(err)]) where [...]
+Service.call! : Service, Rpc(arg, ret, err), arg => Try(ret, [Infra([RpcErr(Io.Thrown), BadData(Str)]), Remote(err)]) where [...]
 
-# platform/Object.roc and platform/Service.roc (and their twins in Remote.roc)
-call! : Object, Rpc(arg, ret, err), arg => Try(ret, [RpcErr(Io.Thrown), BadData(Str), Remote(err), Infra(Rpc.Infra)]) where [arg.Cbor.Writable, ret.Cbor.Readable(e1), err.Cbor.Readable(e2)]
-call! : Service, Rpc(arg, ret, err), arg => Try(ret, [RpcErr(Io.Thrown), BadData(Str), Remote(err), Infra(Rpc.Infra)]) where [arg.Cbor.Writable, ret.Cbor.Readable(e1), err.Cbor.Readable(e2)]
+# Each function: its own tags in Infra (examples from platform-g/)
+Object.Cell.get! : Object.Cell(a), Object.Self => Try(a, [NotFound, Infra([BadData(Str), StorageErr(Io.Thrown)])])
+Object.Cell.set! : Object.Cell(a), Object.Self, a => Try({}, [Infra([StorageErr(Io.Thrown)])])
+Object.Self.sql! : Object.Self, Str, params => Try(rows, [Infra([SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [...]
+Kv.Cell.get!     : Kv.Cell(a) => Try(a, [NotFound, Infra([KvErr(Io.Thrown), BadData(Str), TooLarge])])
+D1.run!          : D1, Str, params => Try(Sql.Info, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint)])]) where [...]
+Env.secret!      : Str => Try(Secret, [Infra([MissingEnv(Str)])])
+Io.timeout       : Io(a, e), U64 -> Io(a, [Infra([TimedOut]), ..e])     # q10_row_infra.roc
 ```
 
-The body of `on` is `RpcX.on` (`option-c/RpcX.roc`) with no `fail_head`: `Fail(e)` writes `err_head` and `Cbor.encode(e)`, a tag of `Infra` writes `infra_head` and `Cbor.encode(i)`. A private `split : Rpc.Fault(err) -> Try(err, Rpc.Infra)` (`RpcX.split`, one arm for each tag) gives the two cases. Q6 shows that the split needs the match: a closed value does not widen.
+### 6.2 The auction, before and after
 
-### 5.2 The wire
-
-| Handler result | Bytes (CBOR) | JSON view for a JS peer | Caller gets |
-| --- | --- | --- | --- |
-| `Ok(v)` | `{"Ok": v}` | `{ Ok: v }` (no change) | `Ok(v)` |
-| `Err(Fail(e))` | `{"Err": e}` | `{ Err: "NotOpen" }` (no change) | `Err(Remote(e))` |
-| `Err(StorageErr(t))` (any tag of `Infra`) | `{"Infra": {"StorageErr": t}}` | `{ Infra: { StorageErr: { name, message } } }` (new) | `Err(Infra(StorageErr(t)))` |
-| A throw | JS throw | (no change) | `Err(RpcErr(t))` |
-| Bytes that do not fit `Reply` | | | `Err(BadData(s))` |
-
-A domain reply has the same bytes as today. A JS callee can give the third form. `js/` passes the reply through, so it needs no code change (only the comment at `js/index.js:216`).
-
-The prototype `option-c/` cannot change the platform `Reply`, so its wire is `{"Err": {"Fail": e}}` or `{"Err": {"Infra": i}}` (nominal `RpcX.Wire`). `RpcX.reply_of3` and its `expect` tests prove the parse of the three-form `Reply`.
-
-## 6. Probe results in detail
-
-| Check | Command | Result |
-| --- | --- | --- |
-| Option C, `web.roc` | `roc build --target=wasm32 --no-cache` | 0 errors, 21 s (base 19 s) |
-| Option C, `ledger.roc` | same | 0 errors |
-| Option C, wire bytes | `roc test --no-cache option-c/web.roc` | 181 passed. With `infra_head` changed: 2 failed |
-| Option C, a handler annotated `Rpc.Fault(Gavel.RoomErr)` that uses `?` on `load_state!` (closed `[Fail([NotOpen]), BadData(Str), StorageErr(Io.Thrown)]`) | build | 0 errors: the result of a function widens at `?`, also inside `Fail` |
-| Option C, `snapshot!` and `close_out!` with `_` in place of the annotation | build (first run) | 0 errors |
-| Option B, `web.roc` and `ledger.roc` | build | 0 errors (after the second list of Q5) |
-| wasm size, web (no `--opt`) | `stat` | base 1,454,418; B 1,798,425; C 1,491,061 |
-| wasm size, ledger (no `--opt`) | `stat` | base 890,245; B 1,009,547; C 1,016,584 |
-
-## 7. The auction example, before and after (option C, platform names)
-
-The files in `option-c/` use `RpcX.on(Gavel.open, open!)` and `RpcX.call!(obj, m, a)`, because they cannot change the platform. With the platform change, the app keeps `Gavel.open.on(open!)` and `obj.call!(m, a)`. The snippets show the platform form.
-
-`Gavel.roc:27` to `31`:
+`Gavel.roc`:
 
 ```roc
 # Before
 RoomErr : [NotOpen, AlreadyOpen, StillOpen, StorageErr(Io.Thrown), SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]
 SettleErr : [D1Err(Io.Thrown), Constraint(Sql.Constraint), KvErr(Io.Thrown), BadData(Str), TooLarge]
-settle_due : Rpc({}, { settled : U32 }, Gavel.SettleErr)
 
 # After
-## The domain errors of a lot room. The infrastructure errors are `Rpc.Infra`.
-RoomErr : [NotOpen, AlreadyOpen, StillOpen]
-settle_due : Rpc({}, { settled : U32 }, Rpc.NoErr)
+RoomErr : [NotOpen, AlreadyOpen, StillOpen, Infra(Rpc.Infra)]
+SettleErr : [Infra(Rpc.Infra)]
 ```
 
-`LotRoom.roc:187` (`open!`):
+`LotRoom.roc` (`open!`, an Rpc handler; `load_state!` is the same change):
 
 ```roc
 # Before
@@ -191,94 +201,101 @@ open! = |self, lot| match state_cell.get!(self) {
 	Err(StorageErr(t)) => Err(StorageErr(t))
 }
 
-# After (the annotation is optional: `_` also builds, `on` closes the type)
-open! : Object.Self, Gavel.Lot => Try({}, Rpc.Fault(Gavel.RoomErr))
+# After
+open! : Object.Self, Gavel.Lot => Try({}, Gavel.RoomErr)
 open! = |self, lot| match state_cell.get!(self) {
-	Ok(_) => Err(Fail(AlreadyOpen))
+	Ok(_) => Err(AlreadyOpen)
 	Err(NotFound) => {
 		state_cell.set!(self, { status: Open, ... })?
 		self.set_alarm_at!(lot.close_ms)?
 		Ok({})
 	}
-	Err(BadData(s)) => Err(BadData(s))
-	Err(StorageErr(t)) => Err(StorageErr(t))
+	Err(Infra(i)) => Err(Infra(i))
 }
 ```
 
-A helper that an Rpc handler and the socket code both use (`LotRoom.roc:80` and `132`):
+Code outside Rpc (`LotRoom.roc` `fetch!`, `web.roc`):
 
 ```roc
-# After
-load_state! : Object.Self => Try(State, [Fail([NotOpen]), BadData(Str), StorageErr(Io.Thrown)])
-...
-	Err(NotFound) => Err(Fail(NotOpen))
+		Err(TooLarge) => Ok(Response.from_status(400))           # before
+		Err(Infra(TooLarge)) => Ok(Response.from_status(400))    # after
 
-# on_message!: check_bid gives NotOpen, load_state! gives Fail(NotOpen)
-	Err(Fail(NotOpen)) | Err(NotOpen) => reject!(socket, "the lot is not open")
+	Constraint(_) => Response.from_text(409, "the lot exists")           # before
+	Infra(Constraint(_)) => Response.from_text(409, "the lot exists")    # after
 ```
 
-`web.roc:64` to `77` (`error_response!`):
+`web.roc` `error_response!`:
 
 ```roc
-# Before
-error_response! : [NotFound, Unauthorized, BadRequest(Str), BadData(Str), Constraint(_), Remote(Gavel.RoomErr), ..] => Response
-error_response! = |e| match e {
-	NotFound => Response.from_text(404, "not found")
-	Remote(NotOpen) => Response.from_text(404, "the lot room is not open")
-	Remote(AlreadyOpen) => Response.from_text(409, "the lot room is open")
-	...
-	_ => { Log.error!("request failed", Str.inspect(e)); Response.from_text(500, "server error") }
-}
-
 # After
-error_response! : [NotFound, Unauthorized, BadRequest(Str), BadData(Str), Constraint(_), Remote(Gavel.RoomErr), Infra(Rpc.Infra), ..] => Response
+error_response! : [NotFound, Unauthorized, BadRequest(Str), BadData(Str), Infra(Rpc.Infra), Remote(Gavel.RoomErr), ..] => Response
 error_response! = |e| match e {
 	NotFound => Response.from_text(404, "not found")
 	Remote(NotOpen) => Response.from_text(404, "the lot room is not open")
 	Remote(AlreadyOpen) => Response.from_text(409, "the lot room is open")
 	Remote(StillOpen) => Response.from_text(409, "the lot is still open")
-	Infra(StorageErr(_)) | Infra(SqlErr(_)) => {
+	Remote(Infra(StorageErr(_))) | Remote(Infra(SqlErr(_))) => {
 		Log.error!("lot room storage failed", Str.inspect(e))
 		Response.from_text(503, "the lot room is not available")
 	}
-	...
-	_ => { Log.error!("request failed", Str.inspect(e)); Response.from_text(500, "server error") }
+	Unauthorized => Response.from_text(401, "admin token needed")
+	BadRequest(msg) => Response.from_text(400, msg)
+	BadData(msg) => Response.from_text(400, msg)              # Request.json! (not nested in the prototype)
+	Infra(Constraint(_)) => Response.from_text(409, "the lot exists")
+	_ => {
+		Log.error!("request failed", Str.inspect(e))
+		Response.from_text(500, "server error")
+	}
 }
 ```
 
-`ledger.roc:41` and `154`:
+`ledger.roc`: no change. `settle_due!` keeps `Try({ settled : U32 }, Gavel.SettleErr)`, and each `?` fits. A nested call that gives its errors to the caller: `closeout = lot_rooms.named(id).call!(Gavel.close_out, {}) ? Rpc.forward(|e| e)`.
 
-```roc
-# Before
-settle_due! : {} => Try({ settled : U32 }, Gavel.SettleErr)
-# After: no domain error, all `?` are platform calls
-settle_due! : {} => Try({ settled : U32 }, Rpc.Fault(Rpc.NoErr))
-```
-
-## 8. Migration list
+### 6.3 Migration list
 
 | File | Change |
 | --- | --- |
-| `platform/Rpc.roc` | `Infra`, `Fault(err)`, private `split`, optional `forward`. New types of `on`, `on_worker`, `reply_of`. The body of `on` (third head). `Reply` with `Infra(Rpc.Infra)`. `infra_head` |
-| `platform/Object.roc`, `platform/Service.roc`, `platform/Remote.roc` | The result type of `call!` and of its twin `call` |
-| `bench/platform/` (the same 4 files) | The same change (copy of the platform) |
-| `js/index.js:216` | The comment names the third form. No code change |
-| `MODULES.md` 8 | The code block, the example (`close_out!`, the caller match), the "Errors" row, the "As built" rows of `Reply`, `call!`, `Rpc.NoErr` |
-| `API.md`, `PLAN.md` (8h table) | A row for N5 |
-| `conformance/RpcErrRoutes.roc`, `RpcMethods.roc`, `RpcRoutes.roc`, `ObjectRoutes.roc`, `DecRoutes.roc` | Domain errors in `Fail`. Caller types with `Infra(Rpc.Infra)` |
-| `conformance/checks/rpcerr.mjs` | New checks: a Roc callee with a storage error gives `Infra(StorageErr(..))`. A JS callee that replies `{ Infra: ... }`. A domain reply has the same bytes as before |
-| `conformance/must-not-compile/rpc_tag_bad.roc`, `rpc_tag_ok.roc` | A domain tag with no `Fail`, and a tag that is in neither `err` nor `Infra`, do not compile |
-| `conformance/reverts.mjs` | The entry of the `on` signature (line 629). New entries: `infra_head` bytes, one arm of `split` that gives `Fail` |
-| `examples/auction/Gavel.roc`, `LotRoom.roc`, `web.roc`, `ledger.roc` | As section 7 (`option-c/` is the diff, less the `RpcX.` names) |
+| `platform/*.roc` | Each public function with an infrastructure tag: the nested type, and the bodies give `Infra(..)` (294 signature lines). `Io.timeout`, `Io.timeout_at`: `[Infra([TimedOut]), ..e]` |
+| `platform/Rpc.roc` | `Infra`, `forward`. `on`, `Reply`, `reply_of`: no change |
+| `platform/Object.roc`, `platform/Service.roc`, `platform/Remote.roc` | `call!` and `call`: `[Infra([RpcErr(Io.Thrown), BadData(Str)]), Remote(err)]` |
+| `bench/platform/` | The same (copy of the platform) |
+| `MODULES.md`, `API.md` | Each signature with an infrastructure tag (216 lines in MODULES.md). MODULES.md 8: the caller shape, `forward` |
+| `PLAN.md` | A row in the 8h table |
+| `conformance/` | Each route and check that matches an infrastructure tag (229 uses in 27 files). `must-not-compile`: a flat infrastructure tag in an Rpc `err` does not compile. `reverts.mjs`: entries for `forward` and for some `nest` arms |
+| `examples/` | Each match on an infrastructure tag. The auction: the diff of `option-g/` (18 lines) |
 | `examples/auction/REVIEW.md` | N5: done |
 
-## 9. Open questions
+## 7. Option C in detail (the alternative)
+
+C changes only Rpc code. The handler error is `Rpc.Fault(err) : [Fail(err), <the 29 tags of Rpc.Infra>]`.
+
+```roc
+Fault(err) : [Fail(err), <the 29 tags of Infra>]
+on        : Rpc(arg, ret, err), (self, arg => Try(ret, Rpc.Fault(err))) -> Rpc.Handler(self) where [...]
+on_worker : Rpc(arg, ret, err), (arg => Try(ret, Rpc.Fault(err))) -> Rpc.Handler({}) where [...]
+reply_of  : List(U8) -> Try(ret, [BadData(Str), Remote(err), Infra(Rpc.Infra)]) where [...]
+forward   : Try(ret, [RpcErr(Io.Thrown), BadData(Str), Remote(err), Infra(Rpc.Infra)]), (err -> e2) -> Try(ret, Rpc.Fault(e2))
+Reply(ret, err) := [Ok(ret), Err(err), Infra(Rpc.Infra)]     # derived parser; on writes the heads by hand
+infra_head = [0xa1, 0x65, 0x49, 0x6e, 0x66, 0x72, 0x61]      # {"Infra": ...}
+call!     : ... => Try(ret, [RpcErr(Io.Thrown), BadData(Str), Remote(err), Infra(Rpc.Infra)])
+```
+
+| Handler result | Bytes | Caller gets |
+| --- | --- | --- |
+| `Ok(v)` | `{"Ok": v}` | `Ok(v)` |
+| `Err(Fail(e))` | `{"Err": e}` (as today) | `Err(Remote(e))` |
+| `Err(StorageErr(t))` | `{"Infra": {"StorageErr": t}}` (new) | `Err(Infra(StorageErr(t)))` |
+
+Two findings set the shape of C: Q4 (no generic codec for `[Fail(e), ...]`, so `Reply` stays nominal) and roc-lang/roc#12482 (no generic nominal encode in the lambda of `on`, so the heads are bytes). `option-c/RpcX.roc` implements both and the build has no crash.
+
+The app code of C: `Err(Fail(AlreadyOpen))` at each domain error, and a helper that both an Rpc handler and other code use gives `Fail(X)` (`on_message!` matches `Err(Fail(NotOpen)) | Err(NotOpen)`). The caller: `Remote(NotOpen)`, `Infra(StorageErr(_))`. Migration: `platform/Rpc.roc`, the `call!` of Object, Service, Remote, `bench/platform/`, MODULES.md 8, the Rpc conformance routes and checks, `reverts.mjs` line 629, the auction (30 lines).
+
+## 8. Open questions
 
 | # | Question | Default of this study |
 | --- | --- | --- |
-| 1 | Names: `Fail(err)`, `Rpc.Fault(err)`, `Rpc.Infra`, the reply key `"Infra"` | As written |
-| 2 | Members of `Rpc.Infra`. Are `RpcErr` (a nested call threw), `MissingEnv`, `InvalidJson`, `TimedOut` infrastructure or domain? A new platform module must add its tag to `Infra` | All 29 of section 2 |
-| 3 | Add `Rpc.forward` now (q6 proves the shape), or later? | Later: the auction has no nested call that gives its errors to its caller |
-| 4 | The third reply form `{ Infra: ... }` becomes part of the contract for a JS peer (MODULES.md 8). OK? | Yes |
-| 5 | Q4 and Q5 are compiler limits. Report them upstream (as #12482)? | Yes, Q5 first (the same union written out has a codec) |
-| 6 | A caller `_` arm still catches a new domain tag. Should the docs show an exhaustive `Remote(r) => room_response(r)` form? | A sentence in MODULES.md 8 |
+| 1 | G: is a tag nested for each module or for each function? `BadData` of `Request.json!` is a bad request, `Constraint` of an insert can be a domain conflict, `TooLarge` of `accept_with!` is a bad request | For each function. Nest the errors of storage, bindings and calls. Keep the request-parse errors of `Request` flat |
+| 2 | G: is the breaking change outside Rpc acceptable (all apps, conformance, MODULES.md)? | Yes, if G is chosen. Else C |
+| 3 | Names: `Rpc.Infra`, the tag `Infra` | As written |
+| 4 | Q4 and Q5 are compiler limits. Report them upstream? | Yes, Q5 first |
+| 5 | A caller `_` arm still catches a new domain tag. Show an exhaustive `Remote(r) => room_response(r)` form in MODULES.md 8? | Yes, one sentence |

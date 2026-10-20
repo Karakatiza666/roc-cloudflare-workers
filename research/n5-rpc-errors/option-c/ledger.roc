@@ -30,7 +30,7 @@ feed_url = "wss://fx.example.com/stream"
 feed_limit_ms = 20_000
 
 ## One message of the feed.
-Tick : { currency : Str, rate : F64 }
+Tick : { currency : Str, rate : Dec }
 
 fetch! : Request => Try(Response, e)
 fetch! = |req| match (req.method(), req.segments()) {
@@ -74,12 +74,15 @@ settle_one! = |id, cfg, rates, now| {
 	Ok({})
 }
 
-## A currency with no rate is left out of the receipt.
+## A currency with no rate, or with an amount that does not fit in `U64`, is left out of the receipt.
 make_receipt : Str, Gavel.Closeout, Gavel.Config, Gavel.Rates, U64 -> Gavel.Receipt
 make_receipt = |id, closeout, cfg, rates, now| {
 	converted = cfg.currencies.keep_oks(
 		|currency| match rates.rates.find_first(|r| r.currency == currency) {
-			Ok(r) => Ok({ currency, amount_cents: (closeout.amount_cents.to_f64() * r.rate).round_to_u64_try() ?? 0 })
+			Ok(r) => match (closeout.amount_cents.to_dec() * r.rate).round_to_u64_try() {
+				Ok(amount_cents) => Ok({ currency, amount_cents })
+				Err(_) => Err(NoRate)
+			}
 			Err(NotFound) => Err(NoRate)
 		},
 	)
@@ -109,11 +112,7 @@ refresh_rates! = || {
 	no_ticks = []
 	var $ticks = no_ticks
 	while !has_all(cfg.currencies, $ticks) {
-		now = Time.now_ms!()
-		if now >= deadline {
-			break
-		}
-		match ws.receive().timeout(deadline - now).run!() {
+		match ws.receive().timeout_at(deadline).run!() {
 			Ok(msg) => {
 				tick : Try(Tick, _)
 				tick = msg.json()
