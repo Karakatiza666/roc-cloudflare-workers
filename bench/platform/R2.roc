@@ -19,7 +19,7 @@ R2 :: { name : Str }.{
 	declare = |b| { name: b.name, kind: "r2", props: [] }
 
 	## The object and its body (a stream). `get` of a key that is not there: `NotFound`.
-	get : R2, Str -> Io(R2.Object, [NotFound, R2Err(Io.Thrown)])
+	get : R2, Str -> Io(R2.Object, [NotFound, Infra([R2Err(Io.Thrown)])])
 	get = |bucket, key| {
 		ops = read_ops(call_ops(bucket, "get", [Lit(Text(key))], []))
 		Io.new(
@@ -32,16 +32,16 @@ R2 :: { name : Str }.{
 						Err(NoBody) => crash "R2.get: the object has no body"
 					}
 				}
-				Err(t) => Err(R2Err(t))
+				Err(t) => Err(Infra(R2Err(t)))
 			},
 		)
 	}
 
-	get! : R2, Str => Try(R2.Object, [NotFound, R2Err(Io.Thrown)])
+	get! : R2, Str => Try(R2.Object, [NotFound, Infra([R2Err(Io.Thrown)])])
 	get! = |bucket, key| Io.run!(get(bucket, key))
 
 	## `range`: the bytes to read. `only_if`: a failed condition is `PreconditionFailed` (R2 gives the object with no body).
-	get_with : R2, Str, { range ?: R2.Range, only_if ?: R2.Cond } -> Io(R2.Object, [NotFound, PreconditionFailed, R2Err(Io.Thrown)])
+	get_with : R2, Str, { range ?: R2.Range, only_if ?: R2.Cond } -> Io(R2.Object, [NotFound, PreconditionFailed, Infra([R2Err(Io.Thrown)])])
 	get_with = |bucket, key, opts| {
 		given = get_program(bucket, key, opts)
 		Io.new(
@@ -55,7 +55,7 @@ R2 :: { name : Str }.{
 		)
 	}
 
-	get_with! : R2, Str, { range ?: R2.Range, only_if ?: R2.Cond } => Try(R2.Object, [NotFound, PreconditionFailed, R2Err(Io.Thrown)])
+	get_with! : R2, Str, { range ?: R2.Range, only_if ?: R2.Cond } => Try(R2.Object, [NotFound, PreconditionFailed, Infra([R2Err(Io.Thrown)])])
 	get_with! = |bucket, key, opts| Io.run!(get_with(bucket, key, opts))
 
 	## The HTTP response of an object: status 200, the body (a stream, no copy into wasm), the HTTP metadata of the object
@@ -70,7 +70,7 @@ R2 :: { name : Str }.{
 	## `content-range`, 416 with `content-range: bytes */size` when it starts after the end (R2 error 10039; `respond!` makes the header with one `head!`, the `Io` twin `respond` gives a 416 without it). A request with `If-Range` gets the whole object (R2 has no
 	## `If-Range`). A `Range` that has more than one range, or has a wrong form, is not used. The method is not read:
 	## the app routes GET and HEAD to it. The bytes of a HEAD response are dropped by Workers.
-	respond : R2, Str, Request -> Io(Response, [R2Err(Io.Thrown)])
+	respond : R2, Str, Request -> Io(Response, [Infra([R2Err(Io.Thrown)])])
 	respond = |bucket, key, req| {
 		wanted = wanted_range(req)
 		opts0 : { range ?: R2.Range, only_if ?: R2.Cond }
@@ -87,12 +87,12 @@ R2 :: { name : Str }.{
 				Ok(NotMet(meta)) => Ok(not_met_response(req, meta))
 				Ok(Absent) => Ok(Response.from_text(404, "Not found"))
 				# R2 error 10039: the range starts after the end.
-				Err(R2Err(t)) => if (t.message.contains("(10039)")) Ok(Response.from_status(416)) else Err(R2Err(t))
+				Err(Infra(R2Err(t))) => if (t.message.contains("(10039)")) Ok(Response.from_status(416)) else Err(Infra(R2Err(t)))
 			},
 		)
 	}
 
-	respond! : R2, Str, Request => Try(Response, [R2Err(Io.Thrown)])
+	respond! : R2, Str, Request => Try(Response, [Infra([R2Err(Io.Thrown)])])
 	respond! = |bucket, key, req| {
 		res = Io.run!(respond(bucket, key, req))?
 		# The error 10039 gives a 416 with no size: one `head!` adds `content-range` (the `Io` twin `respond` has none).
@@ -107,7 +107,7 @@ R2 :: { name : Str }.{
 	}
 
 	## The metadata only (`head`).
-	head : R2, Str -> Io(R2.Meta, [NotFound, R2Err(Io.Thrown)])
+	head : R2, Str -> Io(R2.Meta, [NotFound, Infra([R2Err(Io.Thrown)])])
 	head = |bucket, key| {
 		ops = read_ops(call_ops(bucket, "head", [Lit(Text(key))], []))
 		Io.new(
@@ -117,17 +117,17 @@ R2 :: { name : Str }.{
 					Err(Missing) => Err(NotFound)
 					Ok(got) => Ok(got.meta)
 				}
-				Err(t) => Err(R2Err(t))
+				Err(t) => Err(Infra(R2Err(t)))
 			},
 		)
 	}
 
-	head! : R2, Str => Try(R2.Meta, [NotFound, R2Err(Io.Thrown)])
+	head! : R2, Str => Try(R2.Meta, [NotFound, Infra([R2Err(Io.Thrown)])])
 	head! = |bucket, key| Io.run!(head(bucket, key))
 
 	## A body of any kind. A stream with no known length (`Body.writer!`, `compress!`) goes through `pf.r2put`: up to
 	## 5 MiB it is one put of the bytes, past it a multipart upload of 5 MiB parts (MODULES.md 5.3).
-	put : R2, Str, Body -> Io(R2.Meta, [R2Err(Io.Thrown)])
+	put : R2, Str, Body -> Io(R2.Meta, [Infra([R2Err(Io.Thrown)])])
 	put = |bucket, key, body| {
 		given = body_ops(body, Err(MissingField), 1)
 		ops = read_ops(put_ops(bucket, key, body, Err(MissingField), given, Lit(Null), []))
@@ -138,19 +138,19 @@ R2 :: { name : Str }.{
 					Err(Missing) => crash "R2.put: R2 gave no object"
 					Ok(got) => Ok(got.meta)
 				}
-				Err(t) => Err(R2Err(t))
+				Err(t) => Err(Infra(R2Err(t)))
 			},
 		)
 	}
 
-	put! : R2, Str, Body => Try(R2.Meta, [R2Err(Io.Thrown)])
+	put! : R2, Str, Body => Try(R2.Meta, [Infra([R2Err(Io.Thrown)])])
 	put! = |bucket, key, body| Io.run!(put(bucket, key, body))
 
 	## `only_if` makes it a compare and swap: a failed condition is `PreconditionFailed` (R2 gives `null`).
 	## A stream with no known length: as in `put`. Past 5 MiB it is a multipart upload, which takes no `only_if` and no
 	## `checksum` (`R2Err`). `length_bytes`: the stream goes through a `FixedLengthStream` of this length, so it is one
 	## put with each option. A stream of another length is `R2Err`.
-	put_with : R2, Str, Body, { only_if ?: R2.Cond, http ?: R2.Http, custom ?: List((Str, Str)), checksum ?: R2.Checksum, length_bytes ?: U64 } -> Io(R2.Meta, [PreconditionFailed, R2Err(Io.Thrown)])
+	put_with : R2, Str, Body, { only_if ?: R2.Cond, http ?: R2.Http, custom ?: List((Str, Str)), checksum ?: R2.Checksum, length_bytes ?: U64 } -> Io(R2.Meta, [PreconditionFailed, Infra([R2Err(Io.Thrown)])])
 	put_with = |bucket, key, body, opts| {
 		given = body_ops(body, opts.?length_bytes, 1)
 		built = put_options(opts, 1 + given.ops.len().to_u32_wrap())
@@ -162,30 +162,30 @@ R2 :: { name : Str }.{
 					Err(Missing) => Err(PreconditionFailed)
 					Ok(got) => Ok(got.meta)
 				}
-				Err(t) => Err(R2Err(t))
+				Err(t) => Err(Infra(R2Err(t)))
 			},
 		)
 	}
 
-	put_with! : R2, Str, Body, { only_if ?: R2.Cond, http ?: R2.Http, custom ?: List((Str, Str)), checksum ?: R2.Checksum, length_bytes ?: U64 } => Try(R2.Meta, [PreconditionFailed, R2Err(Io.Thrown)])
+	put_with! : R2, Str, Body, { only_if ?: R2.Cond, http ?: R2.Http, custom ?: List((Str, Str)), checksum ?: R2.Checksum, length_bytes ?: U64 } => Try(R2.Meta, [PreconditionFailed, Infra([R2Err(Io.Thrown)])])
 	put_with! = |bucket, key, body, opts| Io.run!(put_with(bucket, key, body, opts))
 
 	## Up to 1,000 keys.
-	delete : R2, List(Str) -> Io({}, [R2Err(Io.Thrown)])
+	delete : R2, List(Str) -> Io({}, [Infra([R2Err(Io.Thrown)])])
 	delete = |bucket, keys| Io.new(
 		call_ops(bucket, "delete", [Lit(Arr(keys.map(|k| Text(k))))], []),
 		|r| match r {
 			Ok(_) => Ok({})
-			Err(t) => Err(R2Err(t))
+			Err(t) => Err(Infra(R2Err(t)))
 		},
 	)
 
-	delete! : R2, List(Str) => Try({}, [R2Err(Io.Thrown)])
+	delete! : R2, List(Str) => Try({}, [Infra([R2Err(Io.Thrown)])])
 	delete! = |bucket, keys| Io.run!(delete(bucket, keys))
 
 	## 1,000 objects or less. `include` fills `http` and `custom` of each `Meta` (with no `include`, they are empty).
 	## The platform helper `pf.r2list` reads each object in JS: a program has no loop (OP4).
-	list : R2, { prefix ?: Str, cursor ?: Str, limit ?: U32, delimiter ?: Str, start_after ?: Str, include ?: List([Http, Custom]) } -> Io({ objects : List(R2.Meta), prefixes : List(Str), next : [More(Str), Done] }, [R2Err(Io.Thrown)])
+	list : R2, { prefix ?: Str, cursor ?: Str, limit ?: U32, delimiter ?: Str, start_after ?: Str, include ?: List([Http, Custom]) } -> Io({ objects : List(R2.Meta), prefixes : List(Str), next : [More(Str), Done] }, [Infra([R2Err(Io.Thrown)])])
 	list = |bucket, opts| {
 		given = [
 			opts.?prefix.map_ok(|s| ("prefix", Text(s))),
@@ -203,27 +203,27 @@ R2 :: { name : Str }.{
 			],
 			|r| match r {
 				Ok(v) => Ok(list_of(v))
-				Err(t) => Err(R2Err(t))
+				Err(t) => Err(Infra(R2Err(t)))
 			},
 		)
 	}
 
-	list! : R2, { prefix ?: Str, cursor ?: Str, limit ?: U32, delimiter ?: Str, start_after ?: Str, include ?: List([Http, Custom]) } => Try({ objects : List(R2.Meta), prefixes : List(Str), next : [More(Str), Done] }, [R2Err(Io.Thrown)])
+	list! : R2, { prefix ?: Str, cursor ?: Str, limit ?: U32, delimiter ?: Str, start_after ?: Str, include ?: List([Http, Custom]) } => Try({ objects : List(R2.Meta), prefixes : List(Str), next : [More(Str), Done] }, [Infra([R2Err(Io.Thrown)])])
 	list! = |bucket, opts| Io.run!(list(bucket, opts))
 
-	create_multipart_upload : R2, Str -> Io(R2.Upload, [R2Err(Io.Thrown)])
+	create_multipart_upload : R2, Str -> Io(R2.Upload, [Infra([R2Err(Io.Thrown)])])
 	create_multipart_upload = |bucket, key| create_upload(bucket, key, [Lit(Text(key))], [])
 
-	create_multipart_upload! : R2, Str => Try(R2.Upload, [R2Err(Io.Thrown)])
+	create_multipart_upload! : R2, Str => Try(R2.Upload, [Infra([R2Err(Io.Thrown)])])
 	create_multipart_upload! = |bucket, key| Io.run!(create_multipart_upload(bucket, key))
 
-	create_multipart_upload_with : R2, Str, { http ?: R2.Http, custom ?: List((Str, Str)) } -> Io(R2.Upload, [R2Err(Io.Thrown)])
+	create_multipart_upload_with : R2, Str, { http ?: R2.Http, custom ?: List((Str, Str)) } -> Io(R2.Upload, [Infra([R2Err(Io.Thrown)])])
 	create_multipart_upload_with = |bucket, key, opts| {
 		built = upload_options(opts, 1)
 		create_upload(bucket, key, [Lit(Text(key)), Slot(built.slot)], built.ops)
 	}
 
-	create_multipart_upload_with! : R2, Str, { http ?: R2.Http, custom ?: List((Str, Str)) } => Try(R2.Upload, [R2Err(Io.Thrown)])
+	create_multipart_upload_with! : R2, Str, { http ?: R2.Http, custom ?: List((Str, Str)) } => Try(R2.Upload, [Infra([R2Err(Io.Thrown)])])
 	create_multipart_upload_with! = |bucket, key, opts| Io.run!(create_multipart_upload_with(bucket, key, opts))
 
 	## No crossing: `resumeMultipartUpload` checks nothing (Cloudflare docs). A wrong upload id is `R2Err` at the first
@@ -239,22 +239,22 @@ R2 :: { name : Str }.{
 		is_eq : _
 
 		## Part numbers are 1 to 10,000. Each part but the last is 5 MiB or more, and all have one size.
-		upload_part : R2.Upload, U32, Body -> Io(R2.Part, [R2Err(Io.Thrown)])
+		upload_part : R2.Upload, U32, Body -> Io(R2.Part, [Infra([R2Err(Io.Thrown)])])
 		upload_part = |up, number, body| part_io(up, number, body, Err(MissingField))
 
-		upload_part! : R2.Upload, U32, Body => Try(R2.Part, [R2Err(Io.Thrown)])
+		upload_part! : R2.Upload, U32, Body => Try(R2.Part, [Infra([R2Err(Io.Thrown)])])
 		upload_part! = |up, number, body| Io.run!(upload_part(up, number, body))
 
 		## `length_bytes`: as in `put_with`, for a stream that has no known length.
-		upload_part_with : R2.Upload, U32, Body, { length_bytes ?: U64 } -> Io(R2.Part, [R2Err(Io.Thrown)])
+		upload_part_with : R2.Upload, U32, Body, { length_bytes ?: U64 } -> Io(R2.Part, [Infra([R2Err(Io.Thrown)])])
 		upload_part_with = |up, number, body, opts| part_io(up, number, body, opts.?length_bytes)
 
-		upload_part_with! : R2.Upload, U32, Body, { length_bytes ?: U64 } => Try(R2.Part, [R2Err(Io.Thrown)])
+		upload_part_with! : R2.Upload, U32, Body, { length_bytes ?: U64 } => Try(R2.Part, [Infra([R2Err(Io.Thrown)])])
 		upload_part_with! = |up, number, body, opts| Io.run!(upload_part_with(up, number, body, opts))
 
 		## On the edge the `R2.Meta` of the result has no `http` and no `custom` (Miniflare has them): read them with `head!`
 		## (MODULES.md 5.3, PLAN.md 11c, E28).
-		complete : R2.Upload, List(R2.Part) -> Io(R2.Meta, [R2Err(Io.Thrown)])
+		complete : R2.Upload, List(R2.Part) -> Io(R2.Meta, [Infra([R2Err(Io.Thrown)])])
 		complete = |up, parts| {
 			parts_js = Arr(parts.map(|p| Obj([("partNumber", Int(p.part_number.to_i64())), ("etag", Text(p.etag))])))
 			ops = read_ops(resume_ops(up).append(Call(Slot(1), "complete", [Lit(parts_js)])))
@@ -265,24 +265,24 @@ R2 :: { name : Str }.{
 						Err(Missing) => crash "R2.Upload.complete: R2 gave no object"
 						Ok(got) => Ok(got.meta)
 					}
-					Err(t) => Err(R2Err(t))
+					Err(t) => Err(Infra(R2Err(t)))
 				},
 			)
 		}
 
-		complete! : R2.Upload, List(R2.Part) => Try(R2.Meta, [R2Err(Io.Thrown)])
+		complete! : R2.Upload, List(R2.Part) => Try(R2.Meta, [Infra([R2Err(Io.Thrown)])])
 		complete! = |up, parts| Io.run!(complete(up, parts))
 
-		abort : R2.Upload -> Io({}, [R2Err(Io.Thrown)])
+		abort : R2.Upload -> Io({}, [Infra([R2Err(Io.Thrown)])])
 		abort = |up| Io.new(
 			resume_ops(up).append(Call(Slot(1), "abort", [])),
 			|r| match r {
 				Ok(_) => Ok({})
-				Err(t) => Err(R2Err(t))
+				Err(t) => Err(Infra(R2Err(t)))
 			},
 		)
 
-		abort! : R2.Upload => Try({}, [R2Err(Io.Thrown)])
+		abort! : R2.Upload => Try({}, [Infra([R2Err(Io.Thrown)])])
 		abort! = |up| Io.run!(abort(up))
 	}
 
@@ -334,7 +334,7 @@ get_program = |bucket, key, opts| {
 	{ ops: read_ops(call_ops(bucket, "get", [Lit(Text(key)), Slot(built.slot)], built.ops)), with_range }
 }
 
-fetched_of : Try(Js, Io.Thrown), Bool -> Try(Fetched, [R2Err(Io.Thrown)])
+fetched_of : Try(Js, Io.Thrown), Bool -> Try(Fetched, [Infra([R2Err(Io.Thrown)])])
 fetched_of = |r, with_range| match r {
 	Ok(v) => match unpack(v) {
 		Err(Missing) => Ok(Absent)
@@ -343,7 +343,7 @@ fetched_of = |r, with_range| match r {
 			Err(NoBody) => Ok(NotMet(got.meta))
 		}
 	}
-	Err(t) => Err(R2Err(t))
+	Err(t) => Err(Infra(R2Err(t)))
 }
 
 # ---- HTTP response ----
@@ -478,7 +478,7 @@ resume_ops = |up| [
 	Call(Slot(0), "resumeMultipartUpload", [Lit(Text(up.key)), Lit(Text(up.upload_id))]),
 ]
 
-create_upload : R2, Str, List(Js.Arg), List(Js.Op) -> Io(R2.Upload, [R2Err(Io.Thrown)])
+create_upload : R2, Str, List(Js.Arg), List(Js.Op) -> Io(R2.Upload, [Infra([R2Err(Io.Thrown)])])
 create_upload = |bucket, key, args, before| {
 	n = before.len().to_u32_wrap() + 2
 	Io.new(
@@ -489,12 +489,12 @@ create_upload = |bucket, key, args, before| {
 				other => crash "R2.create_multipart_upload: the upload id is ${Str.inspect(other)}"
 			}
 			Ok(other) => crash "R2.create_multipart_upload: the upload is ${Str.inspect(other)}"
-			Err(t) => Err(R2Err(t))
+			Err(t) => Err(Infra(R2Err(t)))
 		},
 	)
 }
 
-part_io : R2.Upload, U32, Body, Try(U64, [MissingField]) -> Io(R2.Part, [R2Err(Io.Thrown)])
+part_io : R2.Upload, U32, Body, Try(U64, [MissingField]) -> Io(R2.Part, [Infra([R2Err(Io.Thrown)])])
 part_io = |up, number, body, length| {
 	before = resume_ops(up)
 	given = body_ops(body, length, before.len().to_u32_wrap())
@@ -507,7 +507,7 @@ part_io = |up, number, body, length| {
 				other => crash "R2.Upload.upload_part: the part is ${Str.inspect(other)}"
 			}
 			Ok(other) => crash "R2.Upload.upload_part: the part is ${Str.inspect(other)}"
-			Err(t) => Err(R2Err(t))
+			Err(t) => Err(Infra(R2Err(t)))
 		},
 	)
 }

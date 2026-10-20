@@ -13,42 +13,42 @@ import http.Method
 Http :: [].{
 
 	## `fetch(request)`, and the body to `Body.default_max` bytes: one wait.
-	send : Request -> Io(Response, [Network(Io.Thrown), HttpErr(Io.Thrown), TooLarge])
+	send : Request -> Io(Response, [Infra([Network(Io.Thrown), HttpErr(Io.Thrown), TooLarge])])
 	send = |req| Io.new(ops(req, Read(Body.default_max), Err(MissingField), Err(MissingField)), read)
 
-	send! : Request => Try(Response, [Network(Io.Thrown), HttpErr(Io.Thrown), TooLarge])
+	send! : Request => Try(Response, [Infra([Network(Io.Thrown), HttpErr(Io.Thrown), TooLarge])])
 	send! = |req| Io.run!(send(req))
 
 	## `max_bytes`: the limit of the body (default `Body.default_max`). `timeout_ms`: `AbortSignal.timeout`, a timeout
 	## is `Network`. `cf`: the `cf` options of `fetch` (`cacheTtl`, `cacheEverything`), a `Js` object of the app.
-	send_with : Request, { max_bytes ?: U64, timeout_ms ?: U64, cf ?: Js } -> Io(Response, [Network(Io.Thrown), HttpErr(Io.Thrown), TooLarge])
+	send_with : Request, { max_bytes ?: U64, timeout_ms ?: U64, cf ?: Js } -> Io(Response, [Infra([Network(Io.Thrown), HttpErr(Io.Thrown), TooLarge])])
 	send_with = |req, opts| Io.new(ops(req, Read(opts.?max_bytes ?? Body.default_max), opts.?timeout_ms, opts.?cf), read)
 
-	send_with! : Request, { max_bytes ?: U64, timeout_ms ?: U64, cf ?: Js } => Try(Response, [Network(Io.Thrown), HttpErr(Io.Thrown), TooLarge])
+	send_with! : Request, { max_bytes ?: U64, timeout_ms ?: U64, cf ?: Js } => Try(Response, [Infra([Network(Io.Thrown), HttpErr(Io.Thrown), TooLarge])])
 	send_with! = |req, opts| Io.run!(send_with(req, opts))
 
 	## `fetch(request)`: the body stays a stream in JS (a `Stream` body, MC13), for a large body or a pass-through.
-	open : Request -> Io(Response, [Network(Io.Thrown), HttpErr(Io.Thrown)])
+	open : Request -> Io(Response, [Infra([Network(Io.Thrown), HttpErr(Io.Thrown)])])
 	open = |req| Io.new(
 		ops(req, Keep, Err(MissingField), Err(MissingField)),
 		|r| match r {
 			Ok(v) => Ok(response_of(v))
 			Err(t) => match Http.error(t) {
-				Network(n) => Err(Network(n))
-				HttpErr(h) => Err(HttpErr(h))
-				_ => Err(Network(t))
+				Network(n) => Err(Infra(Network(n)))
+				HttpErr(h) => Err(Infra(HttpErr(h)))
+				_ => Err(Infra(Network(t)))
 			}
 		},
 	)
 
-	open! : Request => Try(Response, [Network(Io.Thrown), HttpErr(Io.Thrown)])
+	open! : Request => Try(Response, [Infra([Network(Io.Thrown), HttpErr(Io.Thrown)])])
 	open! = |req| Io.run!(open(req))
 
 	## `send` of a `GET` of the URL.
-	get : Str -> Io(Response, [Network(Io.Thrown), HttpErr(Io.Thrown), TooLarge])
+	get : Str -> Io(Response, [Infra([Network(Io.Thrown), HttpErr(Io.Thrown), TooLarge])])
 	get = |url| send(Request.get(url))
 
-	get! : Str => Try(Response, [Network(Io.Thrown), HttpErr(Io.Thrown), TooLarge])
+	get! : Str => Try(Response, [Infra([Network(Io.Thrown), HttpErr(Io.Thrown), TooLarge])])
 	get! = |url| Io.run!(get(url))
 
 	## What Cloudflare answers for a request that it cannot pass on (MODULES.md 4): the `status` and the `code` of the
@@ -146,10 +146,10 @@ ops = |req, body_mode, timeout, cf| {
 	request_ops.concat(read_ops)
 }
 
-read : Try(Js, Io.Thrown) -> Try(Response, [Network(Io.Thrown), HttpErr(Io.Thrown), TooLarge])
+read : Try(Js, Io.Thrown) -> Try(Response, [Infra([Network(Io.Thrown), HttpErr(Io.Thrown), TooLarge])])
 read = |r| match r {
 	Ok(v) => Ok(response_of(v))
-	Err(t) => Err(Http.error(t))
+	Err(t) => Err(Infra(Http.error(t)))
 }
 
 ## The record of the program as a `Response`. A shape that is not that record is a platform bug: a crash.

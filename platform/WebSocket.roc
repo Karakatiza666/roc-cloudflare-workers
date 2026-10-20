@@ -54,14 +54,14 @@ WebSocket :: { ref : Js.Ref }.{
 	## A client: `fetch(url)` with `Upgrade: websocket`, then `accept()` of the `webSocket` of the response, in one
 	## program with one wait. A `ws://` or `wss://` URL is sent as `http://` or `https://` (the `fetch` of Workers takes
 	## only these). `NotUpgrade` when the server does not answer 101. A throw of `fetch` is `SocketErr`.
-	connect : Str -> Io(WebSocket, [NotUpgrade, SocketErr(Io.Thrown)])
+	connect : Str -> Io(WebSocket, [NotUpgrade, Infra([SocketErr(Io.Thrown)])])
 	connect = |url| connect_with(url, {})
 
-	connect! : Str => Try(WebSocket, [NotUpgrade, SocketErr(Io.Thrown)])
+	connect! : Str => Try(WebSocket, [NotUpgrade, Infra([SocketErr(Io.Thrown)])])
 	connect! = |url| Io.run!(connect(url))
 
 	## `headers`: more request headers. `protocols`: the header `Sec-WebSocket-Protocol`.
-	connect_with : Str, { headers ?: List(Header), protocols ?: List(Str) } -> Io(WebSocket, [NotUpgrade, SocketErr(Io.Thrown)])
+	connect_with : Str, { headers ?: List(Header), protocols ?: List(Str) } -> Io(WebSocket, [NotUpgrade, Infra([SocketErr(Io.Thrown)])])
 	connect_with = |url, opts| {
 		extra = (opts.?headers ?? []).map(|h| Arr([Text(h.name), Text(h.value)]))
 		protocols = match opts.?protocols {
@@ -78,12 +78,12 @@ WebSocket :: { ref : Js.Ref }.{
 			|r| match r {
 				Ok(Ref(ws)) => Ok(WebSocket.{ ref: ws })
 				Ok(_) => Err(NotUpgrade)
-				Err(t) => Err(SocketErr(t))
+				Err(t) => Err(Infra(SocketErr(t)))
 			},
 		)
 	}
 
-	connect_with! : Str, { headers ?: List(Header), protocols ?: List(Str) } => Try(WebSocket, [NotUpgrade, SocketErr(Io.Thrown)])
+	connect_with! : Str, { headers ?: List(Header), protocols ?: List(Str) } => Try(WebSocket, [NotUpgrade, Infra([SocketErr(Io.Thrown)])])
 	connect_with! = |url, opts| Io.run!(connect_with(url, opts))
 
 	## `ws.send(data)`, one `call!`. A throw (the socket is closed) is `Closed`.
@@ -92,10 +92,10 @@ WebSocket :: { ref : Js.Ref }.{
 
 	## The value as JSON text, in a text frame. A value that JSON cannot show (a `NaN` in an `F64`) is `BadData`, and
 	## nothing is sent.
-	send_json! : WebSocket, a => Try({}, [Closed, BadData(Str)]) where [a.Json.Encodable(enc)]
+	send_json! : WebSocket, a => Try({}, [Closed, Infra([BadData(Str)])]) where [a.Json.Encodable(enc)]
 	send_json! = |ws, value| match Json.to_str_try(value) {
 		Ok(text) => Remote.socket_send!(ws.ref, Text(text)).map_err(|_| Closed)
-		Err(e) => Err(BadData(Str.inspect(e)))
+		Err(e) => Err(Infra(BadData(Str.inspect(e))))
 	}
 
 	## The next message: one wait (`pf.wsReceive`), with no deadline (API.md 10.2). After the close, each call gives

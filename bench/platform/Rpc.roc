@@ -2,8 +2,10 @@
 ## `Object` or a `Service`, the callee with `on`. The argument and the reply cross as CBOR (MC5). The reply is one
 ## `Reply`: the `Ok` value or the `Err` tag of the method. A handler erases its types (CBOR in, CBOR out).
 ## Typed data: the format, what a JS peer sees, and what survives a round trip are in MODULES.md 1, "Formats of typed data".
+import Io
 import Request
 import Response
+import Sql
 import cbor.Cbor
 
 Rpc(arg, ret, err) :: { name : Str }.{
@@ -38,16 +40,59 @@ Rpc(arg, ret, err) :: { name : Str }.{
 	on_worker = |m, f!| Rpc.on(m, |_, a| f!(a))
 
 	## The bytes of a reply as the result of `call!`: an `Err` of the callee is `Remote(err)`, a reply that does not fit
-	## is `BadData`.
-	reply_of : List(U8) -> Try(ret, [BadData(Str), Remote(err)]) where [ret.Cbor.Readable(e1), err.Cbor.Readable(e2)]
+	## is `Infra(BadData)`.
+	reply_of : List(U8) -> Try(ret, [Infra([BadData(Str)]), Remote(err)]) where [ret.Cbor.Readable(e1), err.Cbor.Readable(e2)]
 	reply_of = |bytes| {
 		r : Try(Reply(ret, err), _)
 		r = Cbor.parse(bytes)
 		match r {
 			Ok(Reply.Ok(v)) => Ok(v)
 			Ok(Reply.Err(e)) => Err(Remote(e))
-			Err(e) => Err(BadData(Str.inspect(e)))
+			Err(e) => Err(Infra(BadData(Str.inspect(e))))
 		}
+	}
+
+	## The infrastructure errors of the platform, one closed union (MODULES.md 1, MC9). Each platform function gives
+	## its own tags in `Infra(...)`. The `err` of a method closes them: `[NotOpen, Infra(Rpc.Infra)]`.
+	Infra : [
+		StorageErr(Io.Thrown),
+		SqlErr(Io.Thrown),
+		Constraint(Sql.Constraint),
+		D1Err(Io.Thrown),
+		KvErr(Io.Thrown),
+		R2Err(Io.Thrown),
+		CacheErr(Io.Thrown),
+		QueueErr(Io.Thrown),
+		ObjectErr(Io.Thrown),
+		ServiceErr(Io.Thrown),
+		RpcErr(Io.Thrown),
+		HttpErr(Io.Thrown),
+		Network(Io.Thrown),
+		SocketErr(Io.Thrown),
+		BodyErr(Io.Thrown),
+		CryptoErr(Io.Thrown),
+		AiErr(Io.Thrown),
+		VectorizeErr(Io.Thrown),
+		WorkflowsErr(Io.Thrown),
+		EmailErr(Io.Thrown),
+		AnalyticsErr(Io.Thrown),
+		AssetsErr(Io.Thrown),
+		SecretsStoreErr(Io.Thrown),
+		LimitErr(Io.Thrown),
+		BadData(Str),
+		InvalidJson(Str),
+		MissingEnv(Str),
+		TooLarge,
+		TimedOut,
+	]
+
+	## A nested call in a handler, for `?`: `call!(...) ? Rpc.forward(f)`. The errors of this call stay in `Infra`,
+	## `f` maps the `err` of the callee (`Rpc.forward(|e| e)` when the two methods have one error type).
+	forward : (err -> [Infra(Rpc.Infra), ..e]) -> ([Infra([RpcErr(Io.Thrown), BadData(Str)]), Remote(err)] -> [Infra(Rpc.Infra), ..e])
+	forward = |f| |x| match x {
+		Infra(RpcErr(t)) => Infra(RpcErr(t))
+		Infra(BadData(s)) => Infra(BadData(s))
+		Remote(e) => f(e)
 	}
 
 	## The `err` of a method with no errors. It has no values. `[]` has no derived codec, so this type has its own: it

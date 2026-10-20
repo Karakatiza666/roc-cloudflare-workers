@@ -37,33 +37,33 @@ Vectorize(meta) := { name : Str, write : meta -> Try(Str, Str), read : Str -> Tr
 	## What `upsert`, `insert` and `deleteByIds` give: the id of the asynchronous mutation.
 	Mutation : { mutation_id : Str }
 
-	query : Vectorize(meta), List(F64) -> Io({ matches : List(Vectorize.Match(meta)), count : U64 }, [VectorizeErr(Io.Thrown), BadData(Str), TooLarge])
+	query : Vectorize(meta), List(F64) -> Io({ matches : List(Vectorize.Match(meta)), count : U64 }, [Infra([VectorizeErr(Io.Thrown), BadData(Str), TooLarge])])
 	query = |index, values| query_io(index, values, [], Body.default_max)
 
-	query! : Vectorize(meta), List(F64) => Try({ matches : List(Vectorize.Match(meta)), count : U64 }, [VectorizeErr(Io.Thrown), BadData(Str), TooLarge])
+	query! : Vectorize(meta), List(F64) => Try({ matches : List(Vectorize.Match(meta)), count : U64 }, [Infra([VectorizeErr(Io.Thrown), BadData(Str), TooLarge])])
 	query! = |index, values| Io.run!(query(index, values))
 
-	query_with : Vectorize(meta), List(F64), Vectorize.QueryOptions -> Io({ matches : List(Vectorize.Match(meta)), count : U64 }, [VectorizeErr(Io.Thrown), BadData(Str), TooLarge])
+	query_with : Vectorize(meta), List(F64), Vectorize.QueryOptions -> Io({ matches : List(Vectorize.Match(meta)), count : U64 }, [Infra([VectorizeErr(Io.Thrown), BadData(Str), TooLarge])])
 	query_with = |index, values, opts| query_io(index, values, query_js(opts), opts.?max_bytes ?? Body.default_max)
 
-	query_with! : Vectorize(meta), List(F64), Vectorize.QueryOptions => Try({ matches : List(Vectorize.Match(meta)), count : U64 }, [VectorizeErr(Io.Thrown), BadData(Str), TooLarge])
+	query_with! : Vectorize(meta), List(F64), Vectorize.QueryOptions => Try({ matches : List(Vectorize.Match(meta)), count : U64 }, [Infra([VectorizeErr(Io.Thrown), BadData(Str), TooLarge])])
 	query_with! = |index, values, opts| Io.run!(query_with(index, values, opts))
 
-	upsert : Vectorize(meta), List(Vectorize.Vector(meta)) -> Io(Vectorize.Mutation, [VectorizeErr(Io.Thrown), BadData(Str)])
+	upsert : Vectorize(meta), List(Vectorize.Vector(meta)) -> Io(Vectorize.Mutation, [Infra([VectorizeErr(Io.Thrown), BadData(Str)])])
 	upsert = |index, vectors| write_io(index, "upsert", vectors)
 
-	upsert! : Vectorize(meta), List(Vectorize.Vector(meta)) => Try(Vectorize.Mutation, [VectorizeErr(Io.Thrown), BadData(Str)])
+	upsert! : Vectorize(meta), List(Vectorize.Vector(meta)) => Try(Vectorize.Mutation, [Infra([VectorizeErr(Io.Thrown), BadData(Str)])])
 	upsert! = |index, vectors| Io.run!(upsert(index, vectors))
 
 	## `insert`: a vector with an id that exists is ignored (Vectorize docs), `upsert` replaces it.
-	insert : Vectorize(meta), List(Vectorize.Vector(meta)) -> Io(Vectorize.Mutation, [VectorizeErr(Io.Thrown), BadData(Str)])
+	insert : Vectorize(meta), List(Vectorize.Vector(meta)) -> Io(Vectorize.Mutation, [Infra([VectorizeErr(Io.Thrown), BadData(Str)])])
 	insert = |index, vectors| write_io(index, "insert", vectors)
 
-	insert! : Vectorize(meta), List(Vectorize.Vector(meta)) => Try(Vectorize.Mutation, [VectorizeErr(Io.Thrown), BadData(Str)])
+	insert! : Vectorize(meta), List(Vectorize.Vector(meta)) => Try(Vectorize.Mutation, [Infra([VectorizeErr(Io.Thrown), BadData(Str)])])
 	insert! = |index, vectors| Io.run!(insert(index, vectors))
 
 	## `getByIds`: the vectors that exist, in no set order.
-	get : Vectorize(meta), List(Str) -> Io(List(Vectorize.Stored(meta)), [VectorizeErr(Io.Thrown), BadData(Str), TooLarge])
+	get : Vectorize(meta), List(Str) -> Io(List(Vectorize.Stored(meta)), [Infra([VectorizeErr(Io.Thrown), BadData(Str), TooLarge])])
 	get = |index, ids| {
 		read = index.read
 		Io.new(
@@ -73,28 +73,28 @@ Vectorize(meta) := { name : Str, write : meta -> Try(Str, Str), read : Str -> Tr
 				Call(Root("pf"), "limit", [Slot(1), Lit(Int(limit(Body.default_max)))]),
 			],
 			|r| match r {
-				Ok(Arr(items)) => stored_list(read, items).map_err(|why| BadData(why))
-				Ok(other) => Err(BadData("getByIds gave ${shape(other)}"))
-				Err(t) => Err(read_error(t))
+				Ok(Arr(items)) => stored_list(read, items).map_err(|why| Infra(BadData(why)))
+				Ok(other) => Err(Infra(BadData("getByIds gave ${shape(other)}")))
+				Err(t) => Err(Infra(read_error(t)))
 			},
 		)
 	}
 
-	get! : Vectorize(meta), List(Str) => Try(List(Vectorize.Stored(meta)), [VectorizeErr(Io.Thrown), BadData(Str), TooLarge])
+	get! : Vectorize(meta), List(Str) => Try(List(Vectorize.Stored(meta)), [Infra([VectorizeErr(Io.Thrown), BadData(Str), TooLarge])])
 	get! = |index, ids| Io.run!(get(index, ids))
 
-	delete : Vectorize(meta), List(Str) -> Io(Vectorize.Mutation, [VectorizeErr(Io.Thrown), BadData(Str)])
+	delete : Vectorize(meta), List(Str) -> Io(Vectorize.Mutation, [Infra([VectorizeErr(Io.Thrown), BadData(Str)])])
 	delete = |index, ids| Io.new(
 		[Get(Root("env"), index.name), Call(Slot(0), "deleteByIds", [Lit(Arr(ids.map(|id| Text(id))))])],
 		mutation_read,
 	)
 
-	delete! : Vectorize(meta), List(Str) => Try(Vectorize.Mutation, [VectorizeErr(Io.Thrown), BadData(Str)])
+	delete! : Vectorize(meta), List(Str) => Try(Vectorize.Mutation, [Infra([VectorizeErr(Io.Thrown), BadData(Str)])])
 	delete! = |index, ids| Io.run!(delete(index, ids))
 }
 
 ## `query(vector, options)`. `opts`: the fields of the options object.
-query_io : Vectorize(meta), List(F64), List((Str, Js)), U64 -> Io({ matches : List(Vectorize.Match(meta)), count : U64 }, [VectorizeErr(Io.Thrown), BadData(Str), TooLarge])
+query_io : Vectorize(meta), List(F64), List((Str, Js)), U64 -> Io({ matches : List(Vectorize.Match(meta)), count : U64 }, [Infra([VectorizeErr(Io.Thrown), BadData(Str), TooLarge])])
 query_io = |index, values, opts, max| {
 	read = index.read
 	Io.new(
@@ -104,14 +104,14 @@ query_io = |index, values, opts, max| {
 			Call(Root("pf"), "limit", [Slot(1), Lit(Int(limit(max)))]),
 		],
 		|r| match r {
-			Ok(js) => matches_of(read, js).map_err(|why| BadData(why))
-			Err(t) => Err(read_error(t))
+			Ok(js) => matches_of(read, js).map_err(|why| Infra(BadData(why)))
+			Err(t) => Err(Infra(read_error(t)))
 		},
 	)
 }
 
 ## `upsert` or `insert` of the vectors, which are one JSON text (JS: `JSON.parse`).
-write_io : Vectorize(meta), Str, List(Vectorize.Vector(meta)) -> Io(Vectorize.Mutation, [VectorizeErr(Io.Thrown), BadData(Str)])
+write_io : Vectorize(meta), Str, List(Vectorize.Vector(meta)) -> Io(Vectorize.Mutation, [Infra([VectorizeErr(Io.Thrown), BadData(Str)])])
 write_io = |index, method, vectors| {
 	write = index.write
 	match vectors_json(write, vectors) {
@@ -125,18 +125,18 @@ write_io = |index, method, vectors| {
 			mutation_read,
 		)
 		# A metadata that does not encode (a `NaN` in an `F64`): no program, so nothing is sent.
-		Err(m) => Io.sync([], |_| Err(BadData("the metadata does not encode: ${m}")))
+		Err(m) => Io.sync([], |_| Err(Infra(BadData("the metadata does not encode: ${m}"))))
 	}
 }
 
-mutation_read : Try(Js, Io.Thrown) -> Try(Vectorize.Mutation, [VectorizeErr(Io.Thrown), BadData(Str)])
+mutation_read : Try(Js, Io.Thrown) -> Try(Vectorize.Mutation, [Infra([VectorizeErr(Io.Thrown), BadData(Str)])])
 mutation_read = |r| match r {
 	Ok(Obj(fs)) => match field(fs, "mutationId") {
 		Text(id) => Ok({ mutation_id: id })
-		other => Err(BadData("the result has no mutationId: ${shape(other)}"))
+		other => Err(Infra(BadData("the result has no mutationId: ${shape(other)}")))
 	}
-	Ok(other) => Err(BadData("the result is ${shape(other)}"))
-	Err(t) => Err(VectorizeErr(t))
+	Ok(other) => Err(Infra(BadData("the result is ${shape(other)}")))
+	Err(t) => Err(Infra(VectorizeErr(t)))
 }
 
 read_error : Io.Thrown -> [VectorizeErr(Io.Thrown), TooLarge]

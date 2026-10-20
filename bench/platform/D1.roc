@@ -19,97 +19,97 @@ D1 :: { name : Str }.{
 	declare = |b| { name: b.name, kind: "d1", props: [] }
 
 	## The rows as the type of the call: `rows : List(Pkg)`. To `Body.default_max` bytes of CBOR.
-	all : D1, Str, params -> Io(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
+	all : D1, Str, params -> Io(rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
 	all = |db, sql, params| all_io(start(db), sql, Cbor.encode(params), Body.default_max)
 
-	all! : D1, Str, params => Try(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
+	all! : D1, Str, params => Try(rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
 	all! = |db, sql, params| Io.run!(all(db, sql, params))
 
-	all_with : D1, Str, params, { max_bytes : U64 } -> Io(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
+	all_with : D1, Str, params, { max_bytes : U64 } -> Io(rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
 	all_with = |db, sql, params, opts| all_io(start(db), sql, Cbor.encode(params), opts.max_bytes)
 
-	all_with! : D1, Str, params, { max_bytes : U64 } => Try(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
+	all_with! : D1, Str, params, { max_bytes : U64 } => Try(rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
 	all_with! = |db, sql, params, opts| Io.run!(all_with(db, sql, params, opts))
 
 	## `all` with the rows as tuples (D1 `raw()`): `rows : List((Str, I64))`. The tuple has one item for each column of the SELECT, in
 	## its order, so the caller keeps the order in the SQL. About twice as fast as `all` for 200 rows (PLAN.md 8g). The same
 	## limit and integer rules as `all`; `BadData` names the column by its index (from 0), not by name.
-	all_tuples : D1, Str, params -> Io(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
+	all_tuples : D1, Str, params -> Io(rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
 	all_tuples = |db, sql, params| all_tuples_io(start(db), sql, Cbor.encode(params), Body.default_max)
 
-	all_tuples! : D1, Str, params => Try(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
+	all_tuples! : D1, Str, params => Try(rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
 	all_tuples! = |db, sql, params| Io.run!(all_tuples(db, sql, params))
 
-	all_tuples_with : D1, Str, params, { max_bytes : U64 } -> Io(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
+	all_tuples_with : D1, Str, params, { max_bytes : U64 } -> Io(rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
 	all_tuples_with = |db, sql, params, opts| all_tuples_io(start(db), sql, Cbor.encode(params), opts.max_bytes)
 
-	all_tuples_with! : D1, Str, params, { max_bytes : U64 } => Try(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
+	all_tuples_with! : D1, Str, params, { max_bytes : U64 } => Try(rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
 	all_tuples_with! = |db, sql, params, opts| Io.run!(all_tuples_with(db, sql, params, opts))
 
 	## The first row (D1 `first()`), or `NotFound`.
-	first : D1, Str, params -> Io(row, [NotFound, D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [row.Cbor.Readable(errs), params.Cbor.Writable]
+	first : D1, Str, params -> Io(row, [NotFound, Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [row.Cbor.Readable(errs), params.Cbor.Writable]
 	first = |db, sql, params| first_io(start(db), sql, Cbor.encode(params), Body.default_max)
 
-	first! : D1, Str, params => Try(row, [NotFound, D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [row.Cbor.Readable(errs), params.Cbor.Writable]
+	first! : D1, Str, params => Try(row, [NotFound, Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [row.Cbor.Readable(errs), params.Cbor.Writable]
 	first! = |db, sql, params| Io.run!(first(db, sql, params))
 
-	first_with : D1, Str, params, { max_bytes : U64 } -> Io(row, [NotFound, D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [row.Cbor.Readable(errs), params.Cbor.Writable]
+	first_with : D1, Str, params, { max_bytes : U64 } -> Io(row, [NotFound, Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [row.Cbor.Readable(errs), params.Cbor.Writable]
 	first_with = |db, sql, params, opts| first_io(start(db), sql, Cbor.encode(params), opts.max_bytes)
 
-	first_with! : D1, Str, params, { max_bytes : U64 } => Try(row, [NotFound, D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [row.Cbor.Readable(errs), params.Cbor.Writable]
+	first_with! : D1, Str, params, { max_bytes : U64 } => Try(row, [NotFound, Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [row.Cbor.Readable(errs), params.Cbor.Writable]
 	first_with! = |db, sql, params, opts| Io.run!(first_with(db, sql, params, opts))
 
 	## A write: D1 `run()`, and its `meta`.
-	run : D1, Str, params -> Io(Sql.Info, [D1Err(Io.Thrown), Constraint(Sql.Constraint)]) where [params.Cbor.Writable]
+	run : D1, Str, params -> Io(Sql.Info, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint)])]) where [params.Cbor.Writable]
 	run = |db, sql, params| run_io(start(db), sql, Cbor.encode(params))
 
-	run! : D1, Str, params => Try(Sql.Info, [D1Err(Io.Thrown), Constraint(Sql.Constraint)]) where [params.Cbor.Writable]
+	run! : D1, Str, params => Try(Sql.Info, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint)])]) where [params.Cbor.Writable]
 	run! = |db, sql, params| Io.run!(run(db, sql, params))
 
 	## Rows with no types (`raw({ columnNames: true })`), for columns that are not known at compile time.
-	rows : D1, Str, params -> Io(Sql.Rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge]) where [params.Cbor.Writable]
+	rows : D1, Str, params -> Io(Sql.Rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])]) where [params.Cbor.Writable]
 	rows = |db, sql, params| rows_io(start(db), sql, Cbor.encode(params), Body.default_max)
 
-	rows! : D1, Str, params => Try(Sql.Rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge]) where [params.Cbor.Writable]
+	rows! : D1, Str, params => Try(Sql.Rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])]) where [params.Cbor.Writable]
 	rows! = |db, sql, params| Io.run!(rows(db, sql, params))
 
-	rows_with : D1, Str, params, { max_bytes : U64 } -> Io(Sql.Rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge]) where [params.Cbor.Writable]
+	rows_with : D1, Str, params, { max_bytes : U64 } -> Io(Sql.Rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])]) where [params.Cbor.Writable]
 	rows_with = |db, sql, params, opts| rows_io(start(db), sql, Cbor.encode(params), opts.max_bytes)
 
-	rows_with! : D1, Str, params, { max_bytes : U64 } => Try(Sql.Rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge]) where [params.Cbor.Writable]
+	rows_with! : D1, Str, params, { max_bytes : U64 } => Try(Sql.Rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])]) where [params.Cbor.Writable]
 	rows_with! = |db, sql, params, opts| Io.run!(rows_with(db, sql, params, opts))
 
 	## One transaction and one crossing (API.md 6.2): one `D1.Result` for each statement, in order. The rows of all
 	## statements together are at most `Body.default_max` bytes.
-	batch : D1, List(Sql.Stmt) -> Io(List(D1.Result), [D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])
+	batch : D1, List(Sql.Stmt) -> Io(List(D1.Result), [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])])
 	batch = |db, stmts| batch_io(start(db), stmts, Body.default_max)
 
-	batch! : D1, List(Sql.Stmt) => Try(List(D1.Result), [D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])
+	batch! : D1, List(Sql.Stmt) => Try(List(D1.Result), [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])])
 	batch! = |db, stmts| Io.run!(batch(db, stmts))
 
-	batch_with : D1, List(Sql.Stmt), { max_bytes : U64 } -> Io(List(D1.Result), [D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])
+	batch_with : D1, List(Sql.Stmt), { max_bytes : U64 } -> Io(List(D1.Result), [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])])
 	batch_with = |db, stmts, opts| batch_io(start(db), stmts, opts.max_bytes)
 
-	batch_with! : D1, List(Sql.Stmt), { max_bytes : U64 } => Try(List(D1.Result), [D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])
+	batch_with! : D1, List(Sql.Stmt), { max_bytes : U64 } => Try(List(D1.Result), [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])])
 	batch_with! = |db, stmts, opts| Io.run!(batch_with(db, stmts, opts))
 
 	## Statements with no parameters (D1 `exec`), for a schema. A constraint failure has the message
 	## `Error in line <n>: <sql>: <text>` (5.1).
-	exec : D1, Str -> Io({}, [D1Err(Io.Thrown), Constraint(Sql.Constraint)])
+	exec : D1, Str -> Io({}, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint)])])
 	exec = |db, sql| Io.new(
 		[Get(Root("env"), db.name), Call(Slot(0), "exec", [Lit(Text(sql))])],
 		|r| match r {
 			Ok(_) => Ok({})
-			Err(t) => Err(thrown(t))
+			Err(t) => Err(Infra(thrown(t)))
 		},
 	)
 
-	exec! : D1, Str => Try({}, [D1Err(Io.Thrown), Constraint(Sql.Constraint)])
+	exec! : D1, Str => Try({}, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint)])])
 	exec! = |db, sql| Io.run!(exec(db, sql))
 
 	## `withSession`, sync (one `call!`, no wait): `Primary` is `"first-primary"`, `Any` `"first-unconstrained"`,
 	## `After(b)` the bookmark of an earlier session. The session holds a ref: it is good for one task (MC13).
-	with_session! : D1, [Primary, Any, After(Str)] => Try(D1.Session, [D1Err(Io.Thrown)])
+	with_session! : D1, [Primary, Any, After(Str)] => Try(D1.Session, [Infra([D1Err(Io.Thrown)])])
 	with_session! = |db, mode| {
 		arg = match mode {
 			Primary => "first-primary"
@@ -119,79 +119,79 @@ D1 :: { name : Str }.{
 		match Js.call!([Get(Root("env"), db.name), Call(Slot(0), "withSession", [Lit(Text(arg))])]) {
 			Ok(Ref(r)) => Ok(D1.Session.{ ref: r })
 			Ok(other) => crash "D1.with_session!: withSession gave ${Str.inspect(other)}"
-			Err(t) => Err(D1Err(t))
+			Err(t) => Err(Infra(D1Err(t)))
 		}
 	}
 
 	## A D1 session (Sessions API): the query functions of `D1` (not `exec`), and `bookmark!`.
 	Session :: { ref : Js.Ref }.{
-		all : D1.Session, Str, params -> Io(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
+		all : D1.Session, Str, params -> Io(rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
 		all = |s, sql, params| all_io(session_start(s), sql, Cbor.encode(params), Body.default_max)
 
-		all! : D1.Session, Str, params => Try(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
+		all! : D1.Session, Str, params => Try(rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
 		all! = |s, sql, params| Io.run!(all(s, sql, params))
 
-		all_with : D1.Session, Str, params, { max_bytes : U64 } -> Io(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
+		all_with : D1.Session, Str, params, { max_bytes : U64 } -> Io(rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
 		all_with = |s, sql, params, opts| all_io(session_start(s), sql, Cbor.encode(params), opts.max_bytes)
 
-		all_with! : D1.Session, Str, params, { max_bytes : U64 } => Try(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
+		all_with! : D1.Session, Str, params, { max_bytes : U64 } => Try(rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
 		all_with! = |s, sql, params, opts| Io.run!(all_with(s, sql, params, opts))
 
 		## `all` with the rows as tuples (D1 `raw()`): `rows : List((Str, I64))`. The tuple has one item for each column of the SELECT, in
 		## its order, so the caller keeps the order in the SQL. About twice as fast as `all` for 200 rows (PLAN.md 8g). The same
 		## limit and integer rules as `all`; `BadData` names the column by its index (from 0), not by name.
-		all_tuples : D1.Session, Str, params -> Io(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
+		all_tuples : D1.Session, Str, params -> Io(rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
 		all_tuples = |s, sql, params| all_tuples_io(session_start(s), sql, Cbor.encode(params), Body.default_max)
 
-		all_tuples! : D1.Session, Str, params => Try(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
+		all_tuples! : D1.Session, Str, params => Try(rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
 		all_tuples! = |s, sql, params| Io.run!(all_tuples(s, sql, params))
 
-		all_tuples_with : D1.Session, Str, params, { max_bytes : U64 } -> Io(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
+		all_tuples_with : D1.Session, Str, params, { max_bytes : U64 } -> Io(rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
 		all_tuples_with = |s, sql, params, opts| all_tuples_io(session_start(s), sql, Cbor.encode(params), opts.max_bytes)
 
-		all_tuples_with! : D1.Session, Str, params, { max_bytes : U64 } => Try(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
+		all_tuples_with! : D1.Session, Str, params, { max_bytes : U64 } => Try(rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
 		all_tuples_with! = |s, sql, params, opts| Io.run!(all_tuples_with(s, sql, params, opts))
 
-		first : D1.Session, Str, params -> Io(row, [NotFound, D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [row.Cbor.Readable(errs), params.Cbor.Writable]
+		first : D1.Session, Str, params -> Io(row, [NotFound, Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [row.Cbor.Readable(errs), params.Cbor.Writable]
 		first = |s, sql, params| first_io(session_start(s), sql, Cbor.encode(params), Body.default_max)
 
-		first! : D1.Session, Str, params => Try(row, [NotFound, D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [row.Cbor.Readable(errs), params.Cbor.Writable]
+		first! : D1.Session, Str, params => Try(row, [NotFound, Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [row.Cbor.Readable(errs), params.Cbor.Writable]
 		first! = |s, sql, params| Io.run!(first(s, sql, params))
 
-		first_with : D1.Session, Str, params, { max_bytes : U64 } -> Io(row, [NotFound, D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [row.Cbor.Readable(errs), params.Cbor.Writable]
+		first_with : D1.Session, Str, params, { max_bytes : U64 } -> Io(row, [NotFound, Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [row.Cbor.Readable(errs), params.Cbor.Writable]
 		first_with = |s, sql, params, opts| first_io(session_start(s), sql, Cbor.encode(params), opts.max_bytes)
 
-		first_with! : D1.Session, Str, params, { max_bytes : U64 } => Try(row, [NotFound, D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [row.Cbor.Readable(errs), params.Cbor.Writable]
+		first_with! : D1.Session, Str, params, { max_bytes : U64 } => Try(row, [NotFound, Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [row.Cbor.Readable(errs), params.Cbor.Writable]
 		first_with! = |s, sql, params, opts| Io.run!(first_with(s, sql, params, opts))
 
-		run : D1.Session, Str, params -> Io(Sql.Info, [D1Err(Io.Thrown), Constraint(Sql.Constraint)]) where [params.Cbor.Writable]
+		run : D1.Session, Str, params -> Io(Sql.Info, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint)])]) where [params.Cbor.Writable]
 		run = |s, sql, params| run_io(session_start(s), sql, Cbor.encode(params))
 
-		run! : D1.Session, Str, params => Try(Sql.Info, [D1Err(Io.Thrown), Constraint(Sql.Constraint)]) where [params.Cbor.Writable]
+		run! : D1.Session, Str, params => Try(Sql.Info, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint)])]) where [params.Cbor.Writable]
 		run! = |s, sql, params| Io.run!(run(s, sql, params))
 
-		rows : D1.Session, Str, params -> Io(Sql.Rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge]) where [params.Cbor.Writable]
+		rows : D1.Session, Str, params -> Io(Sql.Rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])]) where [params.Cbor.Writable]
 		rows = |s, sql, params| rows_io(session_start(s), sql, Cbor.encode(params), Body.default_max)
 
-		rows! : D1.Session, Str, params => Try(Sql.Rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge]) where [params.Cbor.Writable]
+		rows! : D1.Session, Str, params => Try(Sql.Rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])]) where [params.Cbor.Writable]
 		rows! = |s, sql, params| Io.run!(rows(s, sql, params))
 
-		rows_with : D1.Session, Str, params, { max_bytes : U64 } -> Io(Sql.Rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge]) where [params.Cbor.Writable]
+		rows_with : D1.Session, Str, params, { max_bytes : U64 } -> Io(Sql.Rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])]) where [params.Cbor.Writable]
 		rows_with = |s, sql, params, opts| rows_io(session_start(s), sql, Cbor.encode(params), opts.max_bytes)
 
-		rows_with! : D1.Session, Str, params, { max_bytes : U64 } => Try(Sql.Rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge]) where [params.Cbor.Writable]
+		rows_with! : D1.Session, Str, params, { max_bytes : U64 } => Try(Sql.Rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])]) where [params.Cbor.Writable]
 		rows_with! = |s, sql, params, opts| Io.run!(rows_with(s, sql, params, opts))
 
-		batch : D1.Session, List(Sql.Stmt) -> Io(List(D1.Result), [D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])
+		batch : D1.Session, List(Sql.Stmt) -> Io(List(D1.Result), [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])])
 		batch = |s, stmts| batch_io(session_start(s), stmts, Body.default_max)
 
-		batch! : D1.Session, List(Sql.Stmt) => Try(List(D1.Result), [D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])
+		batch! : D1.Session, List(Sql.Stmt) => Try(List(D1.Result), [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])])
 		batch! = |s, stmts| Io.run!(batch(s, stmts))
 
-		batch_with : D1.Session, List(Sql.Stmt), { max_bytes : U64 } -> Io(List(D1.Result), [D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])
+		batch_with : D1.Session, List(Sql.Stmt), { max_bytes : U64 } -> Io(List(D1.Result), [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])])
 		batch_with = |s, stmts, opts| batch_io(session_start(s), stmts, opts.max_bytes)
 
-		batch_with! : D1.Session, List(Sql.Stmt), { max_bytes : U64 } => Try(List(D1.Result), [D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])
+		batch_with! : D1.Session, List(Sql.Stmt), { max_bytes : U64 } => Try(List(D1.Result), [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])])
 		batch_with! = |s, stmts, opts| Io.run!(batch_with(s, stmts, opts))
 
 		## `getBookmark`, sync: `NotFound` before the first query of the session.
@@ -209,15 +209,15 @@ D1 :: { name : Str }.{
 		info : D1.Result -> Sql.Info
 		info = |r| r.info
 
-		all : D1.Result -> Try(rows, [BadData(Str)]) where [rows.Cbor.Readable(errs)]
-		all = |r| SqlRules.typed(r.rows)
+		all : D1.Result -> Try(rows, [Infra([BadData(Str)])]) where [rows.Cbor.Readable(errs)]
+		all = |r| SqlRules.typed(r.rows).map_err(|BadData(text)| Infra(BadData(text)))
 
 		## The first row, or `NotFound`.
-		first : D1.Result -> Try(row, [NotFound, BadData(Str)]) where [row.Cbor.Readable(errs)]
+		first : D1.Result -> Try(row, [NotFound, Infra([BadData(Str)])]) where [row.Cbor.Readable(errs)]
 		first = |r| match first_item(r.rows) {
-			Ok(bytes) => SqlRules.typed(bytes).map_err(|BadData(text)| BadData(text))
+			Ok(bytes) => SqlRules.typed(bytes).map_err(|BadData(text)| Infra(BadData(text)))
 			Err(Empty) => Err(NotFound)
-			Err(Bad) => Err(BadData("the rows are not an array"))
+			Err(Bad) => Err(Infra(BadData("the rows are not an array")))
 		}
 	}
 }
@@ -242,7 +242,7 @@ bound = |at, sql, params| {
 	}
 }
 
-all_io : At, Str, List(U8), U64 -> Io(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Readable(errs)]
+all_io : At, Str, List(U8), U64 -> Io(rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs)]
 all_io = |at, sql, params, max| {
 	b = bound(at, sql, params)
 	s = b.stmt
@@ -251,15 +251,15 @@ all_io = |at, sql, params, max| {
 		|r| match r {
 			Ok(Packed(bytes)) => match SqlRules.typed(bytes) {
 				Ok(v) => Ok(v)
-				Err(BadData(text)) => Err(BadData(text))
+				Err(BadData(text)) => Err(Infra(BadData(text)))
 			}
 			Ok(other) => crash "D1.all: pf.pack gave ${Str.inspect(other)}"
-			Err(t) => Err(read_error(t))
+			Err(t) => Err(Infra(read_error(t)))
 		},
 	)
 }
 
-first_io : At, Str, List(U8), U64 -> Io(row, [NotFound, D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [row.Cbor.Readable(errs)]
+first_io : At, Str, List(U8), U64 -> Io(row, [NotFound, Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [row.Cbor.Readable(errs)]
 first_io = |at, sql, params, max| {
 	b = bound(at, sql, params)
 	s = b.stmt
@@ -270,29 +270,29 @@ first_io = |at, sql, params, max| {
 			Ok(Packed([0xf6])) => Err(NotFound)
 			Ok(Packed(bytes)) => match SqlRules.typed(bytes) {
 				Ok(v) => Ok(v)
-				Err(BadData(text)) => Err(BadData(text))
+				Err(BadData(text)) => Err(Infra(BadData(text)))
 			}
 			Ok(other) => crash "D1.first: pf.pack gave ${Str.inspect(other)}"
-			Err(t) => Err(read_error(t))
+			Err(t) => Err(Infra(read_error(t)))
 		},
 	)
 }
 
-run_io : At, Str, List(U8) -> Io(Sql.Info, [D1Err(Io.Thrown), Constraint(Sql.Constraint)])
+run_io : At, Str, List(U8) -> Io(Sql.Info, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint)])])
 run_io = |at, sql, params| {
 	b = bound(at, sql, params)
 	s = b.stmt
 	Io.new(
 		b.ops.concat([Call(Slot(s), "run", []), Get(Slot(s + 1), "meta"), Call(Root("pf"), "pack", [Slot(s + 2)])]),
 		|r| match r {
-			Ok(Packed(bytes)) => info_of(bytes).map_err(|text| D1Err({ name: "BadData", message: text }))
+			Ok(Packed(bytes)) => info_of(bytes).map_err(|text| Infra(D1Err({ name: "BadData", message: text })))
 			Ok(other) => crash "D1.run: pf.pack gave ${Str.inspect(other)}"
-			Err(t) => Err(thrown(t))
+			Err(t) => Err(Infra(thrown(t)))
 		},
 	)
 }
 
-rows_io : At, Str, List(U8), U64 -> Io(Sql.Rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])
+rows_io : At, Str, List(U8), U64 -> Io(Sql.Rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])])
 rows_io = |at, sql, params, max| {
 	b = bound(at, sql, params)
 	s = b.stmt
@@ -304,14 +304,14 @@ rows_io = |at, sql, params, max| {
 				_ => crash "D1.rows: raw gave no column names"
 			}
 			Ok(other) => crash "D1.rows: raw gave ${Str.inspect(other)}"
-			Err(t) => Err(read_error(t))
+			Err(t) => Err(Infra(read_error(t)))
 		},
 	)
 }
 
 ## `raw()` with no column names, then `pf.pack`: the rows as CBOR arrays, read as tuples. `raw()` does not send the keys, so
 ## the host writes less and the parser has no key to match (PLAN.md 8g, P1).
-all_tuples_io : At, Str, List(U8), U64 -> Io(rows, [D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge]) where [rows.Cbor.Readable(errs)]
+all_tuples_io : At, Str, List(U8), U64 -> Io(rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs)]
 all_tuples_io = |at, sql, params, max| {
 	b = bound(at, sql, params)
 	s = b.stmt
@@ -320,17 +320,17 @@ all_tuples_io = |at, sql, params, max| {
 		|r| match r {
 			Ok(Packed(bytes)) => match SqlRules.typed_tuples(bytes) {
 				Ok(v) => Ok(v)
-				Err(BadData(text)) => Err(BadData(text))
+				Err(BadData(text)) => Err(Infra(BadData(text)))
 			}
 			Ok(other) => crash "D1.all_tuples: pf.pack gave ${Str.inspect(other)}"
-			Err(t) => Err(read_error(t))
+			Err(t) => Err(Infra(read_error(t)))
 		},
 	)
 }
 
 ## `prepare` and `bind` for each statement, then `batch` of them, then the `results` and the `meta` of each result as
 ## `Packed` values (`pf.packEach`, API.md 6.4). `max`: the limit of all rows together.
-batch_io : At, List(Sql.Stmt), U64 -> Io(List(D1.Result), [D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])
+batch_io : At, List(Sql.Stmt), U64 -> Io(List(D1.Result), [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), TooLarge])])
 batch_io = |at, stmts, max| {
 	built = stmts.fold(
 		{ ops: at.ops, slots: [] },
@@ -350,7 +350,7 @@ batch_io = |at, stmts, max| {
 		|r| match r {
 			Ok(Arr(items)) => Ok(items.map(result_of))
 			Ok(other) => crash "D1.batch: packEach gave ${Str.inspect(other)}"
-			Err(t) => Err(read_error(t))
+			Err(t) => Err(Infra(read_error(t)))
 		},
 	)
 }

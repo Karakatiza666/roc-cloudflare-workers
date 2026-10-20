@@ -18,7 +18,7 @@ Email :: { name : Str }.{
 
 	## The structured send of the docs: `env[name].send({ from, to, subject, text, html, cc, bcc, replyTo })`.
 	## Gives the `messageId` that Workers made. One wait.
-	send : Email, { from : Str, to : List(Str), subject : Str, text ?: Str, html ?: Str, cc ?: List(Str), bcc ?: List(Str), reply_to ?: Str } -> Io({ message_id : Str }, [EmailErr(Io.Thrown)])
+	send : Email, { from : Str, to : List(Str), subject : Str, text ?: Str, html ?: Str, cc ?: List(Str), bcc ?: List(Str), reply_to ?: Str } -> Io({ message_id : Str }, [Infra([EmailErr(Io.Thrown)])])
 	send = |email, msg| {
 		required = [("from", Text(msg.from)), ("to", texts(msg.to)), ("subject", Text(msg.subject))]
 		optional = [
@@ -34,12 +34,12 @@ Email :: { name : Str }.{
 		)
 	}
 
-	send! : Email, { from : Str, to : List(Str), subject : Str, text ?: Str, html ?: Str, cc ?: List(Str), bcc ?: List(Str), reply_to ?: Str } => Try({ message_id : Str }, [EmailErr(Io.Thrown)])
+	send! : Email, { from : Str, to : List(Str), subject : Str, text ?: Str, html ?: Str, cc ?: List(Str), bcc ?: List(Str), reply_to ?: Str } => Try({ message_id : Str }, [Infra([EmailErr(Io.Thrown)])])
 	send! = |email, msg| Io.run!(email.send(msg))
 
 	## `send(new EmailMessage(from, to, raw))`: `raw` is a MIME message as text. The `EmailMessage` class is made by
 	## `pf.emailMessage` (`cloudflare:email`).
-	send_raw : Email, { from : Str, to : Str, raw : Str } -> Io({ message_id : Str }, [EmailErr(Io.Thrown)])
+	send_raw : Email, { from : Str, to : Str, raw : Str } -> Io({ message_id : Str }, [Infra([EmailErr(Io.Thrown)])])
 	send_raw = |email, msg| Io.new(
 		[
 			Get(Root("env"), email.name),
@@ -49,7 +49,7 @@ Email :: { name : Str }.{
 		sent,
 	)
 
-	send_raw! : Email, { from : Str, to : Str, raw : Str } => Try({ message_id : Str }, [EmailErr(Io.Thrown)])
+	send_raw! : Email, { from : Str, to : Str, raw : Str } => Try({ message_id : Str }, [Infra([EmailErr(Io.Thrown)])])
 	send_raw! = |email, msg| Io.run!(email.send_raw(msg))
 
 	## An incoming mail. `raw` is a stream (`Body.Stream`), read once (RS3). `raw_size_bytes` is `rawSize` (MC10).
@@ -89,14 +89,14 @@ Email :: { name : Str }.{
 		}
 
 		## `message.forward(to)`: to a verified destination address. One wait.
-		forward : Email.Mail, Str -> Io({}, [EmailErr(Io.Thrown)])
+		forward : Email.Mail, Str -> Io({}, [Infra([EmailErr(Io.Thrown)])])
 		forward = |_mail, dest| Io.new([Call(Root("event"), "forward", [Lit(Text(dest))])], unit)
 
-		forward! : Email.Mail, Str => Try({}, [EmailErr(Io.Thrown)])
+		forward! : Email.Mail, Str => Try({}, [Infra([EmailErr(Io.Thrown)])])
 		forward! = |mail, dest| Io.run!(mail.forward(dest))
 
 		## `message.forward(to, headers)`. Workers keeps only the headers that start with `X-`.
-		forward_with : Email.Mail, Str, { headers ?: List(Header) } -> Io({}, [EmailErr(Io.Thrown)])
+		forward_with : Email.Mail, Str, { headers ?: List(Header) } -> Io({}, [Infra([EmailErr(Io.Thrown)])])
 		forward_with = |_mail, dest, opts| {
 			extra = opts.?headers ?? []
 			Io.new(
@@ -108,12 +108,12 @@ Email :: { name : Str }.{
 			)
 		}
 
-		forward_with! : Email.Mail, Str, { headers ?: List(Header) } => Try({}, [EmailErr(Io.Thrown)])
+		forward_with! : Email.Mail, Str, { headers ?: List(Header) } => Try({}, [Infra([EmailErr(Io.Thrown)])])
 		forward_with! = |mail, dest, opts| Io.run!(mail.forward_with(dest, opts))
 
 		## `message.reply(new EmailMessage(to, from, raw))`: `raw` is the MIME message of the reply, as text. It goes from
 		## the address that got the mail to the sender.
-		reply : Email.Mail, Str -> Io({}, [EmailErr(Io.Thrown)])
+		reply : Email.Mail, Str -> Io({}, [Infra([EmailErr(Io.Thrown)])])
 		reply = |mail, mime| Io.new(
 			[
 				Call(Root("pf"), "emailMessage", [Lit(Text(mail.to)), Lit(Text(mail.from)), Lit(Text(mime))]),
@@ -122,7 +122,7 @@ Email :: { name : Str }.{
 			unit,
 		)
 
-		reply! : Email.Mail, Str => Try({}, [EmailErr(Io.Thrown)])
+		reply! : Email.Mail, Str => Try({}, [Infra([EmailErr(Io.Thrown)])])
 		reply! = |mail, mime| Io.run!(mail.reply(mime))
 
 		## `message.setReject(reason)`: the mail is rejected with this text. Workers gives no result, and the local
@@ -141,21 +141,21 @@ Email :: { name : Str }.{
 texts : List(Str) -> Js
 texts = |l| Arr(l.map(|s| Text(s)))
 
-unit : Try(Js, Io.Thrown) -> Try({}, [EmailErr(Io.Thrown)])
+unit : Try(Js, Io.Thrown) -> Try({}, [Infra([EmailErr(Io.Thrown)])])
 unit = |r| match r {
 	Ok(_) => Ok({})
-	Err(t) => Err(EmailErr(t))
+	Err(t) => Err(Infra(EmailErr(t)))
 }
 
 ## `{ messageId }` of `send`. A runtime that gives no result has an empty id.
-sent : Try(Js, Io.Thrown) -> Try({ message_id : Str }, [EmailErr(Io.Thrown)])
+sent : Try(Js, Io.Thrown) -> Try({ message_id : Str }, [Infra([EmailErr(Io.Thrown)])])
 sent = |r| match r {
 	Ok(Obj(fields)) => match fields.find_first(|(k, _)| k == "messageId") {
 		Ok((_, Text(id))) => Ok({ message_id: id })
 		_ => Ok({ message_id: "" })
 	}
 	Ok(_) => Ok({ message_id: "" })
-	Err(t) => Err(EmailErr(t))
+	Err(t) => Err(Infra(EmailErr(t)))
 }
 
 mail : Email.Mail

@@ -97,17 +97,17 @@ Response :: { status : U16, headers : List(Header) ?? [], body : Body ?? Empty, 
 		}
 	}
 
-	text! : Response => Try(Str, [TooLarge, BadData(Str), BodyErr(Io.Thrown)])
-	text! = |r| r.body.text!()
+	text! : Response => Try(Str, [Infra([TooLarge, BadData(Str), BodyErr(Io.Thrown)])])
+	text! = |r| r.body.text!().map_err(|e| Infra(e))
 
-	json! : Response => Try(a, [TooLarge, BadData(Str), BodyErr(Io.Thrown)]) where [a.Json.Parseable([InvalidJson(Str), ..errs])]
-	json! = |r| r.body.json!()
+	json! : Response => Try(a, [Infra([TooLarge, BadData(Str), BodyErr(Io.Thrown)])]) where [a.Json.Parseable([InvalidJson(Str), ..errs])]
+	json! = |r| r.body.json!().map_err(|e| Infra(e))
 
-	bytes! : Response => Try(List(U8), [TooLarge, BodyErr(Io.Thrown)])
-	bytes! = |r| r.body.bytes!()
+	bytes! : Response => Try(List(U8), [Infra([TooLarge, BodyErr(Io.Thrown)])])
+	bytes! = |r| r.body.bytes!().map_err(|e| Infra(e))
 
-	bytes_with! : Response, { max_bytes : U64 } => Try(List(U8), [TooLarge, BodyErr(Io.Thrown)])
-	bytes_with! = |r, opts| r.body.bytes_with!(opts)
+	bytes_with! : Response, { max_bytes : U64 } => Try(List(U8), [Infra([TooLarge, BodyErr(Io.Thrown)])])
+	bytes_with! = |r, opts| r.body.bytes_with!(opts).map_err(|e| Infra(e))
 }
 
 content_type : Str -> Header

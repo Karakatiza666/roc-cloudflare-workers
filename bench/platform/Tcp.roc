@@ -14,13 +14,13 @@ Tcp := { ref : Js.Ref }.{
 	Tls : [Off, On, StartTls]
 
 	## `connect({ hostname, port })`, then a wait for `opened`: one wait. A host that does not answer is `SocketErr`.
-	connect : Str, U16 -> Io(Tcp, [SocketErr(Io.Thrown)])
+	connect : Str, U16 -> Io(Tcp, [Infra([SocketErr(Io.Thrown)])])
 	connect = |host, port| connect_with(host, port, {})
 
-	connect! : Str, U16 => Try(Tcp, [SocketErr(Io.Thrown)])
+	connect! : Str, U16 => Try(Tcp, [Infra([SocketErr(Io.Thrown)])])
 	connect! = |host, port| Io.run!(connect(host, port))
 
-	connect_with : Str, U16, { tls ?: Tcp.Tls } -> Io(Tcp, [SocketErr(Io.Thrown)])
+	connect_with : Str, U16, { tls ?: Tcp.Tls } -> Io(Tcp, [Infra([SocketErr(Io.Thrown)])])
 	connect_with = |host, port, opts| {
 		tls = match opts.?tls {
 			Ok(On) => "on"
@@ -30,45 +30,45 @@ Tcp := { ref : Js.Ref }.{
 		Io.new([Call(Root("pf"), "tcpConnect", [Lit(Text(host)), Lit(Int(port.to_i64())), Lit(Text(tls))])], socket_of)
 	}
 
-	connect_with! : Str, U16, { tls ?: Tcp.Tls } => Try(Tcp, [SocketErr(Io.Thrown)])
+	connect_with! : Str, U16, { tls ?: Tcp.Tls } => Try(Tcp, [Infra([SocketErr(Io.Thrown)])])
 	connect_with! = |host, port, opts| Io.run!(connect_with(host, port, opts))
 
 	## The next bytes that the peer sent, at most `Body.default_max` (MC11: the rest comes next). One wait, with no
 	## deadline (API.md 10.2). `Closed` at the end of the stream. In `Io.race!`, a branch that lost takes no bytes (OP8).
-	read : Tcp -> Io(List(U8), [Closed, SocketErr(Io.Thrown)])
+	read : Tcp -> Io(List(U8), [Closed, Infra([SocketErr(Io.Thrown)])])
 	read = |tcp| Io.new(
 		[Keep(Root("signal")), Call(Root("pf"), "tcpRead", [Lit(Ref(tcp.ref)), Lit(Int(Body.default_max.to_i64_try() ?? I64.highest)), Slot(0)])],
 		|r| match r {
 			Ok(Bytes(b)) => Ok(b)
 			Ok(Undefined) | Ok(Null) => Err(Closed)
 			Ok(other) => crash "Tcp.read: pf.tcpRead gave ${Str.inspect(other)}"
-			Err(t) => Err(SocketErr(t))
+			Err(t) => Err(Infra(SocketErr(t)))
 		},
 	)
 
-	read! : Tcp => Try(List(U8), [Closed, SocketErr(Io.Thrown)])
+	read! : Tcp => Try(List(U8), [Closed, Infra([SocketErr(Io.Thrown)])])
 	read! = |tcp| Io.run!(read(tcp))
 
 	## `writer.write(bytes)`: one wait. A socket that is closed is `Closed`.
-	write : Tcp, List(U8) -> Io({}, [Closed, SocketErr(Io.Thrown)])
+	write : Tcp, List(U8) -> Io({}, [Closed, Infra([SocketErr(Io.Thrown)])])
 	write = |tcp, bytes| Io.new(
 		[Call(Root("pf"), "tcpWrite", [Lit(Ref(tcp.ref)), Lit(Bytes(bytes))])],
 		|r| match r {
 			Ok(Text("closed")) => Err(Closed)
 			Ok(_) => Ok({})
-			Err(t) => Err(SocketErr(t))
+			Err(t) => Err(Infra(SocketErr(t)))
 		},
 	)
 
-	write! : Tcp, List(U8) => Try({}, [Closed, SocketErr(Io.Thrown)])
+	write! : Tcp, List(U8) => Try({}, [Closed, Infra([SocketErr(Io.Thrown)])])
 	write! = |tcp, bytes| Io.run!(write(tcp, bytes))
 
 	## `socket.startTls()` of a socket of `connect_with!` with `tls: StartTls`, then a wait for `opened`. The old socket
 	## is not usable after it.
-	start_tls : Tcp -> Io(Tcp, [SocketErr(Io.Thrown)])
+	start_tls : Tcp -> Io(Tcp, [Infra([SocketErr(Io.Thrown)])])
 	start_tls = |tcp| Io.new([Call(Root("pf"), "tcpStartTls", [Lit(Ref(tcp.ref))])], socket_of)
 
-	start_tls! : Tcp => Try(Tcp, [SocketErr(Io.Thrown)])
+	start_tls! : Tcp => Try(Tcp, [Infra([SocketErr(Io.Thrown)])])
 	start_tls! = |tcp| Io.run!(start_tls(tcp))
 
 	## `socket.close()`, one `call!` with no wait. A throw is dropped.
@@ -81,9 +81,9 @@ Tcp := { ref : Js.Ref }.{
 }
 
 ## The socket of a program that ends with `pf.tcpConnect` or `pf.tcpStartTls`.
-socket_of : Try(Js, Io.Thrown) -> Try(Tcp, [SocketErr(Io.Thrown)])
+socket_of : Try(Js, Io.Thrown) -> Try(Tcp, [Infra([SocketErr(Io.Thrown)])])
 socket_of = |r| match r {
 	Ok(Ref(s)) => Ok(Tcp.{ ref: s })
 	Ok(other) => crash "Tcp: the socket is ${Str.inspect(other)}"
-	Err(t) => Err(SocketErr(t))
+	Err(t) => Err(Infra(SocketErr(t)))
 }

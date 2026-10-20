@@ -26,17 +26,17 @@ Service :: { name : Str, service : Str, entrypoint : Str }.{
 	}
 
 	## `env[name].fetch(request)`. The response body stays a stream.
-	fetch : Service, Request -> Io(Response, [ServiceErr(Io.Thrown)])
-	fetch = |s, req| Remote.fetch([Get(Root("env"), s.name)], 0, req, |t| ServiceErr(t))
+	fetch : Service, Request -> Io(Response, [Infra([ServiceErr(Io.Thrown)])])
+	fetch = |s, req| Remote.fetch([Get(Root("env"), s.name)], 0, req, |t| Infra(ServiceErr(t)))
 
-	fetch! : Service, Request => Try(Response, [ServiceErr(Io.Thrown)])
+	fetch! : Service, Request => Try(Response, [Infra([ServiceErr(Io.Thrown)])])
 	fetch! = |s, req| Io.run!(fetch(s, req))
 
 	## `env[name][method](arg)`: the reply is read to the RPC limit of Workers (32 MiB). An `Err` of the callee is
 	## `Remote(err)`.
-	call : Service, Rpc(arg, ret, err), arg -> Io(ret, [RpcErr(Io.Thrown), BadData(Str), Remote(err)]) where [arg.Cbor.Writable, ret.Cbor.Readable(e1), err.Cbor.Readable(e2)]
+	call : Service, Rpc(arg, ret, err), arg -> Io(ret, [Remote(err), Infra([RpcErr(Io.Thrown), BadData(Str)])]) where [arg.Cbor.Writable, ret.Cbor.Readable(e1), err.Cbor.Readable(e2)]
 	call = |s, m, a| Remote.call([Get(Root("env"), s.name)], 0, m, a, Remote.rpc_max)
 
-	call! : Service, Rpc(arg, ret, err), arg => Try(ret, [RpcErr(Io.Thrown), BadData(Str), Remote(err)]) where [arg.Cbor.Writable, ret.Cbor.Readable(e1), err.Cbor.Readable(e2)]
+	call! : Service, Rpc(arg, ret, err), arg => Try(ret, [Remote(err), Infra([RpcErr(Io.Thrown), BadData(Str)])]) where [arg.Cbor.Writable, ret.Cbor.Readable(e1), err.Cbor.Readable(e2)]
 	call! = |s, m, a| Io.run!(call(s, m, a))
 }

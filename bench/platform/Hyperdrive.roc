@@ -31,17 +31,17 @@ Hyperdrive :: { name : Str }.{
 
 	## `env[name].connect()`, then a wait for `opened` (`pf.tcpOpen`): one wait. The socket goes to the database of the
 	## binding through Hyperdrive. A throw (no binding, the origin does not answer) is `SocketErr`.
-	connect : Hyperdrive -> Io(Tcp, [SocketErr(Io.Thrown)])
+	connect : Hyperdrive -> Io(Tcp, [Infra([SocketErr(Io.Thrown)])])
 	connect = |h| Io.new(
 		[Get(Root("env"), h.name), Call(Slot(0), "connect", []), Call(Root("pf"), "tcpOpen", [Slot(1)])],
 		|r| match r {
 			Ok(Ref(s)) => Ok(Tcp.{ ref: s })
 			Ok(other) => crash "Hyperdrive.connect: the socket is ${Str.inspect(other)}"
-			Err(t) => Err(SocketErr(t))
+			Err(t) => Err(Infra(SocketErr(t)))
 		},
 	)
 
-	connect! : Hyperdrive => Try(Tcp, [SocketErr(Io.Thrown)])
+	connect! : Hyperdrive => Try(Tcp, [Infra([SocketErr(Io.Thrown)])])
 	connect! = |h| Io.run!(connect(h))
 }
 

@@ -12,17 +12,17 @@ SecretsStore :: { name : Str }.{
 	declare : SecretsStore -> { name : Str, kind : Str, props : List((Str, Str)) }
 	declare = |b| { name: b.name, kind: "secrets_store", props: [] }
 
-	get : SecretsStore -> Io(Secret, [SecretsStoreErr(Io.Thrown)])
+	get : SecretsStore -> Io(Secret, [Infra([SecretsStoreErr(Io.Thrown)])])
 	get = |s| Io.new(
 		[Get(Root("env"), s.name), Call(Slot(0), "get", [])],
 		|r| match r {
 			Ok(Text(text)) => Ok(Secret.from_str(text))
 			Ok(other) => crash "SecretsStore.get: get() gave ${kind(other)}"
-			Err(t) => Err(SecretsStoreErr(t))
+			Err(t) => Err(Infra(SecretsStoreErr(t)))
 		},
 	)
 
-	get! : SecretsStore => Try(Secret, [SecretsStoreErr(Io.Thrown)])
+	get! : SecretsStore => Try(Secret, [Infra([SecretsStoreErr(Io.Thrown)])])
 	get! = |s| Io.run!(get(s))
 }
 
