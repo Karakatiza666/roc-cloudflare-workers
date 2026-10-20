@@ -178,6 +178,37 @@ for (const reason of ['socket', 'stream']) {
   for (let i = 0; i < 1000; i++) { const t = tb.begin('i'); ids.add(t.id); tb.end(t); }
   row('id: first id 1, ids unique', [t1.id, ids.size], [1, 1001]);
 }
+// sweep(own): the wait of a cancelled task is woken again (`ownWoken`) only by a sweep of its own context (js/tasks.js), because
+// workerd keeps a wake from another request context until the object has I/O (the Init wait of a Durable Object).
+{
+  const tb = table();
+  const own = { kind: 'Init' }, other = { kind: 'Init' };
+  const t = tb.begin('i', { kind: 'Init', hooks: own });
+  const woken = (p) => Promise.race([p.then(() => true), new Promise((r) => setImmediate(() => r(false)))]);
+  tb.waitStart(t);
+  const p = t.ownWoken;
+  clock = 200;
+  tb.sweep(); // a sweep of another context: the cancel, no own wake
+  row('sweep(): cancels the task', t.cancelled, true);
+  row('sweep(): no own wake', await woken(p), false);
+  tb.sweep(other);
+  row('sweep(other): no own wake', await woken(p), false);
+  tb.sweep(own);
+  row('sweep(own) after the cancel: own wake', await woken(p), true);
+  tb.waitStop(t);
+  row('waitStop: clears wakeOwn and ownWoken', [t.wakeOwn, t.ownWoken], [null, null]);
+  tb.sweep(own); // no wait: no throw
+  row('sweep(own) with no wait: no throw', true, true);
+}
+{
+  const tb = table();
+  const own = { kind: 'Init' };
+  const t = tb.begin('i', { kind: 'Init', hooks: own });
+  tb.waitStart(t);
+  const p = t.ownWoken;
+  tb.sweep(own); // before the deadline: no cancel, no wake
+  row('sweep(own) of a task not cancelled: no own wake', await Promise.race([p.then(() => true), new Promise((r) => setImmediate(() => r(false)))]), false);
+}
 // deadlineOf is pure: same input, same output.
 row('deadlineOf: no wait, Fetch', deadlineOf({ kind: 'Fetch', waiting: false, response: 'none' }), Infinity);
 console.log(failed ? 'FAIL' : 'PASS');

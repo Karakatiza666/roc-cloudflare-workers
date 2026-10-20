@@ -62,8 +62,8 @@ const server = createServer((req, res) => {
     if (path === '/slow') return setTimeout(() => res.end('late'), 2000);
     // 6 MiB in chunks (no content-length), then the connection breaks: a stream that errors in the middle.
     if (path === '/broken') {
-      res.write(Buffer.alloc(6 * 1024 * 1024, 66));
-      return setTimeout(() => res.destroy(), 100);
+      // The break comes after the write is flushed: a fixed delay from the write cut the data that a loaded client had not read yet.
+      return res.write(Buffer.alloc(6 * 1024 * 1024, 66), () => setTimeout(() => res.destroy(), 100));
     }
     if (path === '/echo_json') return res.end(`${req.method} ${req.headers['content-type'] ?? '-'} ${Buffer.concat(chunks).toString()}`);
     if (path === '/echo') return res.end(`${req.method} ${req.headers['x-test'] ?? '-'} ${Buffer.concat(chunks).toString()}`);
