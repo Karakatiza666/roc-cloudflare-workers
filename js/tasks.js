@@ -120,7 +120,7 @@ export function makeTaskTable(opts = {}) {
         writers: null, responseWriter: undefined,
         waiting: false, waitingSince: 0, socketWait: false,
         response: 'none', completeAt: 0,
-        cancelled: false, reason: null, hostFreed: false, ended5: false, wake: null, unlisten: null,
+        cancelled: false, reason: null, hostFreed: false, ended5: false, wake: null, wakeOwn: null, ownWoken: null, unlisten: null,
       };
       tasks.set(t.id, t);
       stats.contextsLive++;
@@ -155,17 +155,22 @@ export function makeTaskTable(opts = {}) {
     spawnEnd(t) {
       if (--t.spawns === 0 && t.ended) freeContext(t);
     },
-    // The wait starts. Returns the cancel promise: it resolves when the task is cancelled.
+    // The wait starts. Returns the cancel promise: it resolves when the task is cancelled. `t.ownWoken` resolves when a
+    // sweep of the own context of the task sees it cancelled (`sweep(own)`). workerd can keep a wake from another request
+    // context until the context of the task has I/O (a Durable Object), so the wait races both.
     waitStart(t, socket = false) {
       t.waiting = true;
       t.waitingSince = now();
       t.socketWait = socket;
+      t.ownWoken = new Promise((r) => (t.wakeOwn = r));
       return new Promise((r) => (t.wake = r));
     },
     waitStop(t) {
       t.waiting = false;
       t.socketWait = false;
       t.wake = null;
+      t.wakeOwn = null;
+      t.ownWoken = null;
     },
     // Response state (8b): the early response with a body that is complete now, or open (a writer, a 101).
     respond(t, open = false) {
@@ -180,10 +185,15 @@ export function makeTaskTable(opts = {}) {
     cancel,
     // Cancel each task past its deadline. Each new request calls it first (PLAN.md 3b). Also free the context of an
     // ended task past the `waitUntil` limit (9c): its started programs see the abort of their signal.
-    sweep() {
+    // `own`: the `hooks` of the task of the caller's request context. That task, when cancelled (also before, from
+    // another context), is woken again from here (`wakeOwn`).
+    sweep(own) {
       const at = now();
       let n = 0;
-      for (const t of tasks.values()) if (!t.cancelled && at >= deadlineOf(t, d) && cancel(t, 'deadline')) n++;
+      for (const t of tasks.values()) {
+        if (!t.cancelled && at >= deadlineOf(t, d) && cancel(t, 'deadline')) n++;
+        if (own && t.hooks === own && t.cancelled) t.wakeOwn?.();
+      }
       for (const t of lingering) {
         if (at < lingerUntil(t, d)) continue;
         stats.contextsExpired++;
