@@ -32,7 +32,7 @@ export const checks = [
   // Io.timeout: a sleep in time is Ok, a sleep that is too long is TimedOut after about 40 ms (not 3 s: it is aborted).
   ['time Io.timeout: Ok when the sleep ends in time, TimedOut after the limit, the sleep is aborted', async (t) => {
     const r = await t.get('/time/timeout');
-    answer(r, 'fast=Ok({}) slow=Err(TimedOut)');
+    answer(r, 'fast=Ok({}) slow=Err(Infra(TimedOut))');
     ok(r.ms >= 45 && r.ms < 600, `${r.ms} ms: want about 50 ms (the sleep of 3 s is aborted)`);
     eq(r.waits, 2, 'waits');
     return `${r.waits} waits, ${r.ms} ms`;
@@ -47,14 +47,14 @@ export const checks = [
   }],
   ['time Io.timeout_at: a deadline in the past is TimedOut at once, the sleep of 3 s is aborted', async (t) => {
     const r = await t.get('/time/timeout_at_past');
-    answer(r, 'Err(TimedOut)');
+    answer(r, 'Err(Infra(TimedOut))');
     ok(r.ms < 600, `${r.ms} ms: want about 0 ms (the sleep of 3 s is aborted)`);
     eq(r.waits, 1, 'waits');
     return `${r.waits} wait, ${r.ms} ms`;
   }],
   ['time Io.timeout_at: a deadline in 100 ms is TimedOut at about 100 ms, not before', async (t) => {
     const r = await t.get('/time/timeout_at_wait');
-    answer(r, 'Err(TimedOut)');
+    answer(r, 'Err(Infra(TimedOut))');
     ok(r.ms >= 90 && r.ms < 600, `${r.ms} ms: want about 100 ms (not 0 ms, not the 3 s of the sleep)`);
     eq(r.waits, 1, 'waits');
     return `${r.waits} wait, ${r.ms} ms`;

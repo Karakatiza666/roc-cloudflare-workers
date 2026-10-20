@@ -77,29 +77,29 @@ unit_try_text = |r| match r {
 	Err(e) => "Err ${Str.inspect(e)}"
 }
 
-unit_text : Try({}, [RpcErr(Io.Thrown), BadData(Str), Remote([AlreadyOpen])]) -> Str
+unit_text : Try({}, [Infra([RpcErr(Io.Thrown), BadData(Str)]), Remote([AlreadyOpen])]) -> Str
 unit_text = |r| match r {
 	Ok({}) => "Ok {}"
 	Err(Remote(AlreadyOpen)) => "AlreadyOpen"
-	Err(RpcErr(t)) => "RpcErr ${t.message}"
-	Err(BadData(s)) => "BadData ${s}"
+	Err(Infra(RpcErr(t))) => "RpcErr ${t.message}"
+	Err(Infra(BadData(s))) => "BadData ${s}"
 }
 
 # The caller matches each tag of the error by its name: a wrong tag does not compile.
-busy_text : Try(I64, [RpcErr(Io.Thrown), BadData(Str), Remote([Busy(Str), StillOpen])]) -> Str
+busy_text : Try(I64, [Infra([RpcErr(Io.Thrown), BadData(Str)]), Remote([Busy(Str), StillOpen])]) -> Str
 busy_text = |r| match r {
 	Ok(v) => "Ok ${v.to_str()}"
 	Err(Remote(Busy(s))) => "Busy ${s}"
 	Err(Remote(StillOpen)) => "StillOpen"
-	Err(RpcErr(t)) => "RpcErr ${t.message}"
-	Err(BadData(_)) => "BadData"
+	Err(Infra(RpcErr(t))) => "RpcErr ${t.message}"
+	Err(Infra(BadData(_))) => "BadData"
 }
 
-noerr_text : Try(I64, [RpcErr(Io.Thrown), BadData(Str), Remote(Rpc.NoErr)]) -> Str
+noerr_text : Try(I64, [Infra([RpcErr(Io.Thrown), BadData(Str)]), Remote(Rpc.NoErr)]) -> Str
 noerr_text = |r| match r {
 	Ok(v) => "Ok ${v.to_str()}"
-	Err(RpcErr(t)) => "RpcErr ${t.message}"
-	Err(BadData(_)) => "BadData"
+	Err(Infra(RpcErr(t))) => "RpcErr ${t.message}"
+	Err(Infra(BadData(_))) => "BadData"
 }
 
 busy! : self, { n : I64 } => Try(I64, [Busy(Str), StillOpen])

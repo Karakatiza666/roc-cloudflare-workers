@@ -5,7 +5,7 @@ import pf.Cbor
 import pf.Io
 
 RpcMethods :: [].{
-	increment : Rpc({ by : I64 }, I64, [StorageErr(Io.Thrown)])
+	increment : Rpc({ by : I64 }, I64, [Infra(Rpc.Infra)])
 	increment = Rpc.method("increment")
 
 	ping : Rpc({ n : I64 }, Str, Rpc.NoErr)

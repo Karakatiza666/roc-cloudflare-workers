@@ -110,20 +110,20 @@ export const checks = [
     eq(JSON.stringify(rows), JSON.stringify([['-2687166099708853831'], ['-9223372036854775807'], ['9223372036854775807']].map(([id]) => ({ id, ty: 'integer' }))), 'the stored ids');
   }],
   ['d1 all! with no cast: BadData with the column, for a positive and a negative id', async (t) => {
-    answer(await route(t, 'all', 'SELECT id FROM bigids WHERE k = 0', '', '&type=id'), 'Err BadData("column id: integer of 2^53 or more, read it with CAST(id AS TEXT) into an I64, U64 or Id64 field")');
-    answer(await route(t, 'all', 'SELECT id FROM bigids WHERE k = 2', '', '&type=id'), 'Err BadData("column id: integer of 2^53 or more, read it with CAST(id AS TEXT) into an I64, U64 or Id64 field")');
-    answer(await route(t, 'first', 'SELECT id FROM bigids WHERE k = 1', '', '&type=id'), 'Err BadData("column id: integer of 2^53 or more, read it with CAST(id AS TEXT) into an I64, U64 or Id64 field")');
+    answer(await route(t, 'all', 'SELECT id FROM bigids WHERE k = 0', '', '&type=id'), 'Err Infra(BadData("column id: integer of 2^53 or more, read it with CAST(id AS TEXT) into an I64, U64 or Id64 field"))');
+    answer(await route(t, 'all', 'SELECT id FROM bigids WHERE k = 2', '', '&type=id'), 'Err Infra(BadData("column id: integer of 2^53 or more, read it with CAST(id AS TEXT) into an I64, U64 or Id64 field"))');
+    answer(await route(t, 'first', 'SELECT id FROM bigids WHERE k = 1', '', '&type=id'), 'Err Infra(BadData("column id: integer of 2^53 or more, read it with CAST(id AS TEXT) into an I64, U64 or Id64 field"))');
   }],
   ['d1 D1.Result.first of a batch! with no cast: BadData with the column', async (t) => {
-    answer(await t.get(`/d1/batch_first?type=id&sql=${q('SELECT id FROM bigids WHERE k = 2')}`), 'Err BadData("column id: integer of 2^53 or more, read it with CAST(id AS TEXT) into an I64, U64 or Id64 field")');
+    answer(await t.get(`/d1/batch_first?type=id&sql=${q('SELECT id FROM bigids WHERE k = 2')}`), 'Err Infra(BadData("column id: integer of 2^53 or more, read it with CAST(id AS TEXT) into an I64, U64 or Id64 field"))');
     answer(await t.get(`/d1/batch_first?type=id&sql=${q('SELECT CAST(id AS TEXT) AS id FROM bigids WHERE k = 2')}`), 'Ok { id: -2687166099708853831 }');
   }],
   ["d1 the text '01' and '9223372036854775808' into an I64 field give BadData", async (t) => {
-    answer(await route(t, 'all', "SELECT '01' AS id", '', '&type=id'), 'Err BadData("column id: the value does not fit the type")');
-    answer(await route(t, 'all', "SELECT '9223372036854775808' AS id", '', '&type=id'), 'Err BadData("column id: the value does not fit the type")');
+    answer(await route(t, 'all', "SELECT '01' AS id", '', '&type=id'), 'Err Infra(BadData("column id: the value does not fit the type"))');
+    answer(await route(t, 'all', "SELECT '9223372036854775808' AS id", '', '&type=id'), 'Err Infra(BadData("column id: the value does not fit the type"))');
   }],
   ['d1 a missing column gives BadData("column id: missing")', async (t) => {
-    answer(await route(t, 'all', 'SELECT name FROM people WHERE id = 1', '', '&type=id'), 'Err BadData("column id: missing")');
+    answer(await route(t, 'all', 'SELECT name FROM people WHERE id = 1', '', '&type=id'), 'Err Infra(BadData("column id: missing"))');
   }],
   ['d1 an I64 column of 2^53 - 1 and an F64 column of 2^60 (no cast) read as numbers', async (t) => {
     answer(await route(t, 'first', 'SELECT i AS id FROM nums WHERE k = 1', '', '&type=id'), 'Ok { id: 9007199254740991 }');
@@ -136,7 +136,7 @@ export const checks = [
     eq(r.awaits, 1, 'crossings with a wait (js_await)');
     eq(r.calls, 0, 'crossings with no wait (js_call)');
     answer(await route(t, 'all_tuples', 'SELECT id, name FROM people WHERE id = ?', 'i:9'), 'Ok []');
-    answer(await route(t, 'all_tuples', 'SELECT name, id FROM people WHERE id = 1'), 'Err BadData("column 0 (from 0): the value does not fit the type")');
+    answer(await route(t, 'all_tuples', 'SELECT name, id FROM people WHERE id = 1'), 'Err Infra(BadData("column 0 (from 0): the value does not fit the type"))');
   }],
   ['d1 all_tuples (Io twin), all_tuples_with! and twin', async (t) => {
     const want = 'Ok [(1, "ann"), (2, "bob"), (3, "cy")]';
@@ -150,8 +150,8 @@ export const checks = [
   }],
   ['d1 all_tuples! on a D1.Session: rows above 1 MiB are TooLarge, all_tuples_with! with 2 MiB gives the rows', async (t) => {
     const sql = 'SELECT 1, x FROM blobs';
-    answer(await route(t, 'session_tuples', sql, '', '&type=big&how='), 'Err TooLarge');
-    answer(await route(t, 'session_tuples', sql, '', '&type=big&how=_io'), 'Err TooLarge');
+    answer(await route(t, 'session_tuples', sql, '', '&type=big&how='), 'Err Infra(TooLarge)');
+    answer(await route(t, 'session_tuples', sql, '', '&type=big&how=_io'), 'Err Infra(TooLarge)');
     answer(await route(t, 'session_tuples', sql, '', `&type=big&how=_with&max=${2 * 1024 * 1024}`), 'Ok rows=12');
     answer(await route(t, 'session_tuples', sql, '', `&type=big&how=_with_io&max=${2 * 1024 * 1024}`), 'Ok rows=12');
   }],
@@ -161,13 +161,13 @@ export const checks = [
       'Ok [(0, 9223372036854775807), (1, -9223372036854775807), (2, -2687166099708853831)]');
   }],
   ['d1 all_tuples! with no cast: BadData with the column index, for a positive and a negative id', async (t) => {
-    const bad = (c) => `Err BadData("column ${c} (from 0): integer of 2^53 or more, read it with CAST(... AS TEXT) into an I64, U64 or Id64 field")`;
+    const bad = (c) => `Err Infra(BadData("column ${c} (from 0): integer of 2^53 or more, read it with CAST(... AS TEXT) into an I64, U64 or Id64 field"))`;
     answer(await route(t, 'all_tuples', 'SELECT k, id FROM bigids WHERE k = 0', '', '&type=ids'), bad(1));
     answer(await route(t, 'all_tuples', 'SELECT k, id FROM bigids WHERE k = 2', '', '&type=ids'), bad(1));
     answer(await route(t, 'all_tuples', 'SELECT id, k FROM bigids WHERE k = 1', '', '&type=ids'), bad(0));
   }],
   ["d1 all_tuples! the text '01' and '9223372036854775808' into an I64 item give BadData", async (t) => {
-    const bad = 'Err BadData("column 1 (from 0): the value does not fit the type")';
+    const bad = 'Err Infra(BadData("column 1 (from 0): the value does not fit the type"))';
     answer(await route(t, 'all_tuples', "SELECT 1, '01'", '', '&type=ids'), bad);
     answer(await route(t, 'all_tuples', "SELECT 1, '9223372036854775808'", '', '&type=ids'), bad);
   }],
@@ -177,11 +177,11 @@ export const checks = [
   }],
   ['d1 all_tuples! into a record type is BadData (a row is an array)', async (t) => {
     const r = await route(t, 'all_tuples', 'SELECT id, name FROM people ORDER BY id', '', '&type=record');
-    ok(r.status === 200 && r.body.startsWith('Err BadData('), `got ${r.status} ${r.body}`);
+    ok(r.status === 200 && r.body.startsWith('Err Infra(BadData('), `got ${r.status} ${r.body}`);
     return r.body;
   }],
   ['d1 all_tuples! of rows above 1 MiB is TooLarge, all_tuples_with! with max_bytes of 2 MiB gives the rows', async (t) => {
-    answer(await route(t, 'all_tuples', 'SELECT 1, x FROM blobs', '', '&type=big'), 'Err TooLarge');
+    answer(await route(t, 'all_tuples', 'SELECT 1, x FROM blobs', '', '&type=big'), 'Err Infra(TooLarge)');
     answer(await route(t, 'all_tuples_with', 'SELECT 1, x FROM blobs', '', `&type=big&max=${2 * 1024 * 1024}`), 'Ok rows=12');
   }],
   // PLAN.md 8c: 2 inserts and a select in one batch: 3 results, and `first()` of the third reads the count. One crossing.
@@ -201,11 +201,11 @@ export const checks = [
   }],
   // MC11: a read above the limit is TooLarge, before any copy into wasm.
   ['d1 all! of rows above 1 MiB is TooLarge, all_with! with max_bytes of 2 MiB gives the rows', async (t) => {
-    answer(await route(t, 'all', 'SELECT x FROM blobs', '', '&type=big'), 'Err TooLarge');
+    answer(await route(t, 'all', 'SELECT x FROM blobs', '', '&type=big'), 'Err Infra(TooLarge)');
     answer(await route(t, 'all_with', 'SELECT x FROM blobs', '', `&type=big&max=${2 * 1024 * 1024}`), 'Ok rows=12');
-    answer(await route(t, 'rows', 'SELECT x FROM blobs'), 'Err TooLarge');
+    answer(await route(t, 'rows', 'SELECT x FROM blobs'), 'Err Infra(TooLarge)');
     ok((await route(t, 'rows_with', 'SELECT x FROM blobs', '', `&max=${2 * 1024 * 1024}`)).body.startsWith('Ok { columns: ["x"]'), 'rows_with! with 2 MiB');
-    answer(await route(t, 'batch', 'SELECT x FROM blobs WHERE rowid <= 6;SELECT x FROM blobs WHERE rowid > 6'), 'Err TooLarge');
+    answer(await route(t, 'batch', 'SELECT x FROM blobs WHERE rowid <= 6;SELECT x FROM blobs WHERE rowid > 6'), 'Err Infra(TooLarge)');
     ok((await route(t, 'batch_with', 'SELECT x FROM blobs WHERE rowid <= 6;SELECT x FROM blobs WHERE rowid > 6', '', `&max=${2 * 1024 * 1024}`)).body.startsWith('Ok results=2 '), 'batch_with! with 2 MiB');
   }],
   // PLAN.md 8c: `with_session!(Primary)`: NotFound before a query, Ok after an insert, and `After(bookmark)` reads the row.
@@ -226,13 +226,13 @@ export const checks = [
     ['a STRICT column', 'Datatype', "INSERT INTO s (id, v) VALUES (1, 'x')", 'cannot store TEXT value in INTEGER column s.v'],
     ["a trigger RAISE(ABORT, 'UNIQUE constraint failed: x')", 'Trigger', "INSERT INTO t (id, u, n, c) VALUES (97, 'y', 1, 1)", 'UNIQUE constraint failed: x'],
   ].map(([what, kind, sql, message]) => [`d1 8d: ${what} gives Constraint ${kind}`, async (t) => {
-    answer(await route(t, 'run', sql), `Err Constraint({ kind: ${kind}, message: "${message}" })`);
+    answer(await route(t, 'run', sql), `Err Infra(Constraint({ kind: ${kind}, message: "${message}" }))`);
     seen[kind] = await jsError(t, sql);
     return seen[kind];
   }]),
   ["d1 8d: a trigger RAISE(ABORT, 'label-conflict') in a batch! gives Trigger, and the batch writes nothing", async (t) => {
     const sql = "INSERT INTO t (id, u, n, c) VALUES (50, 'w', 1, 1);INSERT INTO t (id, u, n, c) VALUES (99, 'z', 1, 1)";
-    answer(await route(t, 'batch', sql), 'Err Constraint({ kind: Trigger, message: "label-conflict" })');
+    answer(await route(t, 'batch', sql), 'Err Infra(Constraint({ kind: Trigger, message: "label-conflict" }))');
     const db = await t.mf.getD1Database('DB');
     eq((await db.prepare('SELECT count(*) AS n FROM t WHERE id = 50').first()).n, 0, 'rows of the first insert');
     seen.batchTrigger = await jsError(t, null, sql);
@@ -240,10 +240,10 @@ export const checks = [
   }],
   ['d1 8d: exec! of a primary key failure gives PrimaryKey, with the line and the SQL in the message', async (t) => {
     const sql = "INSERT INTO t (id, u, n, c) VALUES (1, 'q', 1, 1)";
-    answer(await route(t, 'exec', sql), `Err Constraint({ kind: PrimaryKey, message: "Error in line 1: ${sql}: UNIQUE constraint failed: t.id" })`);
+    answer(await route(t, 'exec', sql), `Err Infra(Constraint({ kind: PrimaryKey, message: "Error in line 1: ${sql}: UNIQUE constraint failed: t.id" }))`);
   }],
   ['d1 a syntax error is D1Err', async (t) => {
-    answer(await route(t, 'run', 'SELEC 1'), 'Err D1Err({ message: "D1_ERROR: near \\"SELEC\\": syntax error at offset 0: SQLITE_ERROR", name: "Error" })');
+    answer(await route(t, 'run', 'SELEC 1'), 'Err Infra(D1Err({ message: "D1_ERROR: near \\"SELEC\\": syntax error at offset 0: SQLITE_ERROR", name: "Error" }))');
   }],
   // PLAN.md 8h item 3: parameters are any value that encodes to a CBOR array (conformance/D1Routes.roc, `params!`).
   ['d1 params: a tuple of (Str, I64, F64, blob) is stored as text, integer, real, blob (run!, and its Io twin)', async (t) => {
@@ -258,7 +258,7 @@ export const checks = [
   }],
   ['d1 params: a U64 of 2^63 is BadParam, and no row (never a negative number) is stored', async (t) => {
     const r = await par(t, 'u64over');
-    ok(r.body.startsWith('Err D1Err({ message: "SQL parameter 1: the integer 9223372036854775808 does not fit I64"') && r.body.includes('name: "BadParam"'), `got ${r.body}`);
+    ok(r.body.startsWith('Err Infra(D1Err({ message: "SQL parameter 1: the integer 9223372036854775808 does not fit I64"') && r.body.includes('name: "BadParam"'), `got ${r.body}`);
     const db = await t.mf.getD1Database('DB');
     eq((await db.prepare("SELECT count(*) AS n FROM pi WHERE k = 'u64over' OR v < 0").first()).n, 0, 'rows of the failed insert, or negative');
   }],
@@ -270,7 +270,7 @@ export const checks = [
   ['d1 params: a record and {} are BadParam (a list or a tuple is needed)', async (t) => {
     for (const c of ['record', 'empty_record']) {
       const r = await par(t, c);
-      ok(r.body.startsWith('Err D1Err({ message: "SQL parameters must be a list or a tuple, not a record or a tag') && r.body.includes('name: "BadParam"'), `${c}: got ${r.body}`);
+      ok(r.body.startsWith('Err Infra(D1Err({ message: "SQL parameters must be a list or a tuple, not a record or a tag') && r.body.includes('name: "BadParam"'), `${c}: got ${r.body}`);
     }
   }],
   ['d1 params: a tag item is BadParam with the hint for Sql.or_null; a Bool item is BadParam', async (t) => {

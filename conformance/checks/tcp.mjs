@@ -58,7 +58,7 @@ export const checks = [
     answer(await t.get(`/tcp/echo_io?port=${port}`), 'write=Ok({}) read=Ok("twin") with=Ok([0, 1, 255])')],
   ['tcp connect! to a port with no server is SocketErr', async (t) => {
     const r = await t.get('/tcp/closed_port');
-    ok(r.status === 200 && r.body.startsWith('Err(SocketErr('), `got ${r.status} ${r.body}`);
+    ok(r.status === 200 && r.body.startsWith('Err(Infra(SocketErr('), `got ${r.status} ${r.body}`);
     return r.body;
   }],
   ['tcp read! after the end of the peer is Closed, write! after close! is Closed', async (t) =>
@@ -73,7 +73,7 @@ export const checks = [
     answer(await t.get(`/tcp/starttls_plain?port=${port}`), 'first=Ok("one") second=Ok("two")')],
   ['tcp start_tls! on a socket of tls Off is SocketErr (the option secureTransport)', async (t) => {
     const r = await t.get(`/tcp/start_tls_off?port=${port}`);
-    ok(r.status === 200 && r.body.startsWith('Err(SocketErr(') && r.body.includes("'starttls' for startTls to be used"), `got ${r.status} ${r.body}`);
+    ok(r.status === 200 && r.body.startsWith('Err(Infra(SocketErr(') && r.body.includes("'starttls' for startTls to be used"), `got ${r.status} ${r.body}`);
     return r.body;
   }],
   // EP11: `start_tls!` released neither the reader nor the writer, so `opened` of the new socket never settled. The route
@@ -92,12 +92,12 @@ export const checks = [
   }],
   ['tcp start_tls! with unread bytes is SocketErr (bytes before the upgrade are never read as TLS), the socket stays plain', async (t) => {
     const r = await t.get(`/tcp/start_tls_unread?port=${port}`);
-    ok(r.status === 200 && r.body.startsWith('start_tls=Err(SocketErr(') && r.body.includes('unread bytes before start_tls') && r.body.endsWith('then_read=Ok("late")'), `got ${r.status} ${r.body}`);
+    ok(r.status === 200 && r.body.startsWith('start_tls=Err(Infra(SocketErr(') && r.body.includes('unread bytes before start_tls') && r.body.endsWith('then_read=Ok("late")'), `got ${r.status} ${r.body}`);
     return r.body;
   }],
   ['tcp start_tls! with a read in flight (a read that lost a race) is SocketErr, the socket stays plain', async (t) => {
     const r = await t.get(`/tcp/start_tls_pending?port=${port}`);
-    ok(r.status === 200 && r.body.startsWith('first=1 start_tls=Err(SocketErr(') && r.body.includes('read is in flight') && r.body.endsWith('then_echo=Ok("ping")'), `got ${r.status} ${r.body}`);
+    ok(r.status === 200 && r.body.startsWith('first=1 start_tls=Err(Infra(SocketErr(') && r.body.includes('read is in flight') && r.body.endsWith('then_echo=Ok("ping")'), `got ${r.status} ${r.body}`);
     return r.body;
   }],
   ['hyperdrive connect!, connect (Io twin): a Tcp socket to the origin of the binding', async (t) =>

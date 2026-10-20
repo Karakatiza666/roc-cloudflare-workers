@@ -9,7 +9,7 @@ import pf.Io
 cell : Kv.Cell(Str)
 cell = Kv.text("KV").cell("c")
 
-read! : {} => Try(Str, [KvErr(Io.Thrown), BadData(Str), TooLarge])
+read! : {} => Try(Str, [Infra([KvErr(Io.Thrown), BadData(Str), TooLarge])])
 read! = |{}| cell.get!()
 
 fetch! = |_req| Ok(Response.from_text(200, "x"))

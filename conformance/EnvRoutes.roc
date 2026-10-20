@@ -14,13 +14,13 @@ EnvRoutes :: [].{
 		match path {
 			["var"] => ok(Str.inspect(Env.var!(name)))
 			["json"] => {
-				got : Try(Pkg, [MissingEnv(Str), BadData(Str)])
+				got : Try(Pkg, [Infra([MissingEnv(Str), BadData(Str)])])
 				got = Env.json!(name)
 				ok(
 					match got {
 						Ok(p) => "Ok ${p.name} ${p.n.to_str()}"
-						Err(MissingEnv(n)) => "MissingEnv ${n}"
-						Err(BadData(_)) => "BadData"
+						Err(Infra(MissingEnv(n))) => "MissingEnv ${n}"
+						Err(Infra(BadData(_))) => "BadData"
 					},
 				)
 			}

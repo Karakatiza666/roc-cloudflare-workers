@@ -9,8 +9,8 @@ export const options = {
 export const checks = [
   ['env var!', async (t) => {
     answer(await t.get('/env/var?name=TEXT_VAR'), 'Ok("hello")');
-    answer(await t.get('/env/var?name=NOPE'), 'Err(MissingEnv("NOPE"))');
-    answer(await t.get('/env/var?name=JSON_VAR'), 'Err(MissingEnv("JSON_VAR"))');
+    answer(await t.get('/env/var?name=NOPE'), 'Err(Infra(MissingEnv("NOPE")))');
+    answer(await t.get('/env/var?name=JSON_VAR'), 'Err(Infra(MissingEnv("JSON_VAR")))');
   }],
   ['env json!', async (t) => {
     answer(await t.get('/env/json?name=JSON_VAR'), 'Ok a 3');
@@ -20,7 +20,7 @@ export const checks = [
   }],
   ['env secret!', async (t) => {
     answer(await t.get('/env/secret?name=SECRET_VAR'), 'inspect=Secret(...) reveal=hunter2');
-    answer(await t.get('/env/secret?name=NOPE'), 'MissingEnv("NOPE")');
+    answer(await t.get('/env/secret?name=NOPE'), 'Infra(MissingEnv("NOPE"))');
   }],
   ['secret from_str, to_inspect, reveal', async (t) => answer(await t.get('/env/from_str?name=pw'), 'inspect={ token: Secret(...) } reveal=pw')],
 ];

@@ -39,7 +39,7 @@ async function hit(t, path, headers = {}) {
 const put = (t, key, text) => t.get(`/r2/put?key=${key}&text=${q(text)}`);
 // PLAN.md EP10: a multipart upload that is not complete keeps a real bucket from a delete, and nothing else knows its id.
 // `uploads` runs `body(open)`; `open(upload)` notes an upload, and each noted upload is aborted at the end, also when a
-// check fails. An upload that is complete or aborted gives `Err R2Err(...)` at the abort: that is no error here.
+// check fails. An upload that is complete or aborted gives `Err Infra(R2Err(...))` at the abort: that is no error here.
 async function uploads(t, body) {
   const noted = [];
   const abortAll = async () => {
@@ -280,7 +280,7 @@ export const checks = [
   ['r2 put! of a stream that errors in the middle aborts the upload: no object, no complete', async (t) => {
     const n = (await calls(t)).length;
     const r = await t.get(`/r2/put_broken?key=gbroken&from=${q(`${t.server}/broken`)}`);
-    ok(r.body.startsWith('Err R2Err('), `got ${r.body}`);
+    ok(r.body.startsWith('Err Infra(R2Err('), `got ${r.body}`);
     eq(await (await t.mf.getR2Bucket('TRACE')).get('gbroken'), null, 'the object');
     let got = [];
     for (let i = 0; i < 40; i++) {
@@ -292,7 +292,7 @@ export const checks = [
   }],
   ['r2 put_with! only_if with a stream of unknown length over 5 MiB is R2Err (no upload, no object)', async (t) => {
     const { r, calls: c } = await gen(t, 'gcond', 6 * MiB, '&etag=anything');
-    ok(r.body.startsWith('Err R2Err(') && r.body.includes('only_if'), `got ${r.body}`);
+    ok(r.body.startsWith('Err Infra(R2Err(') && r.body.includes('only_if'), `got ${r.body}`);
     eq(JSON.stringify(c), '[]', 'the multipart calls');
     eq(await (await t.mf.getR2Bucket('TRACE')).get('gcond'), null, 'the object');
   }],
@@ -333,7 +333,7 @@ export const checks = [
   }],
   ['r2 put_with! checksum: a wrong Sha256 is R2Err, the right one is in meta.checksums', async (t) => {
     const bad = await t.get('/r2/put_with?key=sum1&text=abc&sha=wrong');
-    ok(bad.body.startsWith('Err R2Err(') && bad.body.includes('SHA-256 checksum'), `got ${bad.body}`);
+    ok(bad.body.startsWith('Err Infra(R2Err(') && bad.body.includes('SHA-256 checksum'), `got ${bad.body}`);
     const good = await t.get('/r2/put_with?key=sum2&text=abc&sha=right');
     ok(good.body.includes('sha256=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'), `got ${good.body}`);
   }],
@@ -388,7 +388,7 @@ export const checks = [
     const upload = open(JSON.parse((await t.get(`/r2/mp_create?key=mp3`)).body).upload);
     answer(await t.get(`/r2/mp_abort?upload=${q(JSON.stringify(upload))}`), 'Ok aborted');
     // A part after the abort is R2Err.
-    ok((await t.get(`/r2/mp_part?upload=${q(JSON.stringify(upload))}`)).body.startsWith('Err R2Err('), 'a part after the abort');
+    ok((await t.get(`/r2/mp_part?upload=${q(JSON.stringify(upload))}`)).body.startsWith('Err Infra(R2Err('), 'a part after the abort');
     const up2 = open(JSON.parse((await t.get('/r2/mp_create_io?key=mp4')).body).upload);
     answer(await t.get(`/r2/mp_abort_io?upload=${q(JSON.stringify(up2))}`), 'Ok aborted');
   })],
@@ -418,14 +418,14 @@ export const checks = [
       throw new Error('a check fails');
     }).then(() => null, (e) => e.message);
     eq(failed, 'a check fails', 'the throw of the check');
-    ok((await t.get(`/r2/mp_part?upload=${q(JSON.stringify(upload))}`)).body.startsWith('Err R2Err('), 'the upload is still open');
+    ok((await t.get(`/r2/mp_part?upload=${q(JSON.stringify(upload))}`)).body.startsWith('Err Infra(R2Err('), 'the upload is still open');
   }],
   // PLAN.md EP10: a route that cannot finish its upload aborts it, because the caller has no upload id. Part number 10001 is
   // refused, and a wrong etag makes `complete!` fail. The check after these ones counts the open uploads.
   ['r2 multipart: a route with a part or a complete that fails aborts its upload', async (t) => {
     for (const path of ['/r2/mp_create?key=mpb1&part=10001', '/r2/mp_create_io?key=mpb2&part=10001', '/r2/mp_with?key=mpb3&part=10001', '/r2/mp_with?key=mpb4&etag=wrong', '/r2/mp_with_io?key=mpb5&etag=wrong']) {
       const r = await t.get(path);
-      ok(r.status === 200 && r.body.startsWith('Err R2Err('), `${path}: got ${r.status} ${r.body.slice(0, 200)}`);
+      ok(r.status === 200 && r.body.startsWith('Err Infra(R2Err('), `${path}: got ${r.status} ${r.body.slice(0, 200)}`);
     }
   }],
   // PLAN.md EP10: no upload of the checks above is open. Miniflare keeps the bucket on disk in its temp dir (`run.mjs` sets

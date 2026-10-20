@@ -24,9 +24,9 @@ export const checks = [
   }],
   ['cache put! of a 206 response is CacheErr', async (t) => {
     const r = await put(t, 'partial', '&status=206');
-    ok(r.body.startsWith('Err CacheErr(') && r.body.includes('206'), `got ${r.body}`);
+    ok(r.body.startsWith('Err Infra(CacheErr(') && r.body.includes('206'), `got ${r.body}`);
     const r2 = await t.get(`/cache/put_io?url=${key('partial')}&text=x&status=206&cc=max-age%3D60`);
-    ok(r2.body.startsWith('Err CacheErr('), `twin: ${r2.body}`);
+    ok(r2.body.startsWith('Err Infra(CacheErr('), `twin: ${r2.body}`);
   }],
   ['cache put! of a Stream body', async (t) => {
     answer(await t.get(`/cache/put_stream?url=${key('s')}&from=${q(`${t.server}/hello`)}`), 'Ok put');

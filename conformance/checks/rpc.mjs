@@ -15,7 +15,7 @@ export const checks = [
     answer(await t.get('/rpc/ping'), 'Ok("default ping 5")');
   }],
   ['rpc an unknown method of a service throws (RpcErr)', async (t) =>
-    answer(await t.get('/rpc/nothere'), 'Err(RpcErr({ message: "The RPC receiver does not implement the method \\"nothere\\".", name: "TypeError" }))')],
+    answer(await t.get('/rpc/nothere'), 'Err(Infra(RpcErr({ message: "The RPC receiver does not implement the method \\"nothere\\".", name: "TypeError" })))')],
   ['rpc Service.fetch! on a binding with entrypoint Admin reaches the fetch! of Admin', async (t) => {
     answer(await t.get('/rpc/admin_fetch'), '200 admin fetch http://x/hello');
     answer(await t.get('/rpc/admin_fetch_io'), '200 admin fetch http://x/hello');
@@ -31,7 +31,7 @@ export const checks = [
   }],
   ['rpc the RPC limit: a reply above 32 MiB is RpcErr, a small one passes', async (t) => {
     const r = await t.get('/rpc/big');
-    if (!r.body.startsWith('Err RpcErr(')) throw new Error(`got ${r.status} ${r.body.slice(0, 300)}`);
+    if (!r.body.startsWith('Err Infra(RpcErr(')) throw new Error(`got ${r.status} ${r.body.slice(0, 300)}`);
     answer(await t.get('/rpc/small'), 'Ok 1000');
     return r.body.slice(0, 200);
   }],

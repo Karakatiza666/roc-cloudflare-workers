@@ -34,7 +34,7 @@ export const checks = [
     answer(await route(t, 'get_io', k), 'Err NotFound');
   }],
   // N6: `find!` and `find` (the Io twin), on Kv and on Kv.Cell: `NotFound` is a value of the inner `Try`.
-  ['kv find!, find (Io twin): a missing key is Ok(Err(NotFound)), a present key Ok(Ok(v)), a bad stored value Err(BadData)', async (t) => {
+  ['kv find!, find (Io twin): a missing key is Ok(Err(NotFound)), a present key Ok(Ok(v)), a bad stored value Err(Infra(BadData))', async (t) => {
     const k = `f-${rand()}`;
     answer(await route(t, 'find', k), 'Ok Err(NotFound)');
     answer(await route(t, 'find_io', k), 'Ok Err(NotFound)');
@@ -43,11 +43,11 @@ export const checks = [
     answer(await route(t, 'find_io', k), 'Ok Ok("hi")');
     await (await t.mf.getKVNamespace('KV')).put(`${k}-text`, 'not json');
     const bad = await route(t, 'find_json', `${k}-text`);
-    ok(bad.body.startsWith('Err BadData('), `a text that is not JSON: ${bad.body}`);
+    ok(bad.body.startsWith('Err Infra(BadData('), `a text that is not JSON: ${bad.body}`);
     answer(await route(t, 'delete', k), 'Ok {}');
     answer(await route(t, 'find', k), 'Ok Err(NotFound)');
   }],
-  ['kv Cell find!, find (Io twin): missing is Ok(Err(NotFound)), a value Ok(Ok(v)), a bad stored value Err(BadData)', async (t) => {
+  ['kv Cell find!, find (Io twin): missing is Ok(Err(NotFound)), a value Ok(Ok(v)), a bad stored value Err(Infra(BadData))', async (t) => {
     const kv = await t.mf.getKVNamespace('KV');
     await route(t, 'cell_delete');
     answer(await route(t, 'cell_find'), 'Ok Err(NotFound)');
@@ -57,7 +57,7 @@ export const checks = [
     answer(await route(t, 'cell_find_io'), 'Ok Ok({ big: 1152921504606846976, n: 3, theme: "dark" })');
     await kv.put('cell-prefs', 'not json');
     const bad = await route(t, 'cell_find');
-    ok(bad.body.startsWith('Err BadData('), `a text that is not JSON: ${bad.body}`);
+    ok(bad.body.startsWith('Err Infra(BadData('), `a text that is not JSON: ${bad.body}`);
     await route(t, 'cell_delete');
   }],
   // N7: `Kv.Cell.declare` is the binding of its Kv (the kind kv and the name, no props).
@@ -71,7 +71,7 @@ export const checks = [
     eq(stored, '{"big":1152921504606846976,"n":3,"theme":"dark"}', 'the stored text (JSON)');
     answer(await route(t, 'json_get', 'js-json'), 'Ok { big: 1152921504606846976, n: 1, theme: "dark" }');
     const bad = await route(t, 'json_get', 'small');
-    ok(bad.body.startsWith('Err BadData('), `a text that is not JSON: ${bad.body}`);
+    ok(bad.body.startsWith('Err Infra(BadData('), `a text that is not JSON: ${bad.body}`);
   }],
   ['kv bytes: put! and get! keep each byte', async (t) => {
     const k = `b-${rand()}`;
@@ -81,15 +81,15 @@ export const checks = [
   }],
   // PLAN.md 8f: `get!` of 2 MiB is `TooLarge`; `get_with!` with `max_bytes`.
   ['kv get! of 2 MiB is TooLarge, get_with! with max_bytes gives it', async (t) => {
-    answer(await route(t, 'len', 'big'), 'Err TooLarge');
+    answer(await route(t, 'len', 'big'), 'Err Infra(TooLarge)');
     answer(await route(t, 'len_with', 'big', `&max=${4 * MiB}`), `Ok len=${2 * MiB}`);
     answer(await route(t, 'len_with_io', 'big', `&max=${4 * MiB}`), `Ok len=${2 * MiB}`);
-    answer(await route(t, 'len_with', 'big', `&max=${2 * MiB - 1}`), 'Err TooLarge');
+    answer(await route(t, 'len_with', 'big', `&max=${2 * MiB - 1}`), 'Err Infra(TooLarge)');
     answer(await route(t, 'len_with', 'big', `&max=${2 * MiB}`), `Ok len=${2 * MiB}`);
   }],
   ['kv get! of 2 MiB takes no wasm memory', async (t) => {
     const before = Number((await t.get('/__mem')).body);
-    answer(await route(t, 'len', 'big'), 'Err TooLarge');
+    answer(await route(t, 'len', 'big'), 'Err Infra(TooLarge)');
     const grew = Number((await t.get('/__mem')).body) - before;
     ok(grew < 1_048_576, `wasm memory grew by ${grew} bytes`);
     return `${grew} bytes`;
@@ -97,7 +97,7 @@ export const checks = [
   ['kv get_with! cache_ttl_ms: 30 s is Ok, less is KvErr', async (t) => {
     answer(await route(t, 'get_cache', 'small', '&ttl=30000'), 'Ok "hello"');
     const r = await route(t, 'get_cache', 'small', '&ttl=5000');
-    ok(r.body.startsWith('Err KvErr('), `cache_ttl_ms of 5 s: ${r.body}`);
+    ok(r.body.startsWith('Err Infra(KvErr('), `cache_ttl_ms of 5 s: ${r.body}`);
     return r.body.slice(0, 200);
   }],
   // PLAN.md 8f: `put_with!` metadata and `get_with_metadata!`.
@@ -113,7 +113,7 @@ export const checks = [
     // A key with no metadata: `Err(Missing)`, not an error of the call. A key that is not there: NotFound.
     answer(await route(t, 'get_meta', 'small'), 'Ok { metadata: Err(Missing), value: "hello" }');
     answer(await route(t, 'get_meta', `none-${rand()}`), 'Err NotFound');
-    answer(await route(t, 'get_meta_with', 'big', `&max=${MiB}`), 'Err TooLarge');
+    answer(await route(t, 'get_meta_with', 'big', `&max=${MiB}`), 'Err Infra(TooLarge)');
   }],
   ['kv put_with! ttl_ms rounds up to whole seconds, and expires_ms', async (t) => {
     const kv = await t.mf.getKVNamespace('KV');
@@ -171,7 +171,7 @@ export const checks = [
     answer(await route(t, 'f64_put', k, '&v=pi'), 'Ok {}');
     answer(await route(t, 'f64_get', k), 'Ok { name: "pi", ratio: 0.5 }');
     const nan = await route(t, 'f64_put', `${k}-nan`, '&v=nan');
-    ok(nan.body.startsWith('Err BadData("the value does not encode: '), `NaN: ${nan.body}`);
+    ok(nan.body.startsWith('Err Infra(BadData("the value does not encode: '), `NaN: ${nan.body}`);
     answer(await route(t, 'f64_get', `${k}-nan`), 'Err NotFound');
     const r = await route(t, 'f64_response', '', '&v=pi');
     eq(r.body, '{"name":"pi","ratio":0.5}', 'Response.from_json of an F64 field');
@@ -204,13 +204,13 @@ export const checks = [
     const k = `orbad-${rand()}`;
     await route(t, 'put', k, '&v=not-json');
     const r = await route(t, 'get_or_bad', k);
-    ok(r.status === 200 && r.body.startsWith('Err BadData("'), `got ${r.body}`);
+    ok(r.status === 200 && r.body.startsWith('Err Infra(BadData("'), `got ${r.body}`);
     answer(await route(t, 'get_or_bad', `${k}-missing`), 'Ok { big: 0, n: 0, theme: "default" }');
     await route(t, 'delete', k);
   }],
   ['kv F64 field: the twin, put_with! and Cell set! give BadData for a NaN and send nothing, a value is stored', async (t) => {
     const k = `f64b-${rand()}`;
-    const bad = (r, what) => ok(r.status === 200 && r.body.startsWith('Err BadData("the value does not encode: '), `${what}: ${r.body}`);
+    const bad = (r, what) => ok(r.status === 200 && r.body.startsWith('Err Infra(BadData("the value does not encode: '), `${what}: ${r.body}`);
     answer(await route(t, 'f64_put_io', k, '&v=pi'), 'Ok {}');
     answer(await route(t, 'f64_get', k), 'Ok { name: "pi", ratio: 0.5 }');
     bad(await route(t, 'f64_put_io', `${k}-io`, '&v=nan'), 'put (Io twin)');
@@ -228,7 +228,7 @@ export const checks = [
   ['kv a NaN is no write: the old value stays', async (t) => {
     const k = `f64c-${rand()}`;
     answer(await route(t, 'f64_put', k, '&v=one'), 'Ok {}');
-    ok((await route(t, 'f64_put', k, '&v=nan')).body.startsWith('Err BadData('), 'NaN put');
+    ok((await route(t, 'f64_put', k, '&v=nan')).body.startsWith('Err Infra(BadData('), 'NaN put');
     answer(await route(t, 'f64_get', k), 'Ok { name: "one", ratio: 0.5 }');
     await route(t, 'delete', k);
   }],

@@ -190,23 +190,23 @@ TcpRoutes :: [].{
 }
 
 ## A branch with no wait: in `Io.race!`, it wins against a read that has its bytes.
-at_once : Io([Got(Str), TimedOut, Now], [Closed, SocketErr(Io.Thrown)])
+at_once : Io([Got(Str), TimedOut, Now], [Closed, Infra([SocketErr(Io.Thrown)])])
 at_once = Io.sync([Get(Root("signal"), "aborted")], |_| Ok(Now))
 
 ok : Str -> Response
 ok = |text| Response.from_text(200, text)
 
 ## `read` (the twin) in a race with a sleep of 2 s, so a route never hangs when no bytes come (a revert).
-read_within! : Tcp => Try(List(U8), [Closed, SocketErr(Io.Thrown), TimedOut])
+read_within! : Tcp => Try(List(U8), [Closed, Infra([SocketErr(Io.Thrown)]), TimedOut])
 read_within! = |s| {
 	r = Io.race!([s.read().map(|b| Got(b)), Time.sleep(2_000).map(|_| TimedOut)])
 	match r.result {
 		Ok(Got(b)) => Ok(b)
 		Ok(TimedOut) => Err(TimedOut)
 		Err(Closed) => Err(Closed)
-		Err(SocketErr(t)) => Err(SocketErr(t))
+		Err(Infra(i)) => Err(Infra(i))
 	}
 }
 
-read_text! : Tcp => Try(Str, [Closed, SocketErr(Io.Thrown), TimedOut])
+read_text! : Tcp => Try(Str, [Closed, Infra([SocketErr(Io.Thrown)]), TimedOut])
 read_text! = |s| read_within!(s).map_ok(|b| Str.from_utf8(b) ?? "?")

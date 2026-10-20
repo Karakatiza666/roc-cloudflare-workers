@@ -57,17 +57,17 @@ HttpRoutes :: [].{
 }
 
 ## `send!` read the body in its crossing: `text!` here has no wait.
-show! : Try(Response, [Network(Io.Thrown), HttpErr(Io.Thrown), TooLarge]) => Response
+show! : Try(Response, [Infra([Network(Io.Thrown), HttpErr(Io.Thrown), TooLarge])]) => Response
 show! = |r| match r {
 	Ok(res) => match res.text!() {
 		Ok(text) => Response.from_text(200, "${res.status().to_str()} ${text}")
 		Err(e) => Response.from_text(200, "body ${Str.inspect(e)}")
 	}
-	Err(e) => Response.from_text(200, error(e))
+	Err(Infra(e)) => Response.from_text(200, error(e))
 }
 
 ## `open!` keeps a stream: `text!` is one more wait.
-show_open! : Try(Response, [Network(Io.Thrown), HttpErr(Io.Thrown)]) => Response
+show_open! : Try(Response, [Infra([Network(Io.Thrown), HttpErr(Io.Thrown)])]) => Response
 show_open! = |r| match r {
 	Ok(res) => {
 		kind = match res.body() {
@@ -79,8 +79,8 @@ show_open! = |r| match r {
 			Err(e) => Response.from_text(200, "body ${Str.inspect(e)}")
 		}
 	}
-	Err(Network(t)) => Response.from_text(200, error(Network(t)))
-	Err(HttpErr(t)) => Response.from_text(200, error(HttpErr(t)))
+	Err(Infra(Network(t))) => Response.from_text(200, error(Network(t)))
+	Err(Infra(HttpErr(t))) => Response.from_text(200, error(HttpErr(t)))
 }
 
 error : [Network(Io.Thrown), HttpErr(Io.Thrown), TooLarge] -> Str

@@ -21,12 +21,12 @@ RateLimitRoutes :: [].{
 	}
 }
 
-show : Try({}, [RateLimited, LimitErr({ name : Str, message : Str })]) -> Response
+show : Try({}, [RateLimited, Infra([LimitErr({ name : Str, message : Str })])]) -> Response
 show = |r| Response.from_text(
 	200,
 	match r {
 		Ok({}) => "Ok"
 		Err(RateLimited) => "RateLimited"
-		Err(LimitErr(t)) => "LimitErr ${t.name}"
+		Err(Infra(LimitErr(t))) => "LimitErr ${t.name}"
 	},
 )

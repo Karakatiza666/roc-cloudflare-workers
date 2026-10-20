@@ -129,7 +129,7 @@ export const checks = [
   // (`t.edge`, PLAN.md 11c, E39) `batch message count of 101 exceeds limit of 100 (10206)`.
   ['queue send_batch! of 101 messages is QueueErr', async (t) => {
     const r = await t.get(`/queue/batch?count=101&label=${id()}`);
-    ok(r.status === 200 && r.body.startsWith('Err QueueErr'), `got ${r.status} ${r.body.slice(0, 200)}`);
+    ok(r.status === 200 && r.body.startsWith('Err Infra(QueueErr('), `got ${r.status} ${r.body.slice(0, 200)}`);
     const text = t.edge ? 'batch message count of 101 exceeds limit of 100 (10206)' : 'Unknown Internal Error (15000)';
     ok(r.body.includes(text), `got ${r.body.slice(0, 200)}, want the text ${text}`);
     return r.body.slice(0, 160);
