@@ -187,7 +187,7 @@ export const checks = [
       return [d, await p];
     }));
     for (const [d, r] of rs) {
-      answer(r, 'Err ObjectErr({ message: "Slow.init: cancelled: deadline", name: "Error" })');
+      answer(r, 'Err Infra(ObjectErr({ message: "Slow.init: cancelled: deadline", name: "Error" }))');
       // About 1060 to 1115 ms when the wait ends at the cancel, 6000 ms or more when it ends with the sleep.
       ok(r.ms < 2500, `offset ${d} ms: the wait ended after ${r.ms} ms`);
     }
