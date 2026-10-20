@@ -10,7 +10,7 @@ User : { name : Str }
 slot : Object.Attachment(User)
 slot = Object.attachment("user")
 
-attach! : Object.Socket => Try({}, [Infra([TooLarge])])
+attach! : Object.Socket => Try({}, [TooLarge])
 attach! = |socket| slot.set!(socket, { name: "a" })
 
 fetch! = |_req| Ok(Response.from_text(200, "x"))

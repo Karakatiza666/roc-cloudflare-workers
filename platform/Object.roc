@@ -524,12 +524,12 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 
 		## `ws.serializeAttachment(bytes)`: it stays while the object sleeps. Workers refuses more than 16,384 bytes:
 		## `TooLarge`.
-		set! : Object.Attachment(a), Object.Socket, a => Try({}, [Infra([TooLarge])])
+		set! : Object.Attachment(a), Object.Socket, a => Try({}, [TooLarge])
 		set! = |att, sock, value| {
 			write = att.write
 			match Js.call!([Call(Ref(sock.ref), "serializeAttachment", [Lit(Bytes(write(value)))])]) {
 				Ok(_) => Ok({})
-				Err(_) => Err(Infra(TooLarge))
+				Err(_) => Err(TooLarge)
 			}
 		}
 

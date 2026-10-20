@@ -6,6 +6,7 @@
 /CborRoutes.roc
 /CfRoutes.roc
 /D1Routes.roc
+/DecRoutes.roc
 /EmailRoutes.roc
 /EnvRoutes.roc
 /HttpRoutes.roc

@@ -308,7 +308,7 @@ The user chose G1a. Branch `n5-g1a`.
 | --- | --- |
 | Signatures | `nest_g1a.py` rewrites each error union of `Try(ok, [..])` and `Io(ok, [..])` in 23 modules (294 signatures; `Io` and `Rpc` by hand): the tags of `Rpc.Infra` go into `Infra([..])`. `--bodies` wraps the tags that the bodies make. The rest by hand (helpers `error_of`, `Err(Infra(error(t)))`, the re-raise `Infra(i) => Err(Infra(i))`) |
 | Bodies | The nested tags are written in the bodies. No generated `map_err` layer. `Response.text!`, `json!`, `bytes!`, `bytes_with!` are `body.x!().map_err(\|e\| Infra(e))`: `Body` stays flat |
-| Flat (bad input) | `Request` and `Body` (all), `Request.post_json`, `WebSocket.Message.json`, `Object.Self.accept!`, `accept_with!` and `set_auto_response!` (`TooLarge` of the arguments), the internal `SqlRules.typed` |
+| Flat (bad input) | `Request` and `Body` (all), `Request.post_json`, `WebSocket.Message.json`, `Object.Self.accept!`, `accept_with!` and `set_auto_response!` and `Attachment.set!` (`TooLarge` of the arguments), the internal `SqlRules.typed` |
 | `Io.timeout`, `timeout_at` | `Io(a, [Infra([TimedOut]), ..e])` (q10) |
 | `Rpc` | `Rpc.Infra` (29 tags, written out: #12489), `Rpc.forward`, `reply_of` gives `Infra([BadData])`. `on` still writes the heads by hand (#12482) |
 | `nest_g1a_docs.py` | The same rewrite for the code blocks of `MODULES.md` (93 signatures) |
