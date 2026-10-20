@@ -83,7 +83,8 @@ const mutations = [
   R(C, 'Dec decoder: a small bignum stays a BigInt', /Dec decode: tags 2 and 3 inside/, ['if (mant >= -0x1fffffffffffffn && mant <= 0x1fffffffffffffn) mant = Number(mant);', '']),
   R(C, 'Dec decoder: a negative integer mantissa as -n', /Dec decode: tag 4 gives/, ['if (major === 0) return n;\n    return typeof n === \'number\' && n < 0x20000000000000 ? -1 - n', 'if (major === 0) return n;\n    return typeof n === \'number\' && n < 0x20000000000000 ? -n']),
   R(C, 'Dec decoder: no check of the array of 2 items', /Dec decode: a bad shape/, ["if (this.u8[this.at++] !== 0x82) this.fail('tag 4 needs an array of 2 items');", 'this.at++;']),
-  R(C, 'Dec decoder: no check of the exponent size', /Dec decode: a bad shape/, ["if (typeof exp !== 'number') this.fail('the exponent of tag 4 is too large');", '']),
+  R(C, 'Dec decoder: no check of the exponent size', /Dec decode: a bad shape/, ["if (!Number.isSafeInteger(exp)) this.fail('the exponent of tag 4 is too large');", '']),
+  R(C, 'Dec decoder: a mantissa of 2^53 stays a Number', /Dec edge/, ["if (typeof mant === 'number' && !Number.isSafeInteger(mant)) mant = BigInt(mant);", '']),
   R(C, 'Dec decoder: the mantissa may be any item', /Dec decode: a bad shape/, ["if (major > 1) this.fail(`${what} must be an integer`);", '']),
   R(C, 'Dec decoder: no check that a bignum has a byte string', /Dec decode: a bad shape/, ["if (bb >> 5 !== 2) this.fail(`tag ${t} needs a byte string`);", '']),
   R(C, 'Dec decoder: no depth check of tag 4', /Dec decode: tag 4 counts as one level/, ['decimal(level) {\n    if (level >= MAX_DEPTH) throw depthError();\n', 'decimal(level) {\n']),
@@ -120,10 +121,7 @@ const fresh = () => {
 let bad = 0;
 fresh();
 const base = run();
-// Known red tests (a bug that the test agent reported, not fixed yet): they fail in the clean copy and do not stop the run.
-const KNOWN = /^Dec edge:/;
-base.failed = base.failed.filter((n) => !KNOWN.test(n));
-console.log(`clean copy: ${base.finished && base.failed.length === 0 ? 'all tests pass (but the known red tests)' : 'FAILS'}`);
+console.log(`clean copy: ${base.finished && base.failed.length === 0 ? 'all tests pass' : 'FAILS'}`);
 if (!base.finished || base.failed.length) { console.log(base.out.slice(-1500)); process.exit(1); }
 
 const rows = [];

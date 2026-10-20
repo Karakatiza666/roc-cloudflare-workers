@@ -32,9 +32,9 @@ const decs = [
   ['big', 170141183460469231731687303715884105727n, null],
   ['bigneg', -170141183460469231731687303715884105728n, null],
   ['tiny', 1n, null],
-  // A mantissa of exactly 2^53 and -2^53: the reader gives an unsafe Number, so the writer does not know the marker (a bug of js/cbor.js,
-  // reported by the test agent). Off by default, so the revert runner has a green clean tree: `DEC_EDGE=1 node conformance/run.mjs ... dec`.
-  ...(process.env.DEC_EDGE ? [['p53', 9_007_199_254_740_992_000n * 1000n, null], ['np53', -9_007_199_254_740_992_000n * 1000n, null]] : []),
+  // A mantissa of exactly 2^53 and -2^53 (the edge of the Number range of the reader): 9.007199254740992 in attos.
+  ['p53', 9_007_199_254_740_992_000n, null],
+  ['np53', -9_007_199_254_740_992_000n, null],
 ];
 
 // The messages of the JS consumers (worker.js `/__dec_seen`) of a queue, for the label.
@@ -147,10 +147,8 @@ export const checks = [
     answer(await t.get('/dec/rpc?v=big'), 'Ok same=True a=170141183460469231731.687303715884105727 b=-170141183460469231731.687303715884105728');
     answer(await t.get('/dec/rpc?v=mid'), 'Ok same=True a=123456789012.345678 b=-170141183460469231731.687303715884105728');
     // A mantissa of exactly 2^53 or -2^53 (the edge of the Number range of the reader).
-    if (process.env.DEC_EDGE) {
-      answer(await t.get('/dec/rpc?v=p53'), 'Ok same=True a=9.007199254740992 b=-170141183460469231731.687303715884105728');
-      answer(await t.get('/dec/rpc?v=np53'), 'Ok same=True a=-9.007199254740992 b=-170141183460469231731.687303715884105728');
-    }
+    answer(await t.get('/dec/rpc?v=p53'), 'Ok same=True a=9.007199254740992 b=-170141183460469231731.687303715884105728');
+    answer(await t.get('/dec/rpc?v=np53'), 'Ok same=True a=-9.007199254740992 b=-170141183460469231731.687303715884105728');
   }],
   ['dec D1 read: a Dec field reads a float, an integer and a float that is not exact in binary', async (t) => {
     answer(await t.get('/dec/d1_read'), 'Ok 2.5 3.0 0.1');
