@@ -31,6 +31,27 @@ TimeRoutes :: [].{
 			slow = Time.sleep(3_000).timeout(40).run!()
 			ok("fast=${Str.inspect(fast)} slow=${Str.inspect(slow)}")
 		}
+		# `Io.timeout_at` (N9): the deadline is a time on the `Time.now_ms!` clock. A deadline in the future that the sleep
+		# beats is `Ok`.
+		["timeout_at_win"] => {
+			got = Time.sleep(10).timeout_at(Time.now_ms!() + 5_000).run!()
+			ok(Str.inspect(got))
+		}
+		# A deadline in the past with a slow operation: `TimedOut` at once, the sleep of 3 s is aborted.
+		["timeout_at_past"] => {
+			got = Time.sleep(3_000).timeout_at(Time.now_ms!() - 1_000).run!()
+			ok(Str.inspect(got))
+		}
+		# A deadline that comes during the wait: `TimedOut` at the deadline (100 ms), not before and not after the sleep of 3 s.
+		["timeout_at_wait"] => {
+			got = Time.sleep(3_000).timeout_at(Time.now_ms!() + 100).run!()
+			ok(Str.inspect(got))
+		}
+		# A deadline above the range of `I64` is clamped: no throw, and the operation wins.
+		["timeout_at_huge"] => {
+			got = Time.sleep(10).timeout_at(U64.highest).run!()
+			ok(Str.inspect(got))
+		}
 		_ => Response.from_text(404, "no route")
 	}
 }

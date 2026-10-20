@@ -31,6 +31,19 @@ const early = async (t, route) => {
   return `${ms} ms`;
 };
 
+const failing = async (t, route, tag) => {
+  const id = rand();
+  answer(await t.get(`/after/${route}?id=${id}`), 'ok');
+  let line;
+  for (let i = 0; i < 50 && !line; i++) {
+    line = t.logs.find((l) => l.message.includes(': after respond: failed:') && l.message.includes(id));
+    if (!line) await sleep(50);
+  }
+  ok(line, `no log line "${tag}: after respond: failed: ..." with ${id}`);
+  eq(line.message.trim(), `${tag}: after respond: failed: Boom("${id}")`, 'the log line');
+  return line.message.trim();
+};
+
 export const checks = [
   ['after: Response.after in a Worker fetch! answers before the work ends, and the work runs after', (t) => early(t, 'slow')],
   ['after: Response.after in a named entry point fetch! answers before the work ends, and the work runs after', (t) => early(t, 'entry')],
@@ -40,15 +53,7 @@ export const checks = [
     answer(await t.get(`/after/two?id=${id}`), 'first');
     eq(await until(kv, `after-${id}-b`), 'one', 'the second work saw the key of the first');
   }],
-  ['after: a failing work gives the log line and the client still got 200', async (t) => {
-    const id = rand();
-    answer(await t.get(`/after/fail?id=${id}`), 'ok');
-    let line;
-    for (let i = 0; i < 50 && !line; i++) {
-      line = t.logs.find((l) => l.message.includes('fetch: after respond: failed:') && l.message.includes(id));
-      if (!line) await sleep(50);
-    }
-    ok(line, `no log line "fetch: after respond: failed: ..." with ${id}`);
-    return line.message.trim();
-  }],
+  // The text of the `Response.after` docs: `<tag>: after respond: failed: <Str.inspect(e)>` (the error is `Boom(id)`).
+  ['after: a failing work gives the log line and the client still got 200', (t) => failing(t, 'fail', 'fetch')],
+  ['after: a failing work in a named entry point gives the log line with the name of the entry point', (t) => failing(t, 'entry_fail', 'After.fetch')],
 ];

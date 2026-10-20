@@ -37,4 +37,32 @@ export const checks = [
     eq(r.waits, 2, 'waits');
     return `${r.waits} waits, ${r.ms} ms`;
   }],
+  // Io.timeout_at (N9): the deadline is a time on the `Time.now_ms!` clock. One check for each way to meet it.
+  ['time Io.timeout_at: a deadline in 5 s that the sleep beats is Ok after about 10 ms', async (t) => {
+    const r = await t.get('/time/timeout_at_win');
+    answer(r, 'Ok({})');
+    ok(r.ms >= 5 && r.ms < 600, `${r.ms} ms: want about 10 ms`);
+    eq(r.waits, 1, 'waits');
+    return `${r.waits} wait, ${r.ms} ms`;
+  }],
+  ['time Io.timeout_at: a deadline in the past is TimedOut at once, the sleep of 3 s is aborted', async (t) => {
+    const r = await t.get('/time/timeout_at_past');
+    answer(r, 'Err(TimedOut)');
+    ok(r.ms < 600, `${r.ms} ms: want about 0 ms (the sleep of 3 s is aborted)`);
+    eq(r.waits, 1, 'waits');
+    return `${r.waits} wait, ${r.ms} ms`;
+  }],
+  ['time Io.timeout_at: a deadline in 100 ms is TimedOut at about 100 ms, not before', async (t) => {
+    const r = await t.get('/time/timeout_at_wait');
+    answer(r, 'Err(TimedOut)');
+    ok(r.ms >= 90 && r.ms < 600, `${r.ms} ms: want about 100 ms (not 0 ms, not the 3 s of the sleep)`);
+    eq(r.waits, 1, 'waits');
+    return `${r.waits} wait, ${r.ms} ms`;
+  }],
+  ['time Io.timeout_at: a deadline of U64.highest does not throw, the operation wins', async (t) => {
+    const r = await t.get('/time/timeout_at_huge');
+    answer(r, 'Ok({})');
+    ok(r.ms < 600, `${r.ms} ms: want about 10 ms`);
+    return `${r.waits} wait, ${r.ms} ms`;
+  }],
 ];
