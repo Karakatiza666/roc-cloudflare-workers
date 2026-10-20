@@ -175,6 +175,24 @@ export const checks = [
     ok(r.ms < 4500, `took ${r.ms} ms`);
     return `${r.ms} ms`;
   }],
+  // A request of another context sweeps the task table and cancels the Init task between 1000 ms (initMs) and 1050 ms (the own timer).
+  // workerd keeps that wake until the object has I/O (the sleep of 6 s), unless the own timer sweeps again (js/tasks.js sweep(own)).
+  // The window is 50 ms wide and the client is not exact: one run sends 12 requests, 5 ms apart, to cover it with high probability.
+  ['objects init! cancelled by a sweep of another request context in the Init window still ends the wait at once', async (t) => {
+    const offsets = [995, 1000, 1005, 1010, 1015, 1020, 1025, 1030, 1035, 1040, 1045, 1050];
+    const rs = await Promise.all(offsets.map(async (d) => {
+      const p = t.get(`/objects/slow?name=fs${d}`);
+      await sleep(d);
+      await t.get(`/objects/counter?name=fsother${d}&op=get`);
+      return [d, await p];
+    }));
+    for (const [d, r] of rs) {
+      answer(r, 'Err ObjectErr({ message: "Slow.init: cancelled: deadline", name: "Error" })');
+      // About 1060 to 1115 ms when the wait ends at the cancel, 6000 ms or more when it ends with the sleep.
+      ok(r.ms < 2500, `offset ${d} ms: the wait ended after ${r.ms} ms`);
+    }
+    return rs.map(([d, r]) => `${d}:${r.ms}`).join(' ');
+  }],
   ['objects a KV-backed class: its first event names the class and new_sqlite_classes', async (t) => {
     const r = await t.get('/objects/kvonly?name=k');
     has(r, 'Err ObjectErr');

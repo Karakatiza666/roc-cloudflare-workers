@@ -101,7 +101,7 @@ export function makeBridge(cell, tasks, shim) {
           const cancelled = tasks.waitStart(t, c.socketWait === true);
           c.socketWait = false;
           try {
-            res = await Promise.race([running, cancelled]);
+            res = await Promise.race([running, cancelled, t.ownWoken]);
           } finally {
             tasks.waitStop(t);
           }

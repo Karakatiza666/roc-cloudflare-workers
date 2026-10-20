@@ -2844,6 +2844,7 @@ Found on the way:
 | Item | Result |
 | --- | --- |
 | Init deadline timer | It swept once; a task that started late was never cut. It now sweeps again until the task ends. |
+| Init deadline: a sweep of another request context (flake, 1 run in 12) | A request of another context that came between `initMs` and the timer cancelled the `Init` task, but its wake did not end the wait until the sleep ended (6 s): workerd keeps a wake from another context until the object has I/O. The wait now also races `t.ownWoken`, which the timer of the task resolves (`sweep(hooks)`). Repro: `research/flake-foreign-sweep/`. |
 | Compiler crash: `Cbor.encode` of the generic reply in an app module | `Rpc.on` writes the reply head by hand |
 | Compiler crash: an `Rpc` answer of `{}` | Fix in progress (N1 of `examples/auction/REVIEW.md`) |
 | roc-cbor 0.2.0 | Prepared, not published: `Cbor.Bytes` reads arrays (a D1 BLOB), a `Dec` encoder (a whole Dec is an integer, else tag 4, exact). The platform moves to it after the release. |
