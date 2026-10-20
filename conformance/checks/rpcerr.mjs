@@ -50,6 +50,17 @@ export const checks = [
       ok(r.status === 200 && r.body.startsWith('RpcErr bad argument: '), `${k}: got ${r.status} ${r.body.slice(0, 200)}`);
     }
   }],
+  // examples/auction/REVIEW.md N1: the answer type `{}` (Rpc.reply_of reads the head by hand, research/rpc-unit-crash).
+  ['rpcerr an answer {}: Ok({}) and Err(Remote(AlreadyOpen)) on an entry point, a named entry point and an object', async (t) => {
+    for (const [k, base] of targets) {
+      answer(await route(t, base, 'unit', 'n=1'), 'Ok {}');
+      answer(await route(t, base, 'unit', 'n=2'), 'AlreadyOpen');
+    }
+  }],
+  ['rpcerr an answer {} with ? (the shape of examples/auction)', async (t) => {
+    answer(await t.get('/rpcerr/obj/unit_try?name=e&n=1'), 'opened');
+    answer(await t.get('/rpcerr/obj/unit_try?name=e&n=2'), 'AlreadyOpen');
+  }],
   // The bytes of a reply: a JS caller gets the plain object `{"Ok": v}` or `{"Err": tag}` (the derived CBOR of a tag).
   ['rpcerr the reply on the wire is {"Ok": v} and {"Err": tag} for a JS caller', async (t) => {
     const r = await t.get('/__wire');

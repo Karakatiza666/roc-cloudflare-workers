@@ -184,7 +184,7 @@ alarm! = |self, _info| match state_cell.get!(self) {
 
 # ---- Rpc ----
 
-open! : Object.Self, Gavel.Lot => Try({ close_ms : U64 }, _)
+open! : Object.Self, Gavel.Lot => Try({}, _)
 open! = |self, lot| match state_cell.get!(self) {
 	Ok(_) => Err(AlreadyOpen)
 	Err(NotFound) => {
@@ -193,7 +193,7 @@ open! = |self, lot| match state_cell.get!(self) {
 			{ status: Open, reserve_cents: lot.reserve_cents, close_ms: lot.close_ms, min_step_cents: lot.min_step_cents, max_step_cents: lot.max_step_cents, winner: "", final_cents: 0 },
 		)?
 		self.set_alarm_at!(lot.close_ms)?
-		Ok({ close_ms: lot.close_ms })
+		Ok({})
 	}
 	Err(BadData(s)) => Err(BadData(s))
 	Err(StorageErr(t)) => Err(StorageErr(t))
