@@ -4,7 +4,7 @@ platform ""
 	exposes [Worker, Request, Response, Body, Http, Ctx, Time, Log, Env, Secret, D1, Sql, Id64, Kv, R2, Cache, Memo, Queue, Object, Rpc, Service, WebSocket, Tcp, Email, WebCrypto, RateLimit, Ai, Vectorize, Analytics, Hyperdrive, Workflows, Assets, Version, SecretsStore, Cbor, Native, Io, Js]
 	packages {
 		http: "https://github.com/roc-lang/http/releases/download/2.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
-		cbor: "https://github.com/Karakatiza666/roc-cbor/releases/download/0.2.0/GTUNBR1419Xvgw1eightgb14scrrWkoiTVkBPJ94yHMA.tar.zst",
+		cbor: "https://github.com/Karakatiza666/roc-cbor/releases/download/0.2.1/9jD8bxEKhNu6CzBKej1nA1hzymTedJsfhiGgiMPGA1mu.tar.zst",
 	}
 	provides { "roc_event": event_for_host! }
 	hosted { "roc_await": Js.host_await!, "roc_call": Js.host_call!, "roc_native": Host.native! }
