@@ -67,4 +67,9 @@ RpcMethods :: [].{
 
 	mismatch_caller : Rpc({ n : I64 }, I64, Rpc.NoErr)
 	mismatch_caller = Rpc.method("mismatch")
+
+	## The answer `{}` (examples/auction/REVIEW.md N1, research/rpc-unit-crash): the callee gives `Ok({})` for the lot "new"
+	## and `Err(AlreadyOpen)` for others. Three callees: the default export, `Admin` and `Counter` (RpcErrRoutes.roc).
+	open_lot : Rpc({ id : Str, close_ms : U64 }, {}, [AlreadyOpen])
+	open_lot = Rpc.method("open_lot")
 }

@@ -43,6 +43,8 @@ const TESTS = {
   'program-test': () => [process.execPath, ['bench/program-test.mjs']],
   'bindings-test': () => [process.execPath, ['bench/bindings-test.mjs', 'bench/out']],
   'cli-test': () => [process.execPath, ['bench/cli-test.mjs', 'bench/out']],
+  // The build of the conformance app only (exit 2: warnings only), for a revert that crashes the compiler.
+  'conformance build': () => ['bash', ['-c', '"$ROC" build --opt=speed --target=wasm32 --no-cache --output=.cache/conformance-reverts/build-check.wasm conformance/app.roc || [ $? -eq 2 ]']],
 };
 // name, the test, the checks that must fail (conformance only), edits: [file, from, to].
 const R = (name, test, checks, ...edits) => ({ name, test, checks, edits });
@@ -605,7 +607,12 @@ const reverts = [
     [BP + 'Rpc.roc', 'err_head = [0xa1, 0x63, 0x45, 0x72, 0x72]', 'err_head = [0xa1, 0x63, 0x65, 0x72, 0x72]']),
   R('8h: reply_of maps a Remote reply to BadData', 'conformance',
     ['rpcerr Err with a payload tag: the caller matches Busy(Str)', 'rpcerr Err with a tag with no payload: the caller matches StillOpen', 'rpcerr a JS callee: the plain objects { Ok } and { Err } are Ok, Busy and StillOpen', 'objects rpc: a callee that gives Err(Nope(3)): the caller gets Err(Remote(Nope(3)))'],
-    [BP + 'Rpc.roc', 'Ok(Reply.Err(e)) => Err(Remote(e))', 'Ok(Reply.Err(e)) => Err(BadData(Str.inspect(e)))']),
+    [BP + 'Rpc.roc', 'Ok(e) => Err(Remote(e))', 'Ok(e) => Err(BadData(Str.inspect(e)))']),
+  // REVIEW.md N1 (research/rpc-unit-crash): reply_of parses the whole reply with a derived parser of `[Ok(ret), Err(err)]`,
+  // as before. With the answer `{}` of `open_lot`, `roc build` of the conformance app crashes (nightly-2026-10-12).
+  R('8h N1: reply_of parses the reply with a derived Reply (the answer {} crashes the build)', 'conformance build', [],
+    [BP + 'Rpc.roc', "\treply_of = |bytes| {\n\t\tif bytes.starts_with(ok_head) {\n\t\t\tv : Try(ret, _)\n\t\t\tv = Cbor.parse(bytes.drop_first(ok_head.len()))\n\t\t\tmatch v {\n\t\t\t\tOk(r) => Ok(r)\n\t\t\t\tErr(e) => Err(BadData(Str.inspect(e)))\n\t\t\t}\n\t\t} else if bytes.starts_with(err_head) {\n\t\t\tv : Try(err, _)\n\t\t\tv = Cbor.parse(bytes.drop_first(err_head.len()))\n\t\t\tmatch v {\n\t\t\t\tOk(e) => Err(Remote(e))\n\t\t\t\tErr(e) => Err(BadData(Str.inspect(e)))\n\t\t\t}\n\t\t} else {\n\t\t\tErr(BadData(\"not a reply: ${Str.inspect(bytes.take_first(8))}\"))\n\t\t}\n\t}\n", "\treply_of = |bytes| {\n\t\tr : Try(Reply(ret, err), _)\n\t\tr = Cbor.parse(bytes)\n\t\tmatch r {\n\t\t\tOk(Reply.Ok(v)) => Ok(v)\n\t\t\tOk(Reply.Err(e)) => Err(Remote(e))\n\t\t\tErr(e) => Err(BadData(Str.inspect(e)))\n\t\t}\n\t}\n"],
+    [BP + 'Rpc.roc', 'ok_head : List(U8)\n', 'Reply(ret, err) := [Ok(ret), Err(err)].{\n\tparser_for : _\n\tencoder_for : _\n}\n\nok_head : List(U8)\n']),
   R('8h: the parser of Rpc.NoErr does not fail (a stray Err reply is not BadData)', 'conformance',
     ['rpcerr a reply { Err } for a method with Rpc.NoErr is BadData'],
     [BP + 'Rpc.roc', 'parser_for = |_| |_state| Err(InvalidCbor(0))', 'parser_for = |_| |state| Ok({ value: crash "NoErr parsed", rest: state })']),

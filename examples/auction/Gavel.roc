@@ -31,8 +31,8 @@ Gavel :: [].{
 	SettleErr : [D1Err(Io.Thrown), Constraint(Sql.Constraint), KvErr(Io.Thrown), BadData(Str), TooLarge]
 
 	# The Rpc methods. The Roc callee and the Roc caller both use these values.
-	## The answer of `open` is the time of the alarm. (`{}` as the answer crashes the compiler: see REVIEW.md.)
-	open : Rpc(Gavel.Lot, { close_ms : U64 }, Gavel.RoomErr)
+	## `open` is a command: its answer is `{}`.
+	open : Rpc(Gavel.Lot, {}, Gavel.RoomErr)
 	open = Rpc.method("open")
 
 	snapshot : Rpc({}, Gavel.Snapshot, Gavel.RoomErr)

@@ -11,18 +11,20 @@ import RpcMethods
 import Q
 
 self_service = Service.binding("SELF")
+
 admin_service = Service.binding("ADMIN")
+
 counters = Object.namespace("COUNTERS", { class: "Counter" })
 
 RpcErrRoutes :: [].{
 
 	## The callees of the default export and of `Admin`.
 	service_handlers : List(Rpc.Handler({}))
-	service_handlers = [RpcMethods.busy.on(busy!), RpcMethods.crashes.on(crashes!), RpcMethods.mismatch.on(mismatch!)]
+	service_handlers = [RpcMethods.busy.on(busy!), RpcMethods.crashes.on(crashes!), RpcMethods.mismatch.on(mismatch!), RpcMethods.open_lot.on(open_lot!)]
 
 	## The callees of the class `Counter`.
 	object_handlers : List(Rpc.Handler(Object.Self))
-	object_handlers = [RpcMethods.busy.on(busy!), RpcMethods.crashes.on(crashes!), RpcMethods.mismatch.on(mismatch!)]
+	object_handlers = [RpcMethods.busy.on(busy!), RpcMethods.crashes.on(crashes!), RpcMethods.mismatch.on(mismatch!), RpcMethods.open_lot.on(open_lot!)]
 
 	route! : Request, List(Str) => Response
 	route! = |req, path| {
@@ -45,6 +47,7 @@ by_service! = |s, case, n| match case {
 	"badarg" => busy_text(s.call!(RpcMethods.busy_badarg, { n: "x" }))
 	"crash" => noerr_text(s.call!(RpcMethods.crashes, { n: n }))
 	"stray" => noerr_text(s.call!(RpcMethods.mismatch_caller, { n: n }))
+	"unit" => unit_text(s.call!(RpcMethods.open_lot, lot(n)))
 	_ => "no case"
 }
 
@@ -54,7 +57,33 @@ by_object! = |o, case, n| match case {
 	"badarg" => busy_text(o.call!(RpcMethods.busy_badarg, { n: "x" }))
 	"crash" => noerr_text(o.call!(RpcMethods.crashes, { n: n }))
 	"stray" => noerr_text(o.call!(RpcMethods.mismatch_caller, { n: n }))
+	"unit" => unit_text(o.call!(RpcMethods.open_lot, lot(n)))
+	# The shape of examples/auction (REVIEW.md N1): `?` on a `call!` with the answer `{}`.
+	"unit_try" => unit_try_text(open_room!(o, lot(n)))
 	_ => "no case"
+}
+
+## The lot of a `unit` case: "new" for n = 1, else "old".
+lot : I64 -> { id : Str, close_ms : U64 }
+lot = |n| { id: if n == 1 "new" else "old", close_ms: 5 }
+
+open_room! = |o, l| {
+	o.call!(RpcMethods.open_lot, l)?
+	Ok("opened")
+}
+
+unit_try_text = |r| match r {
+	Ok(s) => s
+	Err(Remote(AlreadyOpen)) => "AlreadyOpen"
+	Err(e) => "Err ${Str.inspect(e)}"
+}
+
+unit_text : Try({}, [RpcErr(Io.Thrown), BadData(Str), Remote([AlreadyOpen])]) -> Str
+unit_text = |r| match r {
+	Ok({}) => "Ok {}"
+	Err(Remote(AlreadyOpen)) => "AlreadyOpen"
+	Err(RpcErr(t)) => "RpcErr ${t.message}"
+	Err(BadData(s)) => "BadData ${s}"
 }
 
 # The caller matches each tag of the error by its name: a wrong tag does not compile.
@@ -83,6 +112,9 @@ busy! = |_self, { n }| match n {
 
 crashes! : self, { n : I64 } => Try(I64, Rpc.NoErr)
 crashes! = |_self, { n }| if n >= 0 crash "rpc callee crash" else Ok(n)
+
+open_lot! : self, { id : Str, close_ms : U64 } => Try({}, [AlreadyOpen])
+open_lot! = |_self, l| if l.id == "new" Ok({}) else Err(AlreadyOpen)
 
 mismatch! : self, { n : I64 } => Try(I64, [Surprise])
 mismatch! = |_self, { n }| if n >= 0 Err(Surprise) else Ok(n)
