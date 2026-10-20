@@ -7,6 +7,7 @@ Minimal repros of the two compiler bugs that `MODULES.md` 15 names. `./run.sh <r
 | `nightly-2026-10-09-258ab27` | Yes | Yes |
 | `nightly-2026-10-12-2664a27` | Yes | Yes |
 | `nightly-2026-10-14-38a3029` (latest on 2026-10-15) | Yes | Yes |
+| `nightly-2026-10-19-601b54c` (checked on 2026-10-20) | No | No |
 
 Issues: bug 1 is roc-lang/roc#12309, bug 2 is roc-lang/roc#12310 (filed on 2026-10-15; no older issue matched).
 
