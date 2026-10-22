@@ -28,7 +28,7 @@ Remote :: [].{
 	## reply as one `Packed` value of at most `max` bytes (`pf.pack`). The reply is `{"Ok": value}` or `{"Err": tag}`: its `Err` is
 	## `Remote(err)`. A reply that does not fit is `BadData`. A throw of the callee, of Workers (no method, the size limit
 	## of RPC) or of `pf.pack` (`TooLarge`) is `RpcErr`.
-	call : List(Js.Op), U32, Rpc(arg, ret, err), arg, U64 -> Io(ret, [Remote(err), Infra([RpcErr(Io.Thrown), BadData(Str)])]) where [arg.Cbor.Writable, ret.Cbor.Readable(e1), err.Cbor.Readable(e2)]
+	call : List(Js.Op), U32, Rpc(iface, arg, ret, err), arg, U64 -> Io(ret, [Remote(err), Infra([RpcErr(Io.Thrown), BadData(Str)])]) where [arg.Cbor.Writable, ret.Cbor.Readable(e1), err.Cbor.Readable(e2)]
 	call = |ops, target, m, a, max| {
 		n = ops.len().to_u32_wrap()
 		Io.new(

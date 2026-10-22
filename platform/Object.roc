@@ -18,61 +18,62 @@ import Remote
 import WebSocket
 import cbor.Cbor
 
-Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)], location_hint : Str }.{
+Object(iface) :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)], location_hint : Str }.{
 
 	## A namespace: the binding name and the class of its objects (`class_name` in the Wrangler config). The class is the
-	## value of `Object.class`, so its name is written once. `script`: the Worker that has the class (`script_name`),
-	## when it is not this Worker. For a class that this app does not have as a value, use `namespace_named` (this Worker)
-	## or `namespace_remote` (another Worker).
-	namespace : Str, { class : Object.Class, script ?: Str } -> Object.Namespace
-	namespace = |binding, opts| Object.Namespace.{ binding, jurisdiction: "", class: opts.class.name, script: opts.?script ?? "" }
+	## value of `Object.class`, so its name is written once, and its interface (`Object.Class(iface)`) is the interface of the
+	## namespace: `call!` takes the `Rpc` constants of that interface only. `script`: the Worker that has the class
+	## (`script_name`), when it is not this Worker. For a class that this app does not have as a value, use
+	## `namespace_named` (this Worker) or `namespace_remote` (another Worker): they take the interface as `Rpc.Iface`.
+	namespace : Str, { class : Object.Class(iface), script ?: Str } -> Object.Namespace(iface)
+	namespace = |binding, opts| Object.Namespace.{ binding, jurisdiction: "", class: opts.class.name(), script: opts.?script ?? "" }
 
 	## A namespace of a class of this Worker, by name: for a class whose `Object.Class` value cannot be imported (a module
 	## cycle). The manifest is the same as `namespace` with that class and no `script`. The shim checks at load that the
 	## class is in `objects`.
-	namespace_named : Str, Str -> Object.Namespace
-	namespace_named = |binding, class_name| Object.Namespace.{ binding, jurisdiction: "", class: class_name, script: "" }
+	namespace_named : Str, Str, Rpc.Iface(iface) -> Object.Namespace(iface)
+	namespace_named = |binding, class_name, _iface| Object.Namespace.{ binding, jurisdiction: "", class: class_name, script: "" }
 
 	## A namespace of a class that another Worker has (`script_name`): the app has the class name only, as text.
-	namespace_remote : Str, { class : Str, script : Str } -> Object.Namespace
-	namespace_remote = |binding, opts| Object.Namespace.{ binding, jurisdiction: "", class: opts.class, script: opts.script }
+	namespace_remote : Str, { class : Str, script : Str }, Rpc.Iface(iface) -> Object.Namespace(iface)
+	namespace_remote = |binding, opts, _iface| Object.Namespace.{ binding, jurisdiction: "", class: opts.class, script: opts.script }
 
 	## A namespace: the binding name, its jurisdiction ("" for none), its class and the Worker of the class ("" for
 	## this Worker). Data.
-	Namespace := { binding : Str, jurisdiction : Str, class : Str, script : Str }.{
+	Namespace(iface) := { binding : Str, jurisdiction : Str, class : Str, script : Str }.{
 
 		## The binding for the manifest (`Worker.new({ bindings: [...] })`, MODULES.md 3): the kind `object`, with
 		## `class`, and `script` when the class is in another Worker. With no `script`, the shim checks at load that
 		## the class is in `objects`.
-		declare : Object.Namespace -> { name : Str, kind : Str, props : List((Str, Str)) }
+		declare : Object.Namespace(iface) -> { name : Str, kind : Str, props : List((Str, Str)) }
 		declare = |ns| {
 			props = [("class", ns.class), ("script", ns.script)].keep_if(|(_, v)| v != "")
 			{ name: ns.binding, kind: "object", props }
 		}
 
 		## A stub of the object with this name: `getByName(name)` runs in the program of each call.
-		named : Object.Namespace, Str -> Object
+		named : Object.Namespace(iface), Str -> Object(iface)
 		named = |ns, name| stub(ns, Named(name), Err(MissingField))
 
-		named_with : Object.Namespace, Str, { location_hint ?: Object.Location } -> Object
+		named_with : Object.Namespace(iface), Str, { location_hint ?: Object.Location } -> Object(iface)
 		named_with = |ns, name, opts| stub(ns, Named(name), opts.?location_hint)
 
 		## A stub of the object with this id (the text of `id.toString()`): `get(idFromString(id))`.
-		from_id : Object.Namespace, Str -> Object
+		from_id : Object.Namespace(iface), Str -> Object(iface)
 		from_id = |ns, id| stub(ns, Id(id), Err(MissingField))
 
-		from_id_with : Object.Namespace, Str, { location_hint ?: Object.Location } -> Object
+		from_id_with : Object.Namespace(iface), Str, { location_hint ?: Object.Location } -> Object(iface)
 		from_id_with = |ns, id, opts| stub(ns, Id(id), opts.?location_hint)
 
 		## `newUniqueId()`, sync (one `call!`). A throw is a crash: the type has no error.
-		unique! : Object.Namespace => Object
+		unique! : Object.Namespace(iface) => Object(iface)
 		unique! = |ns| match unique_id!(ns, []) {
 			Ok(id) => stub(ns, Id(id), Err(MissingField))
 			Err(t) => crash "Object.unique!: ${t.name}: ${t.message}"
 		}
 
 		## `newUniqueId({ jurisdiction })`, sync. The Cloudflare docs recommend `jurisdiction` on the namespace.
-		unique_with! : Object.Namespace, { jurisdiction ?: Object.Jurisdiction, location_hint ?: Object.Location } => Try(Object, [Infra([ObjectErr(Io.Thrown)])])
+		unique_with! : Object.Namespace(iface), { jurisdiction ?: Object.Jurisdiction, location_hint ?: Object.Location } => Try(Object(iface), [Infra([ObjectErr(Io.Thrown)])])
 		unique_with! = |ns, opts| {
 			args = match opts.?jurisdiction {
 				Ok(j) => [Lit(Obj([("jurisdiction", Text(jurisdiction_text(j)))]))]
@@ -85,7 +86,7 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 		}
 
 		## `namespace.jurisdiction(j)`: data. The same name gives another object in another jurisdiction.
-		jurisdiction : Object.Namespace, Object.Jurisdiction -> Object.Namespace
+		jurisdiction : Object.Namespace(iface), Object.Jurisdiction -> Object.Namespace(iface)
 		jurisdiction = |ns, j| { ..ns, jurisdiction: jurisdiction_text(j) }
 	}
 
@@ -95,29 +96,29 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 	Location : [Wnam, Enam, Sam, Weur, Eeur, Apac, ApacNe, ApacSe, Oc, Afr, Me]
 
 	## `stub.fetch(request)`: a 101 response keeps its `web_socket`, so a Worker can give it to the client.
-	fetch : Object, Request -> Io(Response, [Infra([ObjectErr(Io.Thrown)])])
+	fetch : Object(iface), Request -> Io(Response, [Infra([ObjectErr(Io.Thrown)])])
 	fetch = |obj, req| {
 		s = stub_ops(obj)
 		Remote.fetch(s.ops, s.slot, req, |t| Infra(ObjectErr(t)))
 	}
 
-	fetch! : Object, Request => Try(Response, [Infra([ObjectErr(Io.Thrown)])])
+	fetch! : Object(iface), Request => Try(Response, [Infra([ObjectErr(Io.Thrown)])])
 	fetch! = |obj, req| Io.run!(fetch(obj, req))
 
 	## `stub[method](arg)` with an `Rpc` constant: the reply is read to the RPC limit of Workers (32 MiB). An `Err` of
 	## the callee is `Remote(err)`.
-	call : Object, Rpc(arg, ret, err), arg -> Io(ret, [Remote(err), Infra([RpcErr(Io.Thrown), BadData(Str)])]) where [arg.Cbor.Writable, ret.Cbor.Readable(e1), err.Cbor.Readable(e2)]
+	call : Object(iface), Rpc(iface, arg, ret, err), arg -> Io(ret, [Remote(err), Infra([RpcErr(Io.Thrown), BadData(Str)])]) where [arg.Cbor.Writable, ret.Cbor.Readable(e1), err.Cbor.Readable(e2)]
 	call = |obj, m, a| {
 		s = stub_ops(obj)
 		Remote.call(s.ops, s.slot, m, a, Remote.rpc_max)
 	}
 
-	call! : Object, Rpc(arg, ret, err), arg => Try(ret, [Remote(err), Infra([RpcErr(Io.Thrown), BadData(Str)])]) where [arg.Cbor.Writable, ret.Cbor.Readable(e1), err.Cbor.Readable(e2)]
+	call! : Object(iface), Rpc(iface, arg, ret, err), arg => Try(ret, [Remote(err), Infra([RpcErr(Io.Thrown), BadData(Str)])]) where [arg.Cbor.Writable, ret.Cbor.Readable(e1), err.Cbor.Readable(e2)]
 	call! = |obj, m, a| Io.run!(call(obj, m, a))
 
 	## The id of the object (`id.toString()`). The runtime makes the id of a named object from the name and the namespace
 	## (and its jurisdiction), so a named object takes one `call!` (`idFromName`). A stub of an id needs no crossing.
-	id! : Object => Try(Str, [Infra([ObjectErr(Io.Thrown)])])
+	id! : Object(iface) => Try(Str, [Infra([ObjectErr(Io.Thrown)])])
 	id! = |obj| match obj.target {
 		Id(id) => Ok(id)
 		Named(name) => {
@@ -406,72 +407,85 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 	{
 		init! ?: Object.Self => Try({}, e1),
 		fetch! ?: Object.Self, Request => Try(Response, e2),
-		rpc ?: List(Rpc.Handler(Object.Self)),
+		rpc ?: List(Rpc.Serves(iface, Object.Self)),
 		alarm! ?: Object.Self, { retry_count : U32, is_retry : Bool } => Try({}, e3),
 		web_socket_message! ?: Object.Self, Object.Socket, WebSocket.Message => Try({}, e4),
 		web_socket_close! ?: Object.Self, Object.Socket, WebSocket.Closed => Try({}, e5),
 		web_socket_error! ?: Object.Self, Object.Socket, Io.Thrown => Try({}, e6),
-	} -> Object.Class
+	} -> Object.Class(iface)
 	class = |name, h| {
-		name,
-		handlers: [
-			("init", h.?init!.is_ok()),
-			("fetch", h.?fetch!.is_ok()),
-			("alarm", h.?alarm!.is_ok()),
-			("webSocketMessage", h.?web_socket_message!.is_ok()),
-			("webSocketClose", h.?web_socket_close!.is_ok()),
-			("webSocketError", h.?web_socket_error!.is_ok()),
-		].keep_if(|(_, present)| present).map(|(n, _)| n),
-		methods: (h.?rpc ?? []).map(|m| m.name),
-		run!: |id, ev| {
-			self = Object.Self.{ class: name, id }
-			match ev {
-				Init => match h.?init! {
-					Ok(f!) => done(f!(self))
-					Err(MissingField) => Unhandled
-				}
-				Fetch(req) => match h.?fetch! {
-					Ok(f!) => match f!(self, req) {
-						Ok(res) => Respond(res)
-						Err(e) => Failed(Str.inspect(e))
+		served = (h.?rpc ?? []).map(|m| m.erase())
+		Object.Class.{
+			name,
+			handlers: [
+				("init", h.?init!.is_ok()),
+				("fetch", h.?fetch!.is_ok()),
+				("alarm", h.?alarm!.is_ok()),
+				("webSocketMessage", h.?web_socket_message!.is_ok()),
+				("webSocketClose", h.?web_socket_close!.is_ok()),
+				("webSocketError", h.?web_socket_error!.is_ok()),
+			].keep_if(|(_, present)| present).map(|(n, _)| n),
+			methods: served.map(|m| m.name),
+			run!: |id, ev| {
+				self = Object.Self.{ class: name, id }
+				match ev {
+					Init => match h.?init! {
+						Ok(f!) => done(f!(self))
+						Err(MissingField) => Unhandled
 					}
-					Err(MissingField) => Unhandled
-				}
-				Alarm(info) => match h.?alarm! {
-					Ok(f!) => done(f!(self, info))
-					Err(MissingField) => Unhandled
-				}
-				Rpc({ method, arg }) => match (h.?rpc ?? []).find_first(|m| m.name == method) {
-					Ok(m) => {
-						run! = m.run!
-						match run!(self, arg) {
-							Ok(bytes) => Reply(Packed(bytes))
-							Err(text) => Failed(text)
+					Fetch(req) => match h.?fetch! {
+						Ok(f!) => match f!(self, req) {
+							Ok(res) => Respond(res)
+							Err(e) => Failed(Str.inspect(e))
 						}
+						Err(MissingField) => Unhandled
 					}
-					Err(_) => Unhandled
+					Alarm(info) => match h.?alarm! {
+						Ok(f!) => done(f!(self, info))
+						Err(MissingField) => Unhandled
+					}
+					Rpc({ method, arg }) => match served.find_first(|m| m.name == method) {
+						Ok(m) => {
+							run! = m.run!
+							match run!(self, arg) {
+								Ok(bytes) => Reply(Packed(bytes))
+								Err(text) => Failed(text)
+							}
+						}
+						Err(_) => Unhandled
+					}
+					# The hibernation API (MODULES.md 12.1).
+					SocketMessage(sock, msg) => match h.?web_socket_message! {
+						Ok(f!) => done(f!(self, sock, msg))
+						Err(MissingField) => Unhandled
+					}
+					SocketClose(sock, closed) => match h.?web_socket_close! {
+						Ok(f!) => done(f!(self, sock, closed))
+						Err(MissingField) => Unhandled
+					}
+					SocketError(sock, thrown) => match h.?web_socket_error! {
+						Ok(f!) => done(f!(self, sock, thrown))
+						Err(MissingField) => Unhandled
+					}
 				}
-				# The hibernation API (MODULES.md 12.1).
-				SocketMessage(sock, msg) => match h.?web_socket_message! {
-					Ok(f!) => done(f!(self, sock, msg))
-					Err(MissingField) => Unhandled
-				}
-				SocketClose(sock, closed) => match h.?web_socket_close! {
-					Ok(f!) => done(f!(self, sock, closed))
-					Err(MissingField) => Unhandled
-				}
-				SocketError(sock, thrown) => match h.?web_socket_error! {
-					Ok(f!) => done(f!(self, sock, thrown))
-					Err(MissingField) => Unhandled
-				}
-			}
-		},
+			},
+		}
 	}
 
-	## A class with its types erased: the handlers that its JS class has (`init`, `fetch`, `alarm`, `webSocketMessage`,
+	## A class with its types erased, but not its interface: the handlers that its JS class has (`init`, `fetch`, `alarm`, `webSocketMessage`,
 	## `webSocketClose`, `webSocketError`) and its RPC methods
 	## (the manifest, API.md AQ10), and the function that runs an event for the object of an id.
-	Class : { name : Str, handlers : List(Str), methods : List(Str), run! : Str, Object.Event => [Respond(Response), Reply(Js), Done, Failed(Str), Unhandled] }
+	Class(iface) := { name : Str, handlers : List(Str), methods : List(Str), run! : Str, Object.Event => [Respond(Response), Reply(Js), Done, Failed(Str), Unhandled] }.{
+		name : Object.Class(iface) -> Str
+		name = |c| c.name
+
+		## For `Worker.new({ objects })`: a list has one type, and two classes have two interfaces.
+		erase : Object.Class(iface) -> Object.AnyClass
+		erase = |c| { name: c.name, handlers: c.handlers, methods: c.methods, run!: c.run! }
+	}
+
+	## A class with its interface erased.
+	AnyClass : { name : Str, handlers : List(Str), methods : List(Str), run! : Str, Object.Event => [Respond(Response), Reply(Js), Done, Failed(Str), Unhandled] }
 
 	## A typed value in the sync KV storage of the object (MODULES.md 9): CBOR bytes under one key. A constant (WR1).
 	cell : Str -> Object.Cell(a) where [a.Cbor.Writable, a.Cbor.Readable(errs)]
@@ -554,7 +568,7 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 	}
 }
 
-stub : Object.Namespace, [Named(Str), Id(Str)], Try(Object.Location, [MissingField]) -> Object
+stub : Object.Namespace(iface), [Named(Str), Id(Str)], Try(Object.Location, [MissingField]) -> Object(iface)
 stub = |ns, target, hint| Object.{
 	namespace: ns.binding,
 	jurisdiction: ns.jurisdiction,
@@ -563,7 +577,7 @@ stub = |ns, target, hint| Object.{
 }
 
 ## `env[namespace]`, then `jurisdiction(j)` when the namespace has one. The namespace is in the last slot.
-namespace_ops : Object -> List(Js.Op)
+namespace_ops : Object(iface) -> List(Js.Op)
 namespace_ops = |obj|
 	if obj.jurisdiction == "" {
 		[Get(Root("env"), obj.namespace)]
@@ -572,7 +586,7 @@ namespace_ops = |obj|
 	}
 
 ## The ops that make the stub, and its slot: `getByName(name, opts)`, or `get(idFromString(id), opts)`.
-stub_ops : Object -> { ops : List(Js.Op), slot : U32 }
+stub_ops : Object(iface) -> { ops : List(Js.Op), slot : U32 }
 stub_ops = |obj| {
 	ns = namespace_ops(obj)
 	n = ns.len().to_u32_wrap()
@@ -583,7 +597,7 @@ stub_ops = |obj| {
 	}
 }
 
-unique_id! : Object.Namespace, List(Js.Arg) => Try(Str, Io.Thrown)
+unique_id! : Object.Namespace(iface), List(Js.Arg) => Try(Str, Io.Thrown)
 unique_id! = |ns, args| {
 	start = if (ns.jurisdiction == "") [Get(Root("env"), ns.binding)] else [Get(Root("env"), ns.binding), Call(Slot(0), "jurisdiction", [Lit(Text(ns.jurisdiction))])]
 	n = start.len().to_u32_wrap()
