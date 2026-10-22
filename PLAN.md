@@ -2855,11 +2855,11 @@ Open (2026-10-21, paused here):
 
 | Item | State |
 | --- | --- |
-| Exact deadlines of other object tasks | Only `Init` has a timer in its own context. `fetch!`, Rpc, alarm and socket tasks that another context cancels can end late, at the next I/O of the object. A fix costs one timer on each wait. Decision of the user. |
-| Same-worker namespace without a class value | Needed when the import of the class makes a cycle. The tests use `namespace_remote` with `script: ""`. Proposal: `Object.namespace_named(name, "Store")`. |
-| G1a wasm size | +9 % (web) and +11 % (ledger) with `--opt=size`. Idea: fewer distinct `Infra([..])` unions. |
-| Auction `Dec` overflow | amount x rate crashes above about 1.7e20; a checked multiply would give an error. |
-| Typed DO namespaces | Not built: one more type argument on each `Rpc`. |
+| Exact deadlines of other object tasks | Only `Init` has a timer in its own context. `fetch!`, Rpc, alarm and socket tasks that another context cancels can end late, at the next I/O of the object. Decision (2026-10-22): try the cheaper form first (an own-context wake only for tasks with a deadline), measure, and fall back to a timer per wait if it cannot work. |
+| Same-worker namespace without a class value | Needed when the import of the class makes a cycle. The tests use `namespace_remote` with `script: ""`. Decision (2026-10-22): add `Object.namespace_named(name, "Store")` (same worker, class by name, load check as before). |
+| G1a wasm size | +9 % (web) and +11 % (ledger) with `--opt=size`. Decision (2026-10-22): a size study in `research/` first (where the bytes go, 1 or 2 reductions), no platform change before the user sees the numbers. |
+| Auction `Dec` overflow | amount x rate crashes above about 1.7e20. To do: a checked multiply that gives an error. |
+| Typed DO namespaces | Decision (2026-10-22): a design study in `research/` first (forms, app code before and after, compile risks). |
 | roc-cbor README | Local commit 57f1935 (0.2.1 install URL), not pushed. |
 
 ## 9. JS shim
