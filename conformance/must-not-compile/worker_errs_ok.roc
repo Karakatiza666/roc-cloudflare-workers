@@ -26,7 +26,7 @@ obj_alarm! = |_self, info| Err(Retry(info.retry_count))
 worker = Worker.new({
 	fetch!: fetch!,
 	scheduled!: scheduled!,
-	objects: [Object.class("C", { init!: obj_init!, fetch!: obj_fetch!, alarm!: obj_alarm! })],
+	objects: [Object.class("C", { init!: obj_init!, fetch!: obj_fetch!, alarm!: obj_alarm! }).erase()],
 })
 
 event! = |e| worker.event!(e)

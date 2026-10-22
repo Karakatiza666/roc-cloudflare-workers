@@ -22,7 +22,7 @@ Worker :: {
 	own! : Worker.Event => Worker.Outcome,
 	rpc : List(Rpc.Handler({})),
 	entrypoints : List(Rpc.Entrypoint),
-	objects : List(Object.Class),
+	objects : List(Object.AnyClass),
 	bindings : List(Worker.Binding),
 	crons : List(Str),
 }.{
@@ -35,9 +35,9 @@ Worker :: {
 		email! ?: Email.Mail => Try({}, e4),
 		tail! ?: List(Worker.TraceItem) => Try({}, e5),
 		other! ?: Str, Js => Try(Js, e6),
-		rpc ?: List(Rpc.Handler({})),
+		rpc ?: List(Rpc.Serves(iface, {})),
 		entrypoints ?: List(Rpc.Entrypoint),
-		objects ?: List(Object.Class),
+		objects ?: List(Object.AnyClass),
 		bindings ?: List(Worker.Binding),
 		crons ?: List(Worker.Cron),
 	} -> Worker
@@ -86,7 +86,7 @@ Worker :: {
 				}
 				_ => Unhandled
 			},
-			rpc: h.?rpc ?? [],
+			rpc: (h.?rpc ?? []).map(|m| m.erase()),
 			entrypoints: h.?entrypoints ?? [],
 			objects: h.?objects ?? [],
 			bindings: h.?bindings ?? [],
@@ -300,9 +300,9 @@ expect {
 		bindings: [
 			D1.binding("DB").declare(),
 			Kv.text("KV").declare(),
-			Object.namespace("ROOMS", { class: Object.class("Room", {}) }).declare(),
-			Object.namespace_remote("FAR", { class: "Far", script: "other" }).declare(),
-			Object.namespace("FAR2", { class: Object.class("Far2", {}), script: "other" }).declare(),
+			Object.namespace("ROOMS", { class: room_class }).declare(),
+			Object.namespace_remote("FAR", { class: "Far", script: "other" }, far_iface).declare(),
+			Object.namespace("FAR2", { class: far2_class, script: "other" }).declare(),
 			Kv.text("CFG").cell("c").declare(),
 		],
 		crons: [Worker.cron("*/5 * * * *", |_s| Ok({})), Worker.cron("0 0 * * *", |_s| Ok({}))],
@@ -328,7 +328,7 @@ expect {
 
 # A service binding with `service` and `entrypoint` has them in the manifest. A plain one has only the name and the kind.
 expect {
-	w = Worker.new({ bindings: [Service.binding("A").declare(), Service.binding_with("B", { service: "svc", entrypoint: "Admin" }).declare()] })
+	w = Worker.new({ bindings: [Service.binding("A", far_iface).declare(), Service.binding_with("B", far_iface, { service: "svc", entrypoint: "Admin" }).declare()] })
 	manifest(w) == Obj([
 		("default", Obj([("handlers", Arr([])), ("methods", Arr([]))])),
 		("objects", Obj([])),
@@ -352,3 +352,14 @@ expect {
 
 # The order of a cron run (cron first, else scheduled!, else Unhandled) calls `own!`, an effect, so an expect cannot run it:
 # conformance/checks/cron.mjs tests it.
+
+NoRpc := []
+
+far_iface : Rpc.Iface(NoRpc)
+far_iface = Rpc.Iface.{}
+
+room_class : Object.Class(NoRpc)
+room_class = Object.class("Room", {})
+
+far2_class : Object.Class(NoRpc)
+far2_class = Object.class("Far2", {})

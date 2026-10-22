@@ -1,0 +1,34 @@
+app [event!] { pf: platform "../../bench/platform/main.roc" }
+
+## Must not compile: `Service.binding` has no interface argument ("too few args").
+## `conformance/must-not-compile.sh` runs `roc check` on it.
+import pf.Worker
+import pf.Rpc
+import pf.Service
+import pf.Response
+
+Room := []
+Ledger := []
+
+room_iface : Rpc.Iface(Room)
+room_iface = Rpc.Iface.{}
+
+ledger_iface : Rpc.Iface(Ledger)
+ledger_iface = Rpc.Iface.{}
+
+open : Rpc(Room, {}, U64, Rpc.NoErr)
+open = Rpc.method("open")
+
+settle : Rpc(Ledger, {}, U64, Rpc.NoErr)
+settle = Rpc.method("settle")
+
+rooms = Service.binding("ROOMS")
+
+fetch! = |_req| {
+	_ = rooms.call!(open, {})
+	Ok(Response.from_text(200, "x"))
+}
+
+worker = Worker.new({ fetch!: fetch! })
+
+event! = |e| worker.event!(e)

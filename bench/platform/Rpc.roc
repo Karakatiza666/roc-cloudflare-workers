@@ -8,22 +8,24 @@ import Response
 import Sql
 import cbor.Cbor
 
-Rpc(arg, ret, err) :: { name : Str }.{
+Rpc(iface, arg, ret, err) :: { name : Str }.{
 
-	## A constant (WR1): the method name and, by its annotation, the types of both sides. `err` is the tag union that
-	## the callee can give (`Rpc.NoErr` for none): the caller gets it as `Remote(err)`.
-	method : Str -> Rpc(arg, ret, err)
+	## A constant (WR1): the method name and, by its annotation, the types of both sides. `iface` is a type of the app with
+	## no values (`Room := []`): the object, the service or the entry point that has the method. `err` is the tag union that
+	## the callee can give (`Rpc.NoErr` for none): the caller gets it as `Remote(err)`. A method that two interfaces
+	## serve is a function of `{}`: `ping : {} -> Rpc(iface, {}, Str, Rpc.NoErr)`.
+	method : Str -> Rpc(iface, arg, ret, err)
 	method = |name| Rpc.{ name }
 
 	## The method name: the JS method that Workers calls.
-	name : Rpc(arg, ret, err) -> Str
+	name : Rpc(iface, arg, ret, err) -> Str
 	name = |m| m.name
 
-	## The callee. `self` is `Object.Self` in a Durable Object (a Worker uses `on_worker`). The result of the
-	## handler is the reply (`Reply`), also an `Err`. A tag that is not in `err` does not compile. An argument that
+	## The callee. `self` is `Object.Self` in a Durable Object (a Worker uses `on_worker`). A class takes a list of
+	## `Rpc.Serves` of one `iface`. The result of the handler is the reply (`Reply`), also an `Err`. A tag that is not in `err` does not compile. An argument that
 	## does not parse is a throw with the text `bad argument: <error>` (the caller gets `RpcErr`).
-	on : Rpc(arg, ret, err), (self, arg => Try(ret, err)) -> Rpc.Handler(self) where [arg.Cbor.Readable(errs), ret.Cbor.Writable, err.Cbor.Writable]
-	on = |m, f!| {
+	on : Rpc(iface, arg, ret, err), (self, arg => Try(ret, err)) -> Rpc.Serves(iface, self) where [arg.Cbor.Readable(errs), ret.Cbor.Writable, err.Cbor.Writable]
+	on = |m, f!| Rpc.Serves.{
 		name: m.name,
 		run!: |self, bytes| match Cbor.parse(bytes) {
 			Ok(a) => match f!(self, a) {
@@ -36,7 +38,7 @@ Rpc(arg, ret, err) :: { name : Str }.{
 
 	## The callee in a Worker (the `rpc` of `Worker.new` and of `Rpc.entrypoint`): `on` with no `self`, as a Worker
 	## entry point has none.
-	on_worker : Rpc(arg, ret, err), (arg => Try(ret, err)) -> Rpc.Handler({}) where [arg.Cbor.Readable(errs), ret.Cbor.Writable, err.Cbor.Writable]
+	on_worker : Rpc(iface, arg, ret, err), (arg => Try(ret, err)) -> Rpc.Serves(iface, {}) where [arg.Cbor.Readable(errs), ret.Cbor.Writable, err.Cbor.Writable]
 	on_worker = |m, f!| Rpc.on(m, |_, a| f!(a))
 
 	## The bytes of a reply as the result of `call!`: an `Err` of the callee is `Remote(err)`, a reply that does not fit
@@ -109,14 +111,28 @@ Rpc(arg, ret, err) :: { name : Str }.{
 	## that does not parse, as text.
 	Handler(self) : { name : Str, run! : self, List(U8) => Try(List(U8), Str) }
 
+	## A handler of a method of the interface `iface`. A class, an entry point and a Worker take a list of them, so all
+	## their methods have one interface.
+	Serves(iface, self) := { name : Str, run! : self, List(U8) => Try(List(U8), Str) }.{
+
+		## The handler with its interface erased.
+		erase : Rpc.Serves(iface, self) -> Rpc.Handler(self)
+		erase = |h| { name: h.name, run!: h.run! }
+	}
+
+	## The proof of an interface for `Object.namespace_named`, `Object.namespace_remote` and `Service.binding`: a value
+	## with no data. The app makes one for each interface (`room : Rpc.Iface(Room)`, `room = Rpc.Iface.{}`). A call with
+	## no `Iface`, or with the `Iface` of another interface, does not compile.
+	Iface(iface) := {}
+
 	## A named entry point (a `WorkerEntrypoint` class): `export const Admin = entrypointClass("Admin")` in the JS entry
 	## file. A service binding with `entrypoint = "Admin"` reaches it. Its `fetch!` gets the requests of `Service.fetch!`
 	## on that binding (the event `EntrypointFetch`). With no `fetch!`, the class has no `fetch` method in JS.
-	entrypoint : Str, { fetch! ?: Request => Try(Response, e), rpc ?: List(Rpc.Handler({})) } -> Rpc.Entrypoint
+	entrypoint : Str, { fetch! ?: Request => Try(Response, e), rpc ?: List(Rpc.Serves(iface, {})) } -> Rpc.Entrypoint
 	entrypoint = |ep_name, h| {
 		name: ep_name,
 		handlers: if (h.?fetch!.is_ok()) ["fetch"] else [],
-		rpc: h.?rpc ?? [],
+		rpc: (h.?rpc ?? []).map(|m| m.erase()),
 		fetch!: |req| match h.?fetch! {
 			Ok(f!) => match f!(req) {
 				Ok(res) => Respond(res)

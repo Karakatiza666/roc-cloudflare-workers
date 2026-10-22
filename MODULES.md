@@ -200,9 +200,9 @@ Worker :: { handlers : List(Str), own! : Worker.Event => Worker.Outcome, rpc : .
 		email! ?: Email.Mail => Try({}, e4),
 		tail! ?: List(Worker.TraceItem) => Try({}, e5),
 		other! ?: Str, Js => Try(Js, e6),
-		rpc ?: List(Rpc.Handler({})),         # methods of the default entry point (Rpc.on_worker)
+		rpc ?: List(Rpc.Serves(iface, {})),   # methods of the default entry point (Rpc.on_worker), one interface
 		entrypoints ?: List(Rpc.Entrypoint),  # named WorkerEntrypoint classes
-		objects ?: List(Object.Class),        # Durable Object classes
+		objects ?: List(Object.AnyClass),     # Durable Object classes, each as `class.erase()`
 		bindings ?: List(Worker.Binding),     # the bindings that the app uses: db.declare(), ... (manifest only)
 		crons ?: List(Worker.Cron),           # a handler for each cron expression
 	} -> Worker
@@ -281,7 +281,7 @@ rooms = Object.namespace("ROOMS", { class: room })   # room = Object.class("Room
 
 worker = Worker.new({
 	fetch!: fetch!,
-	objects: [room],
+	objects: [room.erase()],
 	bindings: [db.declare(), rooms.declare()],
 	crons: [Worker.cron("*/5 * * * *", settle!)],
 })
@@ -875,25 +875,25 @@ Queue(a) :: { ... }.{
 Outside: a stub is plain data, like a binding.
 
 ```roc
-Object :: { ... }.{
-	namespace : Str, { class : Object.Class, script ?: Str } -> Object.Namespace   # the binding, the class value (its name is class_name), script_name
-	namespace_named : Str, Str -> Object.Namespace                                 # a class of this Worker, by name (the class value cannot be imported: a module cycle)
-	namespace_remote : Str, { class : Str, script : Str } -> Object.Namespace      # a class of another Worker: the app has the name only. `script: ""` gives the manifest of `namespace_named` (no behavior change)
-	Namespace := { ... }.{
-		declare : Object.Namespace -> Worker.Binding         # for Worker.new bindings (3): kind object, class, script
-		named : Object.Namespace, Str -> Object             # data: getByName runs in the program of each call
-		named_with : Object.Namespace, Str, { location_hint ?: Object.Location } -> Object
-		from_id : Object.Namespace, Str -> Object
-		from_id_with : Object.Namespace, Str, { location_hint ?: Object.Location } -> Object
-		unique! : Object.Namespace => Object                 # newUniqueId, sync
-		unique_with! : Object.Namespace, { jurisdiction ?: Object.Jurisdiction, location_hint ?: Object.Location } => Try(Object, [Infra([ObjectErr(Thrown)])])
-		jurisdiction : Object.Namespace, Object.Jurisdiction -> Object.Namespace   # namespace.jurisdiction(j), data
+Object(iface) :: { ... }.{
+	namespace : Str, { class : Object.Class(iface), script ?: Str } -> Object.Namespace(iface)   # the binding, the class value (its name is class_name), script_name. `iface` is the one of the class
+	namespace_named : Str, Str, Rpc.Iface(iface) -> Object.Namespace(iface)                      # a class of this Worker, by name (the class value cannot be imported: a module cycle). The interface is an argument
+	namespace_remote : Str, { class : Str, script : Str }, Rpc.Iface(iface) -> Object.Namespace(iface)   # a class of another Worker: the app has the name only. `script: ""` gives the manifest of `namespace_named` (no behavior change)
+	Namespace(iface) := { ... }.{
+		declare : Object.Namespace(iface) -> Worker.Binding  # for Worker.new bindings (3): kind object, class, script
+		named : Object.Namespace(iface), Str -> Object(iface)   # data: getByName runs in the program of each call
+		named_with : Object.Namespace(iface), Str, { location_hint ?: Object.Location } -> Object(iface)
+		from_id : Object.Namespace(iface), Str -> Object(iface)
+		from_id_with : Object.Namespace(iface), Str, { location_hint ?: Object.Location } -> Object(iface)
+		unique! : Object.Namespace(iface) => Object(iface)   # newUniqueId, sync
+		unique_with! : Object.Namespace(iface), { jurisdiction ?: Object.Jurisdiction, location_hint ?: Object.Location } => Try(Object(iface), [Infra([ObjectErr(Thrown)])])
+		jurisdiction : Object.Namespace(iface), Object.Jurisdiction -> Object.Namespace(iface)   # namespace.jurisdiction(j), data
 	}
 	Jurisdiction : [Eu, Us, Fedramp]                                     # "eu", "us", "fedramp"
 	Location : [Wnam, Enam, Sam, Weur, Eeur, Apac, ApacNe, ApacSe, Oc, Afr, Me]   # "apac-ne" for ApacNe
-	fetch! : Object, Request => Try(Response, [Infra([ObjectErr(Thrown)])])
-	call! : Object, Rpc(arg, ret, err), arg => Try(ret, [Remote(err), Infra([RpcErr(Thrown), BadData(Str)])]) where [arg.Encodable, ret.Parseable, err.Parseable]
-	id! : Object => Try(Str, [Infra([ObjectErr(Thrown)])])         # one call!: idFromName(name).toString() for a named object
+	fetch! : Object(iface), Request => Try(Response, [Infra([ObjectErr(Thrown)])])
+	call! : Object(iface), Rpc(iface, arg, ret, err), arg => Try(ret, [Remote(err), Infra([RpcErr(Thrown), BadData(Str)])]) where [arg.Encodable, ret.Parseable, err.Parseable]
+	id! : Object(iface) => Try(Str, [Infra([ObjectErr(Thrown)])])  # one call!: idFromName(name).toString() for a named object
 }
 ```
 
@@ -910,12 +910,14 @@ Inside: a class is a record of handlers, all optional, as for `Worker`.
 	class : Str, {
 		init! ?: Object.Self => Try({}, e),                     # in blockConcurrencyWhile, in the constructor
 		fetch! ?: Object.Self, Request => Try(Response, e),
-		rpc ?: List(Rpc.Handler(Object.Self)),
+		rpc ?: List(Rpc.Serves(iface, Object.Self)),            # all methods of one interface
 		alarm! ?: Object.Self, { retry_count : U32, is_retry : Bool } => Try({}, e),
 		web_socket_message! ?: Object.Self, Object.Socket, WebSocket.Message => Try({}, e),
 		web_socket_close! ?: Object.Self, Object.Socket, WebSocket.Closed => Try({}, e),
 		web_socket_error! ?: Object.Self, Object.Socket, Thrown => Try({}, e),
-	} -> Object.Class
+	} -> Object.Class(iface)
+	Class(iface) := { ... }.{ name : Object.Class(iface) -> Str, erase : Object.Class(iface) -> Object.AnyClass }   # erase: for Worker.new objects
+	AnyClass : { ... }                                              # a class with its interface erased
 
 	Self := { ... }.{
 		id : Object.Self -> Str
@@ -963,12 +965,14 @@ Inside: a class is a record of handlers, all optional, as for `Worker`.
 ```
 
 ```roc
-counters = Object.namespace("COUNTERS", { class: counter })   # counter = Object.class("Counter", ...), below
-increment : Rpc({ by : I64 }, I64, [Infra(Rpc.Infra)])
+Counter := []                                                  # the interface: a type with no values (MODULES.md 8)
+counters = Object.namespace("COUNTERS", { class: counter })   # counter = Object.class("Counter", ...), below. The namespace has the interface of the class
+increment : Rpc(Counter, { by : I64 }, I64, [Infra(Rpc.Infra)])
 increment = Rpc.method("increment")
 count : Object.Cell(I64)
 count = Object.cell("count")
 
+counter : Object.Class(Counter)
 counter = Object.class("Counter", {
 	rpc: [
 		increment.on(|self, { by }| {
@@ -1006,7 +1010,11 @@ As built in `PLAN.md` 8f, part 1 (`platform/Object.roc`, `platform/Remote.roc`, 
 | Item | Built as | Why |
 | --- | --- | --- |
 | Backing | `Object :: { namespace, jurisdiction, target : [Named(Str), Id(Str)], location_hint }`, `Namespace := { binding, jurisdiction, class, script }` (`""` for none; `class` and `script` are for the manifest only, 3), `Self :: { class, id }` | Data only (MC1) |
-| Namespace and class (step 8h wave B) | `Object.namespace(binding, { class, script? })`: `class` is the value of `Object.class`, so the class name is written once. For a class of this Worker whose value cannot be imported (a module cycle): `Object.namespace_named(binding, "Name")`, the same manifest as `namespace` with no `script`. For a class of another Worker, the app has no value: `Object.namespace_remote(binding, { class: "Name", script: "worker" })` takes the name as text. The class is in the manifest (3), so the shim and `sync` check the Wrangler config against `objects`. The types do not tie a namespace to its class: an `Rpc` of another class compiles and gives `RpcErr` ("does not implement the method") at the call. A phantom class type (`Object.Namespace(cls)`, `Rpc(cls, arg, ret, err)`) would add one type argument to each `Rpc` and `Object` annotation, a type for each class, and an annotation for each namespace; an `Rpc` used on a service and on an object (`conformance/RpcMethods.roc`) would need a free class variable and get no check. Not built. | Cost against gain |
+| Namespace and class (step 8h wave B, typed in step 8h wave N) | `Object.namespace(binding, { class, script? })`: `class` is the value of `Object.class`, so the class name is written once, and the namespace has the interface of the class (`Object.Class(iface)`). For a class of this Worker whose value cannot be imported (a module cycle): `Object.namespace_named(binding, "Name", iface)`, the same manifest as `namespace` with no `script`. For a class of another Worker, the app has no value: `Object.namespace_remote(binding, { class: "Name", script: "worker" }, iface)` takes the name as text. `iface` is a value of `Rpc.Iface(iface)`, so a call with no interface does not compile. The class is in the manifest (3), so the shim and `sync` check the Wrangler config against `objects`. | Typed DO namespaces (`research/typed-do-ns/`, option A) |
+| Typed namespaces (step 8h wave N) | Built: option A of `research/typed-do-ns/`. `Rpc(iface, arg, ret, err)`, `Object(iface)`, `Object.Namespace(iface)`, `Object.Class(iface)` and `Service(iface)` carry a phantom interface type: a type of the app with no values (`Gavel.Room := []`). `call!` takes the `Rpc` constants of the interface of its stub only, so `lot_rooms.named(id).call!(Gavel.settle_due, {})` is a type mismatch (`Rpc(Gavel.Ledger, ..)` against `Rpc(Gavel.Room, arg, ret, err)`). `Object.class` takes `rpc: List(Rpc.Serves(iface, Object.Self))`: `Rpc.on` gives a `Rpc.Serves`, so the handlers of one class are of one interface. `Worker.new` takes `objects: List(Object.AnyClass)`: write `LotRoom.class.erase()`. Types only: the wire format and the manifest do not change. A JS peer is not checked: a method that its class has not is `RpcErr` at run time, as before. The cost: `auction` web +181 B and ledger +281 B with `--opt=size` (0.015 % and 0.04 %). | Wrong method at the caller and at the callee is a compile error |
+| The interface argument | `namespace_named`, `namespace_remote`, `Service.binding` and `Service.binding_with` take a value of `Rpc.Iface(iface)` (`Rpc.Iface := {}`, no data). The app makes one for each interface in its shared module: `room_iface : Rpc.Iface(Gavel.Room)` and `room_iface = Rpc.Iface.{}`. Without it, `iface` would come from the first `call!` of the namespace, and a wrong first call would pass. A call with no interface is "too few args". An interface of another type is a type mismatch at the first `call!`. | Q5 of the study |
+| A method of two interfaces | A constant with a free `iface` does not compile ("value is not polymorphic"), so a method that two interfaces serve is a function of `{}`: `ping : {} -> Rpc(iface, { n : I64 }, Str, Rpc.NoErr)`, used as `ping({})` (`conformance/RpcMethods.roc`). | Compiler rule |
+| A class with no `rpc` | `iface` is free: annotate the class (`Object.Class(NoRpc)`, `NoRpc := []`). | A constant needs a concrete type |
 | Twins | `fetch`, `call` (stubs) and `set_alarm_at`, `set_alarm_in`, `get_alarm`, `delete_alarm`, `delete_all` (`Self`) give an `Io`. SQL, cells, `list!` and `id!` do not wait: no twin. | MC3 |
 | `unique!` | A throw of `newUniqueId` is a crash | The type has no error |
 | `id!` | `idFromName(name).toString()` with `call!`. A stub of an id gives its id with no crossing. | |
@@ -1028,34 +1036,38 @@ As built in `PLAN.md` 8f, part 1 (`platform/Object.roc`, `platform/Remote.roc`, 
 One constant names a method and its types, also the errors that the callee can give. Both sides use it: the caller with `call!`, the callee with `on`.
 
 ```roc
-Rpc(arg, ret, err) :: { name : Str }.{
-	method : Str -> Rpc(arg, ret, err)
-	on : Rpc(arg, ret, err), (self, arg => Try(ret, err)) -> Rpc.Handler(self) where [arg.Parseable, ret.Encodable, err.Encodable]   # a Durable Object: self is Object.Self
-	on_worker : Rpc(arg, ret, err), (arg => Try(ret, err)) -> Rpc.Handler({}) where [arg.Parseable, ret.Encodable, err.Encodable]  # a Worker: no self
-	entrypoint : Str, { fetch! ?: Request => Try(Response, e), rpc ?: List(Rpc.Handler({})) } -> Rpc.Entrypoint
+Rpc(iface, arg, ret, err) :: { name : Str }.{
+	method : Str -> Rpc(iface, arg, ret, err)
+	on : Rpc(iface, arg, ret, err), (self, arg => Try(ret, err)) -> Rpc.Serves(iface, self) where [arg.Parseable, ret.Encodable, err.Encodable]   # a Durable Object: self is Object.Self
+	on_worker : Rpc(iface, arg, ret, err), (arg => Try(ret, err)) -> Rpc.Serves(iface, {}) where [arg.Parseable, ret.Encodable, err.Encodable]  # a Worker: no self
+	entrypoint : Str, { fetch! ?: Request => Try(Response, e), rpc ?: List(Rpc.Serves(iface, {})) } -> Rpc.Entrypoint
 	reply_of : List(U8) -> Try(ret, [Remote(err), Infra([BadData(Str)])]) where [ret.Parseable, err.Parseable]
 	Infra : [StorageErr(Thrown), SqlErr(Thrown), Constraint(Sql.Constraint), D1Err(Thrown), KvErr(Thrown), R2Err(Thrown), CacheErr(Thrown), QueueErr(Thrown), ObjectErr(Thrown), ServiceErr(Thrown), RpcErr(Thrown), HttpErr(Thrown), Network(Thrown), SocketErr(Thrown), BodyErr(Thrown), CryptoErr(Thrown), AiErr(Thrown), VectorizeErr(Thrown), WorkflowsErr(Thrown), EmailErr(Thrown), AnalyticsErr(Thrown), AssetsErr(Thrown), SecretsStoreErr(Thrown), LimitErr(Thrown), BadData(Str), InvalidJson(Str), MissingEnv(Str), TooLarge, TimedOut]   # MC9: the closed union of all Infra tags
 	forward : (err -> [Infra(Rpc.Infra), ..e]) -> ([Infra([RpcErr(Thrown), BadData(Str)]), Remote(err)] -> [Infra(Rpc.Infra), ..e])   # a nested call in a handler: call!(...) ? Rpc.forward(f)
 	NoErr := []                                               # the err of a method with no errors, with its own codec
 	Handler(self) : { ... }                                  # types erased: CBOR in, CBOR out
+	Serves(iface, self) := { ... }.{ erase : Rpc.Serves(iface, self) -> Rpc.Handler(self) }   # a handler of one interface: a class, an entry point and a Worker take a list of them
+	Iface(iface) := {}                                       # the proof of an interface, for namespace_named, namespace_remote and Service.binding: Rpc.Iface.{}
 }
 
 Reply(ret, err) := [Ok(ret), Err(err)]                       # the wire form (private): {"Ok": value} or {"Err": tag}; reply_of parses it
 ok_head, err_head : List(U8)                                 # its first bytes (private): on writes them by hand
 
-Service :: { name : Str, service : Str, entrypoint : Str }.{
-	binding : Str -> Service
-	binding_with : Str, { service ?: Str, entrypoint ?: Str } -> Service   # the Worker and entry point, for the manifest only
-	declare : Service -> Worker.Binding                                   # for Worker.new bindings (3): kind service
-	fetch! : Service, Request => Try(Response, [Infra([ServiceErr(Thrown)])])
-	call! : Service, Rpc(arg, ret, err), arg => Try(ret, [Remote(err), Infra([RpcErr(Thrown), BadData(Str)])]) where [arg.Encodable, ret.Parseable, err.Parseable]
+Service(iface) :: { name : Str, service : Str, entrypoint : Str }.{
+	binding : Str, Rpc.Iface(iface) -> Service(iface)
+	binding_with : Str, Rpc.Iface(iface), { service ?: Str, entrypoint ?: Str } -> Service(iface)   # the Worker and entry point, for the manifest only
+	declare : Service(iface) -> Worker.Binding                            # for Worker.new bindings (3): kind service
+	fetch! : Service(iface), Request => Try(Response, [Infra([ServiceErr(Thrown)])])
+	call! : Service(iface), Rpc(iface, arg, ret, err), arg => Try(ret, [Remote(err), Infra([RpcErr(Thrown), BadData(Str)])]) where [arg.Encodable, ret.Parseable, err.Parseable]
 }
 ```
 
 ```roc
+Auction := []                                                          # the interface of the callee: a type with no values
+
 RoomErr : [StillOpen, NotFound, Infra(Rpc.Infra)]
 
-close_out : Rpc({ id : U64 }, { total : U64 }, RoomErr)
+close_out : Rpc(Auction, { id : U64 }, { total : U64 }, RoomErr)
 close_out = Rpc.method("close_out")
 
 close_out! : Object.Self, { id : U64 } => Try({ total : U64 }, RoomErr)   # the callee
@@ -1082,7 +1094,7 @@ relay! = |_self, arg| {
 
 | Item | Rule |
 | --- | --- |
-| Interface | A package of `Rpc` constants is the interface of a service. The caller and the callee import the same package, so their types agree. |
+| Interface | A package of `Rpc` constants is the interface of a service. The caller and the callee import the same package, so their types agree. The first type argument of `Rpc` names the callee (`Auction := []`, a type with no values), and the type of the stub (`Object(iface)`, `Service(iface)`) must have the same one: `call!` of an `Rpc` of another interface does not compile, and a class takes `Rpc.Serves` of one interface only. `namespace_named`, `namespace_remote` and `Service.binding` take the interface as a value (`Rpc.Iface(iface)`). A method that two interfaces serve is a function of `{}` (7, "Typed namespaces"). |
 | On the wire | The table "Formats of typed data" (1). One argument. The module sends it as CBOR, and JS gives the callee the JS value, so a JS callee gets a plain object (a `BigInt` above 2^53, a `Uint8Array` for a `Cbor.Bytes` field, an `Array` of numbers for a `List(U8)` field, MC5). JS sends the reply of a JS callee back as CBOR. |
 | Errors | `err` is a tag union that the callee can give: a handler that gives another tag does not compile. An `Err(e)` of the callee is a normal reply, and the caller gets `Remote(e)`, the same tag. A method with no errors has `err` `Rpc.NoErr`: `[]` has no derived codec (`research/e1-errors/rpc_empty.roc`). A throw (a crash, a JS throw, a bad argument with "bad argument", a missing method) is `Infra(RpcErr(Thrown))`. A reply that does not fit `ret` or `err` is `Infra(BadData)`. |
 | Infrastructure errors (MC9) | Each platform function gives its storage, binding and call errors in one tag, `Infra([its own tags])`. The domain errors of a handler stay plain (`Err(NotFound)`). The `err` of a method closes the platform errors with `Infra(Rpc.Infra)`: the payloads of each `?` merge, and the closed `Rpc.Infra` has a CBOR codec. `Rpc.Infra` costs 3 to 6 KB of wasm for each of its 29 tags in each app that uses it as a closed `err`: an app that cares about size declares `Faults : [the tags that it uses]` and writes `Infra(Faults)` (1, "Cost of `Rpc.Infra`"). A tag that is not in `Faults` is then a compile error. The caller gets one shape: `Infra(..)` when this call failed, `Remote(Infra(..))` when a platform call of the callee failed, `Remote(<domain tag>)` for a domain error. A match with an arm for each domain tag and one `Remote(Infra(_))` arm needs no `_`, so a new domain tag of the callee does not compile until the caller has an arm for it. |
@@ -1096,7 +1108,7 @@ Limits: Workers RPC can carry more than this module. The module keeps to typed d
 
 | Workers RPC can carry | This module | Why |
 | --- | --- | --- |
-| Structured clone values, many arguments | One argument and one reply, as CBOR data (MC5). A record holds many values. | One type on both sides (`Rpc(arg, ret, err)`) |
+| Structured clone values, many arguments | One argument and one reply, as CBOR data (MC5). A record holds many values. | One type on both sides (`Rpc(iface, arg, ret, err)`) |
 | Stubs: a function, an `RpcTarget`, a Durable Object stub, a service binding | No. Send the name of the object or the binding, and make the stub on the other side (`named`, `Service.binding`). | A stub is a ref, and a ref is good for one task (MC13). A Roc function cannot be a JS function (`API.md` AQ1). |
 | Callbacks to the caller (a function in the argument) | No | The same: a callback is a stub |
 | `ReadableStream`, `WritableStream`, `Request`, `Response` | No. Use `fetch!` of the `Object` or the `Service`: a `Body` stream passes with no copy. | CBOR has no stream |
@@ -1108,8 +1120,9 @@ As built in `PLAN.md` 8f, part 1 (`platform/Rpc.roc`, `platform/Service.roc`, `p
 
 | Item | Built as | Why |
 | --- | --- | --- |
-| `Rpc.name` | Public: `Rpc(arg, ret, err) -> Str`, the method name | `Object` and `Service` build the call in `Remote` (not exposed), and `Rpc` is opaque |
+| `Rpc.name` | Public: `Rpc(iface, arg, ret, err) -> Str`, the method name | `Object` and `Service` build the call in `Remote` (not exposed), and `Rpc` is opaque |
 | `Handler(self)` | `{ name : Str, run! : self, List(U8) => Try(List(U8), Str) }`: `run!` parses the argument with `Cbor.parse`, a parse error is `Err("bad argument: <error>")`. `Ok(r)` and `Err(e)` of the handler are both `Ok(bytes)`: the CBOR of `{"Ok": r}` or `{"Err": e}` | The prototype (15) |
+| `Serves(iface, self)` | `:=` with the same record as `Handler(self)`. `on` and `on_worker` give it, `Object.class`, `Worker.new` and `Rpc.entrypoint` take a list of it (one `iface`) and erase it with `erase` once, when they make the class, the Worker or the entry point. | Typed namespaces: a callee with methods of two interfaces does not compile |
 | The reply on the wire | `{"Ok": value}` or `{"Err": tag}`, the derived CBOR of a tag `Ok(ret)` or `Err(err)`. The type `Reply(ret, err) := [Ok(ret), Err(err)]` (private) has the derived codec. `Rpc.reply_of` (the parser of `call!`) parses it. `on` writes the first bytes by hand (`ok_head`, `err_head`: a map of one entry and its key) and then `Cbor.encode` of the value only, because `Cbor.encode(Reply.Ok(r))` in `on` crashes the compiler when a type module of the app uses `on` (`research/e1-errors/mod`, still on nightly-2026-10-19). The parser of a tag with a `{}` value crashed too, so each `Rpc(_, {}, _)` did (`research/rpc-unit-crash`, fixed in nightly-2026-10-19). A reply that does not parse is `Infra(BadData)`. In JS the reply is a plain object `{ Ok: value }` or `{ Err: tag }` (a tag with no payload is text, `{ Err: "StillOpen" }`), so it passes through to the caller as any reply. A JS callee gives the same shape. | `research/rpc-err-sql-params` (form B) |
 | `Rpc.NoErr` | `NoErr := []` with its own `encoder_for` (writes nothing: it has no values) and `parser_for` (always `InvalidCbor(0)`, so a reply `{"Err": ...}` is `Infra(BadData)`). | The compiler derives no codec for `[]` |
 | `Entrypoint` | `{ name, handlers : List(Str), rpc, fetch! : Request => [Respond(Response), Failed(Str), Unhandled] }` | The manifest needs the handlers |
@@ -1604,7 +1617,7 @@ Lessons from the compiler (nightlies 10-09 and 10-12):
 | A `where` clause cannot name `List(a)` | `all!` takes the type of the whole result. The caller writes `List(Pkg)`. |
 | A type module `Crypto` shadows the builtin module (`clash/`) | `WebCrypto` |
 | The tags of the nominal `Method` of `roc-lang/http` match in a tuple with a list pattern, from another module | Routing by `match (req.method(), req.segments())` |
-| A phantom type variable on an opaque type (`Rpc(arg, ret, err) :: { name : Str }`) fixes the types of both sides | Typed RPC with one constant |
+| A phantom type variable on an opaque type (`Rpc(iface, arg, ret, err) :: { name : Str }`) fixes the types of both sides, and its first variable ties a stub to its callee | Typed RPC with one constant, typed namespaces |
 | An optional field of a structural record can hold an effectful function with an error type variable | `Object.class` takes a plain record |
 | `Str.inspect` works on the type variable `e` of `Worker(e)` (now of each handler in `Worker.new`) | `Err(e)` becomes a log line |
 | An opaque type over a bare `Str` (`Secret :: Str`) gets the codecs of `Str`: `Json.to_str` and `Cbor.encode` write the hidden text. A hand-written `encoder_for` does not compile (type mismatch on `encode_str`). With a record backing (`Secret :: { text : Str }`), an encode is a compile error, as the Roc docs say for nominal types. The bug is only in the encoder, for a nominal type over `Str` or a number type in a record, a tuple or a tag; a bare value is rejected. Over `Bool`, the same encode crashes the compiler. Repro: `research/roc-bugs/` (also on nightly 10-14). | `Secret` has a record backing. Reported: roc-lang/roc#12309. |

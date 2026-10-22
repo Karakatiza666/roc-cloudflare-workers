@@ -7,7 +7,7 @@ Two Workers and a Durable Object class over the platform. `REVIEW.md` is the erg
 | `web.roc` | auction-web: the HTTP routes, KV, R2, D1. Its entry file is `worker.js`, its config is `wrangler-web.toml`. |
 | `LotRoom.roc` | The Durable Object class `LotRoom` (live bids). It is in the script of auction-web. |
 | `ledger.roc` | auction-ledger: settles closed lots and reads the FX feed. Its entry file is `worker-ledger.js`, its config is `wrangler-ledger.toml`. |
-| `Gavel.roc` | The types, the Rpc methods and the bindings that both Workers use. |
+| `Gavel.roc` | The types, the interfaces (`Gavel.Room`, `Gavel.Ledger`: types with no values, one for each callee), the Rpc methods and the bindings that both Workers use. |
 
 ## Build
 

@@ -10,26 +10,26 @@ import pf.Cbor
 import RpcMethods
 import RpcErrRoutes
 
-self_service = Service.binding("SELF")
+self_service = Service.binding("SELF", RpcMethods.default_iface)
 
-admin_service = Service.binding("ADMIN")
+admin_service = Service.binding("ADMIN", RpcMethods.admin_iface)
 
 RpcRoutes :: [].{
 
 	## The RPC methods of the default export.
-	rpc : List(Rpc.Handler({}))
-	rpc = [RpcMethods.ping.on_worker(default_ping!), RpcMethods.hello.on_worker(default_hello!)].concat(RpcErrRoutes.service_handlers)
+	rpc : List(Rpc.Serves(RpcMethods.Default, {}))
+	rpc = [RpcMethods.ping({}).on_worker(default_ping!), RpcMethods.hello({}).on_worker(default_hello!)].concat(RpcErrRoutes.service_handlers({}))
 
 	## The named entry points.
 	entrypoints : List(Rpc.Entrypoint)
-	entrypoints = [Rpc.entrypoint("Admin", { fetch!: admin_fetch!, rpc: [RpcMethods.purge.on_worker(purge!)].concat(RpcErrRoutes.service_handlers) })]
+	entrypoints = [Rpc.entrypoint("Admin", { fetch!: admin_fetch!, rpc: [RpcMethods.purge.on_worker(purge!)].concat(RpcErrRoutes.service_handlers({})) })]
 
 	route! : Request, List(Str) => Response
 	route! = |_req, path| match path {
 		# One `Rpc` constant calls a method of an object (`/objects/rpc/ping`) and of a service (here).
-		["ping"] => show(self_service.call!(RpcMethods.ping, { n: 5 }))
-		["ping_io"] => show(Io.run!(self_service.call(RpcMethods.ping, { n: 6 })))
-		["nothere"] => show(self_service.call!(RpcMethods.nothere, { n: 1 }))
+		["ping"] => show(self_service.call!(RpcMethods.ping({}), { n: 5 }))
+		["ping_io"] => show(Io.run!(self_service.call(RpcMethods.ping({}), { n: 6 })))
+		["nothere"] => show(self_service.call!(RpcMethods.nothere({}), { n: 1 }))
 		# `Service.fetch!` on a binding with `entrypoint = "Admin"` reaches the `fetch!` of `Admin`.
 		["admin_fetch"] => match admin_service.fetch!(Request.get("http://x/hello")) {
 			Ok(res) => Response.from_text(200, "${res.status().to_str()} ${res.text!() ?? "?"}")

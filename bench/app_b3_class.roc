@@ -12,6 +12,6 @@ import pf.Object
 fetch! : Request => Try(Response, _)
 fetch! = |_req| Ok(Response.from_text(200, "class"))
 
-worker = Worker.new({ fetch!: fetch!, objects: [Object.class("Counter", {})], bindings: [Object.namespace("GHOSTS", { class: Object.class("Ghost", {}) }).declare()] })
+worker = Worker.new({ fetch!: fetch!, objects: [Object.class("Counter", {}).erase()], bindings: [Object.namespace("GHOSTS", { class: Object.class("Ghost", {}) }).declare()] })
 
 event! = |e| worker.event!(e)

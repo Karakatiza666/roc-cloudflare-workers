@@ -40,44 +40,44 @@ Big : { x : Str }
 ObjectRoutes :: [].{
 
 	## The classes of the app: the manifest names them, and `conformance/worker.js` exports each one.
-	counter_class : Object.Class
-	counter_class = Object.class("Counter", { fetch!: counter_fetch!, alarm!: counter_alarm!, rpc: [RpcMethods.increment.on(increment!), RpcMethods.ping.on(object_ping!), RpcMethods.boom.on(boom!), RpcMethods.echo.on(echo!), RpcMethods.hello.on(object_hello!), RpcMethods.nap.on(nap!), RpcMethods.relay.on(relay!), RpcMethods.relay_map.on(relay_map!)].concat(RpcErrRoutes.object_handlers) })
+	counter_class : Object.Class(RpcMethods.Counter)
+	counter_class = Object.class("Counter", { fetch!: counter_fetch!, alarm!: counter_alarm!, rpc: [RpcMethods.increment.on(increment!), RpcMethods.ping({}).on(object_ping!), RpcMethods.boom.on(boom!), RpcMethods.echo.on(echo!), RpcMethods.hello({}).on(object_hello!), RpcMethods.nap.on(nap!), RpcMethods.relay({}).on(relay!), RpcMethods.relay_map({}).on(relay_map!)].concat(RpcErrRoutes.object_handlers) })
 
-	store_class : Object.Class
-	store_class = Object.class("Store", { init!: store_init!, fetch!: store_fetch!, rpc: [RpcMethods.fail.on(store_fail!)] })
+	store_class : Object.Class(RpcMethods.Store)
+	store_class = Object.class("Store", { init!: store_init!, fetch!: store_fetch!, rpc: [RpcMethods.fail({}).on(store_fail!)] })
 
-	flaky_class : Object.Class
+	flaky_class : Object.Class(RpcMethods.NoRpc)
 	flaky_class = Object.class("Flaky", { init!: flaky_init!, fetch!: plain_fetch! })
 
-	slow_class : Object.Class
+	slow_class : Object.Class(RpcMethods.NoRpc)
 	slow_class = Object.class("Slow", { init!: slow_init!, fetch!: plain_fetch! })
 
-	ticker_class : Object.Class
+	ticker_class : Object.Class(RpcMethods.NoRpc)
 	ticker_class = Object.class("Ticker", { fetch!: ticker_fetch!, alarm!: ticker_alarm! })
 
-	kv_only_class : Object.Class
+	kv_only_class : Object.Class(RpcMethods.NoRpc)
 	kv_only_class = Object.class("KvOnly", { fetch!: kv_only_fetch! })
 
-	classes : List(Object.Class)
-	classes = [counter_class, store_class, flaky_class, slow_class, ticker_class, kv_only_class]
+	classes : List(Object.AnyClass)
+	classes = [counter_class.erase(), store_class.erase(), flaky_class.erase(), slow_class.erase(), ticker_class.erase(), kv_only_class.erase()]
 
 	## The namespaces: each takes the class value, so a class name is written once.
-	counters : Object.Namespace
+	counters : Object.Namespace(RpcMethods.Counter)
 	counters = Object.namespace("COUNTERS", { class: counter_class })
 
-	stores : Object.Namespace
+	stores : Object.Namespace(RpcMethods.Store)
 	stores = Object.namespace("STORES", { class: store_class })
 
-	flakies : Object.Namespace
+	flakies : Object.Namespace(RpcMethods.NoRpc)
 	flakies = Object.namespace("FLAKY", { class: flaky_class })
 
-	slows : Object.Namespace
+	slows : Object.Namespace(RpcMethods.NoRpc)
 	slows = Object.namespace("SLOW", { class: slow_class })
 
-	tickers : Object.Namespace
+	tickers : Object.Namespace(RpcMethods.NoRpc)
 	tickers = Object.namespace("TICKERS", { class: ticker_class })
 
-	kv_only : Object.Namespace
+	kv_only : Object.Namespace(RpcMethods.NoRpc)
 	kv_only = Object.namespace("KVONLY", { class: kv_only_class })
 
 	route! : Request, List(Str) => Response
@@ -94,11 +94,11 @@ ObjectRoutes :: [].{
 			# N4: the bindings that the namespaces give to the manifest: a class value, a class value with `script`, and `namespace_remote`.
 			["namespaces"] => {
 				far = Object.namespace("FAR2", { class: store_class, script: "other" })
-				remote = Object.namespace_remote("FAR", { class: "Far", script: "other" })
+				remote = Object.namespace_remote("FAR", { class: "Far", script: "other" }, RpcMethods.counter_iface)
 				Response.from_text(200, Str.inspect([counters.declare(), far.declare(), remote.declare()]))
 			}
 			# `namespace_named`: `store_ns` (the RPC callee of `RpcErrRoutes`, below) and one more: the class name, no `script`.
-			["namespaces_named"] => Response.from_text(200, Str.inspect([store_ns.declare(), Object.namespace_named("NAMED", "Counter").declare()]))
+			["namespaces_named"] => Response.from_text(200, Str.inspect([store_ns.declare(), Object.namespace_named("NAMED", "Counter", RpcMethods.counter_iface).declare()]))
 			["jurisdiction"] => Response.from_text(200, Str.inspect(counters.jurisdiction(Eu).named(name).id!()))
 			# `named_with` and `from_id_with` with a location hint, `unique!`, and `id!` of a stub of an id (no crossing).
 			["location"] => {
@@ -137,9 +137,9 @@ ObjectRoutes :: [].{
 				Response.from_text(200, "${Str.inspect(a)} ${Str.inspect(b)}")
 			}
 			["rpc", "nap"] => Response.from_text(200, Str.inspect(counters.named(name).call!(RpcMethods.nap, { ms: Q.num(req, "ms") })))
-			["rpc", "ping"] => Response.from_text(200, Str.inspect(counters.named(name).call!(RpcMethods.ping, { n: 7 })))
+			["rpc", "ping"] => Response.from_text(200, Str.inspect(counters.named(name).call!(RpcMethods.ping({}), { n: 7 })))
 			["rpc", "boom"] => Response.from_text(200, Str.inspect(counters.named(name).call!(RpcMethods.boom, { n: 3 })))
-			["rpc", "nothere"] => Response.from_text(200, Str.inspect(counters.named(name).call!(RpcMethods.nothere, { n: 1 })))
+			["rpc", "nothere"] => Response.from_text(200, Str.inspect(counters.named(name).call!(RpcMethods.nothere({}), { n: 1 })))
 			["rpc", "echo"] => Response.from_text(200, Str.inspect(counters.named(name).call!(RpcMethods.echo, { big: 1_152_921_504_606_846_976 })))
 			["fetch_io"] => Response.from_text(200, text!(Io.run!(counters.named(name).fetch(Request.get("http://o/id")))))
 			_ => Response.from_text(404, "no route")
@@ -148,7 +148,7 @@ ObjectRoutes :: [].{
 }
 
 ## The request to the object: the op as its path, and the query of the route.
-forward! : Object, List(Str), Request => Response
+forward! : Object(RpcMethods.Counter), List(Str), Request => Response
 forward! = |o, op, req| {
 	query = match req.url().split_first("?") {
 		Ok({ after, .. }) => "?${after}"
@@ -422,7 +422,7 @@ echo! = |_self, v| Ok(v)
 
 # N5 G1a (checks/rpcerr.mjs, "infra"): the callee `fail` in `Store` `?`s a platform error: SqlErr, Constraint, StorageErr (the class
 # has no `alarm!`). The `Counter` callees `relay` and `relay_map` call it and pass its errors on with `Rpc.forward`.
-store_ns = Object.namespace_named("STORES", "Store")
+store_ns = Object.namespace_named("STORES", "Store", RpcMethods.store_iface)
 
 store_fail! : Object.Self, { kind : Str } => Try(I64, [NotOpen, Infra(Rpc.Infra)])
 store_fail! = |self, { kind }| match kind {
@@ -448,13 +448,13 @@ store_fail! = |self, { kind }| match kind {
 
 relay! : Object.Self, { kind : Str } => Try(I64, [NotOpen, Infra(Rpc.Infra)])
 relay! = |_self, arg| {
-	v = store_ns.named("relay").call!(RpcMethods.fail, arg) ? Rpc.forward(|e| e)
+	v = store_ns.named("relay").call!(RpcMethods.fail({}), arg) ? Rpc.forward(|e| e)
 	Ok(v)
 }
 
 relay_map! : Object.Self, { kind : Str } => Try(I64, [Shut, Infra(Rpc.Infra)])
 relay_map! = |_self, arg| {
-	v = store_ns.named("relay").call!(RpcMethods.fail, arg) ? Rpc.forward(
+	v = store_ns.named("relay").call!(RpcMethods.fail({}), arg) ? Rpc.forward(
 		|e| match e {
 			NotOpen => Shut
 			Infra(i) => Infra(i)

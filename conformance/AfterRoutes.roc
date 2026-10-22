@@ -9,10 +9,17 @@ import pf.Rpc
 import pf.Service
 import Q
 
+## The service `AFTER` has no Rpc method: the interface is for the type of the binding only.
+AfterApi := []
+
+after_iface : Rpc.Iface(AfterApi)
+after_iface = Rpc.Iface.{}
+
 store : Kv(Str)
 store = Kv.text("KV")
 
-after_service = Service.binding("AFTER")
+after_service : Service(AfterApi)
+after_service = Service.binding("AFTER", after_iface)
 
 AfterRoutes :: [].{
 
