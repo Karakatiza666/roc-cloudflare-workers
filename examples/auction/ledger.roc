@@ -20,7 +20,7 @@ import Gavel
 receipts = R2.binding("RECEIPTS")
 
 ## The class `LotRoom` is in the script of auction-web.
-lot_rooms = Object.namespace_remote("LOT_ROOM", { class: "LotRoom", script: "auction-web" })
+lot_rooms = Object.namespace_remote("LOT_ROOM", { class: "LotRoom", script: "auction-web" }, Gavel.room_iface)
 
 feed_url = "wss://fx.example.com/stream"
 
@@ -77,7 +77,7 @@ settle_one! = |id, cfg, rates, now| {
 convert : U64, Dec -> Try(U64, [OutOfRange])
 convert = |cents, rate| {
 	estimate = cents.to_f64() * rate.to_f64()
-	if estimate.abs() > 1.0e20 Err(OutOfRange) else (cents.to_dec() * rate).round_to_u64_try()
+	if (estimate.abs() > 1.0e20) Err(OutOfRange) else (cents.to_dec() * rate).round_to_u64_try()
 }
 
 ## The fee: `cents * percent / 100`. When the product does not fit in `U64`, the fee is split (`cents / 100 * percent`

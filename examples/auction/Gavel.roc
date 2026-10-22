@@ -35,18 +35,31 @@ Gavel :: [].{
 	## What `settle_due` can answer: only platform errors (D1, KV).
 	SettleErr : [Infra(Gavel.Faults)]
 
+	## The interfaces: one type for each callee, with no values. `Rpc(Gavel.Room, ..)` is a method of a lot room. A call of a
+	## method of another interface does not compile, and a class takes the methods of one interface only.
+	Room := []
+
+	Ledger := []
+
+	## The proofs of the interfaces, for `Object.namespace_remote` and `Service.binding_with`.
+	room_iface : Rpc.Iface(Gavel.Room)
+	room_iface = Rpc.Iface.{}
+
+	ledger_iface : Rpc.Iface(Gavel.Ledger)
+	ledger_iface = Rpc.Iface.{}
+
 	# The Rpc methods. The Roc callee and the Roc caller both use these values.
 	## `open` is a command: its answer is `{}`.
-	open : Rpc(Gavel.Lot, {}, Gavel.RoomErr)
+	open : Rpc(Gavel.Room, Gavel.Lot, {}, Gavel.RoomErr)
 	open = Rpc.method("open")
 
-	snapshot : Rpc({}, Gavel.Snapshot, Gavel.RoomErr)
+	snapshot : Rpc(Gavel.Room, {}, Gavel.Snapshot, Gavel.RoomErr)
 	snapshot = Rpc.method("snapshot")
 
-	close_out : Rpc({}, Gavel.Closeout, Gavel.RoomErr)
+	close_out : Rpc(Gavel.Room, {}, Gavel.Closeout, Gavel.RoomErr)
 	close_out = Rpc.method("close_out")
 
-	settle_due : Rpc({}, { settled : U32 }, Gavel.SettleErr)
+	settle_due : Rpc(Gavel.Ledger, {}, { settled : U32 }, Gavel.SettleErr)
 	settle_due = Rpc.method("settle_due")
 
 	# Bindings with the same name in both wrangler files. The room namespace is in each Worker (the ledger names the script).

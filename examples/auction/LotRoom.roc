@@ -26,7 +26,7 @@ Top : { bidder : Str, amount_cents : U64, bids_count : U64 }
 
 LotRoom :: [].{
 
-	class : Object.Class
+	class : Object.Class(Gavel.Room)
 	class = Object.class(
 		"LotRoom",
 		{

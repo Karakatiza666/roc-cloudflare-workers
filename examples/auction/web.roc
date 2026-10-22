@@ -32,7 +32,7 @@ lot_rooms = Object.namespace("LOT_ROOM", { class: LotRoom.class })
 
 images = R2.binding("BUCKET")
 
-ledger = Service.binding_with("LEDGER", { service: "auction-ledger" })
+ledger = Service.binding_with("LEDGER", Gavel.ledger_iface, { service: "auction-ledger" })
 
 catalog : Kv.Cell(List(Gavel.Lot))
 catalog = Kv.json("KV").cell("catalog")
@@ -186,7 +186,7 @@ settle! = |s| {
 
 worker = Worker.new({
 	fetch!,
-	objects: [LotRoom.class],
+	objects: [LotRoom.class.erase()],
 	bindings: [Gavel.db.declare(), catalog.declare(), images.declare(), lot_rooms.declare(), ledger.declare()],
 	crons: [Worker.cron("*/5 * * * *", settle!)],
 })
