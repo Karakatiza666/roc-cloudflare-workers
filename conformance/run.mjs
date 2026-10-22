@@ -191,9 +191,9 @@ async function runChecks() {
     }
   }
 
-  // The end: no task, no ref, no context, no alarm, no live byte of a task (RS1, PLAN.md 10c).
+  // The end: no task, no ref, no context, no alarm, no live byte of a task (RS1, PLAN.md 10c), no timer (the timer of a task is cleared at its end).
   const st = JSON.parse(await (await mf.dispatchFetch('http://localhost/__stats')).text());
-  const endOk = st.tasks === 0 && st.refsLive === 0 && st.contextsLive === 0 && st.alarms === 0 && st.live === 0;
+  const endOk = st.tasks === 0 && st.refsLive === 0 && st.contextsLive === 0 && st.alarms === 0 && st.live === 0 && st.timers === 0;
   console.log(`${endOk ? 'PASS' : 'FAIL'} end: ${JSON.stringify(st)}`);
   if (!endOk) failed++;
 }

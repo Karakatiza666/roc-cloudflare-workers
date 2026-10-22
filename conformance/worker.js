@@ -22,6 +22,18 @@ export const Room = objectClass('Room');
 const exported = { Counter, Store, Flaky, Slow, Ticker, KvOnly, Admin, After, Room };
 const kind = (v) => (v === null ? 'null' : Array.isArray(v) ? 'Array' : typeof v === 'object' ? Object.getPrototypeOf(v)?.constructor?.name ?? 'null-proto' : typeof v);
 
+// The timers that are set and not yet fired or cleared (`GET /__stats` field `timers`): the deadline timer of a task (`watch`,
+// js/index.js) must be cleared at the end of its task (checks/deadline.mjs). `setTimeout` and `clearTimeout` of the isolate count.
+const liveTimers = new Set();
+const setT = globalThis.setTimeout;
+const clearT = globalThis.clearTimeout;
+globalThis.setTimeout = (fn, ms, ...a) => {
+  const id = setT((...x) => (liveTimers.delete(id), fn(...x)), ms, ...a);
+  liveTimers.add(id);
+  return id;
+};
+globalThis.clearTimeout = (id) => (liveTimers.delete(id), clearT(id));
+
 // The root `ops` (API.md 6.4). `lib` is an object of functions, not a function (the option check, PLAN.md 8a O4).
 const ops = {
   lib: { twice: (n) => n * 2 },
@@ -67,7 +79,18 @@ export default class extends Handler {
     if (stub) return stub;
     if (path === '/__stats') {
       const s = r.tasks.stats;
-      return Response.json({ live: r.x.live_bytes(), tasks: r.tasks.size, refsLive: s.refsLive, contextsLive: s.contextsLive, alarms: r.stats.alarms });
+      return Response.json({ live: r.x.live_bytes(), tasks: r.tasks.size, refsLive: s.refsLive, contextsLive: s.contextsLive, alarms: r.stats.alarms, timers: liveTimers.size });
+    }
+    // checks/deadline.mjs: a call of a stub from JS, so no Roc task of the Worker waits and sweeps at its own deadline. `?kind=fetch|rpc&name=&ms=`:
+    // the wait of the object task (Counter `/sleep`, the Rpc method `nap`) is `ms`. The answer is the text of the reply or of the error.
+    if (path === '/__object_wait') {
+      const q = new URL(request.url).searchParams;
+      const stub = this.env.COUNTERS.getByName(q.get('name'));
+      try {
+        return new Response(q.get('kind') === 'rpc' ? JSON.stringify(await stub.nap({ ms: Number(q.get('ms')) })) : await (await stub.fetch(`http://object/sleep?ms=${q.get('ms')}`)).text());
+      } catch (e) {
+        return new Response(`${e.name}: ${e.message}`);
+      }
     }
     if (path === '/__mem') return new Response(String(r.x.memory.buffer.byteLength));
     // FO6 (PLAN.md 8f): a JS call with no argument of the RPC method `hello` (argument type `{}`): the default export

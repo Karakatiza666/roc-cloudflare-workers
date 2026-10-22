@@ -22,6 +22,10 @@ count = Object.cell("count")
 dec_cell : Object.Cell({ a : Dec, b : Dec })
 dec_cell = Object.cell("dec")
 
+## The wait of the next alarm in ms (the deadline repro of `research/flake-foreign-sweep/`): `/alarm_nap?ms=`.
+nap_cell : Object.Cell(U64)
+nap_cell = Object.cell("nap")
+
 ## Written after `respond!` (API.md 10.2).
 late : Object.Cell(Str)
 late = Object.cell("late")
@@ -37,7 +41,7 @@ ObjectRoutes :: [].{
 
 	## The classes of the app: the manifest names them, and `conformance/worker.js` exports each one.
 	counter_class : Object.Class
-	counter_class = Object.class("Counter", { fetch!: counter_fetch!, alarm!: counter_alarm!, rpc: [RpcMethods.increment.on(increment!), RpcMethods.ping.on(object_ping!), RpcMethods.boom.on(boom!), RpcMethods.echo.on(echo!), RpcMethods.hello.on(object_hello!), RpcMethods.relay.on(relay!), RpcMethods.relay_map.on(relay_map!)].concat(RpcErrRoutes.object_handlers) })
+	counter_class = Object.class("Counter", { fetch!: counter_fetch!, alarm!: counter_alarm!, rpc: [RpcMethods.increment.on(increment!), RpcMethods.ping.on(object_ping!), RpcMethods.boom.on(boom!), RpcMethods.echo.on(echo!), RpcMethods.hello.on(object_hello!), RpcMethods.nap.on(nap!), RpcMethods.relay.on(relay!), RpcMethods.relay_map.on(relay_map!)].concat(RpcErrRoutes.object_handlers) })
 
 	store_class : Object.Class
 	store_class = Object.class("Store", { init!: store_init!, fetch!: store_fetch!, rpc: [RpcMethods.fail.on(store_fail!)] })
@@ -132,6 +136,7 @@ ObjectRoutes :: [].{
 				b = Io.run!(o.call(RpcMethods.increment, { by: 3 }))
 				Response.from_text(200, "${Str.inspect(a)} ${Str.inspect(b)}")
 			}
+			["rpc", "nap"] => Response.from_text(200, Str.inspect(counters.named(name).call!(RpcMethods.nap, { ms: Q.num(req, "ms") })))
 			["rpc", "ping"] => Response.from_text(200, Str.inspect(counters.named(name).call!(RpcMethods.ping, { n: 7 })))
 			["rpc", "boom"] => Response.from_text(200, Str.inspect(counters.named(name).call!(RpcMethods.boom, { n: 3 })))
 			["rpc", "nothere"] => Response.from_text(200, Str.inspect(counters.named(name).call!(RpcMethods.nothere, { n: 1 })))
@@ -170,6 +175,11 @@ answer = |t| Ok(Response.from_text(200, t))
 counter_fetch! : Object.Self, Request => Try(Response, e)
 counter_fetch! = |self, req| match req.segments() {
 	["id"] => answer(self.id())
+	# A wait before the response (the deadline repro of research/flake-foreign-sweep/): `/sleep?ms=`.
+	["sleep"] => {
+		Time.sleep!(Q.num(req, "ms"))
+		answer("slept")
+	}
 	["sql_setup"] => {
 		made = [
 			"CREATE TABLE IF NOT EXISTS p (id INTEGER PRIMARY KEY)",
@@ -340,6 +350,11 @@ counter_fetch! = |self, req| match req.segments() {
 		got = self.get_alarm!()
 		answer("set=${Str.inspect(set)} id=${self.id()} t0=${t0.to_str()} alarm=${Str.inspect(got)}")
 	}
+	# An alarm that waits `ms` (the deadline repro of research/flake-foreign-sweep/): the alarm runs 10 ms after the call, then sleeps.
+	["alarm_nap"] => {
+		_ = nap_cell.set!(self, Q.num(req, "ms"))
+		answer(Str.inspect(self.set_alarm_in!(10)))
+	}
 	# `set_alarm_at!(now + ms)`: the alarm is at that time.
 	["alarm_at"] => {
 		t = Time.now_ms!() + Q.num(req, "ms")
@@ -373,6 +388,10 @@ counter_fetch! = |self, req| match req.segments() {
 counter_alarm! : Object.Self, { retry_count : U32, is_retry : Bool } => Try({}, [])
 counter_alarm! = |self, _info| {
 	Log.info!("counter alarm", { id: self.id(), at: Time.now_ms!() })
+	match nap_cell.get!(self) {
+		Ok(ms) => Time.sleep!(ms)
+		Err(_) => {}
+	}
 	Ok({})
 }
 
@@ -385,6 +404,12 @@ increment! = |self, { by }| {
 
 object_ping! : Object.Self, { n : I64 } => Try(Str, Rpc.NoErr)
 object_ping! = |_self, { n }| Ok("object ping ${n.to_str()}")
+
+nap! : Object.Self, { ms : U64 } => Try(U64, Rpc.NoErr)
+nap! = |_self, { ms }| {
+	Time.sleep!(ms)
+	Ok(ms)
+}
 
 object_hello! : Object.Self, {} => Try(Str, Rpc.NoErr)
 object_hello! = |_self, {}| Ok("object hello")
