@@ -52,6 +52,7 @@ const TESTS = {
 const R = (name, test, checks, ...edits) => ({ name, test, checks, edits });
 // The checks of the 8h wave N reverts (the names of conformance/checks/{objects,kv,websocket}.mjs).
 const NS = 'objects namespace: the class value gives the class name, script is kept, namespace_remote gives the text class and the script';
+const NN = 'objects namespace: namespace_named gives the binding and the class name as given, and no script';
 const OF = 'objects Object.Cell find!: a missing cell is Ok(Err(NotFound)), a value Ok(Ok(v)), a value of another type Err(BadData)';
 const KF = 'kv find!, find (Io twin): a missing key is Ok(Err(NotFound)), a present key Ok(Ok(v)), a bad stored value Err(BadData)';
 const KC = 'kv Cell find!, find (Io twin): missing is Ok(Err(NotFound)), a value Ok(Ok(v)), a bad stored value Err(BadData)';
@@ -734,6 +735,10 @@ const reverts = [
   R('8h N4: Object.namespace drops script', 'conformance', [NS], [BP + 'Object.roc', 'class: opts.class.name, script: opts.?script ?? ""', 'class: opts.class.name, script: ""']),
   R('8h N4: Object.namespace_remote swaps the class and the script', 'conformance', [NS], [BP + 'Object.roc', 'class: opts.class, script: opts.script }', 'class: opts.script, script: opts.class }']),
   R('8h N4: Object.namespace takes a Str class again (must-not-compile)', 'must-not-compile', [], [BP + 'Object.roc', 'namespace : Str, { class : Object.Class, script ?: Str } -> Object.Namespace', 'namespace : Str, { class : Str, script ?: Str } -> Object.Namespace'], [BP + 'Object.roc', 'class: opts.class.name,', 'class: opts.class,'], [BP + 'Worker.roc', 'Object.namespace("ROOMS", { class: Object.class("Room", {}) })', 'Object.namespace("ROOMS", { class: "Room" })'], [BP + 'Worker.roc', 'Object.namespace("FAR2", { class: Object.class("Far2", {}), script: "other" })', 'Object.namespace("FAR2", { class: "Far2", script: "other" })']),
+  // `Object.namespace_named` (binding, class name in this Worker, no script).
+  R('8h N4: Object.namespace_named swaps the binding and the class', 'conformance', [NN], [BP + 'Object.roc', 'Object.Namespace.{ binding, jurisdiction: "", class: class_name, script: "" }', 'Object.Namespace.{ binding: class_name, jurisdiction: "", class: binding, script: "" }']),
+  R('8h N4: Object.namespace_named gives a script', 'conformance', [NN], [BP + 'Object.roc', 'Object.Namespace.{ binding, jurisdiction: "", class: class_name, script: "" }', 'Object.Namespace.{ binding, jurisdiction: "", class: class_name, script: "self" }']),
+  R('8h N4: the STORES namespace of the conformance app names the class Counter', 'conformance', [NN], ['conformance/ObjectRoutes.roc', 'store_ns = Object.namespace_named("STORES", "Store")', 'store_ns = Object.namespace_named("STORES", "Counter")']),
   // N6: `find!` gives `Ok(Err(NotFound))` for a missing value, `Ok(Ok(v))` for a value, `Err(BadData)` for a bad value.
   R('8h N6: Object.Cell.find! gives a value as Ok(Err(NotFound))', 'conformance', [OF], [BP + 'Object.roc', 'Ok(v) => Ok(Ok(v))', 'Ok(_) => Ok(Err(NotFound))']),
   R('8h N6: Object.Cell.find! gives BadData as NotFound', 'conformance', [OF], [BP + 'Object.roc', 'Err(NotFound) => Ok(Err(NotFound))\n\t\t\tErr(Infra(i)) => Err(Infra(i))', 'Err(NotFound) => Ok(Err(NotFound))\n\t\t\tErr(Infra(BadData(_))) => Ok(Err(NotFound))\n\t\t\tErr(Infra(i)) => Err(Infra(i))']),

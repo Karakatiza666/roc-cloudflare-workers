@@ -93,6 +93,8 @@ ObjectRoutes :: [].{
 				remote = Object.namespace_remote("FAR", { class: "Far", script: "other" })
 				Response.from_text(200, Str.inspect([counters.declare(), far.declare(), remote.declare()]))
 			}
+			# `namespace_named`: `store_ns` (the RPC callee of `RpcErrRoutes`, below) and one more: the class name, no `script`.
+			["namespaces_named"] => Response.from_text(200, Str.inspect([store_ns.declare(), Object.namespace_named("NAMED", "Counter").declare()]))
 			["jurisdiction"] => Response.from_text(200, Str.inspect(counters.jurisdiction(Eu).named(name).id!()))
 			# `named_with` and `from_id_with` with a location hint, `unique!`, and `id!` of a stub of an id (no crossing).
 			["location"] => {
