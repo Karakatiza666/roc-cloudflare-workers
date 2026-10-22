@@ -22,9 +22,16 @@ Object :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id(Str)],
 
 	## A namespace: the binding name and the class of its objects (`class_name` in the Wrangler config). The class is the
 	## value of `Object.class`, so its name is written once. `script`: the Worker that has the class (`script_name`),
-	## when it is not this Worker. For a class that this app does not have as a value, use `namespace_remote`.
+	## when it is not this Worker. For a class that this app does not have as a value, use `namespace_named` (this Worker)
+	## or `namespace_remote` (another Worker).
 	namespace : Str, { class : Object.Class, script ?: Str } -> Object.Namespace
 	namespace = |binding, opts| Object.Namespace.{ binding, jurisdiction: "", class: opts.class.name, script: opts.?script ?? "" }
+
+	## A namespace of a class of this Worker, by name: for a class whose `Object.Class` value cannot be imported (a module
+	## cycle). The manifest is the same as `namespace` with that class and no `script`. The shim checks at load that the
+	## class is in `objects`.
+	namespace_named : Str, Str -> Object.Namespace
+	namespace_named = |binding, class_name| Object.Namespace.{ binding, jurisdiction: "", class: class_name, script: "" }
 
 	## A namespace of a class that another Worker has (`script_name`): the app has the class name only, as text.
 	namespace_remote : Str, { class : Str, script : Str } -> Object.Namespace

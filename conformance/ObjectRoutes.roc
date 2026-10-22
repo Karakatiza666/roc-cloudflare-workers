@@ -395,7 +395,7 @@ echo! = |_self, v| Ok(v)
 
 # N5 G1a (checks/rpcerr.mjs, "infra"): the callee `fail` in `Store` `?`s a platform error: SqlErr, Constraint, StorageErr (the class
 # has no `alarm!`). The `Counter` callees `relay` and `relay_map` call it and pass its errors on with `Rpc.forward`.
-store_ns = Object.namespace_remote("STORES", { class: "Store", script: "" })
+store_ns = Object.namespace_named("STORES", "Store")
 
 store_fail! : Object.Self, { kind : Str } => Try(I64, [NotOpen, Infra(Rpc.Infra)])
 store_fail! = |self, { kind }| match kind {

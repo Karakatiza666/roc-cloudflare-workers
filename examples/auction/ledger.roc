@@ -72,12 +72,20 @@ settle_one! = |id, cfg, rates, now| {
 	Ok({})
 }
 
+## Cents times a rate, rounded. `Dec` has no `times_try` and `times_saturated` crashes (see research/dec-times/), and `*`
+## crashes above `Dec.highest` (about 1.7e20). An F64 estimate above 1e20 is out of `U64` range (1.8e19) with a wide margin, so the `Dec` product is safe below it.
+convert : U64, Dec -> Try(U64, [OutOfRange])
+convert = |cents, rate| {
+	estimate = cents.to_f64() * rate.to_f64()
+	if estimate.abs() > 1.0e20 Err(OutOfRange) else (cents.to_dec() * rate).round_to_u64_try()
+}
+
 ## A currency with no rate, or with an amount that does not fit in `U64`, is left out of the receipt.
 make_receipt : Str, Gavel.Closeout, Gavel.Config, Gavel.Rates, U64 -> Gavel.Receipt
 make_receipt = |id, closeout, cfg, rates, now| {
 	converted = cfg.currencies.keep_oks(
 		|currency| match rates.rates.find_first(|r| r.currency == currency) {
-			Ok(r) => match (closeout.amount_cents.to_dec() * r.rate).round_to_u64_try() {
+			Ok(r) => match convert(closeout.amount_cents, r.rate) {
 				Ok(amount_cents) => Ok({ currency, amount_cents })
 				Err(_) => Err(NoRate)
 			}
@@ -92,6 +100,14 @@ expect {
 	rates = { as_of_ms: 1, rates: [{ currency: "EUR", rate: 0.5 }] }
 	r = make_receipt("l1", { winner: "ann", amount_cents: 1000 }, cfg, rates, 9)
 	r.fee_cents == 50 and r.converted == [{ currency: "EUR", amount_cents: 500 }]
+}
+
+# An amount times a rate above `Dec.highest` leaves the currency out and does not crash. The fee is 0: a `U64` fee has its own limit.
+expect {
+	cfg = { fee_percent: 0, max_step_cents: 0, currencies: ["EUR", "JPY"] }
+	rates = { as_of_ms: 1, rates: [{ currency: "EUR", rate: 20.0 }, { currency: "JPY", rate: 0.5 }] }
+	r = make_receipt("l1", { winner: "ann", amount_cents: 10_000_000_000_000_000_000 }, cfg, rates, 9)
+	r.converted == [{ currency: "JPY", amount_cents: 5_000_000_000_000_000_000 }]
 }
 
 # ---- FX feed ----
