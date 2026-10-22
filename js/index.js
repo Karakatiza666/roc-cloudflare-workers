@@ -26,7 +26,6 @@ import { checkOptions } from './options.js';
 import { makeRunner, manifestOf, NOT_STACK_FIRST } from './runner.js';
 import { fetchEvent, scheduledEvent, queueEvent, emailEvent, tailEvent, otherEvent, responseOf, rpcEvent, entrypointFetchEvent, objectEvent, objectInit, objectFetch, objectAlarm, objectRpc, objectSocketMessage, objectSocketClose, objectSocketError, manifestEvent } from './events.js';
 import { isBenchHost } from './host.js';
-import { DEADLINES } from './tasks.js';
 
 // The classes of the entry file (PLAN.md 8f, API.md AQ10): `objectClass` and `entrypointClass` make a class for each
 // name, and `makeHandler` checks the names against the manifest of the app and puts the methods on each prototype.
@@ -95,11 +94,30 @@ export function makeHandler(module, opts = {}) {
 
   // Run one event as a task. A trap gives `{ trap, status }`; its log line has the text of a Roc `crash` (8a O2).
   // `ro`: the task context (PLAN.md 9b, API.md 6.2 OP3): `kind`, `signal`, `env`, `ctx` and `event` (the root `event`).
+  // `ro.own`: a Durable Object task, with the own-context timer of its deadline (`watch`).
   const run = async (name, ev, ro) => {
     checkEnv(ro.env);
-    const r = await runnerOf().run(ev, ro);
+    const stop = ro.own ? watch(ro.hooks) : null;
+    let r;
+    try {
+      r = await runnerOf().run(ev, ro);
+    } finally {
+      stop?.();
+    }
     if (r.trap && !r.shed && !r.cancelled) log(`${name}: trap: ${r.crash ?? r.trap}`);
     return r;
+  };
+  // The deadline of a Durable Object task (API.md 10.2): a timer in the context of the task, so the deadline needs no other request.
+  // It sweeps at the deadline (`wakeIn`: from the state of the task, one timer for each task, not for each wait) and again until
+  // the task ends. `sweep(hooks)` also wakes the wait of the cancelled task from its own context: workerd keeps a wake from another
+  // context until the object has I/O of its own (seen for `Init`; not for a fetch, an Rpc or an alarm, research/flake-foreign-sweep/).
+  // A Worker task has none: its deadline is checked when another request comes (zzfetch.mjs there).
+  const watch = (hooks) => {
+    const tasks = runnerOf().tasks;
+    let timer;
+    const tick = (ms) => (timer = setTimeout(() => (tasks.sweep(hooks), tick(tasks.wakeIn(hooks))), ms));
+    tick(tasks.wakeFirst(hooks.kind));
+    return () => clearTimeout(timer);
   };
   // An outcome that the entry does not take: the reason as text (API.md 10.1: `Failed`, `Unhandled`, another one).
   const reason = (o) => (o.outcome === 'failed' ? `failed: ${o.message}` : o.outcome === 'unhandled' ? 'unhandled: the app has no handler for it' : `the outcome ${o.outcome} is not for this event`);
@@ -227,7 +245,6 @@ export function makeHandler(module, opts = {}) {
     if (e) throw e;
     envChecked.add(env);
   }
-  const initMs = runnerOpts.initMs ?? DEADLINES.initMs;
   // A JS method on the prototype, where Workers finds a handler and an RPC method (an own property gives "The RPC
   // receiver does not implement the method").
   const method = (C, name, fn) => Object.defineProperty(C.prototype, name, { configurable: true, writable: true, value: fn });
@@ -255,7 +272,7 @@ export function makeHandler(module, opts = {}) {
   const fetchLike = async (tag, kind, ev, request, self, keep) => {
     const hooks = { kind, ctx: self.ctx, respond: null, response: null, passThrough: false };
     const early = new Promise((resolve) => (hooks.respond = resolve));
-    const running = run(tag, ev, { kind: 'Fetch', signal: request.signal, env: self.env, ctx: self.ctx, event: request, hooks });
+    const running = run(tag, ev, { kind: 'Fetch', signal: request.signal, env: self.env, ctx: self.ctx, event: request, hooks, own: kind === 'ObjectFetch' });
     const r = await Promise.race([running, early]);
     if (hooks.response) {
       const rest = running.then((x) => {
@@ -271,21 +288,11 @@ export function makeHandler(module, opts = {}) {
   };
   const hooksOf = (kind, self) => ({ kind, ctx: self.ctx });
   const app = {
-    // The event `Init` in `blockConcurrencyWhile`. Its deadline (API.md 10.2, shim option `initMs`): a timer sweeps the
-    // task table then, so the cancel names the task before Workers resets the object (30 s). The task starts after this
-    // line (late under load), so the timer comes again every 100 ms until the task ends. The timer is in the context of
-    // the task, so it also ends the wait when a request of another context cancelled the task (`sweep(hooks)`).
+    // The event `Init` in `blockConcurrencyWhile`. Its deadline (API.md 10.2, shim option `initMs`) is swept by the timer of
+    // `watch`, so the cancel names the task before Workers resets the object (30 s).
     async objectInit(name, ctx, env) {
-      let timer;
-      const hooks = { kind: 'Init', ctx };
-      const tick = (ms) => (timer = setTimeout(() => (runnerOf().tasks.sweep(hooks), tick(100)), ms));
-      tick(initMs + 50);
-      try {
-        const r = await run(`${name}.init`, objectEvent(name, ctx.id.toString(), objectInit()), { kind: 'Init', env, ctx, event: ctx, hooks });
-        done(`${name}.init`, r);
-      } finally {
-        clearTimeout(timer);
-      }
+      const r = await run(`${name}.init`, objectEvent(name, ctx.id.toString(), objectInit()), { kind: 'Init', env, ctx, event: ctx, hooks: { kind: 'Init', ctx }, own: true });
+      done(`${name}.init`, r);
     },
     bind(kind, name, C) {
       const entry = manifest[kind][name];
@@ -297,11 +304,11 @@ export function makeHandler(module, opts = {}) {
           return fetchLike(`${name}.fetch`, 'ObjectFetch', objectEvent(name, this.ctx.id.toString(), objectFetch(request)), request, this, false);
         });
         if (C.handlers.has('alarm')) method(C, 'alarm', async function (info) {
-          const r = await run(`${name}.alarm`, objectEvent(name, this.ctx.id.toString(), objectAlarm(info)), { kind: 'Alarm', env: this.env, ctx: this.ctx, event: info, hooks: hooksOf('Alarm', this) });
+          const r = await run(`${name}.alarm`, objectEvent(name, this.ctx.id.toString(), objectAlarm(info)), { kind: 'Alarm', env: this.env, ctx: this.ctx, event: info, hooks: hooksOf('Alarm', this), own: true });
           done(`${name}.alarm`, r);
         });
         for (const m of entry.methods) method(C, m, async function (arg) {
-          const r = await run(`${name}.${m}`, objectEvent(name, this.ctx.id.toString(), objectRpc(m, arg)), { kind: 'Rpc', env: this.env, ctx: this.ctx, event: arg, hooks: hooksOf('Rpc', this) });
+          const r = await run(`${name}.${m}`, objectEvent(name, this.ctx.id.toString(), objectRpc(m, arg)), { kind: 'Rpc', env: this.env, ctx: this.ctx, event: arg, hooks: hooksOf('Rpc', this), own: true });
           return reply(`${name}.${m}`, r);
         });
         // The hibernation API (MODULES.md 12.1): a method only for a handler of the class. An `Err`, `Unhandled` and a
@@ -309,7 +316,7 @@ export function makeHandler(module, opts = {}) {
         const socketEvent = (handler, make) => {
           if (C.handlers.has(handler)) method(C, handler, async function (ws, ...rest) {
             const tag = `${name}.${handler}`;
-            const r = await run(tag, objectEvent(name, this.ctx.id.toString(), make(ws, ...rest)), { kind: 'Socket', env: this.env, ctx: this.ctx, event: ws, hooks: hooksOf('Socket', this) });
+            const r = await run(tag, objectEvent(name, this.ctx.id.toString(), make(ws, ...rest)), { kind: 'Socket', env: this.env, ctx: this.ctx, event: ws, hooks: hooksOf('Socket', this), own: true });
             if (!r.trap && r.outcome.outcome !== 'done') log(`${tag}: ${reason(r.outcome)}`);
           });
         };

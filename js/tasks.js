@@ -34,6 +34,20 @@ export function deadlineOf(t, d = DEADLINES) {
   return t.waiting ? t.waitingSince + d.taskDeadlineMs : Infinity;
 }
 
+// The own-context timer of a Durable Object task (`js/index.js` `watch`) comes this long after the time it aims at, so a
+// clock that is a little early still finds the deadline passed. A timer that finds the deadline passed already waits `RETRY`.
+export const TIMER_MARGIN_MS = 50;
+export const TIMER_RETRY_MS = 100;
+
+// The time at which the timer of task `t` must sweep next (`at`: now). A task with no deadline now can get one later (a wait
+// starts, or its response is complete and `afterRespondMs` runs), so a task of a kind with per-wait limits is looked at again
+// within the shortest limit that can apply. The Init and wall limits are fixed. Pure.
+export function wakeAt(t, at, d = DEADLINES) {
+  const dl = deadlineOf(t, d);
+  if (t.response === 'complete' || t.kind === 'Init' || WALL.has(t.kind)) return dl;
+  return Math.min(dl, at + Math.min(d.afterRespondMs, d.taskDeadlineMs));
+}
+
 // The time at which the context of an ended task `t` is freed, although a started program still runs: the `waitUntil`
 // limit, `afterRespondMs` after the response is complete. A task that ended with no complete response (no early response, or
 // a writer that the end closed) has it complete at its end. Pure.
@@ -205,6 +219,21 @@ export function makeTaskTable(opts = {}) {
     // The ended tasks whose context waits for a started program.
     get lingering() {
       return lingering.size;
+    },
+    // Delay in ms of the next sweep of the own-context timer of a task (`js/index.js` `watch`). `wakeFirst(kind)`: before the
+    // task has an entry (O(1)). `wakeIn(own)`: for the task with `hooks === own`.
+    wakeFirst: (kind) => {
+      const at = now();
+      return TIMER_MARGIN_MS + Math.max(0, wakeAt({ kind, startedAt: at, response: 'none', waiting: false }, at, d) - at);
+    },
+    wakeIn(own) {
+      const at = now();
+      for (const t of tasks.values()) {
+        if (t.hooks !== own) continue;
+        const ms = wakeAt(t, at, d) - at;
+        return ms <= 0 ? TIMER_RETRY_MS : ms + TIMER_MARGIN_MS;
+      }
+      return TIMER_RETRY_MS;
     },
     // A replace (M1): cancel all tasks of the old instance, so it can be collected.
     cancelAll(inst, reason = 'replace') {

@@ -678,6 +678,8 @@ Deadlines (`PLAN.md` 3b). The shim cancels a task at its deadline (`PLAN.md` 3c)
 | After the response | 30 s after the response body is complete. The body is complete when it is sent for `Empty`, `Text`, `Bytes` and a `Stream` that the task does not write. A stream of `Body.writer!` (`MODULES.md` 4) is complete at its `close!`, so the task stays while it writes. A 101 response is complete when its socket closes. | Workers: "`waitUntil()` can extend execution for up to 30 seconds after the response is sent", and "A Worker that is still streaming a response body remains active" (Cloudflare docs, limits) |
 | A wait on a socket (`WebSocket.receive!`, `Tcp.read!`), in any state | No deadline | A socket can be idle for a long time. Its close gives `Closed` to the wait (below). |
 
+Deadline timer of an object task. The sweep of `PLAN.md` 3b runs at each new request, and a Durable Object may get none. So each task of an object (`Init`, `Fetch`, `Rpc`, `Alarm`, the socket events) has one timer in its own request context (`js/index.js` `watch`). It sweeps at the deadline of the task plus 50 ms, and looks again when the task has no deadline yet (no wait, a wait on a socket, a response not complete): after the shortest limit that can apply (`afterRespondMs`, `taskDeadlineMs`). The task clears it at its end. Cost: one `setTimeout` and one `clearTimeout` for each task. A task of a Worker has no timer: its deadline is checked only when another request comes (`research/flake-foreign-sweep/zzfetch.mjs`).
+
 In each state, the task also ends (a cancel, `PLAN.md` 3c: at once for a task that waits, else at its next wait) when:
 
 | Signal | Note |

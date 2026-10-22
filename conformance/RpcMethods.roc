@@ -11,6 +11,10 @@ RpcMethods :: [].{
 	ping : Rpc({ n : I64 }, Str, Rpc.NoErr)
 	ping = Rpc.method("ping")
 
+	## A method of `Counter` that waits `ms` before its reply (the deadline repro of `research/flake-foreign-sweep/`).
+	nap : Rpc({ ms : U64 }, U64, Rpc.NoErr)
+	nap = Rpc.method("nap")
+
 	## The callee gives `Err(Nope(n))`: the caller gets `Err(Remote(Nope(n)))`.
 	boom : Rpc({ n : I64 }, I64, [Nope(I64)])
 	boom = Rpc.method("boom")
