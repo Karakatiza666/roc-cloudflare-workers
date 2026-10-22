@@ -19,7 +19,7 @@ export const checks = [
       await mf.dispose();
     }
   }],
-  // The same with no other request: nothing sweeps, so the Worker task is cut only when its sleep ends (no timer for a Worker task, js/index.js `watch`).
+  // The same with no other request: nothing sweeps. Before the timer of each task (js/index.js `watch`, also for a Worker task) it ended when the sleep ended (2579 ms); now at about 560 ms.
   ['ZZ fetch no other request: a sleep of 2.5 s, deadline of a wait 0.5 s', async (t) => {
     const entry = t.entry.replace('initMs: 1000 }', 'initMs: 1000, taskDeadlineMs: 500 }');
     const mf = t.start({ handleStructuredLogs: () => {} }, entry);
@@ -27,7 +27,9 @@ export const checks = [
       const base = (await mf.ready).href.replace(/\/$/, '');
       const t0 = Date.now();
       const r = await (await mf.dispatchFetch(`${base}/time/sleep?ms=2500`)).text();
-      return `${r.slice(0, 40)} at ${Date.now() - t0} ms`;
+      const ms = Date.now() - t0;
+      if (ms > 1200) throw new Error(`the deadline did not cut the wait: ${r.slice(0, 40)} at ${ms} ms`);
+      return `${r.slice(0, 40)} at ${ms} ms`;
     } finally {
       await mf.dispose();
     }

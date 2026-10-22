@@ -20,7 +20,7 @@ Cause: workerd keeps a promise resolve from another request context until the co
 | `js/tasks.js` `waitStart` | Makes a second promise `t.ownWoken` (resolver `t.wakeOwn`). |
 | `js/tasks.js` `sweep(own)` | For the task with `hooks === own`: when it is cancelled, call `t.wakeOwn()`. The cancel, its log line and the counts stay the same (once). |
 | `js/bridge.js` `js_await` | The race is `[running, cancelled, t.ownWoken]`. |
-| `js/index.js` `watch` | The timer of each object task (`objectInit` has no timer of its own now) calls `sweep(hooks)` with the hooks of the task. |
+| `js/index.js` `watch` | The timer of each task, Worker and object (`objectInit` has no timer of its own now) calls `sweep(hooks)` with the hooks of the task. |
 
 ## Files
 
@@ -47,17 +47,17 @@ Question: does a sweep from another context also end a wait late for the other o
 | ObjectFetch, no other request | 2508 ms (not cut at the deadline) | 557 ms |
 | Rpc, no other request | 2512 ms | 560 ms |
 | Alarm, no other request | 2503 ms | 539 ms |
-| Worker fetch, no other request (`zzfetch.mjs`) | 2579 ms | 2579 ms (no timer for a Worker task) |
+| Worker fetch, no other request (`zzfetch.mjs`) | 2579 ms | 561 ms (a Worker task has the timer too, added after the first measure) |
 
-So the held wake is seen for `Init` only (the cause is not known: `Init` is the one task that runs in a callback of `blockConcurrencyWhile`, the others run in a request, an Rpc call or an alarm). For the other kinds the gap was a deadline that no request sweeps. The timer of each object task (`watch`, `js/index.js`) closes it, and it also wakes the wait from the own context.
+So the held wake is seen for `Init` only (the cause is not known: `Init` is the one task that runs in a callback of `blockConcurrencyWhile`, the others run in a request, an Rpc call or an alarm). For the other kinds the gap was a deadline that no request sweeps. The timer of each task (`watch`, `js/index.js`; Worker tasks too) closes it. An `Init` task is also looked at each 100 ms, for a cancel of another context with no deadline (`cancelAll`, a failed gate), and it also wakes the wait from the own context.
 
-Cost (`zzcost.mjs`, 400 requests, Miniflare, 3 runs each):
+Cost (`zzcost.mjs`, 400 requests, Miniflare, 3 runs each; the table of the first measure, with timers for object tasks only, had 0 and 1; the second measure has a timer for each task):
 
 | Request | `setTimeout` before | after | `clearTimeout` before | after | Time per request before | after |
 | --- | --- | --- | --- | --- | --- | --- |
-| Worker fetch, no object | 0 | 0 | 0 | 0 | 1.8 to 2.3 ms | 1.8 to 2.1 ms |
-| Object fetch! | 0 | 1 | 0 | 1 | 2.6 to 2.9 ms | 2.4 to 3.2 ms |
-| Object Rpc | 0 | 1 | 0 | 1 | 1.8 to 2.1 ms | 1.6 to 2.4 ms |
+| Worker fetch, no object | 0 | 1 | 0 | 1 | 1.8 to 2.3 ms | 1.0 to 2.1 ms |
+| Worker fetch, then object fetch! | 0 | 2 | 0 | 2 | 2.6 to 2.9 ms | 2.6 to 2.9 ms |
+| Worker fetch, then object Rpc | 0 | 2 | 0 | 2 | 1.8 to 2.1 ms | 2.0 to 2.4 ms |
 
 A pair `setTimeout` and `clearTimeout` costs 0.3 us in Node (1,000,000 pairs). No micro benchmark of tasks or deadlines exists in `bench/` (`bench/deadline-test.mjs` is a test).
 

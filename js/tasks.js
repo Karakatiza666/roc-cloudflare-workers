@@ -48,6 +48,13 @@ export function wakeAt(t, at, d = DEADLINES) {
   return Math.min(dl, at + Math.min(d.afterRespondMs, d.taskDeadlineMs));
 }
 
+// The delay in ms of the next timer of task `t` at `at`: to `wakeAt` plus the margin, or `TIMER_RETRY_MS` when that has passed.
+function delayOf(t, at, d = DEADLINES) {
+  const ms = wakeAt(t, at, d) - at;
+  const w = ms <= 0 ? TIMER_RETRY_MS : ms + TIMER_MARGIN_MS;
+  return t.kind === 'Init' ? Math.min(w, TIMER_RETRY_MS) : w;
+}
+
 // The time at which the context of an ended task `t` is freed, although a started program still runs: the `waitUntil`
 // limit, `afterRespondMs` after the response is complete. A task that ended with no complete response (no early response, or
 // a writer that the end closed) has it complete at its end. Pure.
@@ -221,18 +228,12 @@ export function makeTaskTable(opts = {}) {
       return lingering.size;
     },
     // Delay in ms of the next sweep of the own-context timer of a task (`js/index.js` `watch`). `wakeFirst(kind)`: before the
-    // task has an entry (O(1)). `wakeIn(own)`: for the task with `hooks === own`.
-    wakeFirst: (kind) => {
-      const at = now();
-      return TIMER_MARGIN_MS + Math.max(0, wakeAt({ kind, startedAt: at, response: 'none', waiting: false }, at, d) - at);
-    },
+    // task has an entry (O(1)). `wakeIn(own)`: for the task with `hooks === own`. An `Init` task is looked at each `TIMER_RETRY_MS`:
+    // its wait can be cancelled from another context (`cancelAll`, a failed gate) with no deadline, and workerd keeps that wake
+    // until the context of the task runs again.
+    wakeFirst: (kind) => delayOf({ kind, startedAt: now(), response: 'none', waiting: false }, now(), d),
     wakeIn(own) {
-      const at = now();
-      for (const t of tasks.values()) {
-        if (t.hooks !== own) continue;
-        const ms = wakeAt(t, at, d) - at;
-        return ms <= 0 ? TIMER_RETRY_MS : ms + TIMER_MARGIN_MS;
-      }
+      for (const t of tasks.values()) if (t.hooks === own) return delayOf(t, now(), d);
       return TIMER_RETRY_MS;
     },
     // A replace (M1): cancel all tasks of the old instance, so it can be collected.
