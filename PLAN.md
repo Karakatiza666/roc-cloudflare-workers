@@ -2860,7 +2860,7 @@ Open (2026-10-21, paused here):
 | G1a wasm size | Done (2026-10-22): `research/g1a-size/README.md`. The cost is the closed `Rpc.Infra` of 29 tags (3 to 6 KB of wasm for each tag), not the nesting. Decision of the user: `Rpc.Infra` stays at 29 tags, and an app that cares about size declares its own alias of the tags that it uses. The auction has `Gavel.Faults` of 11 tags (`Gavel.roc`): web 1,239,206 bytes (+0.4%), ledger 741,907 bytes (+2.6%) with `--opt=size`, against 1,233,953 and 723,009 before G1a (G1a with `Rpc.Infra`: +8.9%, +11.3%). `Rpc.forward` needs `Rpc.Infra` (`research/g1a-size/forward-alias`). Docs: `MODULES.md` 1 and 8. |
 | Auction `Dec` overflow | Done (2026-10-22): `Dec` has no `times_try` and `Dec.times_saturated` crashes for a factor below 1 (roc-lang/roc#12516, `research/dec-times/`). `convert` in `examples/auction/ledger.roc` checks an F64 estimate against 1e20 and leaves the currency out on overflow; `fee_of` uses `U64.times_try` and an exact split on overflow. Both have an `expect`. |
 | Typed DO namespaces | Done (2026-10-22, branch `typed-ns`): option A of `research/typed-do-ns/`. `Rpc(iface, arg, ret, err)`, `Object(iface)`, `Object.Namespace(iface)`, `Object.Class(iface)` (`erase()` for `Worker.new objects`), `Service(iface)`, `Rpc.Serves(iface, self)`. `namespace_named`, `namespace_remote`, `Service.binding` and `Service.binding_with` take the interface as a value (`Rpc.Iface(iface)`). `on_worker` and `Rpc.entrypoint` are typed too. MODULES.md 7 and 8. |
-| roc-cbor README | Local commit 57f1935 (0.2.1 install URL), not pushed. |
+| roc-cbor README | Done (2026-10-23): commit 57f1935 (0.2.1 install URL) pushed. |
 
 ## 9. JS shim
 
