@@ -864,7 +864,7 @@ Outside: a stub is plain data, like a binding.
 Object :: { ... }.{
 	namespace : Str, { class : Object.Class, script ?: Str } -> Object.Namespace   # the binding, the class value (its name is class_name), script_name
 	namespace_named : Str, Str -> Object.Namespace                                 # a class of this Worker, by name (the class value cannot be imported: a module cycle)
-	namespace_remote : Str, { class : Str, script : Str } -> Object.Namespace      # a class of another Worker: the app has the name only
+	namespace_remote : Str, { class : Str, script : Str } -> Object.Namespace      # a class of another Worker: the app has the name only. `script: ""` gives the manifest of `namespace_named` (no behavior change)
 	Namespace := { ... }.{
 		declare : Object.Namespace -> Worker.Binding         # for Worker.new bindings (3): kind object, class, script
 		named : Object.Namespace, Str -> Object             # data: getByName runs in the program of each call

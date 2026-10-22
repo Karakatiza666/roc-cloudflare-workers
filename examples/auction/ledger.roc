@@ -80,6 +80,14 @@ convert = |cents, rate| {
 	if estimate.abs() > 1.0e20 Err(OutOfRange) else (cents.to_dec() * rate).round_to_u64_try()
 }
 
+## The fee: `cents * percent / 100`. When the product does not fit in `U64`, the fee is split (`cents / 100 * percent`
+## plus the part of the last two digits), which is exact and does not overflow for a percent of 100 or less.
+fee_of : U64, U64 -> U64
+fee_of = |cents, percent| match cents.times_try(percent) {
+	Ok(product) => product / 100
+	Err(Overflow) => (cents / 100).times_saturated(percent).plus_saturated((cents % 100) * percent / 100)
+}
+
 ## A currency with no rate, or with an amount that does not fit in `U64`, is left out of the receipt.
 make_receipt : Str, Gavel.Closeout, Gavel.Config, Gavel.Rates, U64 -> Gavel.Receipt
 make_receipt = |id, closeout, cfg, rates, now| {
@@ -92,7 +100,7 @@ make_receipt = |id, closeout, cfg, rates, now| {
 			Err(NotFound) => Err(NoRate)
 		},
 	)
-	{ lot_id: id, winner: closeout.winner, amount_cents: closeout.amount_cents, fee_cents: closeout.amount_cents * cfg.fee_percent / 100, converted, settled_ms: now }
+	{ lot_id: id, winner: closeout.winner, amount_cents: closeout.amount_cents, fee_cents: fee_of(closeout.amount_cents, cfg.fee_percent), converted, settled_ms: now }
 }
 
 expect {
@@ -102,7 +110,14 @@ expect {
 	r.fee_cents == 50 and r.converted == [{ currency: "EUR", amount_cents: 500 }]
 }
 
-# An amount times a rate above `Dec.highest` leaves the currency out and does not crash. The fee is 0: a `U64` fee has its own limit.
+# A large amount with a fee: the product `cents * percent` is above `U64.highest`, the fee is still exact (5 % of 1e19).
+expect {
+	cfg = { fee_percent: 5, max_step_cents: 0, currencies: [] }
+	r = make_receipt("l1", { winner: "ann", amount_cents: 10_000_000_000_000_000_000 }, cfg, { as_of_ms: 1, rates: [] }, 9)
+	r.fee_cents == 500_000_000_000_000_000
+}
+
+# An amount times a rate above `Dec.highest` leaves the currency out and does not crash.
 expect {
 	cfg = { fee_percent: 0, max_step_cents: 0, currencies: ["EUR", "JPY"] }
 	rates = { as_of_ms: 1, rates: [{ currency: "EUR", rate: 20.0 }, { currency: "JPY", rate: 0.5 }] }
