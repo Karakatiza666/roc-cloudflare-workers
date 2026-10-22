@@ -63,7 +63,7 @@ route! = |req| {
 }
 
 ## `Infra(..)`: a platform call of this Worker failed. `Remote(Infra(..))`: a platform call of the lot room failed.
-error_response! : [NotFound, Unauthorized, BadRequest(Str), BadData(Str), Infra(Rpc.Infra), Remote(Gavel.RoomErr), ..] => Response
+error_response! : [NotFound, Unauthorized, BadRequest(Str), BadData(Str), Infra(Gavel.Faults), Remote(Gavel.RoomErr), ..] => Response
 error_response! = |e| match e {
 	NotFound => Response.from_text(404, "not found")
 	Remote(NotOpen) => Response.from_text(404, "the lot room is not open")
