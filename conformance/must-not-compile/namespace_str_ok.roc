@@ -5,9 +5,12 @@ import pf.Worker
 import pf.Object
 import pf.Response
 
+NoRpc := []
+
+room : Object.Class(NoRpc)
 room = Object.class("LotRoom", {})
 
-rooms : Object.Namespace
+rooms : Object.Namespace(NoRpc)
 rooms = Object.namespace("ROOMS", { class: room })
 
 fetch! = |_req| Ok(Response.from_text(200, "x"))

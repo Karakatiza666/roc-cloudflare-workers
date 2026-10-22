@@ -12,11 +12,12 @@ import pf.Queue
 import pf.Memo
 import pf.Log
 import pf.WebCrypto
+import RpcMethods
 import Q
 
 db = D1.binding("DB")
 
-self_service = Service.binding("SELF")
+self_service = Service.binding("SELF", RpcMethods.default_iface)
 
 ## The queues: `DECJ` (json, a JS consumer), `DECV` (v8, the Roc consumer `consume!`), `DECVJS` (v8, a JS consumer).
 Msg : { label : Str, n : U64, d : Dec, whole : Dec, big : Dec, list : List(Dec) }
@@ -44,7 +45,7 @@ DecRow : { x : Dec }
 ## The value that is sent, stored and sent back.
 Pair : { a : Dec, b : Dec }
 
-echo_dec : Rpc(Pair, Pair, Rpc.NoErr)
+echo_dec : Rpc(RpcMethods.Default, Pair, Pair, Rpc.NoErr)
 echo_dec = Rpc.method("echo_dec")
 
 ## The value of the Memo has an id that `load!` makes new each time: a second `get!` with the same id was read from the pin
@@ -63,7 +64,7 @@ exact_pair = { a: 0.1, b: Dec.lowest }
 DecRoutes :: [].{
 
 	## The RPC method of the default export (`rpc` of `Worker`).
-	rpc : List(Rpc.Handler({}))
+	rpc : List(Rpc.Serves(RpcMethods.Default, {}))
 	rpc = [echo_dec.on_worker(echo_handler!)]
 
 	route! : Request, List(Str) => Response

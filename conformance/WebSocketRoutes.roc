@@ -9,6 +9,7 @@ import pf.WebSocket
 import pf.Io
 import pf.Time
 import pf.Log
+import RpcMethods
 import Q
 
 ## The attachment of a socket of `Room`: kept while the object sleeps.
@@ -35,13 +36,13 @@ events = Object.cell("events")
 
 WebSocketRoutes :: [].{
 
-	room_class : Object.Class
+	room_class : Object.Class(RpcMethods.NoRpc)
 	room_class = Object.class("Room", { init!: room_init!, fetch!: room_fetch!, web_socket_message!: room_message!, web_socket_close!: room_close!, web_socket_error!: room_error! })
 
-	classes : List(Object.Class)
-	classes = [room_class]
+	classes : List(Object.AnyClass)
+	classes = [room_class.erase()]
 
-	rooms : Object.Namespace
+	rooms : Object.Namespace(RpcMethods.NoRpc)
 	rooms = Object.namespace("ROOMS", { class: room_class })
 
 	route! : Request, List(Str) => Response

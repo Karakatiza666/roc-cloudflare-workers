@@ -6,7 +6,9 @@ import pf.Worker
 import pf.Rpc
 import pf.Response
 
-close_out : Rpc({}, U64, [StillOpen])
+Room := []
+
+close_out : Rpc(Room, {}, U64, [StillOpen])
 close_out = Rpc.method("close_out")
 
 fetch! = |_req| Ok(Response.from_text(200, "x"))

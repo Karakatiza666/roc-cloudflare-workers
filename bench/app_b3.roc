@@ -13,6 +13,10 @@ db = D1.binding("DB")
 
 kv = Kv.text("KV")
 
+## A class with no Rpc method: the interface type has no values.
+NoRpc := []
+
+counter : Object.Class(NoRpc)
 counter = Object.class("Counter", {})
 
 counters = Object.namespace("COUNTERS", { class: counter })
@@ -22,7 +26,7 @@ fetch! = |_req| Ok(Response.from_text(200, "b3"))
 
 worker = Worker.new({
 	fetch!: fetch!,
-	objects: [counter],
+	objects: [counter.erase()],
 	bindings: [db.declare(), kv.declare(), counters.declare()],
 	crons: [Worker.cron("*/5 * * * *", |_s| Err(FromCron))],
 })

@@ -96,7 +96,7 @@ pair attachment_bad.roc 'slot.set!(socket, { name: 5 })' attachment_ok.roc
 # `get!` of the bad file does not); `Object.namespace` takes the class value, not its name; `broadcast!` gives `{}`, not a count.
 pair find_object_bad.roc 'This expression produces the tag NotFound but the annotated tag union does not list it' find_object_ok.roc
 pair find_kv_bad.roc 'This expression produces the tag NotFound but the annotated tag union does not list it' find_kv_ok.roc
-pair namespace_str_bad.roc 'from_quote' namespace_str_ok.roc
+pair namespace_str_bad.roc 'Object.Class(iface)' namespace_str_ok.roc
 pair broadcast_count_bad.roc 'But the annotation says it should be: U64' broadcast_count_ok.roc
 # roc-cbor 0.2.0: a wrapper around `D1.all!` with the old long `Parseable([InvalidCbor(U64), ..errs])` form is a type mismatch (D1 reads with `Readable`, which adds `MissingRequiredField(Str)`).
 pair cbor_parseable_long_bad.roc 'MissingRequiredField(Str)' cbor_readable_ok.roc

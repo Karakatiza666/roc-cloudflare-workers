@@ -7,7 +7,9 @@ import pf.Rpc
 import pf.Object
 import pf.Response
 
-close_out : Rpc({}, U64, [NotOpen, Infra(Rpc.Infra)])
+Room := []
+
+close_out : Rpc(Room, {}, U64, [NotOpen, Infra(Rpc.Infra)])
 close_out = Rpc.method("close_out")
 
 close_out! = |self, {}| {
@@ -19,6 +21,6 @@ room = Object.class("Room", { rpc: [close_out.on(close_out!)] })
 
 fetch! = |_req| Ok(Response.from_text(200, "x"))
 
-worker = Worker.new({ fetch!: fetch!, objects: [room] })
+worker = Worker.new({ fetch!: fetch!, objects: [room.erase()] })
 
 event! = |e| worker.event!(e)

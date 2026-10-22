@@ -11,40 +11,40 @@ import pf.D1
 import RpcMethods
 import Q
 
-self_service = Service.binding("SELF")
+self_service = Service.binding("SELF", RpcMethods.default_iface)
 
-admin_service = Service.binding("ADMIN")
+admin_service = Service.binding("ADMIN", RpcMethods.admin_iface)
 
 db = D1.binding("DB")
 
 RpcErrRoutes :: [].{
 
 	## The callees of the default export and of `Admin`.
-	service_handlers : List(Rpc.Handler({}))
-	service_handlers = [RpcMethods.busy.on(busy!), RpcMethods.crashes.on(crashes!), RpcMethods.mismatch.on(mismatch!), RpcMethods.open_lot.on(open_lot!), RpcMethods.fail.on(fail_svc!), RpcMethods.relay.on(relay_svc!), RpcMethods.relay_map.on(relay_map_svc!)]
+	service_handlers : {} -> List(Rpc.Serves(iface, {}))
+	service_handlers = |{}| [RpcMethods.busy({}).on(busy!), RpcMethods.crashes({}).on(crashes!), RpcMethods.mismatch({}).on(mismatch!), RpcMethods.open_lot({}).on(open_lot!), RpcMethods.fail({}).on(fail_svc!), RpcMethods.relay({}).on(relay_svc!), RpcMethods.relay_map({}).on(relay_map_svc!)]
 
 	## The callees of the class `Counter`.
-	object_handlers : List(Rpc.Handler(Object.Self))
-	object_handlers = [RpcMethods.busy.on(busy!), RpcMethods.crashes.on(crashes!), RpcMethods.mismatch.on(mismatch!), RpcMethods.open_lot.on(open_lot!)]
+	object_handlers : List(Rpc.Serves(RpcMethods.Counter, Object.Self))
+	object_handlers = [RpcMethods.busy({}).on(busy!), RpcMethods.crashes({}).on(crashes!), RpcMethods.mismatch({}).on(mismatch!), RpcMethods.open_lot({}).on(open_lot!)]
 
 	## `counters` and `stores` are the namespaces of `ObjectRoutes` (the class `Counter` has the handlers of this module, so this module cannot import it).
-	route! : Object.Namespace, Object.Namespace, Request, List(Str) => Response
+	route! : Object.Namespace(RpcMethods.Counter), Object.Namespace(RpcMethods.Store), Request, List(Str) => Response
 	route! = |counters, stores, req, path| {
 		n = Q.num(req, "n").to_i64_try() ?? 0
 		kind = { kind: Q.text(req, "kind") }
 		text = match path {
 			# N5 G1a: `Infra` errors of a callee. `fail`: the callee `?`s a platform error (the Durable Object `Store`, or the Workers).
 			# `relay` and `relay_map`: the callee calls `fail` and passes its errors on with `Rpc.forward`.
-			["store", "fail"] => fail_text(stores.named(Q.text(req, "name")).call!(RpcMethods.fail, kind))
-			["self", "fail"] => fail_text(self_service.call!(RpcMethods.fail, kind))
-			["admin", "fail"] => fail_text(admin_service.call!(RpcMethods.fail, kind))
+			["store", "fail"] => fail_text(stores.named(Q.text(req, "name")).call!(RpcMethods.fail({}), kind))
+			["self", "fail"] => fail_text(self_service.call!(RpcMethods.fail({}), kind))
+			["admin", "fail"] => fail_text(admin_service.call!(RpcMethods.fail({}), kind))
 			["self", "jsfail"] => fail_text(self_service.call!(RpcMethods.jsfail, kind))
-			["self", "relay"] => fail_text(self_service.call!(RpcMethods.relay, kind))
-			["admin", "relay"] => fail_text(admin_service.call!(RpcMethods.relay, kind))
-			["obj", "relay"] => fail_text(counters.named(Q.text(req, "name")).call!(RpcMethods.relay, kind))
-			["self", "relay_map"] => map_text(self_service.call!(RpcMethods.relay_map, kind))
-			["admin", "relay_map"] => map_text(admin_service.call!(RpcMethods.relay_map, kind))
-			["obj", "relay_map"] => map_text(counters.named(Q.text(req, "name")).call!(RpcMethods.relay_map, kind))
+			["self", "relay"] => fail_text(self_service.call!(RpcMethods.relay({}), kind))
+			["admin", "relay"] => fail_text(admin_service.call!(RpcMethods.relay({}), kind))
+			["obj", "relay"] => fail_text(counters.named(Q.text(req, "name")).call!(RpcMethods.relay({}), kind))
+			["self", "relay_map"] => map_text(self_service.call!(RpcMethods.relay_map({}), kind))
+			["admin", "relay_map"] => map_text(admin_service.call!(RpcMethods.relay_map({}), kind))
+			["obj", "relay_map"] => map_text(counters.named(Q.text(req, "name")).call!(RpcMethods.relay_map({}), kind))
 			["self", "jsbusy"] => busy_text(self_service.call!(RpcMethods.jsbusy, { n: n }))
 			["self", "jsthrow"] => noerr_text(self_service.call!(RpcMethods.jsthrow, { n: n }))
 			["self", case] => by_service!(self_service, case, n)
@@ -56,23 +56,23 @@ RpcErrRoutes :: [].{
 	}
 }
 
-by_service! : Service, Str, I64 => Str
+by_service! : Service(iface), Str, I64 => Str
 by_service! = |s, case, n| match case {
-	"busy" => busy_text(s.call!(RpcMethods.busy, { n: n }))
-	"badarg" => busy_text(s.call!(RpcMethods.busy_badarg, { n: "x" }))
-	"crash" => noerr_text(s.call!(RpcMethods.crashes, { n: n }))
-	"stray" => noerr_text(s.call!(RpcMethods.mismatch_caller, { n: n }))
-	"unit" => unit_text(s.call!(RpcMethods.open_lot, lot(n)))
+	"busy" => busy_text(s.call!(RpcMethods.busy({}), { n: n }))
+	"badarg" => busy_text(s.call!(RpcMethods.busy_badarg({}), { n: "x" }))
+	"crash" => noerr_text(s.call!(RpcMethods.crashes({}), { n: n }))
+	"stray" => noerr_text(s.call!(RpcMethods.mismatch_caller({}), { n: n }))
+	"unit" => unit_text(s.call!(RpcMethods.open_lot({}), lot(n)))
 	_ => "no case"
 }
 
-by_object! : Object, Str, I64 => Str
+by_object! : Object(iface), Str, I64 => Str
 by_object! = |o, case, n| match case {
-	"busy" => busy_text(o.call!(RpcMethods.busy, { n: n }))
-	"badarg" => busy_text(o.call!(RpcMethods.busy_badarg, { n: "x" }))
-	"crash" => noerr_text(o.call!(RpcMethods.crashes, { n: n }))
-	"stray" => noerr_text(o.call!(RpcMethods.mismatch_caller, { n: n }))
-	"unit" => unit_text(o.call!(RpcMethods.open_lot, lot(n)))
+	"busy" => busy_text(o.call!(RpcMethods.busy({}), { n: n }))
+	"badarg" => busy_text(o.call!(RpcMethods.busy_badarg({}), { n: "x" }))
+	"crash" => noerr_text(o.call!(RpcMethods.crashes({}), { n: n }))
+	"stray" => noerr_text(o.call!(RpcMethods.mismatch_caller({}), { n: n }))
+	"unit" => unit_text(o.call!(RpcMethods.open_lot({}), lot(n)))
 	# The shape of examples/auction (REVIEW.md N1): `?` on a `call!` with the answer `{}`.
 	"unit_try" => unit_try_text(open_room!(o, lot(n)))
 	_ => "no case"
@@ -83,7 +83,7 @@ lot : I64 -> { id : Str, close_ms : U64 }
 lot = |n| { id: if (n == 1) "new" else "old", close_ms: 5 }
 
 open_room! = |o, l| {
-	o.call!(RpcMethods.open_lot, l)?
+	o.call!(RpcMethods.open_lot({}), l)?
 	Ok("opened")
 }
 
@@ -178,14 +178,14 @@ fail_svc! = |_self, { kind }| match kind {
 # `Rpc.forward(|e| e)`: the same `err` as `fail`.
 relay_svc! : self, { kind : Str } => Try(I64, [NotOpen, Infra(Rpc.Infra)])
 relay_svc! = |_self, arg| {
-	v = self_service.call!(RpcMethods.fail, arg) ? Rpc.forward(|e| e)
+	v = self_service.call!(RpcMethods.fail({}), arg) ? Rpc.forward(|e| e)
 	Ok(v)
 }
 
 # `Rpc.forward` with a domain mapping: `NotOpen` is `Shut`, `Infra` stays.
 relay_map_svc! : self, { kind : Str } => Try(I64, [Shut, Infra(Rpc.Infra)])
 relay_map_svc! = |_self, arg| {
-	v = self_service.call!(RpcMethods.fail, arg) ? Rpc.forward(
+	v = self_service.call!(RpcMethods.fail({}), arg) ? Rpc.forward(
 		|e| match e {
 			NotOpen => Shut
 			Infra(i) => Infra(i)
