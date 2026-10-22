@@ -3,7 +3,7 @@
 // Each rule of the deadline table of API.md 10.2, also the rules that need later steps
 // (respond!, Body.writer!, 101 sockets, receive!: 8b, 8f). Deadlines: wait 100 ms,
 // wall 200 ms, Init 150 ms, after respond 100 ms.
-import { makeTaskTable, deadlineOf, DEADLINES } from '../js/tasks.js';
+import { makeTaskTable, deadlineOf, wakeAt, DEADLINES, TIMER_MARGIN_MS, TIMER_RETRY_MS } from '../js/tasks.js';
 let failed = false;
 const row = (name, got, want) => {
   const pass = JSON.stringify(got) === JSON.stringify(want);
@@ -208,6 +208,64 @@ for (const reason of ['socket', 'stream']) {
   const p = t.ownWoken;
   tb.sweep(own); // before the deadline: no cancel, no wake
   row('sweep(own) of a task not cancelled: no own wake', await Promise.race([p.then(() => true), new Promise((r) => setImmediate(() => r(false)))]), false);
+}
+// wakeAt (js/tasks.js): when the own-context timer of a task sweeps next. Pure. Limits: wait 100 ms, wall 200, Init 150, after respond 40.
+{
+  const d = { taskDeadlineMs: 100, wallMs: 200, initMs: 150, afterRespondMs: 40 };
+  row('wakeAt: Init is its exact deadline (start 10 + 150)', wakeAt({ kind: 'Init', startedAt: 10, waiting: false, response: 'none' }, 50, d), 160);
+  row('wakeAt: Init waiting is its exact deadline too', wakeAt({ kind: 'Init', startedAt: 10, waiting: true, waitingSince: 30, response: 'none' }, 50, d), 160);
+  for (const kind of ['Scheduled', 'Queue', 'Alarm']) row(`wakeAt: ${kind} is its exact wall deadline (start 10 + 200)`, wakeAt({ kind, startedAt: 10, waiting: false, response: 'none' }, 50, d), 210);
+  row('wakeAt: a complete response is completeAt + afterRespondMs', wakeAt({ kind: 'Fetch', startedAt: 0, waiting: false, response: 'complete', completeAt: 20 }, 50, d), 60);
+  row('wakeAt: a task with no deadline now looks again after min(afterRespondMs, taskDeadlineMs) = 40', wakeAt({ kind: 'Fetch', startedAt: 0, waiting: false, response: 'none' }, 50, d), 90);
+  row('wakeAt: an open response with no deadline: the same', wakeAt({ kind: 'Fetch', startedAt: 0, waiting: false, response: 'open' }, 50, d), 90);
+  row('wakeAt: a wait deadline sooner than that is kept (wait since 30 + 100 = 130, with afterRespondMs 300: 130)', wakeAt({ kind: 'Fetch', startedAt: 0, waiting: true, waitingSince: 30, response: 'none' }, 50, { ...d, afterRespondMs: 300 }), 130);
+  row('wakeAt: a wait deadline later than at + 40 gives at + 40 (wait since 30 + 100 = 130, at 50)', wakeAt({ kind: 'Fetch', startedAt: 0, waiting: true, waitingSince: 30, response: 'none' }, 50, d), 90);
+  row('wakeAt: afterRespondMs above taskDeadlineMs: the shorter, taskDeadlineMs, is used', wakeAt({ kind: 'Rpc', startedAt: 0, waiting: false, response: 'none' }, 50, { ...d, afterRespondMs: 300 }), 150);
+}
+// The delay of the timer (`delayOf`, not exported) by `wakeFirst(kind)` (a task not started yet) and `wakeIn(own)`. Limits as at the top
+// of this file (wait 100, wall 200, Init 150, after respond 100): the margin is TIMER_MARGIN_MS, a passed deadline waits TIMER_RETRY_MS,
+// the Init timer is never above TIMER_RETRY_MS.
+{
+  const tb = table();
+  row('constants: margin 50, retry 100', [TIMER_MARGIN_MS, TIMER_RETRY_MS], [50, 100]);
+  row('wakeFirst(Init): capped at TIMER_RETRY_MS (deadline 150 + margin 50 = 200 without the cap)', tb.wakeFirst('Init'), TIMER_RETRY_MS);
+  row('wakeFirst(Alarm): wall 200 + margin 50', tb.wakeFirst('Alarm'), 250);
+  row('wakeFirst(Fetch): min(afterRespondMs, taskDeadlineMs) 100 + margin 50', tb.wakeFirst('Fetch'), 150);
+  clock = 1000;
+  row('wakeFirst uses the clock: the same delay at another time', [tb.wakeFirst('Alarm'), tb.wakeFirst('Init')], [250, 100]);
+  const own = { kind: 'Fetch' };
+  const t = tb.begin('i', { kind: 'Fetch', hooks: own });
+  row('wakeIn: a task with no wait: min(afterRespondMs, taskDeadlineMs) 100 + margin 50', tb.wakeIn(own), 150);
+  tb.waitStart(t);
+  clock += 30;
+  row('wakeIn: a wait that started 30 ms ago, deadline in 70 ms: 70 + margin 50', tb.wakeIn(own), 120);
+  clock += 70;
+  row('wakeIn: the deadline is now: TIMER_RETRY_MS', tb.wakeIn(own), TIMER_RETRY_MS);
+  clock += 400;
+  row('wakeIn: the deadline passed 400 ms ago: TIMER_RETRY_MS', tb.wakeIn(own), TIMER_RETRY_MS);
+  row('wakeIn: no task with these hooks: TIMER_RETRY_MS', tb.wakeIn({ kind: 'Fetch' }), TIMER_RETRY_MS);
+  tb.waitStop(t); tb.end(t);
+  row('wakeIn: the task ended: TIMER_RETRY_MS', tb.wakeIn(own), TIMER_RETRY_MS);
+}
+{
+  const tb = table();
+  const own = { kind: 'Alarm' };
+  tb.begin('i', { kind: 'Alarm', hooks: own });
+  row('wakeIn: Alarm at start: wall 200 + margin 50', tb.wakeIn(own), 250);
+  clock = 120;
+  row('wakeIn: Alarm at 120: 80 + margin 50', tb.wakeIn(own), 130);
+  clock = 201;
+  row('wakeIn: Alarm past the wall deadline: TIMER_RETRY_MS', tb.wakeIn(own), TIMER_RETRY_MS);
+}
+{
+  const tb = table();
+  const own = { kind: 'Init' };
+  tb.begin('i', { kind: 'Init', hooks: own });
+  row('wakeIn: Init at start: capped at TIMER_RETRY_MS (200 without the cap)', tb.wakeIn(own), TIMER_RETRY_MS);
+  clock = 20;
+  row('wakeIn: Init at 20: 130 + margin 50 = 180, capped at TIMER_RETRY_MS', tb.wakeIn(own), TIMER_RETRY_MS);
+  clock = 300;
+  row('wakeIn: Init past its deadline: TIMER_RETRY_MS', tb.wakeIn(own), TIMER_RETRY_MS);
 }
 // deadlineOf is pure: same input, same output.
 row('deadlineOf: no wait, Fetch', deadlineOf({ kind: 'Fetch', waiting: false, response: 'none' }), Infinity);
