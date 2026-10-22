@@ -6,6 +6,13 @@ Problem: `examples/auction/REVIEW.md` N4 and `MODULES.md` 7 ("Namespace and clas
 
 Goal: a namespace where `call!` compiles only for the Rpc methods that its class serves.
 
+Status (2026-10-22): option A is built in `platform/` (branch `typed-ns`, MODULES.md 7 and 8). The user decided Q1 to Q5:
+the erase step is `erase()`, services and entry points are typed in the same step, a shared method is a function of `{}`,
+the interface type is named by the app (`Gavel.Room`), and `namespace_named`, `namespace_remote`, `Service.binding` and
+`Service.binding_with` take the interface as a value of `Rpc.Iface(iface)` (probe `probes/a6_ok.roc`, `a6_missing_fail.roc`,
+`a6_wrong_fail.roc`). `make_platform_a.py` and `run.sh` work on the platform of 2026-10-22 before the change: they do not
+apply to the built `platform/`.
+
 This study changes no file of `platform/`, `bench/`, `conformance/` or `examples/`. The platform changes are in two
 generated copies (`platform-a/`, `platform-b/`, not in git).
 
@@ -16,7 +23,7 @@ Compiler: the pinned nightly (`nightly-2026-10-19-601b54c`), each build with `--
 | File | What it is |
 | --- | --- |
 | `run.sh` | Runs all probes and builds. Run from the submodule root: `research/typed-do-ns/run.sh` (about 4.5 min). |
-| `probes/*.roc` | Models of the types with no platform (`roc --no-cache` or `roc check --no-cache`). |
+| `probes/*.roc` | Models of the types with no platform (`a6_*`: the interface as an argument) (`roc --no-cache` or `roc check --no-cache`). |
 | `make_platform_a.py` | Makes `platform-a/`: `platform/` with option A. |
 | `make_platform_b.py` | Makes `platform-b/`: `platform/` with option B. |
 | `auction-a/`, `auction-b/`, `auction-c/` | The auction example (`examples/auction/*.roc`) with each option. Option C uses the real `platform/`. |
