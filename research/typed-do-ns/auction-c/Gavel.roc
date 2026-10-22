@@ -1,0 +1,110 @@
+## Shared by auction-web and auction-ledger: types, the Rpc method names, the bindings that both Workers use.
+## Both apps import this file, so the caller and the callee of each Rpc method have the same types.
+import pf.Rpc
+import pf.Kv
+import pf.D1
+import pf.Io
+import pf.Memo
+import pf.Sql
+import pf.Object
+import pf.Request
+import pf.Response
+
+Gavel :: [].{
+
+	## A lot. The steps are in cents. `max_step_cents` comes from the site config at the time of creation.
+	Lot : { id : Str, title : Str, reserve_cents : U64, close_ms : U64, min_step_cents : U64, max_step_cents : U64 }
+
+	Snapshot : { high : U64, bidder : Str, open : Bool, bids_count : U64 }
+
+	## `winner` is "" when the lot closed under its reserve.
+	Closeout : { winner : Str, amount_cents : U64 }
+
+	Config : { fee_percent : U64, max_step_cents : U64, currencies : List(Str) }
+
+	## Units of each currency for 1 USD, as the FX feed gives them. `Dec`: a feed number is read exactly, and CBOR keeps it exact (tag 4).
+	Rates : { as_of_ms : U64, rates : List({ currency : Str, rate : Dec }) }
+
+	Receipt : { lot_id : Str, winner : Str, amount_cents : U64, fee_cents : U64, converted : List({ currency : Str, amount_cents : U64 }), settled_ms : U64 }
+
+	## What a lot room can answer. Each Rpc method of the room has this error type, and the callee cannot give another tag.
+	## `Infra`: a platform call of the room failed (storage, SQL).
+	RoomErr : [NotOpen, AlreadyOpen, StillOpen, Infra(Rpc.Infra)]
+
+	## What `settle_due` can answer: only platform errors (D1, KV).
+	SettleErr : [Infra(Rpc.Infra)]
+
+	# The Rpc methods. The Roc callee and the Roc caller both use these values.
+	## Option C: a typed client of a lot room, written in the app (no platform change). It has only the methods of the
+	## room, so a call of another method does not compile. One line for each method.
+	Room :: { obj : Object }.{
+		at : Object.Namespace, Str -> Gavel.Room
+		at = |ns, id| Gavel.Room.{ obj: ns.named(id) }
+
+		open! : Gavel.Room, Gavel.Lot => Try({}, Gavel.CallErr)
+		open! = |r, lot| r.obj.call!(Gavel.open, lot)
+
+		snapshot! : Gavel.Room => Try(Gavel.Snapshot, Gavel.CallErr)
+		snapshot! = |r| r.obj.call!(Gavel.snapshot, {})
+
+		close_out! : Gavel.Room => Try(Gavel.Closeout, Gavel.CallErr)
+		close_out! = |r| r.obj.call!(Gavel.close_out, {})
+
+		fetch! : Gavel.Room, Request => Try(Response, [Infra([ObjectErr(Io.Thrown)])])
+		fetch! = |r, req| r.obj.fetch!(req)
+	}
+
+	## The error of a call of the room, as `Object.call!` gives it.
+	CallErr : [Remote(Gavel.RoomErr), Infra([RpcErr(Io.Thrown), BadData(Str)])]
+
+	## `open` is a command: its answer is `{}`.
+	open : Rpc(Gavel.Lot, {}, Gavel.RoomErr)
+	open = Rpc.method("open")
+
+	snapshot : Rpc({}, Gavel.Snapshot, Gavel.RoomErr)
+	snapshot = Rpc.method("snapshot")
+
+	close_out : Rpc({}, Gavel.Closeout, Gavel.RoomErr)
+	close_out = Rpc.method("close_out")
+
+	settle_due : Rpc({}, { settled : U32 }, Gavel.SettleErr)
+	settle_due = Rpc.method("settle_due")
+
+	# Bindings with the same name in both wrangler files. The room namespace is in each Worker (the ledger names the script).
+	db = D1.binding("DB")
+
+	# The KV binding is declared by one cell of it (`Kv.Cell.declare`): `web.roc` and `ledger.roc` name one cell each.
+	config_cell : Kv.Cell(Gavel.Config)
+	config_cell = Kv.json("KV").cell("config")
+
+	rates_cell : Kv.Cell(Gavel.Rates)
+	rates_cell = Kv.json("KV").cell("fx:rates")
+
+	no_rates : Gavel.Rates
+	no_rates = { as_of_ms: 0, rates: [] }
+
+	default_config : Gavel.Config
+	default_config = { fee_percent: 5, max_step_cents: 100_000, currencies: ["EUR", "GBP", "JPY"] }
+
+	## The site config, loaded once for each isolate. A missing key gives the default.
+	config : Memo(Gavel.Config, _)
+	config = Memo.new("gavel-config", { max_age_ms: 60_000, load!: || Gavel.config_cell.get_or!(Gavel.default_config) })
+
+	## Both Workers share one D1 database. Each Worker creates the tables once for each isolate.
+	tables : Memo({}, _)
+	tables = Memo.new("gavel-tables", { max_age_ms: 3_600_000, load!: create_tables! })
+
+	schema : List(Str)
+	schema = [
+		"CREATE TABLE IF NOT EXISTS lots (id TEXT PRIMARY KEY, title TEXT NOT NULL, reserve_cents INTEGER NOT NULL, close_ms INTEGER NOT NULL, min_step_cents INTEGER NOT NULL, max_step_cents INTEGER NOT NULL)",
+		"CREATE TABLE IF NOT EXISTS settlements (lot_id TEXT PRIMARY KEY, winner TEXT NOT NULL, amount_cents INTEGER NOT NULL, settled_ms INTEGER NOT NULL)",
+	]
+}
+
+create_tables! : () => Try({}, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint)])])
+create_tables! = || {
+	for sql in Gavel.schema {
+		_ = Gavel.db.run!(sql, Sql.none)?
+	}
+	Ok({})
+}
