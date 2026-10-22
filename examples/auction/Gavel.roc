@@ -24,12 +24,16 @@ Gavel :: [].{
 
 	Receipt : { lot_id : Str, winner : Str, amount_cents : U64, fee_cents : U64, converted : List({ currency : Str, amount_cents : U64 }), settled_ms : U64 }
 
+	## The platform errors of this app: the tags that its platform calls can give. A tag of `Rpc.Infra` that is not here is a compile error.
+	## The closed union has code for each tag (3 to 6 KB of wasm), so the app lists only its own tags in place of `Rpc.Infra`.
+	Faults : [StorageErr(Io.Thrown), SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge, D1Err(Io.Thrown), KvErr(Io.Thrown), R2Err(Io.Thrown), ObjectErr(Io.Thrown), RpcErr(Io.Thrown), MissingEnv(Str)]
+
 	## What a lot room can answer. Each Rpc method of the room has this error type, and the callee cannot give another tag.
 	## `Infra`: a platform call of the room failed (storage, SQL).
-	RoomErr : [NotOpen, AlreadyOpen, StillOpen, Infra(Rpc.Infra)]
+	RoomErr : [NotOpen, AlreadyOpen, StillOpen, Infra(Gavel.Faults)]
 
 	## What `settle_due` can answer: only platform errors (D1, KV).
-	SettleErr : [Infra(Rpc.Infra)]
+	SettleErr : [Infra(Gavel.Faults)]
 
 	# The Rpc methods. The Roc callee and the Roc caller both use these values.
 	## `open` is a command: its answer is `{}`.

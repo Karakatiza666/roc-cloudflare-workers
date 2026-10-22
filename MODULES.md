@@ -121,6 +121,20 @@ Nested and flat errors (MC9, N5 G1a). An error is `Infra(..)` when the platform 
 | `NotFound`, `AlreadyExists`, `Closed`, `PreconditionFailed`, `RateLimited`, `BadSignature`, `NotUpgrade`, `Missing` | flat | A domain result: the app matches it and acts on it |
 | The `err` of an `Rpc` method | The domain tags, and `Infra(Rpc.Infra)` | The caller gets `Remote(domain tag)`, `Remote(Infra(..))` or `Infra(..)` (8) |
 
+Cost of `Rpc.Infra` (N5 G1a size study, `research/g1a-size/README.md`). `Rpc.Infra` has 29 tags. A closed `err` gets a derived CBOR writer, reader and `Str.inspect` for each tag, so each app that uses `Rpc.Infra` as a closed `Rpc` error type pays 3 to 6 KB of wasm for each tag (about 110 KB for web and 80 KB for ledger of the auction, +9% and +11% with `--opt=size`). The nesting `Infra(..)` costs almost nothing. `Rpc.Infra` stays the default: it has all platform tags, so it never gives a compile error. An app that cares about size declares an alias of the tags that it uses, once, and writes `Infra(Alias)`:
+
+```roc
+Faults : [StorageErr(Io.Thrown), SqlErr(Io.Thrown), BadData(Str)]   # the tags of the platform calls of this app
+RoomErr : [NotOpen, Infra(Faults)]
+```
+
+| Item | Rule |
+| --- | --- |
+| Size | 11 tags in the auction: web +0.4%, ledger +2.6% against the build with the 8 and 5 tags of before G1a (29 tags: +8.9%, +11.3%) |
+| Type check | A platform call with a tag that is not in the alias does not compile in a handler (`?`), so a new platform tag is a compile error until the app lists it |
+| Callee and caller | Both import the alias (a shared type module, as `Gavel.roc`), so their types agree. On the wire a tag is its name and payload |
+| `Rpc.forward` | It needs `Infra(Rpc.Infra)` in the `err` of both methods: with an alias it does not compile (`research/g1a-size/forward-alias`). Use `Rpc.Infra` in these two methods, or match the result of the call by hand |
+
 ## 2. An app
 
 ```roc
@@ -1071,7 +1085,7 @@ relay! = |_self, arg| {
 | Interface | A package of `Rpc` constants is the interface of a service. The caller and the callee import the same package, so their types agree. |
 | On the wire | The table "Formats of typed data" (1). One argument. The module sends it as CBOR, and JS gives the callee the JS value, so a JS callee gets a plain object (a `BigInt` above 2^53, a `Uint8Array` for a `Cbor.Bytes` field, an `Array` of numbers for a `List(U8)` field, MC5). JS sends the reply of a JS callee back as CBOR. |
 | Errors | `err` is a tag union that the callee can give: a handler that gives another tag does not compile. An `Err(e)` of the callee is a normal reply, and the caller gets `Remote(e)`, the same tag. A method with no errors has `err` `Rpc.NoErr`: `[]` has no derived codec (`research/e1-errors/rpc_empty.roc`). A throw (a crash, a JS throw, a bad argument with "bad argument", a missing method) is `Infra(RpcErr(Thrown))`. A reply that does not fit `ret` or `err` is `Infra(BadData)`. |
-| Infrastructure errors (MC9) | Each platform function gives its storage, binding and call errors in one tag, `Infra([its own tags])`. The domain errors of a handler stay plain (`Err(NotFound)`). The `err` of a method closes the platform errors with `Infra(Rpc.Infra)`: the payloads of each `?` merge, and the closed `Rpc.Infra` has a CBOR codec. The caller gets one shape: `Infra(..)` when this call failed, `Remote(Infra(..))` when a platform call of the callee failed, `Remote(<domain tag>)` for a domain error. A match with an arm for each domain tag and one `Remote(Infra(_))` arm needs no `_`, so a new domain tag of the callee does not compile until the caller has an arm for it. |
+| Infrastructure errors (MC9) | Each platform function gives its storage, binding and call errors in one tag, `Infra([its own tags])`. The domain errors of a handler stay plain (`Err(NotFound)`). The `err` of a method closes the platform errors with `Infra(Rpc.Infra)`: the payloads of each `?` merge, and the closed `Rpc.Infra` has a CBOR codec. `Rpc.Infra` costs 3 to 6 KB of wasm for each of its 29 tags in each app that uses it as a closed `err`: an app that cares about size declares `Faults : [the tags that it uses]` and writes `Infra(Faults)` (1, "Cost of `Rpc.Infra`"). A tag that is not in `Faults` is then a compile error. The caller gets one shape: `Infra(..)` when this call failed, `Remote(Infra(..))` when a platform call of the callee failed, `Remote(<domain tag>)` for a domain error. A match with an arm for each domain tag and one `Remote(Infra(_))` arm needs no `_`, so a new domain tag of the callee does not compile until the caller has an arm for it. |
 | `Rpc.forward` | A nested call in a handler: `x = call!(...) ? Rpc.forward(f)`. `Infra(RpcErr)` and `Infra(BadData)` of this call stay `Infra`, `f` maps the `err` of the callee into the `err` of the handler (`\|e\| e` when the two have one type). Evidence: `research/n5-rpc-errors` (q9, `g1a-check/`). |
 | A JS method with many arguments | `Js` (`API.md` 6.4) |
 | `self` | `Object.Self` in a Durable Object (`on`). A Worker entry point has no `self`: `on_worker(\|arg\| ...)` (MC14). `on` with a `{}` self still compiles for a Worker. |
