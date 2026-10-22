@@ -1,0 +1,112 @@
+== wasm size in bytes, --opt=size
+variant                       web     ledger
+base                      1233953     723009
+g1a                       1343972     804719
+a1                        1268171     730976
+a2                        1253378     730976
+sweep-11                  1239206     741751
+sweep-16                  1284207     763374
+sweep-22                  1339340     790463
+sweep-29                  1343972     804719
+sweep-29-str              1305709     795246
+sweep-29-none             1295032     773460
+p4                        1351799     804872
+base-noinsp               1217880     710172
+g1a-noinsp                1332265     793940
+== function tables (roc build --debug): base against g1a
+--- web: base against g1a
+functions: base 504, new 508, same name 289
+code bytes: base 1,208,595, new 1,319,328
+same name: base 638,039, new 612,090
+other: base 570,556 in 215 functions, new 707,238 in 219
+rank-paired unmatched functions, the largest growth: delta, base bytes, new bytes, tags, kind
+37449	42008	79457	0	
+27446	39632	67078	0	
+9505	30443	39948	6	
+7575	18638	26213	1	
+6990	26272	33262	0	
+6211	22145	28356	25	writer
+5366	11932	17298	0	
+5316	9759	15075	1	
+same-name functions (equal hash), the largest growth:
+159	24	183	0	
+118	32	150	0	
+32	19	51	0	
+30	11	41	0	
+26	60	86	0	
+functions with kind (new):
+28356 25 writer not in base
+20260 23 inspect not in base
+--- web: sweep-11 against g1a (the same app, 11 tags against 29)
+functions: base 506, new 508, same name 357
+code bytes: base 1,213,307, new 1,319,328
+same name: base 675,434, new 674,867
+other: base 537,873 in 149 functions, new 644,461 in 151
+rank-paired unmatched functions, the largest growth: delta, base bytes, new bytes, tags, kind
+33008	34070	67078	0	
+28802	50655	79457	0	
+9460	16753	26213	1	
+7045	26217	33262	0	
+6686	33262	39948	6	
+6379	21977	28356	25	writer
+4280	8928	13208	0	
+3916	16344	20260	23	inspect
+same-name functions (equal hash), the largest growth:
+19	55	74	0	
+19	59	78	0	
+10	17	27	0	
+5	14	19	0	
+0	1189	1189	0	
+functions with kind (new):
+28356 25 writer not in base
+20260 23 inspect not in base
+--- ledger: base against g1a
+functions: base 428, new 433, same name 264
+code bytes: base 705,227, new 787,938
+same name: base 404,638, new 386,435
+other: base 300,589 in 164 functions, new 401,503 in 169
+rank-paired unmatched functions, the largest growth: delta, base bytes, new bytes, tags, kind
+26478	126217	152695	9	
+24179	13533	37712	25	writer
+16332	13500	29832	0	
+8328	11932	20260	23	inspect
+3647	7216	10863	0	
+3348	3753	7101	1	
+3170	5282	8452	0	
+2759	4457	7216	0	
+same-name functions (equal hash), the largest growth:
+134	49	183	0	
+106	77	183	0	
+94	19	113	0	
+33	150	183	0	
+14	19	33	0	
+functions with kind (new):
+37712 25 writer not in base
+20260 23 inspect not in base
+--- ledger: sweep-11 against g1a (the same app, 11 tags against 29)
+functions: base 435, new 433, same name 320
+code bytes: base 724,043, new 787,938
+same name: base 427,540, new 429,525
+other: base 296,503 in 115 functions, new 358,413 in 113
+rank-paired unmatched functions, the largest growth: delta, base bytes, new bytes, tags, kind
+19975	17737	37712	25	writer
+16360	13472	29832	0	
+10561	142134	152695	9	
+9136	11124	20260	23	inspect
+3478	7385	10863	0	
+2360	11112	13472	0	
+2228	8896	11124	0	
+1236	7216	8452	0	
+same-name functions (equal hash), the largest growth:
+1971	189488	191459	1	
+19	59	78	0	
+19	55	74	0	
+8	16	24	0	
+0	37	37	0	
+functions with kind (new):
+37712 25 writer not in base
+20260 23 inspect not in base
+
+real	10m1.632s
+user	15m29.010s
+sys	0m50.353s
