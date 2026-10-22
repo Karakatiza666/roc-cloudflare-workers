@@ -93,6 +93,8 @@ ObjectRoutes :: [].{
 				remote = Object.namespace_remote("FAR", { class: "Far", script: "other" })
 				Response.from_text(200, Str.inspect([counters.declare(), far.declare(), remote.declare()]))
 			}
+			# `namespace_named`: `store_ns` (the RPC callee of `RpcErrRoutes`, below) and one more: the class name, no `script`.
+			["namespaces_named"] => Response.from_text(200, Str.inspect([store_ns.declare(), Object.namespace_named("NAMED", "Counter").declare()]))
 			["jurisdiction"] => Response.from_text(200, Str.inspect(counters.jurisdiction(Eu).named(name).id!()))
 			# `named_with` and `from_id_with` with a location hint, `unique!`, and `id!` of a stub of an id (no crossing).
 			["location"] => {
@@ -395,7 +397,7 @@ echo! = |_self, v| Ok(v)
 
 # N5 G1a (checks/rpcerr.mjs, "infra"): the callee `fail` in `Store` `?`s a platform error: SqlErr, Constraint, StorageErr (the class
 # has no `alarm!`). The `Counter` callees `relay` and `relay_map` call it and pass its errors on with `Rpc.forward`.
-store_ns = Object.namespace_remote("STORES", { class: "Store", script: "" })
+store_ns = Object.namespace_named("STORES", "Store")
 
 store_fail! : Object.Self, { kind : Str } => Try(I64, [NotOpen, Infra(Rpc.Infra)])
 store_fail! = |self, { kind }| match kind {
