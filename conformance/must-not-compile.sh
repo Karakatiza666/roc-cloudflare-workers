@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Must-not-compile checks (MODULES.md 10, PLAN.md 8c): a `Secret` in the fields of a `Log` line, and in a CBOR encode. Also `Id64` (MODULES.md 5.1).
-# PLAN.md 8h: an Rpc handler with a tag that is not in `err`, a `Worker.new` field of the wrong handler type, and the
+# Typed namespaces: see the block `pair_all` below. PLAN.md 8h: an Rpc handler with a tag that is not in `err`, a `Worker.new` field of the wrong handler type, and the
 # files that must compile (one error type for each handler). SQL parameters (MODULES.md 5.1).
 # Each `*_bad.roc` must fail `roc check` with an error that names `Secret`, and its `*_ok.roc` (the same file with
 # `s.reveal()`) must pass, so the error is the secret and not another fault. The CBOR files import `pf.Cbor` (the platform module that
@@ -203,4 +203,39 @@ pair rpc_infra_flat_bad.roc 'I need it to have the type: Object.Self -> Try({}, 
 pair infra_flat_kept_bad.roc 'This expression produces the tag TooLarge but the annotated tag union does not list it' infra_flat_kept_ok.roc
 pair infra_flat_body_bad.roc 'This expression produces the tag BadData but the annotated tag union does not list it' infra_flat_body_ok.roc
 pair infra_precise_bad.roc 'These can never match' infra_precise_ok.roc
+# Typed namespaces (MODULES.md 7, 8; research/typed-do-ns/): `Rpc(iface, ..)`, `Rpc.Serves(iface, self)`, `Object.Class(iface)`,
+# `Rpc.Iface(iface)`. A method of another interface is a type mismatch with both `Rpc` types in the text, a list of served methods
+# of two interfaces is "incompatible types" with both `Rpc.Serves` types, and a missing `Rpc.Iface` is "too few args" with the
+# type of the function. `pair_all bad control want...`: the error of the bad file has each text `want`.
+pair_all() {
+  local bad=$1 control=$2; shift 2
+  out=$("$ROC" check "$dir/$bad" 2>&1); code=$?
+  flat=$(tr -s ' \n' '  ' <<< "$out")
+  missing=""
+  for want in "$@"; do grep -qF -- "$want" <<< "$flat" || missing="$missing [$want]"; done
+  if [ $code -eq 1 ] && [ -z "$missing" ]; then echo "PASS $bad does not compile (the error has: $*)"
+  else echo "FAIL $bad: it compiles, or the error does not have:$missing"; echo "$out" | head -20; rc=1; fi
+  out=$("$ROC" check "$dir/$control" 2>&1)
+  if [ $? -eq 0 ]; then echo "PASS $control compiles"
+  else echo "FAIL $control: the control does not compile"; echo "$out" | head -20; rc=1; fi
+}
+# A method of another interface at the caller: `Object.call!` (the namespace has the interface of its class, of its `Rpc.Iface`) and `Service.call!`.
+pair_all typed_call_bad.roc typed_call_ok.roc 'type mismatch' 'Rpc(Ledger, {}, U64, Rpc.NoErr)' 'Rpc(Room, arg, ret, err)'
+pair_all namespace_named_wrong_iface_bad.roc namespace_named_wrong_iface_ok.roc 'type mismatch' 'Rpc(Room, {}, U64, Rpc.NoErr)' 'Rpc(Ledger, arg, ret, err)'
+pair_all namespace_remote_wrong_iface_bad.roc namespace_remote_wrong_iface_ok.roc 'type mismatch' 'Rpc(Room, {}, U64, Rpc.NoErr)' 'Rpc(Ledger, arg, ret, err)'
+pair_all service_call_bad.roc service_call_ok.roc 'type mismatch' 'Rpc(Ledger, {}, U64, Rpc.NoErr)' 'Rpc(Room, arg, ret, err)'
+pair_all worker_serves_service_bad.roc worker_serves_service_ok.roc 'type mismatch' 'Rpc(Room, {}, U64, Rpc.NoErr)' 'Rpc(Ledger, arg, ret, err)'
+# The interface of a class is the one of the methods that it serves: annotated as another interface, or used by a caller of another one.
+pair_all class_serves_other_bad.roc class_serves_other_ok.roc 'type mismatch' 'Object.Class(Ledger)' 'the annotation says it should be: Object.Class(Room)'
+pair_all class_serves_call_bad.roc class_serves_call_ok.roc 'type mismatch' 'Rpc(Room, {}, U64, Rpc.NoErr)' 'Rpc(Ledger, arg, ret, err)'
+# A class, a Worker and an entry point serve the methods of one interface. An entry point has no interface in its type (`Rpc.Entrypoint`
+# is erased), so a Service of another interface that reaches it is not a compile error: only the list of one `rpc` is checked.
+pair_all class_mixed_bad.roc class_mixed_ok.roc 'incompatible types' 'Rpc.Serves(Room, Object.Self)' 'Rpc.Serves(Ledger, self)'
+pair_all worker_rpc_mixed_bad.roc worker_rpc_mixed_ok.roc 'incompatible types' 'Rpc.Serves(Room, {})' 'Rpc.Serves(Ledger, {})'
+pair_all entrypoint_mixed_bad.roc entrypoint_mixed_ok.roc 'incompatible types' 'Rpc.Serves(Room, {})' 'Rpc.Serves(Ledger, {})'
+# No `Rpc.Iface` argument.
+pair_all namespace_named_noiface_bad.roc namespace_named_noiface_ok.roc 'too few args' 'Str, Str, Rpc.Iface(iface) -> Object.Namespace(iface)'
+pair_all namespace_remote_noiface_bad.roc namespace_remote_noiface_ok.roc 'too few args' 'Rpc.Iface(iface) -> Object.Namespace(iface)'
+pair_all service_noiface_bad.roc service_noiface_ok.roc 'too few args' 'Str, Rpc.Iface(iface) -> Service(iface)'
+pair_all service_with_noiface_bad.roc service_with_noiface_ok.roc 'too few args' 'Str, Rpc.Iface(iface), {'
 exit "$rc"
