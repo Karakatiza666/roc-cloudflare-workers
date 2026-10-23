@@ -46,7 +46,7 @@ DecRow : { x : Dec }
 Pair : { a : Dec, b : Dec }
 
 echo_dec : Rpc(RpcMethods.Default, Pair, Pair, Rpc.NoErr)
-echo_dec = Rpc.method("echo_dec")
+echo_dec = RpcMethods.default_iface.method("echo_dec")
 
 ## The value of the Memo has an id that `load!` makes new each time: a second `get!` with the same id was read from the pin
 ## (a pinned value that does not parse loads again, so the equal Decs alone would not show a failed parse).

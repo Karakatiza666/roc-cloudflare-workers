@@ -11,16 +11,16 @@ Room := []
 Ledger := []
 
 room_iface : Rpc.Iface(Room)
-room_iface = Rpc.Iface.{}
+room_iface = Rpc.iface("Room")
 
 ledger_iface : Rpc.Iface(Ledger)
-ledger_iface = Rpc.Iface.{}
+ledger_iface = Rpc.iface("Ledger")
 
 open : Rpc(Room, {}, U64, Rpc.NoErr)
-open = Rpc.method("open")
+open = room_iface.method("open")
 
 settle : Rpc(Ledger, {}, U64, Rpc.NoErr)
-settle = Rpc.method("settle")
+settle = ledger_iface.method("settle")
 
 rooms : Object.Namespace(Room)
 rooms = Object.namespace_named("ROOMS", "Room", room_iface)

@@ -18,3 +18,4 @@ dist/
 examples/*/node_modules/
 examples/*/app.wasm
 research/starttls/out/
+examples/auction/*.wasm

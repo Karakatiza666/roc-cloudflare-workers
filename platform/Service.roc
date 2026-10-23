@@ -8,23 +8,23 @@ import Rpc
 import Remote
 import cbor.Cbor
 
-Service(iface) :: { name : Str, service : Str, entrypoint : Str }.{
+Service(iface) :: { name : Str, service : Str, entrypoint : Str, iface_name : Str }.{
 
 	## The binding `name`, with the interface of the Worker that it reaches (`Rpc.Iface`): `call!` takes the `Rpc`
 	## constants of that interface only.
 	binding : Str, Rpc.Iface(iface) -> Service(iface)
-	binding = |name, _iface| Service.{ name, service: "", entrypoint: "" }
+	binding = |name, iface| Service.{ name, service: "", entrypoint: "", iface_name: iface.name() }
 
 	## `service`: the name of the bound Worker. `entrypoint`: its named entry point. Both are for the manifest only
 	## (`declare`): the calls use the binding as Workers made it.
 	binding_with : Str, Rpc.Iface(iface), { service ?: Str, entrypoint ?: Str } -> Service(iface)
-	binding_with = |name, _iface, opts| Service.{ name, service: opts.?service ?? "", entrypoint: opts.?entrypoint ?? "" }
+	binding_with = |name, iface, opts| Service.{ name, service: opts.?service ?? "", entrypoint: opts.?entrypoint ?? "", iface_name: iface.name() }
 
 	## The binding for the manifest (`Worker.new({ bindings: [...] })`, MODULES.md 3): the kind `service`, with
-	## `service` and `entrypoint` when `binding_with` gave them.
+	## `service` and `entrypoint` when `binding_with` gave them, and `iface`, the name of its interface.
 	declare : Service(iface) -> { name : Str, kind : Str, props : List((Str, Str)) }
 	declare = |s| {
-		props = [("service", s.service), ("entrypoint", s.entrypoint)].keep_if(|(_, v)| v != "")
+		props = [("service", s.service), ("entrypoint", s.entrypoint), ("iface", s.iface_name)].keep_if(|(_, v)| v != "")
 		{ name: s.name, kind: "service", props }
 	}
 

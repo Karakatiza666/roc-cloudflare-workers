@@ -31,7 +31,7 @@ A project has four files: `app.roc`, `worker.js`, `wrangler.toml`, `package.json
 | Command | What it does |
 | --- | --- |
 | `roc-cloudflare-workers init [dir]` | Writes the four files of a new project (`examples/hello`), with the URLs of the release of the package. |
-| `roc-cloudflare-workers sync` | Reads the manifest of `app.wasm`, writes `worker.js` (one export line for each class, then `makeHandler`), and checks `wrangler.toml`: `main`, the compatibility date and flags, `durable_objects.bindings`, `migrations` (`new_sqlite_classes`), the bindings of `Worker.new({ bindings })`, `triggers.crons` of `Worker.new({ crons })`. It prints the parts to add and gives exit 1 when one is missing or wrong. `--check`: write nothing (for CI). |
+| `roc-cloudflare-workers sync` | Reads the manifest of `app.wasm`, writes `worker.js` (one export line for each class, then `makeHandler`), and checks `wrangler.toml`: `main`, the compatibility date and flags, `durable_objects.bindings`, `migrations` (`new_sqlite_classes`), the bindings of `Worker.new({ bindings })`, `triggers.crons` of `Worker.new({ crons })`. It also checks the link to the other Workers of the same repo: a service binding or a `namespace_remote` goes to a Worker by its name in the Wrangler config, so `sync` finds that Worker (its config and its built wasm) and compares the interface names (`Rpc.iface("Ledger")`). It prints the parts to add and gives exit 1 when one is missing or wrong. `--check`: write nothing (for CI). |
 
 ```sh
 npx --yes --package=https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/X.Y.Z/roc-cloudflare-workers-X.Y.Z.tgz roc-cloudflare-workers init my-worker
@@ -101,6 +101,7 @@ export default makeHandler(app);
 | Bindings | Names that the app uses in `X.binding("NAME")` | One binding for each name. `sync` prints the part of each binding of `Worker.new({ bindings })` that is not in the config. |
 | Durable Object classes | `new_sqlite_classes` in the migration, and `durable_objects.bindings` with the `class_name` of `Object.namespace` | The platform needs SQLite-backed classes (`MODULES.md` 7). `sync` checks both. |
 | `triggers.crons` | The expressions of `Worker.cron` | `sync` checks them. A cron of the config with no `Worker.cron` needs a `scheduled!`. |
+| `services` and `durable_objects.bindings` with `script_name` | The Worker of the link: its `name` in its own Wrangler config, in the same repo | The types check one Worker. `sync` checks the link: the other Worker must be built (its `.wasm` file, the one that its `main` imports, or `app.wasm`), and its entry point or class must have the same interface name as the binding. A Worker that `sync` does not find or that is not built is a note (build it with `roc build`), not a failure. |
 
 5. Run and deploy:
 

@@ -41,10 +41,10 @@ ObjectRoutes :: [].{
 
 	## The classes of the app: the manifest names them, and `conformance/worker.js` exports each one.
 	counter_class : Object.Class(RpcMethods.Counter)
-	counter_class = Object.class("Counter", { fetch!: counter_fetch!, alarm!: counter_alarm!, rpc: [RpcMethods.increment.on(increment!), RpcMethods.ping({}).on(object_ping!), RpcMethods.boom.on(boom!), RpcMethods.echo.on(echo!), RpcMethods.hello({}).on(object_hello!), RpcMethods.nap.on(nap!), RpcMethods.relay({}).on(relay!), RpcMethods.relay_map({}).on(relay_map!)].concat(RpcErrRoutes.object_handlers) })
+	counter_class = Object.class("Counter", { fetch!: counter_fetch!, alarm!: counter_alarm!, rpc: [RpcMethods.increment.on(increment!), RpcMethods.ping(RpcMethods.counter_iface).on(object_ping!), RpcMethods.boom.on(boom!), RpcMethods.echo.on(echo!), RpcMethods.hello(RpcMethods.counter_iface).on(object_hello!), RpcMethods.nap.on(nap!), RpcMethods.relay(RpcMethods.counter_iface).on(relay!), RpcMethods.relay_map(RpcMethods.counter_iface).on(relay_map!)].concat(RpcErrRoutes.object_handlers) })
 
 	store_class : Object.Class(RpcMethods.Store)
-	store_class = Object.class("Store", { init!: store_init!, fetch!: store_fetch!, rpc: [RpcMethods.fail({}).on(store_fail!)] })
+	store_class = Object.class("Store", { init!: store_init!, fetch!: store_fetch!, rpc: [RpcMethods.fail(RpcMethods.store_iface).on(store_fail!)] })
 
 	flaky_class : Object.Class(RpcMethods.NoRpc)
 	flaky_class = Object.class("Flaky", { init!: flaky_init!, fetch!: plain_fetch! })
@@ -137,9 +137,9 @@ ObjectRoutes :: [].{
 				Response.from_text(200, "${Str.inspect(a)} ${Str.inspect(b)}")
 			}
 			["rpc", "nap"] => Response.from_text(200, Str.inspect(counters.named(name).call!(RpcMethods.nap, { ms: Q.num(req, "ms") })))
-			["rpc", "ping"] => Response.from_text(200, Str.inspect(counters.named(name).call!(RpcMethods.ping({}), { n: 7 })))
+			["rpc", "ping"] => Response.from_text(200, Str.inspect(counters.named(name).call!(RpcMethods.ping(RpcMethods.counter_iface), { n: 7 })))
 			["rpc", "boom"] => Response.from_text(200, Str.inspect(counters.named(name).call!(RpcMethods.boom, { n: 3 })))
-			["rpc", "nothere"] => Response.from_text(200, Str.inspect(counters.named(name).call!(RpcMethods.nothere({}), { n: 1 })))
+			["rpc", "nothere"] => Response.from_text(200, Str.inspect(counters.named(name).call!(RpcMethods.nothere(RpcMethods.counter_iface), { n: 1 })))
 			["rpc", "echo"] => Response.from_text(200, Str.inspect(counters.named(name).call!(RpcMethods.echo, { big: 1_152_921_504_606_846_976 })))
 			["fetch_io"] => Response.from_text(200, text!(Io.run!(counters.named(name).fetch(Request.get("http://o/id")))))
 			_ => Response.from_text(404, "no route")
@@ -448,13 +448,13 @@ store_fail! = |self, { kind }| match kind {
 
 relay! : Object.Self, { kind : Str } => Try(I64, [NotOpen, Infra(Rpc.Infra)])
 relay! = |_self, arg| {
-	v = store_ns.named("relay").call!(RpcMethods.fail({}), arg) ? Rpc.forward(|e| e)
+	v = store_ns.named("relay").call!(RpcMethods.fail(RpcMethods.store_iface), arg) ? Rpc.forward(|e| e)
 	Ok(v)
 }
 
 relay_map! : Object.Self, { kind : Str } => Try(I64, [Shut, Infra(Rpc.Infra)])
 relay_map! = |_self, arg| {
-	v = store_ns.named("relay").call!(RpcMethods.fail({}), arg) ? Rpc.forward(
+	v = store_ns.named("relay").call!(RpcMethods.fail(RpcMethods.store_iface), arg) ? Rpc.forward(
 		|e| match e {
 			NotOpen => Shut
 			Infra(i) => Infra(i)

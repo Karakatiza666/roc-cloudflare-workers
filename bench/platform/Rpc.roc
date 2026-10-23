@@ -8,18 +8,16 @@ import Response
 import Sql
 import cbor.Cbor
 
-Rpc(iface, arg, ret, err) :: { name : Str }.{
-
-	## A constant (WR1): the method name and, by its annotation, the types of both sides. `iface` is a type of the app with
-	## no values (`Room := []`): the object, the service or the entry point that has the method. `err` is the tag union that
-	## the callee can give (`Rpc.NoErr` for none): the caller gets it as `Remote(err)`. A method that two interfaces
-	## serve is a function of `{}`: `ping : {} -> Rpc(iface, {}, Str, Rpc.NoErr)`.
-	method : Str -> Rpc(iface, arg, ret, err)
-	method = |name| Rpc.{ name }
+Rpc(iface, arg, ret, err) :: { name : Str, iface_name : Str }.{
 
 	## The method name: the JS method that Workers calls.
 	name : Rpc(iface, arg, ret, err) -> Str
 	name = |m| m.name
+
+	## The name of the interface of the method (`Rpc.iface("Ledger")`): the manifest records it, and `roc-cloudflare-workers sync`
+	## compares it across Workers.
+	iface_name : Rpc(iface, arg, ret, err) -> Str
+	iface_name = |m| m.iface_name
 
 	## The callee. `self` is `Object.Self` in a Durable Object (a Worker uses `on_worker`). A class takes a list of
 	## `Rpc.Serves` of one `iface`. The result of the handler is the reply (`Reply`), also an `Err`. A tag that is not in `err` does not compile. An argument that
@@ -27,6 +25,7 @@ Rpc(iface, arg, ret, err) :: { name : Str }.{
 	on : Rpc(iface, arg, ret, err), (self, arg => Try(ret, err)) -> Rpc.Serves(iface, self) where [arg.Cbor.Readable(errs), ret.Cbor.Writable, err.Cbor.Writable]
 	on = |m, f!| Rpc.Serves.{
 		name: m.name,
+		iface_name: m.iface_name,
 		run!: |self, bytes| match Cbor.parse(bytes) {
 			Ok(a) => match f!(self, a) {
 				Ok(r) => Ok(ok_head.concat(Cbor.encode(r)))
@@ -109,21 +108,46 @@ Rpc(iface, arg, ret, err) :: { name : Str }.{
 
 	## A method with its types erased: the argument as CBOR in, the reply (`Reply`) as CBOR out. `Err`: an argument
 	## that does not parse, as text.
-	Handler(self) : { name : Str, run! : self, List(U8) => Try(List(U8), Str) }
+	Handler(self) : { name : Str, iface_name : Str, run! : self, List(U8) => Try(List(U8), Str) }
 
 	## A handler of a method of the interface `iface`. A class, an entry point and a Worker take a list of them, so all
 	## their methods have one interface.
-	Serves(iface, self) := { name : Str, run! : self, List(U8) => Try(List(U8), Str) }.{
+	Serves(iface, self) := { name : Str, iface_name : Str, run! : self, List(U8) => Try(List(U8), Str) }.{
 
 		## The handler with its interface erased.
 		erase : Rpc.Serves(iface, self) -> Rpc.Handler(self)
-		erase = |h| { name: h.name, run!: h.run! }
+		erase = |h| { name: h.name, iface_name: h.iface_name, run!: h.run! }
 	}
 
-	## The proof of an interface for `Object.namespace_named`, `Object.namespace_remote` and `Service.binding`: a value
-	## with no data. The app makes one for each interface (`room : Rpc.Iface(Room)`, `room = Rpc.Iface.{}`). A call with
-	## no `Iface`, or with the `Iface` of another interface, does not compile.
-	Iface(iface) := {}
+	## An interface (MODULES.md 8): a type of the app with no values (`Ledger := []`) and its name as text. The shared module
+	## of the Workers makes one value for each interface (`ledger : Rpc.Iface(Ledger)`, `ledger = Rpc.iface("Ledger")`).
+	## The type connects the two sides of a call in the compiler. The name goes to the manifest: the type cannot cross a
+	## Worker (the link of a service binding or of a `namespace_remote` is in the Wrangler config), so `roc-cloudflare-workers
+	## sync` compares the names of the Workers of one repo. A call with no `Iface`, or with the `Iface` of another interface,
+	## does not compile.
+	Iface(iface) := { name : Str }.{
+
+		## A method of the interface (WR1): the method name and, by the annotation of the constant, the types of both sides.
+		## `err` is the tag union that the callee can give (`Rpc.NoErr` for none): the caller gets it as `Remote(err)`.
+		## A method that two interfaces serve is a function of the interface: `ping : Rpc.Iface(iface) -> Rpc(iface, {}, Str, Rpc.NoErr)`,
+		## `ping = |i| i.method("ping")`.
+		method : Rpc.Iface(iface), Str -> Rpc(iface, arg, ret, err)
+		method = |i, method_name| Rpc.{ name: method_name, iface_name: i.name }
+
+		## The name that `Rpc.iface` got.
+		name : Rpc.Iface(iface) -> Str
+		name = |i| i.name
+	}
+
+	## The value of an interface: `ledger = Rpc.iface("Ledger")`. The name is the name of the type, as text. Two values with
+	## the same name and different types are two interfaces for the compiler and one for `sync`.
+	iface : Str -> Rpc.Iface(iface)
+	iface = |iface_text| Rpc.Iface.{ name: iface_text }
+
+	## The distinct interface names of some handlers, in order: none for no handler. A class, a Worker and an entry point
+	## have one name at most: two names are an error at load (`checkManifest` in `js/manifest.js`).
+	iface_names : List(Rpc.Handler(self)) -> List(Str)
+	iface_names = |hs| hs.fold([], |acc, h| if (acc.contains(h.iface_name)) acc else acc.append(h.iface_name))
 
 	## A named entry point (a `WorkerEntrypoint` class): `export const Admin = entrypointClass("Admin")` in the JS entry
 	## file. A service binding with `entrypoint = "Admin"` reaches it. Its `fetch!` gets the requests of `Service.fetch!`
@@ -133,6 +157,7 @@ Rpc(iface, arg, ret, err) :: { name : Str }.{
 		name: ep_name,
 		handlers: if (h.?fetch!.is_ok()) ["fetch"] else [],
 		rpc: (h.?rpc ?? []).map(|m| m.erase()),
+		iface_names: Rpc.iface_names((h.?rpc ?? []).map(|m| m.erase())),
 		fetch!: |req| match h.?fetch! {
 			Ok(f!) => match f!(req) {
 				Ok(res) => Respond(res)
@@ -143,7 +168,7 @@ Rpc(iface, arg, ret, err) :: { name : Str }.{
 	}
 
 	## An entry point with its types erased. `handlers`: the handlers that its JS class has (`fetch`), for the manifest.
-	Entrypoint : { name : Str, handlers : List(Str), rpc : List(Rpc.Handler({})), fetch! : Request => [Respond(Response), Failed(Str), Unhandled] }
+	Entrypoint : { name : Str, handlers : List(Str), rpc : List(Rpc.Handler({})), iface_names : List(Str), fetch! : Request => [Respond(Response), Failed(Str), Unhandled] }
 }
 
 ## The reply of a method on the wire: `{"Ok": value}` or `{"Err": tag}` (the derived CBOR of a tag). A JS callee gives
