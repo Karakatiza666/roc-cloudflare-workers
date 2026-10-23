@@ -57,7 +57,7 @@ The steps are in dependency order. A step with a Talon dependency waits for that
 | --- | --- | --- | --- | --- |
 | 1 | Platform | Put `js/` in the platform bundle (section 4). Keep the `.tgz` for one release | Nothing | Yes |
 | 2 | Platform | `cli.mjs`: `sync` only. `init` moves to the helper. Add `js/cfw.json` (`{ "api": 1 }`). `entryOf` writes the import as the relative path from `worker.js` to the directory of `cli.mjs` (`./.roc-cfw/index.js`), and the package name `roc-cloudflare-workers` only when `cli.mjs` is in `node_modules/` | Nothing | Yes (the import depends on where `cli.mjs` is) |
-| 3 | Platform | Rename `examples/hello/app.roc` to `main.roc` (G7) | Nothing | Yes, after a change of the scripts that name `app.roc` |
+| 3 | Platform | Done (2026-10-23). Renamed `examples/hello/app.roc` to `main.roc` (G7): `js/cli.mjs` `init`, `scripts/bundle.sh`, `scripts/test_bundle.sh`, `examples/hello/package.json`, the docs | Nothing | Yes, after a change of the scripts that name `app.roc` |
 | 4 | Helper | New repository `roc-cloudflare-workers-cli`: `roc-cfw shim`, `sync`, `init` (section 5) | basic-cli. `tln path` (step 6), or the cache rule as a fallback | Not used yet |
 | 5 | Talon | G1: the build target (R-TG1 to R-TG6) | Talon P0 | n/a |
 | 6 | Talon | `tln run`, `[scripts]`, `--each` order (R-RUN1 to R-RUN17, R-EA1 to R-EA8), `[tools]` (R-PT1 to R-PT16), `tln path` (R-PTH1 to R-PTH5) | Talon P1 | n/a |
