@@ -2,6 +2,22 @@
 
 Date: 2026-10-23, revised the same day with the decisions of the user (Talon study, section 12: `tln run` in Talon v1, no shell, `tln path`, project tools in `[tools]`, dependency order for `--each`). A plan, not done work. The Talon side is a proposal: `talon/research/talon-scripts/README.md` (the parent repository). A rule id with `PROPOSED` there (R-RUN, R-TG, R-PTH, R-IN8) is not in the Talon design yet. The gaps G1 to G7 are in `README.md` of this directory.
 
+## Decisions (2026-10-23)
+
+The user answered the questions of the Talon study (`talon/research/talon-scripts/README.md`, section 12). The effect on this plan:
+
+| # | Decision | Effect here |
+| --- | --- | --- |
+| Q-S1 | `tln run` is in Talon v1 | The examples and the template use `talon.toml` `[scripts]` |
+| Q-S2 | No shell in a step | Each step is one command (sections 3.1, 3.3) |
+| Q-S3 | `tln path` | `roc-cfw` finds `js/` with `tln path pf` (section 5) |
+| Q-S4 | Project tools in `[tools]` | `roc-cfw` is pinned in each project. CI uses the lock. No global install (sections 3, 6, 7) |
+| Q-S5 | The R-SM2 stub for `tln init --platform` | `roc-cfw init` replaces the stub body (section 7) |
+| Q-S6 | `--each` in dependency order | A Worker that reads another wasm declares `[run] after` (section 3.3) |
+| Q-S8 | One `[build] target` | The platform has one target: no key needed |
+| Q-S9 | No `tln run --dry-run` | None |
+| Q-S10 | `in` steps and `--each` | The repo examples use `in` steps (section 3.3) |
+
 ## 1. Before and after
 
 ```text
