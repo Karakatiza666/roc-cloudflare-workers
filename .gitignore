@@ -19,3 +19,4 @@ examples/*/node_modules/
 examples/*/app.wasm
 research/starttls/out/
 examples/auction/*.wasm
+bench/app_link_callee_b.roc
