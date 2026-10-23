@@ -506,7 +506,7 @@ export function crossCheck(m, cfg, { cfgFile, wasmFile, root, workers, manifestF
       note(`${rel(wasm)}: no manifest to check (${tm?.error ?? 'the app has no Worker.new, or it is not stack-first'})`);
       continue;
     }
-        let callee;
+    let callee;
     let label;
     if (l.kind === 'service') {
       label = l.entrypoint ? `the entry point ${l.entrypoint}` : 'the default entry point';
