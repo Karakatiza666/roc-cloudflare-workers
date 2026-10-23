@@ -1,6 +1,6 @@
 # Transition: from the npm setup to the Talon setup
 
-Date: 2026-10-23. A plan, not done work. The Talon side is a proposal: `talon/research/talon-scripts/README.md` (the parent repository). A rule id with `PROPOSED` there (R-RUN, R-TG, R-PTH, R-IN8) is not in the Talon design yet. The gaps G1 to G7 are in `README.md` of this directory.
+Date: 2026-10-23, revised the same day with the decisions of the user (Talon study, section 12: `tln run` in Talon v1, no shell, `tln path`, project tools in `[tools]`, dependency order for `--each`). A plan, not done work. The Talon side is a proposal: `talon/research/talon-scripts/README.md` (the parent repository). A rule id with `PROPOSED` there (R-RUN, R-TG, R-PTH, R-IN8) is not in the Talon design yet. The gaps G1 to G7 are in `README.md` of this directory.
 
 ## 1. Before and after
 
@@ -12,14 +12,15 @@ release:  <hash>.tar.zst  (platform)             release:  <hash>.tar.zst  (plat
           (shim + cli.mjs: sync, init)
 
 project:  app.roc        platform URL            project:  main.roc       platform URL + roc: pin
-          package.json   shim .tgz URL, scripts            talon.toml     [scripts]
+          package.json   shim .tgz URL, scripts            talon.toml     [tools] roc-cfw, [scripts]
           worker.js      import 'roc-cloud...'             worker.js      import './.roc-cfw/index.js'
           wrangler.toml                                    wrangler.toml  (no change)
           node_modules/  (npm install)                     .roc-cfw/      copy of js/ (gitignored)
 
 commands: npm install                            commands: tln install
           npm run build                                    tln run build
-          npx ... roc-cloudflare-workers init              tln init --platform ... ; roc-cfw init
+          npx ... roc-cloudflare-workers init              tln init --platform ... ; tln add --tool ...
+                                                           tln x roc-cfw -- init
 ```
 
 | Part | Today | After | Pinned by |
@@ -28,8 +29,8 @@ commands: npm install                            commands: tln install
 | Nightly | By hand | `roc:` pin in the header, the proxy selects it | Header |
 | Shim JS (`js/*.js`) | npm tarball | `js/` in the platform bundle, copied to `.roc-cfw/` | Header hash (the same pin) |
 | `sync` (manifest, `worker.js`, config check) | `js/cli.mjs` in the tarball, run by npm `bin` | `js/cli.mjs` in the platform bundle, run by `node` through `roc-cfw sync` | Header hash |
-| `init` | `js/cli.mjs init` | `roc-cfw init` (separate tool), template in `js/template/` of the bundle | Tool: `tln tool install`. Template: header hash |
-| Helper CLI | npm `bin` | `roc-cfw`: a Roc app on basic-cli, repository `Karakatiza666/roc-cloudflare-workers-cli` | `tools.json` (global), `@=X.Y.Z` in CI |
+| `init` | `js/cli.mjs init` | `roc-cfw init` (separate tool), template in `js/template/` of the bundle | Tool: `[tools]` of the project. Template: header hash |
+| Helper CLI | npm `bin` | `roc-cfw`: a Roc app on basic-cli, repository `Karakatiza666/roc-cloudflare-workers-cli` | `[tools] roc-cfw` of each project: a range (`ref`) and the locked release URL with its hash (`url`), Talon R-PT1. No global install |
 | Task list | `package.json` `scripts` | `talon.toml` `[scripts]`, `tln run` | The repository |
 
 ## 2. Order of the work
@@ -43,7 +44,7 @@ The steps are in dependency order. A step with a Talon dependency waits for that
 | 3 | Platform | Rename `examples/hello/app.roc` to `main.roc` (G7) | Nothing | Yes, after a change of the scripts that name `app.roc` |
 | 4 | Helper | New repository `roc-cloudflare-workers-cli`: `roc-cfw shim`, `sync`, `init` (section 5) | basic-cli. `tln path` (step 6), or the cache rule as a fallback | Not used yet |
 | 5 | Talon | G1: the build target (R-TG1 to R-TG6) | Talon P0 | n/a |
-| 6 | Talon | `tln run`, `[scripts]`, `tln path` (R-RUN1 to R-RUN17, R-PTH1 to R-PTH5) | Talon P1 | n/a |
+| 6 | Talon | `tln run`, `[scripts]`, `--each` order (R-RUN1 to R-RUN17, R-EA1 to R-EA8), `[tools]` (R-PT1 to R-PT16), `tln path` (R-PTH1 to R-PTH5) | Talon P1 | n/a |
 | 7 | Platform | Examples and README to the Talon setup (section 3). Remove `package.json` of the examples | Steps 2 to 6 | No: this is the switch |
 | 8 | Platform | CI and release (section 6). Remove the `.tgz` asset | Step 7 | n/a |
 
@@ -67,12 +68,15 @@ The template for a user project (`js/template/` in the bundle, used by `roc-cfw 
 ```text
 main.roc         the body of examples/hello/main.roc (the helper keeps the header that tln init wrote)
 wrangler.toml    examples/hello/wrangler.toml, with the name of the project
-talon.toml       [scripts] below
+talon.toml       [scripts] below. `roc-cfw init` adds the table to the `talon.toml` that `tln add --tool` made, and keeps `[tools]`
 .gitignore       app.wasm, .roc-cfw/, .wrangler/
 ```
 
 ```toml
 # talon.toml of a user project
+[tools]
+roc-cfw = { ref = "Karakatiza666/roc-cloudflare-workers-cli@^1", url = "https://github.com/Karakatiza666/roc-cloudflare-workers-cli/releases/download/1.0.3/<hash>.tar.zst" }
+
 [scripts]
 build = ["roc build --target=wasm32 --no-cache --output=app.wasm main.roc", "roc-cfw sync"]
 check = ["roc build --target=wasm32 --no-cache --output=app.wasm main.roc", "roc-cfw sync --check"]
@@ -100,6 +104,9 @@ In the repository, a build inside `examples/auction/` gives `PathOutsideWorkspac
 [workspace]
 members = ["examples/hello/main.roc", "examples/auction/web.roc", "examples/auction/ledger.roc"]
 
+[tools]
+roc-cfw = { ref = "Karakatiza666/roc-cloudflare-workers-cli@^1", url = "<release URL with hash>" }
+
 [scripts]
 hello = [
   "roc build --target=wasm32 --no-cache --output=examples/hello/app.wasm examples/hello/main.roc",
@@ -113,6 +120,16 @@ auction = [
 ]
 examples = ["@hello", "@auction"]
 ```
+
+The examples use one root script and `in` steps, not `tln run --each`: a build must run from the root (`PathOutsideWorkspace`), and the 2 Workers of `auction` share one directory, so they are one node of `--each` (Talon R-EA1). A user repository with one directory for each Worker can use `--each` with dependency order:
+
+```toml
+# workers/web/talon.toml: web's sync reads ledger.wasm, so ledger runs first
+[run]
+after = ["../ledger"]
+```
+
+`tln run --each build` then runs `workers/ledger` before `workers/web`. Talon has no other order source than header path entries and `after`: no file-change detection, no cache, no parallel runs (Talon R-EA2 to R-EA7).
 
 `--js <dir>`: a helper flag for this repository only. The path platform `../../platform/main.roc` makes `tln path pf` give `platform/`, and the JS is in `js/` of the root. A user project never needs the flag. The other way is a move of `js/` to `platform/js/`, which changes the paths of the tests and `bench/`. Not proposed.
 
@@ -138,7 +155,7 @@ Talon reads only `main.roc` of a bundle (CLI R-DI7) and never runs a file of it 
 | --- | --- |
 | `release.yml` job `release` | `gh release create` with the bundle only. No `shim`, `shim_url` outputs |
 | `release.yml` job `test-published` | `scripts/test_bundle.sh <url>` with one argument. It still installs Wrangler (`npm install -g wrangler`): an external program, not a project dependency |
-| `release-notes.md` | Remove the `npm install @SHIM_URL@` block and the `.tgz` row. Add: `tln add --platform Karakatiza666/roc-cloudflare-workers@<tag>` (the tag of the release), and `tln tool install Karakatiza666/roc-cloudflare-workers-cli` |
+| `release-notes.md` | Remove the `npm install @SHIM_URL@` block and the `.tgz` row. Add: `tln add --platform Karakatiza666/roc-cloudflare-workers@<tag>` (the tag of the release), and `tln add --tool Karakatiza666/roc-cloudflare-workers-cli` |
 
 ## 5. The helper repository
 
@@ -146,7 +163,8 @@ Talon reads only `main.roc` of a bundle (CLI R-DI7) and never runs a file of it 
 | --- | --- |
 | Repository | `Karakatiza666/roc-cloudflare-workers-cli`. Its own repository: a Talon release has one `<hash>.tar.zst` asset (CLI R-DI4), and one group cannot hold a `platform` and an `app` (Resolution R-C4) |
 | Language, platform | Roc, basic-cli. Packages: `roc-app-header` (read the header of the app file) |
-| Release | An app bundle (`roc bundle`), so `tln tool install` builds it (CLI R-T10). Prebuilt binaries later (CLI R-T22, P3) |
+| Release | An app bundle (`roc bundle`), so Talon builds it from the locked `url` of `[tools]` (Talon R-PT6, CLI R-T10). A project pins it with `tln add --tool`. Prebuilt binaries later (CLI R-T22, P3) |
+| Platform of the tool | basic-cli (a native platform, Talon R-PT16) |
 | Commands | `roc-cfw shim`, `roc-cfw sync [args]`, `roc-cfw init` (Talon proposal, section 6) |
 | Contract with the bundle | `js/cfw.json` `api`. The helper supports a list of `api` numbers. A new `api` needs a helper release. A platform release with the same `api` needs none |
 | Programs that it runs | `tln path <alias>`, `node .roc-cfw/cli.mjs sync ...`. It finds both in `PATH` |
@@ -166,7 +184,7 @@ read the header of the app file -> the platform alias (pf)
 dir = $(tln path pf)/js            (Talon R-PTH1; fetches when missing)
   |
   v
-read dir/cfw.json: api supported? --no--> exit 2: "update roc-cfw: tln tool update roc-cfw"
+read dir/cfw.json: api supported? --no--> exit 2: "update roc-cfw: tln update roc-cfw"
   |
   v
 .roc-cfw/.platform == the platform hash? --no--> copy dir/* to .roc-cfw/ (a temp, then rename), write .platform
@@ -186,7 +204,7 @@ node .roc-cfw/cli.mjs sync [sync args]   (exit code passes through)
 | `scripts/test_example.sh` | `npm install <shim .tgz>`, `./node_modules/.bin/roc-cloudflare-workers sync --check` | Copy `js/` (or `js/` of the extracted bundle) to `<project>/.roc-cfw/`, then `node .roc-cfw/cli.mjs sync --check`. No helper and no Talon needed: the test checks the platform files |
 | `scripts/test_bundle.sh` | Arguments: bundle, shim | Argument: bundle. Step 2 takes `js/` from the bundle in the package cache (`$XDG_CACHE_HOME/roc/packages/<hash>/js/`), so the test proves that the bundle has the shim |
 | `release.yml`, `tests` job | `npm install -g wrangler` | No change |
-| New job (after Talon P1) | None | Install Talon at a fixed version (CLI R-IN6 form), `tln install --frozen`, `tln tool install Karakatiza666/roc-cloudflare-workers-cli@=<v>`, `tln run examples`, then `git diff --exit-code examples/` (the committed `worker.js` files are the files that `sync` writes) |
+| New job (after Talon P1) | None | Install Talon at a fixed version (CLI R-IN6 form), `tln install --frozen` (it also builds `roc-cfw` from the locked `url` of the root `[tools]`), `tln run examples`, then `git diff --exit-code examples/` (the committed `worker.js` files are the files that `sync` writes) |
 
 ### 6.2 A user project
 
@@ -199,8 +217,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: curl -fsSL https://github.com/roc-talon/talon/releases/download/v<t>/install.sh | sh -s -- --yes --version <t>
-      - run: tln install --frozen
-      - run: tln tool install Karakatiza666/roc-cloudflare-workers-cli@=<v>
+      - run: tln install --frozen     # the closure, and roc-cfw from the locked url (no global install)
       - uses: actions/setup-node@v4
         with:
           node-version: '26'
@@ -208,14 +225,16 @@ jobs:
       - run: tln run check
 ```
 
+`tln install --frozen` fails with exit 14 when `[tools] roc-cfw` has no `url` or a `url` outside its range (Talon R-PT7). A run of `roc-cfw` makes no network call: the `url` is the lock (R-PT8). `tln audit` reports a yanked helper release.
+
 `tln run check` fails the job when the build fails (exit 1 of `roc build`, also when it wrote the wasm) or when `sync --check` finds a change.
 
 ## 7. The user steps after the change
 
 ```sh
 tln init --platform Karakatiza666/roc-cloudflare-workers    # main.roc (header + stub), roc: pin, CI file
-tln tool install Karakatiza666/roc-cloudflare-workers-cli   # once per machine
-roc-cfw init                                                # app body, wrangler.toml, talon.toml, .gitignore
+tln add --tool Karakatiza666/roc-cloudflare-workers-cli     # talon.toml [tools] roc-cfw: range + locked url, built here
+tln x roc-cfw -- init                                       # the project version (R-PT11): app body, wrangler.toml, [scripts], .gitignore
 tln run build                                               # roc build, then roc-cfw sync
 tln run dev                                                 # wrangler dev --local
 ```
@@ -224,6 +243,7 @@ Update of the platform:
 
 ```sh
 tln update pf        # new header URL and hash
+tln update roc-cfw   # optional: a new helper inside the ref range (a new url)
 tln run build        # sync copies the new js/ (new hash), writes worker.js, checks wrangler.toml
 ```
 
@@ -242,5 +262,7 @@ tln run build        # sync copies the new js/ (new hash), writes worker.js, che
 | A user deletes the cache (`tln cache clean --all`) | `.roc-cfw/` is a copy, so `wrangler dev` still works. The next `roc-cfw sync` fetches again through `tln path` |
 | `node` loads `.roc-cfw/*.js` as CommonJS | `js/package.json` with `"type": "module"` is in the copy (section 4.1) |
 | `wrangler dev` watch and Windows symlinks | Not relevant: the copy has no symlink. Wrangler bundles a relative import from `.roc-cfw/` (probe `talon/research/talon-scripts/probes/wrangler-resolve/`, case a-copy) |
-| An old helper and a new bundle `api` | The helper stops with exit 2 and names `tln tool update roc-cfw` |
+| An old helper and a new bundle `api` | The helper stops with exit 2 and names `tln update roc-cfw` (the project pin) |
+| The global `roc-cfw` (if a user installed one) has another version than the project | Inside `tln run` and `tln x roc-cfw`, the project version wins (Talon R-PT12). A `roc-cfw` typed in a shell is the global one: the README says to use `tln x roc-cfw` |
+| GC removes the built helper | Talon keeps it while the project is known (R-PT14). After `tln cache clean`, the next run builds it again |
 | Talon does not accept `tln run` (question Q-S1 of the Talon study) | Keep the steps in a `Makefile` or in CI. Steps 1 to 4 and section 4 still remove npm from the project |
