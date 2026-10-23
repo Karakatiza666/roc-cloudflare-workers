@@ -115,7 +115,7 @@ The shim has a second problem that Talon cannot solve. Wrangler bundles `worker.
 | G4 | 5: template files | None in Talon. Keep `roc-cloudflare-workers init` (writes the 4 files with the URLs of `release.json`). After G1, `tln init --platform` can make the ladder-checked `main.roc` and the CI file | Keep separate |
 | G5 | 6: platform and shim are two pins (a header URL and an npm URL) that must have one version (`.github/release-notes.md`, "must have the same version") | Platform side only: `sync` compares the platform URL in the app header with `release.json.platform`, and prints the exact `npm install <shim URL>` for the version of the header when they differ. The shim URL follows from the platform URL: same tag, file `roc-cloudflare-workers-<tag>.tgz` (`scripts/bundle.sh`). `tln update` of `pf` then gives a clear next step | Clean. No Talon change |
 | G6 | 1: a minimum nightly of the platform | None. The user sets `[toolchain] roc = ">=..."`. `init` of the platform can write it into `talon.toml` | Clean. A platform-set bound would change the rank of `roc:` hints (Design R-EF1). Do not do it |
-| G7 | 1: file name `app.roc` | Platform side: name the template file `main.roc` | Clean |
+| G7 | 1: file name `app.roc` | Platform side: name the template file `main.roc`. Done (2026-10-23) | Clean |
 
 ## 4. Why not ship the CLI inside the platform (G3)
 
@@ -151,5 +151,5 @@ Work to do, in order:
 | Order | Owner | Item |
 | --- | --- | --- |
 | 1 | Talon design (human review, TW17) | G1: the target of a project build |
-| 2 | Platform | G5: the version check in `sync`. G7: template file name `main.roc` |
+| 2 | Platform | G5: the version check in `sync`. G7: template file name `main.roc` (done) |
 | 3 | Platform | Move the example CI to `tln install --frozen` after G1 is done |

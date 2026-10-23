@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "roc build --target=wasm32 --no-cache --output=app.wasm app.roc && roc-cloudflare-workers sync",
+    "build": "roc build --target=wasm32 --no-cache --output=app.wasm main.roc && roc-cloudflare-workers sync",
     "sync": "roc-cloudflare-workers sync",
     "dev": "wrangler dev --local",
     "deploy": "wrangler deploy"

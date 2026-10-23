@@ -8,7 +8,7 @@ compatibility_date = "2026-10-01"
 # For a Worker of your own account use a service binding. Drop the flag if the app never fetches such a URL.
 compatibility_flags = ["enable_request_signal", "global_fetch_strictly_public"]
 
-# The binding `DB` of `D1.binding("DB")` in app.roc. Local runs (`wrangler dev`) make an empty database.
+# The binding `DB` of `D1.binding("DB")` in main.roc. Local runs (`wrangler dev`) make an empty database.
 # For a deploy: `wrangler d1 create roc-hello`, and put its id here.
 [[d1_databases]]
 binding = "DB"

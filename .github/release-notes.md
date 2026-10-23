@@ -12,7 +12,7 @@ The JS shim is the file @SHIM_NAME@ of this release:
 npm install @SHIM_URL@
 ```
 
-Then `roc build --target=wasm32 --output=app.wasm app.roc`, and a `worker.js` with
+Then `roc build --target=wasm32 --output=app.wasm main.roc`, and a `worker.js` with
 `import app from './app.wasm'; import { makeHandler } from 'roc-cloudflare-workers'; export default makeHandler(app);`.
 The compatibility flag `enable_request_signal` is required in the Wrangler config. The README has the full steps.
 

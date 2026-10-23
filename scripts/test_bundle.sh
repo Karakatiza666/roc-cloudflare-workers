@@ -4,7 +4,7 @@
 # Defaults: the files of dist/ (made by scripts/bundle.sh). A file is served on http://127.0.0.1 (Roc allows plain
 # http only for localhost). `--replace-dep OLD NEW` changes no file: OLD is the platform path of the examples, from here.
 # Steps (each one fails the script):
-#   1. `roc check` and `roc build` of examples/hello/app.roc and examples/hello/with_cbor.roc against the bundle,
+#   1. `roc check` and `roc build` of examples/hello/main.roc and examples/hello/with_cbor.roc against the bundle,
 #      with an empty package cache (XDG_CACHE_HOME) so that http and cbor come from their URLs.
 #   2. scripts/test_example.sh: the app of 1 in `wrangler dev --local` with the shim package, then `wrangler deploy --dry-run`.
 set -euo pipefail
@@ -37,7 +37,7 @@ echo "shim: $shim"
 
 for app in hello with_cbor; do
 	src=examples/hello/$app.roc
-	[ "$app" = hello ] && src=examples/hello/app.roc
+	[ "$app" = hello ] && src=examples/hello/main.roc
 	"$ROC" check "$src" --replace-dep ./platform/main.roc "$url"
 	# `--no-cache`: a warm build cache gave other code (PLAN.md, status of 11a).
 	"$ROC" build --opt=speed --target=wasm32 --no-cache --output="$work/$app.wasm" "$src" --replace-dep ./platform/main.roc "$url"
