@@ -740,6 +740,7 @@ const reverts = [
   R('8h B5: D1.declare gives the kind kv (roc test)', 'roc test', [], ['platform/D1.roc', 'kind: "d1", props: []', 'kind: "kv", props: []']),
   R('8h B5: D1.declare gives the kind kv (the load)', 'conformance', ['start'], [BP + 'D1.roc', 'kind: "d1", props: []', 'kind: "kv", props: []']),
   R('8h B5: checkConfig ignores the migrations', 'cli-test', [], ['js/cli.mjs', 'for (const mig of cfg.migrations ?? []) {', 'for (const mig of []) {']),
+  R('G7: init writes the template as app.roc, not main.roc', 'cli-test', [], ['js/cli.mjs', "writeFileSync(join(dir, 'main.roc'), app);", "writeFileSync(join(dir, 'app.roc'), app);"]),
   // 8h wave N (N4, N6, N7, N11). The names start with `8h N` (a filter: `node conformance/reverts.mjs "8h N"`).
   // N4: `Object.namespace` takes the class value; `namespace_remote` takes the class name as text.
   R('8h N4: Object.namespace gives a fixed class name, not the name of the class value', 'conformance', [NS], [BP + 'Object.roc', 'class: opts.class.name(),', 'class: "Counter",']),

@@ -55,7 +55,7 @@ pkg="$work/js"
 mkdir -p "$pkg/template"
 cp js/*.js js/*.mjs js/package.json "$pkg/"
 cp LICENSE "$pkg/LICENSE"
-cp examples/hello/{app.roc,worker.js,wrangler.toml,package.json} "$pkg/template/"
+cp examples/hello/{main.roc,worker.js,wrangler.toml,package.json} "$pkg/template/"
 node -e '
   const [file, version, platform, shim] = process.argv.slice(1);
   require("fs").writeFileSync(file, JSON.stringify({ version, platform, shim }, null, 2) + "\n");

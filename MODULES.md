@@ -186,7 +186,7 @@ event! = |e| worker.event!(e)
 
 | Build | Rule |
 | --- | --- |
-| Command | `roc build --target=wasm32 --no-cache --output=app.wasm app.roc`, from the root of the repository: a build inside a subdirectory can give `PathOutsideWorkspace` when the platform line is a relative path (`examples/auction/README.md`). |
+| Command | `roc build --target=wasm32 --no-cache --output=app.wasm main.roc`, from the root of the repository: a build inside a subdirectory can give `PathOutsideWorkspace` when the platform line is a relative path (`examples/auction/README.md`). |
 | Result | A build with type errors still writes the `.wasm`, prints "N errors and 0 warnings found ... while successfully building", and exits with 1 (checked 2026-10-20). A build is good only when the exit code is 0 and the text is "0 errors and 0 warnings". A script checks the exit code, not the file. |
 
 ## 3. Entry: `Worker`

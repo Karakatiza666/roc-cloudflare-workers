@@ -32,7 +32,7 @@ const USAGE = `usage:
       --force: write the entry file also when it was not made by sync.
       Exit 0: all good. Exit 1: a part is missing or wrong. Exit 2: a bad command line or no app.
   roc-cloudflare-workers init [dir] [--name NAME] [--platform URL] [--force]
-      Writes app.roc, worker.js, wrangler.toml and package.json of a new project (from examples/hello).`;
+      Writes main.roc, worker.js, wrangler.toml and package.json of a new project (from examples/hello).`;
 
 // ---- The command line ----
 
@@ -537,7 +537,7 @@ function sync(argv) {
   const dir = process.cwd();
   const wasm = resolve(a.wasm ?? 'app.wasm');
   const entry = resolve(a.entry ?? 'worker.js');
-  if (!existsSync(wasm)) usage(`${relative(dir, wasm)} is not there: build the app first (roc build --target=wasm32 --no-cache --output=app.wasm app.roc)`);
+  if (!existsSync(wasm)) usage(`${relative(dir, wasm)} is not there: build the app first (roc build --target=wasm32 --no-cache --output=app.wasm main.roc)`);
   const got = manifestOf(new WebAssembly.Module(readFileSync(wasm)), manifestEvent());
   if (got === undefined) {
     console.error(`roc-cloudflare-workers: ${relative(dir, wasm)}: ${NOT_STACK_FIRST}`);
@@ -621,7 +621,7 @@ function sync(argv) {
 
 // The template: `template/` of the package (scripts/bundle.sh copies examples/hello there), or examples/hello of the repo.
 function templateDir() {
-  for (const d of [join(here, 'template'), join(here, '..', 'examples', 'hello')]) if (existsSync(join(d, 'app.roc'))) return d;
+  for (const d of [join(here, 'template'), join(here, '..', 'examples', 'hello')]) if (existsSync(join(d, 'main.roc'))) return d;
   throw new Error('no template: the package has no template/ directory');
 }
 
@@ -643,14 +643,14 @@ function init(argv) {
   const rel = release();
   const platform = a.platform ?? rel?.platform;
   const t = templateDir();
-  const files = ['app.roc', 'worker.js', 'wrangler.toml', 'package.json'];
+  const files = ['main.roc', 'worker.js', 'wrangler.toml', 'package.json'];
   const there = files.filter((f) => existsSync(join(dir, f)));
   if (there.length && !a.force) {
     console.error(`roc-cloudflare-workers: ${there.join(', ')} in ${dir} already: init writes no file over another (--force does)`);
     process.exit(1);
   }
   const read = (f) => readFileSync(join(t, f), 'utf8');
-  const app = read('app.roc')
+  const app = read('main.roc')
     .replace(/platform "[^"]*"/, `platform "${platform ?? '<the platform URL of the release>'}"`)
     .replace(/^## The platform line is a path.*\n/m, '');
   const toml = read('wrangler.toml').replace(/^name = ".*"$/m, `name = "${name}"`).replace(/^database_name = ".*"$/m, `database_name = "${name}"`).replace(/wrangler d1 create \S+/g, `wrangler d1 create ${name}`);
@@ -658,12 +658,12 @@ function init(argv) {
   pkg.name = name;
   if (rel?.shim) pkg.dependencies['roc-cloudflare-workers'] = rel.shim;
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'app.roc'), app);
+  writeFileSync(join(dir, 'main.roc'), app);
   writeFileSync(join(dir, 'worker.js'), read('worker.js'));
   writeFileSync(join(dir, 'wrangler.toml'), toml);
   writeFileSync(join(dir, 'package.json'), JSON.stringify(pkg, null, 2) + '\n');
   console.log(`wrote ${files.join(', ')} in ${dir}`);
-  if (!platform) console.log('app.roc: put the platform URL of the release in the platform line (--platform URL).');
+  if (!platform) console.log('main.roc: put the platform URL of the release in the platform line (--platform URL).');
   if (!rel?.shim) console.log('package.json: put the URL of the shim package of the release in dependencies.');
   console.log('Next: npm install, npm run build (roc build, then roc-cloudflare-workers sync), npm run dev.');
 }

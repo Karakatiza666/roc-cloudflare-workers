@@ -164,16 +164,17 @@ for (const form of ['toml', 'jsonc']) {
 {
   const dir = join(tmp, 'new-app');
   const r = run(tmp, 'init', 'new-app', '--platform', 'https://example.com/p.tar.zst');
-  const files = ['app.roc', 'worker.js', 'wrangler.toml', 'package.json'];
+  const files = ['main.roc', 'worker.js', 'wrangler.toml', 'package.json'];
   check('5a init writes the four files', r.code === 0 && files.every((f) => existsSync(join(dir, f))), `exit ${r.code}: ${r.all.slice(0, 300)}`);
-  const app = readFileSync(join(dir, 'app.roc'), 'utf8');
-  check('5b app.roc has the platform URL', app.includes('platform "https://example.com/p.tar.zst"'), app.split('\n')[0]);
+  const app = readFileSync(join(dir, 'main.roc'), 'utf8');
+  check('5b main.roc has the platform URL', app.includes('platform "https://example.com/p.tar.zst"'), app.split('\n')[0]);
+  check('5b2 init writes no app.roc (the template file is main.roc)', !existsSync(join(dir, 'app.roc')), '');
   check('5c wrangler.toml and package.json have the name of the directory', /^name = "new-app"$/m.test(readFileSync(join(dir, 'wrangler.toml'), 'utf8')) && JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).name === 'new-app', '');
   const again = run(tmp, 'init', 'new-app');
   check('5d init over the files: exit 1 and nothing written', again.code === 1 && again.err.includes('already'), `exit ${again.code}: ${again.all.slice(0, 200)}`);
-  writeFileSync(join(dir, 'app.roc'), 'mine');
+  writeFileSync(join(dir, 'main.roc'), 'mine');
   const forced = run(tmp, 'init', 'new-app', '--force', '--name', 'other-name');
-  check('5e init --force writes over them, with --name', forced.code === 0 && readFileSync(join(dir, 'app.roc'), 'utf8') !== 'mine' && /^name = "other-name"$/m.test(readFileSync(join(dir, 'wrangler.toml'), 'utf8')), `exit ${forced.code}`);
+  check('5e init --force writes over them, with --name', forced.code === 0 && readFileSync(join(dir, 'main.roc'), 'utf8') !== 'mine' && /^name = "other-name"$/m.test(readFileSync(join(dir, 'wrangler.toml'), 'utf8')), `exit ${forced.code}`);
 }
 
 console.log(failed ? 'FAILED' : 'all passed');

@@ -26,7 +26,7 @@ Needs: a Roc nightly (the release notes name it, `compat/last-stack-first-nightl
 
 ## Use it
 
-A project has four files: `app.roc`, `worker.js`, `wrangler.toml`, `package.json`. The command `roc-cloudflare-workers` of the shim package makes them:
+A project has four files: `main.roc`, `worker.js`, `wrangler.toml`, `package.json`. The command `roc-cloudflare-workers` of the shim package makes them:
 
 | Command | What it does |
 | --- | --- |
@@ -43,7 +43,7 @@ npm run dev       # wrangler dev --local
 
 The steps below say what each file has.
 
-1. The app (`examples/hello/app.roc`). The header has the platform and nothing else. The platform brings `Http`, `Cbor` and the types of `roc-lang/http`: the app has no `http` and no `cbor` entry.
+1. The app (`examples/hello/main.roc`). The header has the platform and nothing else. The platform brings `Http`, `Cbor` and the types of `roc-lang/http`: the app has no `http` and no `cbor` entry.
 
 ```roc
 app [event!] { pf: platform "https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/X.Y.Z/<hash>.tar.zst" }
@@ -73,7 +73,7 @@ event! = |e| worker.event!(e)
 2. Build the app. Use `--no-cache`, so that each build of the same source gives the same bytes: a build with a warm build cache gives other bytes than a clean build (`research/no-cache-repro/README.md`). No wrong behavior of a warm build is known (the conformance run passes on both), but a release and a test must build what a clean machine builds.
 
 ```sh
-roc build --target=wasm32 --no-cache --output=app.wasm app.roc
+roc build --target=wasm32 --no-cache --output=app.wasm main.roc
 ```
 
 A `roc build` with type errors still writes the `.wasm` file. It prints "N errors and 0 warnings found ... while successfully building" and exits with 1 (checked 2026-10-20 with one bad line). A build is good only when the exit code is 0 and the text is "0 errors and 0 warnings". A script must check the exit code. In the repo, run the command from the root (a build inside `examples/auction/` gives `PathOutsideWorkspace`).
