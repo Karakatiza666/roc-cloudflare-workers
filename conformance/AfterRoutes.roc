@@ -13,7 +13,7 @@ import Q
 AfterApi := []
 
 after_iface : Rpc.Iface(AfterApi)
-after_iface = Rpc.Iface.{}
+after_iface = Rpc.iface("AfterApi")
 
 store : Kv(Str)
 store = Kv.text("KV")

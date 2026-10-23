@@ -26,28 +26,28 @@ Object(iface) :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id
 	## (`script_name`), when it is not this Worker. For a class that this app does not have as a value, use
 	## `namespace_named` (this Worker) or `namespace_remote` (another Worker): they take the interface as `Rpc.Iface`.
 	namespace : Str, { class : Object.Class(iface), script ?: Str } -> Object.Namespace(iface)
-	namespace = |binding, opts| Object.Namespace.{ binding, jurisdiction: "", class: opts.class.name(), script: opts.?script ?? "" }
+	namespace = |binding, opts| Object.Namespace.{ binding, jurisdiction: "", class: opts.class.name(), script: opts.?script ?? "", iface_name: opts.class.iface_name() }
 
 	## A namespace of a class of this Worker, by name: for a class whose `Object.Class` value cannot be imported (a module
 	## cycle). The manifest is the same as `namespace` with that class and no `script`. The shim checks at load that the
 	## class is in `objects`.
 	namespace_named : Str, Str, Rpc.Iface(iface) -> Object.Namespace(iface)
-	namespace_named = |binding, class_name, _iface| Object.Namespace.{ binding, jurisdiction: "", class: class_name, script: "" }
+	namespace_named = |binding, class_name, iface| Object.Namespace.{ binding, jurisdiction: "", class: class_name, script: "", iface_name: iface.name() }
 
 	## A namespace of a class that another Worker has (`script_name`): the app has the class name only, as text.
 	namespace_remote : Str, { class : Str, script : Str }, Rpc.Iface(iface) -> Object.Namespace(iface)
-	namespace_remote = |binding, opts, _iface| Object.Namespace.{ binding, jurisdiction: "", class: opts.class, script: opts.script }
+	namespace_remote = |binding, opts, iface| Object.Namespace.{ binding, jurisdiction: "", class: opts.class, script: opts.script, iface_name: iface.name() }
 
 	## A namespace: the binding name, its jurisdiction ("" for none), its class and the Worker of the class ("" for
-	## this Worker). Data.
-	Namespace(iface) := { binding : Str, jurisdiction : Str, class : Str, script : Str }.{
+	## this Worker), and the name of its interface ("" for a class with no Rpc method). Data.
+	Namespace(iface) := { binding : Str, jurisdiction : Str, class : Str, script : Str, iface_name : Str }.{
 
 		## The binding for the manifest (`Worker.new({ bindings: [...] })`, MODULES.md 3): the kind `object`, with
-		## `class`, and `script` when the class is in another Worker. With no `script`, the shim checks at load that
-		## the class is in `objects`.
+		## `class`, `iface` (the interface name, when there is one), and `script` when the class is in another Worker. With
+		## no `script`, the shim checks at load that the class is in `objects`.
 		declare : Object.Namespace(iface) -> { name : Str, kind : Str, props : List((Str, Str)) }
 		declare = |ns| {
-			props = [("class", ns.class), ("script", ns.script)].keep_if(|(_, v)| v != "")
+			props = [("class", ns.class), ("script", ns.script), ("iface", ns.iface_name)].keep_if(|(_, v)| v != "")
 			{ name: ns.binding, kind: "object", props }
 		}
 
@@ -417,6 +417,7 @@ Object(iface) :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id
 		served = (h.?rpc ?? []).map(|m| m.erase())
 		Object.Class.{
 			name,
+			iface_names: Rpc.iface_names(served),
 			handlers: [
 				("init", h.?init!.is_ok()),
 				("fetch", h.?fetch!.is_ok()),
@@ -475,17 +476,24 @@ Object(iface) :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id
 	## A class with its types erased, but not its interface: the handlers that its JS class has (`init`, `fetch`, `alarm`, `webSocketMessage`,
 	## `webSocketClose`, `webSocketError`) and its RPC methods
 	## (the manifest, API.md AQ10), and the function that runs an event for the object of an id.
-	Class(iface) := { name : Str, handlers : List(Str), methods : List(Str), run! : Str, Object.Event => [Respond(Response), Reply(Js), Done, Failed(Str), Unhandled] }.{
+	Class(iface) := { name : Str, iface_names : List(Str), handlers : List(Str), methods : List(Str), run! : Str, Object.Event => [Respond(Response), Reply(Js), Done, Failed(Str), Unhandled] }.{
 		name : Object.Class(iface) -> Str
 		name = |c| c.name
 
+		## The name of the interface of its Rpc methods ("" for a class with none). Two names are an error at load.
+		iface_name : Object.Class(iface) -> Str
+		iface_name = |c| match c.iface_names {
+			[first, ..] => first
+			[] => ""
+		}
+
 		## For `Worker.new({ objects })`: a list has one type, and two classes have two interfaces.
 		erase : Object.Class(iface) -> Object.AnyClass
-		erase = |c| { name: c.name, handlers: c.handlers, methods: c.methods, run!: c.run! }
+		erase = |c| { name: c.name, iface_names: c.iface_names, handlers: c.handlers, methods: c.methods, run!: c.run! }
 	}
 
 	## A class with its interface erased.
-	AnyClass : { name : Str, handlers : List(Str), methods : List(Str), run! : Str, Object.Event => [Respond(Response), Reply(Js), Done, Failed(Str), Unhandled] }
+	AnyClass : { name : Str, iface_names : List(Str), handlers : List(Str), methods : List(Str), run! : Str, Object.Event => [Respond(Response), Reply(Js), Done, Failed(Str), Unhandled] }
 
 	## A typed value in the sync KV storage of the object (MODULES.md 9): CBOR bytes under one key. A constant (WR1).
 	cell : Str -> Object.Cell(a) where [a.Cbor.Writable, a.Cbor.Readable(errs)]

@@ -9,8 +9,11 @@ import pf.Response
 
 Room := []
 
+room_iface : Rpc.Iface(Room)
+room_iface = Rpc.iface("Room")
+
 close_out : Rpc(Room, {}, U64, [NotOpen, Infra(Rpc.Infra)])
-close_out = Rpc.method("close_out")
+close_out = room_iface.method("close_out")
 
 close_out! = |self, {}| {
 	self.delete_all!()?

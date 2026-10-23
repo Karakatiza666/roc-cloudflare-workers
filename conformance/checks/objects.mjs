@@ -99,11 +99,12 @@ export const checks = [
   // N4: the bindings that the namespaces give to the manifest (the same values as the string form gave: the class name, `script`).
   ['objects namespace: the class value gives the class name, script is kept, namespace_remote gives the text class and the script', async (t) =>
     answer(await t.get('/objects/namespaces'),
-      '[{ kind: "object", name: "COUNTERS", props: [("class", "Counter")] }, { kind: "object", name: "FAR2", props: [("class", "Store"), ("script", "other")] }, { kind: "object", name: "FAR", props: [("class", "Far"), ("script", "other")] }]')],
-  // `namespace_named("STORES", "Store")` is the namespace that the RPC checks use: its class is the class that STORES has in the config.
+      '[{ kind: "object", name: "COUNTERS", props: [("class", "Counter"), ("iface", "Counter")] }, { kind: "object", name: "FAR2", props: [("class", "Store"), ("script", "other"), ("iface", "Store")] }, { kind: "object", name: "FAR", props: [("class", "Far"), ("script", "other"), ("iface", "Counter")] }]')],
+  // `namespace_named("STORES", "Store", store_iface)` is the namespace that the RPC checks use: its class is the class that STORES has in the config.
+  // NAMED has the class Counter and the interface Default, so `iface` is the name of the interface value and not of the class.
   ['objects namespace: namespace_named gives the binding and the class name as given, and no script', async (t) =>
     answer(await t.get('/objects/namespaces_named'),
-      '[{ kind: "object", name: "STORES", props: [("class", "Store")] }, { kind: "object", name: "NAMED", props: [("class", "Counter")] }]')],
+      '[{ kind: "object", name: "STORES", props: [("class", "Store"), ("iface", "Store")] }, { kind: "object", name: "NAMED", props: [("class", "Counter"), ("iface", "Default")] }]')],
   ['objects Object.Cell get_or!: a value of another type is BadData, not the default', async (t) => {
     const r = await counter(t, 'cell_or_bad', 'cell_or_bad');
     ok(r.status === 200 && r.body.startsWith('Err(Infra(BadData('), `got ${r.status} ${r.body}`);

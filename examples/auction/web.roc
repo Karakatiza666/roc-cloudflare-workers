@@ -32,7 +32,7 @@ lot_rooms = Object.namespace("LOT_ROOM", { class: LotRoom.class })
 
 images = R2.binding("BUCKET")
 
-ledger = Service.binding_with("LEDGER", Gavel.ledger_iface, { service: "auction-ledger" })
+ledger = Service.binding_with("LEDGER", Gavel.ledger, { service: "auction-ledger" })
 
 catalog : Kv.Cell(List(Gavel.Lot))
 catalog = Kv.json("KV").cell("catalog")

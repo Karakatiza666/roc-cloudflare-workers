@@ -20,7 +20,7 @@ import Gavel
 receipts = R2.binding("RECEIPTS")
 
 ## The class `LotRoom` is in the script of auction-web.
-lot_rooms = Object.namespace_remote("LOT_ROOM", { class: "LotRoom", script: "auction-web" }, Gavel.room_iface)
+lot_rooms = Object.namespace_remote("LOT_ROOM", { class: "LotRoom", script: "auction-web" }, Gavel.room)
 
 feed_url = "wss://fx.example.com/stream"
 

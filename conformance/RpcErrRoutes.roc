@@ -20,12 +20,12 @@ db = D1.binding("DB")
 RpcErrRoutes :: [].{
 
 	## The callees of the default export and of `Admin`.
-	service_handlers : {} -> List(Rpc.Serves(iface, {}))
-	service_handlers = |{}| [RpcMethods.busy({}).on(busy!), RpcMethods.crashes({}).on(crashes!), RpcMethods.mismatch({}).on(mismatch!), RpcMethods.open_lot({}).on(open_lot!), RpcMethods.fail({}).on(fail_svc!), RpcMethods.relay({}).on(relay_svc!), RpcMethods.relay_map({}).on(relay_map_svc!)]
+	service_handlers : Rpc.Iface(iface) -> List(Rpc.Serves(iface, {}))
+	service_handlers = |i| [RpcMethods.busy(i).on(busy!), RpcMethods.crashes(i).on(crashes!), RpcMethods.mismatch(i).on(mismatch!), RpcMethods.open_lot(i).on(open_lot!), RpcMethods.fail(i).on(fail_svc!), RpcMethods.relay(i).on(relay_svc!), RpcMethods.relay_map(i).on(relay_map_svc!)]
 
 	## The callees of the class `Counter`.
 	object_handlers : List(Rpc.Serves(RpcMethods.Counter, Object.Self))
-	object_handlers = [RpcMethods.busy({}).on(busy!), RpcMethods.crashes({}).on(crashes!), RpcMethods.mismatch({}).on(mismatch!), RpcMethods.open_lot({}).on(open_lot!)]
+	object_handlers = [RpcMethods.busy(RpcMethods.counter_iface).on(busy!), RpcMethods.crashes(RpcMethods.counter_iface).on(crashes!), RpcMethods.mismatch(RpcMethods.counter_iface).on(mismatch!), RpcMethods.open_lot(RpcMethods.counter_iface).on(open_lot!)]
 
 	## `counters` and `stores` are the namespaces of `ObjectRoutes` (the class `Counter` has the handlers of this module, so this module cannot import it).
 	route! : Object.Namespace(RpcMethods.Counter), Object.Namespace(RpcMethods.Store), Request, List(Str) => Response
@@ -35,46 +35,46 @@ RpcErrRoutes :: [].{
 		text = match path {
 			# N5 G1a: `Infra` errors of a callee. `fail`: the callee `?`s a platform error (the Durable Object `Store`, or the Workers).
 			# `relay` and `relay_map`: the callee calls `fail` and passes its errors on with `Rpc.forward`.
-			["store", "fail"] => fail_text(stores.named(Q.text(req, "name")).call!(RpcMethods.fail({}), kind))
-			["self", "fail"] => fail_text(self_service.call!(RpcMethods.fail({}), kind))
-			["admin", "fail"] => fail_text(admin_service.call!(RpcMethods.fail({}), kind))
+			["store", "fail"] => fail_text(stores.named(Q.text(req, "name")).call!(RpcMethods.fail(RpcMethods.store_iface), kind))
+			["self", "fail"] => fail_text(self_service.call!(RpcMethods.fail(RpcMethods.default_iface), kind))
+			["admin", "fail"] => fail_text(admin_service.call!(RpcMethods.fail(RpcMethods.admin_iface), kind))
 			["self", "jsfail"] => fail_text(self_service.call!(RpcMethods.jsfail, kind))
-			["self", "relay"] => fail_text(self_service.call!(RpcMethods.relay({}), kind))
-			["admin", "relay"] => fail_text(admin_service.call!(RpcMethods.relay({}), kind))
-			["obj", "relay"] => fail_text(counters.named(Q.text(req, "name")).call!(RpcMethods.relay({}), kind))
-			["self", "relay_map"] => map_text(self_service.call!(RpcMethods.relay_map({}), kind))
-			["admin", "relay_map"] => map_text(admin_service.call!(RpcMethods.relay_map({}), kind))
-			["obj", "relay_map"] => map_text(counters.named(Q.text(req, "name")).call!(RpcMethods.relay_map({}), kind))
+			["self", "relay"] => fail_text(self_service.call!(RpcMethods.relay(RpcMethods.default_iface), kind))
+			["admin", "relay"] => fail_text(admin_service.call!(RpcMethods.relay(RpcMethods.admin_iface), kind))
+			["obj", "relay"] => fail_text(counters.named(Q.text(req, "name")).call!(RpcMethods.relay(RpcMethods.counter_iface), kind))
+			["self", "relay_map"] => map_text(self_service.call!(RpcMethods.relay_map(RpcMethods.default_iface), kind))
+			["admin", "relay_map"] => map_text(admin_service.call!(RpcMethods.relay_map(RpcMethods.admin_iface), kind))
+			["obj", "relay_map"] => map_text(counters.named(Q.text(req, "name")).call!(RpcMethods.relay_map(RpcMethods.counter_iface), kind))
 			["self", "jsbusy"] => busy_text(self_service.call!(RpcMethods.jsbusy, { n: n }))
 			["self", "jsthrow"] => noerr_text(self_service.call!(RpcMethods.jsthrow, { n: n }))
-			["self", case] => by_service!(self_service, case, n)
-			["admin", case] => by_service!(admin_service, case, n)
-			["obj", case] => by_object!(counters.named(Q.text(req, "name")), case, n)
+			["self", case] => by_service!(self_service, RpcMethods.default_iface, case, n)
+			["admin", case] => by_service!(admin_service, RpcMethods.admin_iface, case, n)
+			["obj", case] => by_object!(counters.named(Q.text(req, "name")), RpcMethods.counter_iface, case, n)
 			_ => "no route"
 		}
 		Response.from_text(200, text)
 	}
 }
 
-by_service! : Service(iface), Str, I64 => Str
-by_service! = |s, case, n| match case {
-	"busy" => busy_text(s.call!(RpcMethods.busy({}), { n: n }))
-	"badarg" => busy_text(s.call!(RpcMethods.busy_badarg({}), { n: "x" }))
-	"crash" => noerr_text(s.call!(RpcMethods.crashes({}), { n: n }))
-	"stray" => noerr_text(s.call!(RpcMethods.mismatch_caller({}), { n: n }))
-	"unit" => unit_text(s.call!(RpcMethods.open_lot({}), lot(n)))
+by_service! : Service(iface), Rpc.Iface(iface), Str, I64 => Str
+by_service! = |s, i, case, n| match case {
+	"busy" => busy_text(s.call!(RpcMethods.busy(i), { n: n }))
+	"badarg" => busy_text(s.call!(RpcMethods.busy_badarg(i), { n: "x" }))
+	"crash" => noerr_text(s.call!(RpcMethods.crashes(i), { n: n }))
+	"stray" => noerr_text(s.call!(RpcMethods.mismatch_caller(i), { n: n }))
+	"unit" => unit_text(s.call!(RpcMethods.open_lot(i), lot(n)))
 	_ => "no case"
 }
 
-by_object! : Object(iface), Str, I64 => Str
-by_object! = |o, case, n| match case {
-	"busy" => busy_text(o.call!(RpcMethods.busy({}), { n: n }))
-	"badarg" => busy_text(o.call!(RpcMethods.busy_badarg({}), { n: "x" }))
-	"crash" => noerr_text(o.call!(RpcMethods.crashes({}), { n: n }))
-	"stray" => noerr_text(o.call!(RpcMethods.mismatch_caller({}), { n: n }))
-	"unit" => unit_text(o.call!(RpcMethods.open_lot({}), lot(n)))
+by_object! : Object(iface), Rpc.Iface(iface), Str, I64 => Str
+by_object! = |o, i, case, n| match case {
+	"busy" => busy_text(o.call!(RpcMethods.busy(i), { n: n }))
+	"badarg" => busy_text(o.call!(RpcMethods.busy_badarg(i), { n: "x" }))
+	"crash" => noerr_text(o.call!(RpcMethods.crashes(i), { n: n }))
+	"stray" => noerr_text(o.call!(RpcMethods.mismatch_caller(i), { n: n }))
+	"unit" => unit_text(o.call!(RpcMethods.open_lot(i), lot(n)))
 	# The shape of examples/auction (REVIEW.md N1): `?` on a `call!` with the answer `{}`.
-	"unit_try" => unit_try_text(open_room!(o, lot(n)))
+	"unit_try" => unit_try_text(open_room!(o, i, lot(n)))
 	_ => "no case"
 }
 
@@ -82,8 +82,8 @@ by_object! = |o, case, n| match case {
 lot : I64 -> { id : Str, close_ms : U64 }
 lot = |n| { id: if (n == 1) "new" else "old", close_ms: 5 }
 
-open_room! = |o, l| {
-	o.call!(RpcMethods.open_lot({}), l)?
+open_room! = |o, i, l| {
+	o.call!(RpcMethods.open_lot(i), l)?
 	Ok("opened")
 }
 
@@ -178,14 +178,14 @@ fail_svc! = |_self, { kind }| match kind {
 # `Rpc.forward(|e| e)`: the same `err` as `fail`.
 relay_svc! : self, { kind : Str } => Try(I64, [NotOpen, Infra(Rpc.Infra)])
 relay_svc! = |_self, arg| {
-	v = self_service.call!(RpcMethods.fail({}), arg) ? Rpc.forward(|e| e)
+	v = self_service.call!(RpcMethods.fail(RpcMethods.default_iface), arg) ? Rpc.forward(|e| e)
 	Ok(v)
 }
 
 # `Rpc.forward` with a domain mapping: `NotOpen` is `Shut`, `Infra` stays.
 relay_map_svc! : self, { kind : Str } => Try(I64, [Shut, Infra(Rpc.Infra)])
 relay_map_svc! = |_self, arg| {
-	v = self_service.call!(RpcMethods.fail({}), arg) ? Rpc.forward(
+	v = self_service.call!(RpcMethods.fail(RpcMethods.default_iface), arg) ? Rpc.forward(
 		|e| match e {
 			NotOpen => Shut
 			Infra(i) => Infra(i)

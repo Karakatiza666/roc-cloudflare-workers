@@ -41,26 +41,27 @@ Gavel :: [].{
 
 	Ledger := []
 
-	## The proofs of the interfaces, for `Object.namespace_remote` and `Service.binding_with`.
-	room_iface : Rpc.Iface(Gavel.Room)
-	room_iface = Rpc.Iface.{}
+	## The values of the interfaces. The text is the name that the manifest records: `roc-cloudflare-workers sync` compares it
+	## across the Workers of the repo (the service binding and the namespace go to a Worker by name in the Wrangler config).
+	room : Rpc.Iface(Gavel.Room)
+	room = Rpc.iface("Room")
 
-	ledger_iface : Rpc.Iface(Gavel.Ledger)
-	ledger_iface = Rpc.Iface.{}
+	ledger : Rpc.Iface(Gavel.Ledger)
+	ledger = Rpc.iface("Ledger")
 
 	# The Rpc methods. The Roc callee and the Roc caller both use these values.
 	## `open` is a command: its answer is `{}`.
 	open : Rpc(Gavel.Room, Gavel.Lot, {}, Gavel.RoomErr)
-	open = Rpc.method("open")
+	open = Gavel.room.method("open")
 
 	snapshot : Rpc(Gavel.Room, {}, Gavel.Snapshot, Gavel.RoomErr)
-	snapshot = Rpc.method("snapshot")
+	snapshot = Gavel.room.method("snapshot")
 
 	close_out : Rpc(Gavel.Room, {}, Gavel.Closeout, Gavel.RoomErr)
-	close_out = Rpc.method("close_out")
+	close_out = Gavel.room.method("close_out")
 
 	settle_due : Rpc(Gavel.Ledger, {}, { settled : U32 }, Gavel.SettleErr)
-	settle_due = Rpc.method("settle_due")
+	settle_due = Gavel.ledger.method("settle_due")
 
 	# Bindings with the same name in both wrangler files. The room namespace is in each Worker (the ledger names the script).
 	db = D1.binding("DB")

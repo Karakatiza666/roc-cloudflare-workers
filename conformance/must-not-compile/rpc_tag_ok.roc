@@ -8,8 +8,11 @@ import pf.Response
 
 Room := []
 
+room_iface : Rpc.Iface(Room)
+room_iface = Rpc.iface("Room")
+
 close_out : Rpc(Room, {}, U64, [StillOpen])
-close_out = Rpc.method("close_out")
+close_out = room_iface.method("close_out")
 
 fetch! = |_req| Ok(Response.from_text(200, "x"))
 

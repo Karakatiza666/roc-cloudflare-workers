@@ -45,6 +45,10 @@ const TESTS = {
   'bindings-test': () => [process.execPath, ['bench/bindings-test.mjs', 'bench/out']],
   'envread-test': () => [process.execPath, ['bench/envread-test.mjs', 'bench/out']],
   'cli-test': () => [process.execPath, ['bench/cli-test.mjs', 'bench/out']],
+  // MODULES.md 3: the interface names in the manifest. `manifest-ifaces` reads the conformance build of the revert (a platform edit); the others read bench/out (a JS edit).
+  'manifest-ifaces': () => [process.execPath, ['bench/iface-test.mjs', out, 'conformance']],
+  'iface-test': () => [process.execPath, ['bench/iface-test.mjs', 'bench/out']],
+  'sync-cross-test': () => [process.execPath, ['bench/sync-cross-test.mjs', 'bench/out']],
   // The build of the conformance app only (exit 2: warnings only), for a revert that crashes the compiler.
   'conformance build': () => ['bash', ['-c', '"$ROC" build --opt=speed --target=wasm32 --no-cache --output=.cache/conformance-reverts/build-check.wasm conformance/app.roc || [ $? -eq 2 ]']],
 };
@@ -745,11 +749,11 @@ const reverts = [
   // N4: `Object.namespace` takes the class value; `namespace_remote` takes the class name as text.
   R('8h N4: Object.namespace gives a fixed class name, not the name of the class value', 'conformance', [NS], [BP + 'Object.roc', 'class: opts.class.name(),', 'class: "Counter",']),
   R('8h N4: Object.namespace drops script', 'conformance', [NS], [BP + 'Object.roc', 'class: opts.class.name(), script: opts.?script ?? ""', 'class: opts.class.name(), script: ""']),
-  R('8h N4: Object.namespace_remote swaps the class and the script', 'conformance', [NS], [BP + 'Object.roc', 'class: opts.class, script: opts.script }', 'class: opts.script, script: opts.class }']),
+  R('8h N4: Object.namespace_remote swaps the class and the script', 'conformance', [NS], [BP + 'Object.roc', 'class: opts.class, script: opts.script, iface_name', 'class: opts.script, script: opts.class, iface_name']),
   R('8h N4: Object.namespace takes a Str class again (must-not-compile)', 'must-not-compile', [], [BP + 'Object.roc', 'namespace : Str, { class : Object.Class(iface), script ?: Str } -> Object.Namespace(iface)', 'namespace : Str, { class : Str, script ?: Str } -> Object.Namespace(iface)'], [BP + 'Object.roc', 'class: opts.class.name(),', 'class: opts.class,'], [BP + 'Worker.roc', 'Object.namespace("ROOMS", { class: room_class })', 'Object.namespace("ROOMS", { class: "Room" })'], [BP + 'Worker.roc', 'Object.namespace("FAR2", { class: far2_class, script: "other" })', 'Object.namespace("FAR2", { class: "Far2", script: "other" })']),
   // `Object.namespace_named` (binding, class name in this Worker, no script).
-  R('8h N4: Object.namespace_named swaps the binding and the class', 'conformance', [NN], [BP + 'Object.roc', 'Object.Namespace.{ binding, jurisdiction: "", class: class_name, script: "" }', 'Object.Namespace.{ binding: class_name, jurisdiction: "", class: binding, script: "" }']),
-  R('8h N4: Object.namespace_named gives a script', 'conformance', [NN], [BP + 'Object.roc', 'Object.Namespace.{ binding, jurisdiction: "", class: class_name, script: "" }', 'Object.Namespace.{ binding, jurisdiction: "", class: class_name, script: "self" }']),
+  R('8h N4: Object.namespace_named swaps the binding and the class', 'conformance', [NN], [BP + 'Object.roc', 'Object.Namespace.{ binding, jurisdiction: "", class: class_name, script: "", iface_name', 'Object.Namespace.{ binding: class_name, jurisdiction: "", class: binding, script: "", iface_name']),
+  R('8h N4: Object.namespace_named gives a script', 'conformance', [NN], [BP + 'Object.roc', 'Object.Namespace.{ binding, jurisdiction: "", class: class_name, script: "", iface_name', 'Object.Namespace.{ binding, jurisdiction: "", class: class_name, script: "self", iface_name']),
   R('8h N4: the STORES namespace of the conformance app names the class Counter', 'conformance', [NN], ['conformance/ObjectRoutes.roc', 'store_ns = Object.namespace_named("STORES", "Store", RpcMethods.store_iface)', 'store_ns = Object.namespace_named("STORES", "Counter", RpcMethods.store_iface)']),
   // N6: `find!` gives `Ok(Err(NotFound))` for a missing value, `Ok(Ok(v))` for a value, `Err(BadData)` for a bad value.
   R('8h N6: Object.Cell.find! gives a value as Ok(Err(NotFound))', 'conformance', [OF], [BP + 'Object.roc', 'Ok(v) => Ok(Ok(v))', 'Ok(_) => Ok(Err(NotFound))']),
@@ -863,13 +867,13 @@ const reverts = [
     [BP + 'Rpc.roc', 'on : Rpc(iface, arg, ret, err), (self, arg => Try(ret, err)) -> Rpc.Serves(iface, self) where', 'on : Rpc(iface, arg, ret, err), (self, arg => Try(ret, err)) -> Rpc.Serves(iface2, self) where']),
   R('typed ns: Rpc.on_worker gives the handler of any interface (a Worker or an entry point of mixed interfaces compiles)', 'must-not-compile', [],
     [BP + 'Rpc.roc', 'on_worker : Rpc(iface, arg, ret, err), (arg => Try(ret, err)) -> Rpc.Serves(iface, {}) where', 'on_worker : Rpc(iface, arg, ret, err), (arg => Try(ret, err)) -> Rpc.Serves(iface2, {}) where'],
-    [BP + 'Rpc.roc', 'on_worker = |m, f!| Rpc.on(m, |_, a| f!(a))', 'on_worker = |m, f!| Rpc.on(Rpc.method(m.name), |_, a| f!(a))']),
+    [BP + 'Rpc.roc', 'on_worker = |m, f!| Rpc.on(m, |_, a| f!(a))', 'on_worker = |m, f!| Rpc.on(Rpc.iface("x").method(m.name), |_, a| f!(a))']),
   R('typed ns: Object.namespace_named takes no interface (a call with two arguments compiles)', 'must-not-compile', [],
     [BP + 'Object.roc', 'namespace_named : Str, Str, Rpc.Iface(iface) -> Object.Namespace(iface)', 'namespace_named : Str, Str -> Object.Namespace(iface)'],
-    [BP + 'Object.roc', 'namespace_named = |binding, class_name, _iface|', 'namespace_named = |binding, class_name|']),
+    [BP + 'Object.roc', 'namespace_named = |binding, class_name, iface| Object.Namespace.{ binding, jurisdiction: "", class: class_name, script: "", iface_name: iface.name() }', 'namespace_named = |binding, class_name| Object.Namespace.{ binding, jurisdiction: "", class: class_name, script: "", iface_name: "" }']),
   R('typed ns: Object.namespace_remote takes no interface (a call with two arguments compiles)', 'must-not-compile', [],
     [BP + 'Object.roc', 'namespace_remote : Str, { class : Str, script : Str }, Rpc.Iface(iface) -> Object.Namespace(iface)', 'namespace_remote : Str, { class : Str, script : Str } -> Object.Namespace(iface)'],
-    [BP + 'Object.roc', 'namespace_remote = |binding, opts, _iface|', 'namespace_remote = |binding, opts|'],
+    [BP + 'Object.roc', 'namespace_remote = |binding, opts, iface| Object.Namespace.{ binding, jurisdiction: "", class: opts.class, script: opts.script, iface_name: iface.name() }', 'namespace_remote = |binding, opts| Object.Namespace.{ binding, jurisdiction: "", class: opts.class, script: opts.script, iface_name: "" }'],
     [BP + 'Worker.roc', 'script: "other" }, far_iface).declare()', 'script: "other" }).declare()']),
   R('typed ns: Object.namespace_named gives the namespace of any interface (the interface value is not used)', 'must-not-compile', [],
     [BP + 'Object.roc', 'namespace_named : Str, Str, Rpc.Iface(iface) -> Object.Namespace(iface)', 'namespace_named : Str, Str, Rpc.Iface(iface) -> Object.Namespace(iface2)']),
@@ -877,14 +881,46 @@ const reverts = [
     [BP + 'Object.roc', 'namespace_remote : Str, { class : Str, script : Str }, Rpc.Iface(iface) -> Object.Namespace(iface)', 'namespace_remote : Str, { class : Str, script : Str }, Rpc.Iface(iface) -> Object.Namespace(iface2)']),
   R('typed ns: Service.binding takes no interface (a call with one argument compiles)', 'must-not-compile', [],
     [BP + 'Service.roc', 'binding : Str, Rpc.Iface(iface) -> Service(iface)', 'binding : Str -> Service(iface)'],
-    [BP + 'Service.roc', 'binding = |name, _iface|', 'binding = |name|'],
+    [BP + 'Service.roc', 'binding = |name, iface| Service.{ name, service: "", entrypoint: "", iface_name: iface.name() }', 'binding = |name| Service.{ name, service: "", entrypoint: "", iface_name: "" }'],
     [BP + 'Worker.roc', 'Service.binding("A", far_iface)', 'Service.binding("A")']),
   R('typed ns: Service.binding_with takes no interface (a call with two arguments compiles)', 'must-not-compile', [],
     [BP + 'Service.roc', 'binding_with : Str, Rpc.Iface(iface), { service ?: Str, entrypoint ?: Str } -> Service(iface)', 'binding_with : Str, { service ?: Str, entrypoint ?: Str } -> Service(iface)'],
-    [BP + 'Service.roc', 'binding_with = |name, _iface, opts|', 'binding_with = |name, opts|'],
+    [BP + 'Service.roc', 'binding_with = |name, iface, opts| Service.{ name, service: opts.?service ?? "", entrypoint: opts.?entrypoint ?? "", iface_name: iface.name() }', 'binding_with = |name, opts| Service.{ name, service: opts.?service ?? "", entrypoint: opts.?entrypoint ?? "", iface_name: "" }'],
     [BP + 'Worker.roc', 'Service.binding_with("B", far_iface, {', 'Service.binding_with("B", {']),
   R('typed ns: Service.binding gives the service of any interface (the interface value is not used)', 'must-not-compile', [],
     [BP + 'Service.roc', 'binding : Str, Rpc.Iface(iface) -> Service(iface)', 'binding : Str, Rpc.Iface(iface) -> Service(iface2)']),
+  // MODULES.md 3: the interface names in the manifest (bench/iface-test.mjs, bench/sync-cross-test.mjs). A platform edit of the conformance build:
+  // `manifest-ifaces` reads its manifest. A JS edit: `iface-test` and `sync-cross-test` read bench/out.
+  R("iface: the manifest of the default export has no ifaces", "manifest-ifaces", [], ["bench/platform/Worker.roc", "class_of(w.handlers, w.rpc.map(|h| h.name), Rpc.iface_names(w.rpc))", "class_of(w.handlers, w.rpc.map(|h| h.name), [])"]),
+  R("iface: the manifest of a class has no ifaces", "manifest-ifaces", [], ["bench/platform/Worker.roc", "class_of(c.handlers, c.methods, c.iface_names)", "class_of(c.handlers, c.methods, [])"]),
+  R("iface: the manifest of an entry point has no ifaces", "manifest-ifaces", [], ["bench/platform/Worker.roc", "class_of(ep.handlers, ep.rpc.map(|h| h.name), ep.iface_names)", "class_of(ep.handlers, ep.rpc.map(|h| h.name), [])"]),
+  R("iface: Rpc.iface_names keeps a name for each method (a class with many methods has a repeated name)", "manifest-ifaces", [], ["bench/platform/Rpc.roc", "if (acc.contains(h.iface_name)) acc else acc.append(h.iface_name)", "acc.append(h.iface_name)"]),
+  R("iface: Object.Namespace.declare has no iface prop", "manifest-ifaces", [], ["bench/platform/Object.roc", ", (\"iface\", ns.iface_name)].keep_if", " ].keep_if"]),
+  R("iface: Object.Namespace.declare has no iface prop (the conformance checks of the namespaces)", "conformance", [NS, NN], ["bench/platform/Object.roc", ", (\"iface\", ns.iface_name)].keep_if", " ].keep_if"]),
+  R("iface: Object.namespace_named gives the class name as the interface name", "conformance", [NN], ["bench/platform/Object.roc", "Object.Namespace.{ binding, jurisdiction: \"\", class: class_name, script: \"\", iface_name: iface.name() }", "Object.Namespace.{ binding, jurisdiction: \"\", class: class_name, script: \"\", iface_name: class_name }"]),
+  R("iface: Object.namespace_remote gives the class name as the interface name", "conformance", [NS], ["bench/platform/Object.roc", "script: opts.script, iface_name: iface.name() }", "script: opts.script, iface_name: opts.class }"]),
+  R("iface: Service.declare has no iface prop (roc test)", "roc test", [], ["platform/Service.roc", ", (\"iface\", s.iface_name)].keep_if", " ].keep_if"]),
+  R("iface: Service.binding has no interface name (roc test)", "roc test", [], ["platform/Service.roc", "binding = |name, iface| Service.{ name, service: \"\", entrypoint: \"\", iface_name: iface.name() }", "binding = |name, _iface| Service.{ name, service: \"\", entrypoint: \"\", iface_name: \"\" }"]),
+  R("iface: checkManifest allows two interface names in a class, an entry point or the default export", "iface-test", [], ["js/manifest.js", "if (list.length > 1) throw new Error(", "if (false) throw new Error("]),
+  R("iface: checkManifest does not compare a namespace with the class of this Worker", "iface-test", [], ["js/manifest.js", "b.iface && out.objects[b.class].iface && b.iface !== out.objects[b.class].iface) throw", "false) throw"]),
+  R("iface: checkManifest compares a namespace with a script (a class of another Worker) with the classes of this one", "iface-test", [], ["js/manifest.js", "if (b.kind === 'object' && !b.script && b.iface &&", "if (b.kind === 'object' && b.iface &&"]),
+  R("iface: checkManifest drops the interface name of a class", "iface-test", [], ["js/manifest.js", "iface: ifaceOf(c, ", "iface: ((_c, _w) => \"\")(c, "]),
+  R("iface: checkManifest drops the interface name of the default export", "iface-test", [], ["js/manifest.js", "defaultIface: ifaceOf(d, 'the default export'),", "defaultIface: '',"]),
+  R("iface: checkManifest accepts an empty interface name", "iface-test", [], ["js/manifest.js", "if (!Array.isArray(list) || !list.every((n) => typeof n === 'string' && n !== ''))", "if (!Array.isArray(list))"]),
+  R("iface: sync does not check the service bindings of the config", "sync-cross-test", [], ["js/cli.mjs", "for (const sv of at(cfg, 'services') ?? []) if (", "for (const sv of []) if ("]),
+  R("iface: sync does not check the Durable Object bindings with script_name", "sync-cross-test", [], ["js/cli.mjs", "for (const o of at(cfg, 'durable_objects.bindings') ?? []) if (", "for (const o of []) if ("]),
+  R("iface: sync takes two different interface names for a match", "sync-cross-test", [], ["js/cli.mjs", "else if (caller.iface === callee) out.push", "else if (caller.iface !== '' || callee !== '') out.push"]),
+  R("iface: sync does not compare a callee with no interface name (the two sides are compared always)", "sync-cross-test", [], ["js/cli.mjs", "if (!caller.iface || !callee) out.push", "if (false) out.push"]),
+  R("iface: sync does not check the entry point of the service", "sync-cross-test", [], ["js/cli.mjs", "if (l.entrypoint && !Object.hasOwn(tm.entrypoints, l.entrypoint)) {", "if (false) {"]),
+  R("iface: sync does not check the class of the Durable Object binding", "sync-cross-test", [], ["js/cli.mjs", "if (!Object.hasOwn(tm.objects, l.class)) {", "if (false) {"]),
+  R("iface: sync makes a note a failure", "sync-cross-test", [], ["js/cli.mjs", "out.push({ level: 'note', text: `${what}: ${t}` })", "out.push({ level: 'wrong', text: `${what}: ${t}` })"]),
+  R("iface: sync does not report a target that is not built", "sync-cross-test", [], ["js/cli.mjs", "if (!existsSync(wasm)) {\n      const src", "if (false) {\n      const src"]),
+  R("iface: sync has no build command in the note of a missing wasm", "sync-cross-test", [], ["js/cli.mjs", "run roc build --target=wasm32 --no-cache --output=${relative(root, wasm)}", "run roc build --target=wasm32 --output=${relative(root, wasm)}"]),
+  R("iface: sync does not note a wasm that is older than its sources", "sync-cross-test", [], ["js/cli.mjs", "if (newer) note(", "if (false) note("]),
+  R("iface: sync does not note several configs with one name", "sync-cross-test", [], ["js/cli.mjs", "if (cands.length > 1) note(", "if (false) note("]),
+  R("iface: sync checks the first of several wasm files for one name", "sync-cross-test", [], ["js/cli.mjs", "if (wasms.length > 1) continue;", "if (false) continue;"]),
+  R("iface: sync takes the dir of the config as the repo root (no .git search)", "sync-cross-test", [], ["js/cli.mjs", "if (existsSync(join(d, '.git'))) return d;", "if (false) return d;"]),
+  R("iface: sync gives exit 0 for a wrong link", "sync-cross-test", [], ["js/cli.mjs", "if ([...items, ...links].some(", "if ([...items].some("]),
 ];
 
 // The filter: texts of names, joined by `|` (a revert runs when its name has one of them).
@@ -950,7 +986,7 @@ for (const rv of reverts) {
       writeFileSync(root + f, s.replace(from, to));
     }
     const roc = rv.edits.some(([f]) => f.endsWith('.roc'));
-    if (rv.test === 'conformance' && (roc || !built)) {
+    if ((rv.test === 'conformance' || rv.test === 'manifest-ifaces') && (roc || !built)) {
       const err = build();
       if (err) {
         console.log(`${rv.name}: ${err}`);

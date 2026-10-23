@@ -3,7 +3,7 @@
 // in Node, so the module lists of the tests (`*.js`) do not take it.
 //   roc-cloudflare-workers sync   reads the manifest of app.wasm, writes worker.js, checks the Wrangler config
 //   roc-cloudflare-workers init   writes the four files of a new project (the template is examples/hello)
-import { readFileSync, writeFileSync, existsSync, mkdirSync, realpathSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, realpathSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { manifestOf, NOT_STACK_FIRST } from './runner.js';
@@ -25,6 +25,9 @@ const USAGE = `usage:
       Reads the manifest of the app (Worker.new), writes the entry file (the objectClass and entrypointClass lines and
       makeHandler), and checks the Wrangler config: the Durable Object bindings and migrations, the bindings of
       Worker.new bindings, triggers.crons of Worker.new crons, and the compatibility flags. It prints the parts to add.
+      It also checks the link to the other Workers of the repo: a service binding (service, entrypoint) and a Durable
+      Object binding with script_name go to a Worker whose Wrangler config has that name (found from the repo root, the
+      directory with .git). The interface name of the caller (Rpc.iface) must be the one of the entry point or class.
       --check: write nothing, fail when the entry file is not the one that sync writes.
       --force: write the entry file also when it was not made by sync.
       Exit 0: all good. Exit 1: a part is missing or wrong. Exit 2: a bad command line or no app.
@@ -382,6 +385,152 @@ export function checkConfig(m, cfg, { entry, scheduled }) {
   return out;
 }
 
+// ---- The link to the other Workers (MODULES.md 3) ----
+
+// The Wrangler configs of a repo: `wrangler.toml`, `wrangler.json`, `wrangler.jsonc` and `wrangler-<x>.toml` (several
+// Workers in one directory). Not in these directories.
+const SKIP_DIRS = new Set(['node_modules', '.git', '.cache', '.claude', '.wrangler', '.zig-cache', 'zig-out']);
+const CONFIG_NAME = /^wrangler([-.][\w.-]*)?\.(toml|jsonc?)$/;
+
+// The directory with `.git` (a directory, or a file in a submodule or a worktree) at or above `dir`, or `dir`.
+export function repoRoot(dir) {
+  for (let d = resolve(dir); ; d = dirname(d)) {
+    if (existsSync(join(d, '.git'))) return d;
+    if (dirname(d) === d) return resolve(dir);
+  }
+}
+
+// All Wrangler configs below `root` that have a `name`: `[{ file, cfg, name }]`, sorted by path. A file that does not parse
+// is not a Worker here.
+export function findWorkers(root, depth = 8) {
+  const out = [];
+  const walk = (d, left) => {
+    let list;
+    try {
+      list = readdirSync(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of list.sort((x, y) => x.name.localeCompare(y.name))) {
+      const f = join(d, e.name);
+      if (e.isDirectory()) {
+        if (left > 0 && !SKIP_DIRS.has(e.name)) walk(f, left - 1);
+      } else if (CONFIG_NAME.test(e.name)) {
+        try {
+          const cfg = readConfig(f);
+          if (typeof cfg?.name === 'string') out.push({ file: f, cfg, name: cfg.name });
+        } catch {}
+      }
+    }
+  };
+  walk(root, depth);
+  return out;
+}
+
+// The wasm of a Worker: the file that its `main` entry imports (`import app from './ledger.wasm'`), else `app.wasm` next
+// to the entry, else `app.wasm` next to the config.
+export function wasmOf(w) {
+  const dir = dirname(w.file);
+  const entry = typeof w.cfg.main === 'string' ? resolve(dir, w.cfg.main) : null;
+  if (entry && existsSync(entry)) {
+    const m = /(?:from|import)\s*['"]([^'"]+\.wasm)['"]/.exec(readFileSync(entry, 'utf8'));
+    if (m) return resolve(dirname(entry), m[1]);
+    return join(dirname(entry), 'app.wasm');
+  }
+  return join(dir, 'app.wasm');
+}
+
+// The `.roc` files that the app of a wasm is made from: `<name>.roc` next to it, and the modules that it imports from the same
+// directory (`import Gavel`, not `import pf.Rpc`), again for each of them. Empty when there is no `<name>.roc`.
+export function sourcesOf(wasm) {
+  const dir = dirname(wasm);
+  const todo = [join(dir, `${basename(wasm, '.wasm')}.roc`)];
+  const seen = new Set();
+  while (todo.length) {
+    const f = todo.pop();
+    if (seen.has(f) || !existsSync(f)) continue;
+    seen.add(f);
+    for (const m of readFileSync(f, 'utf8').matchAll(/^import\s+([A-Z][\w.]*)/gm)) todo.push(join(dir, `${m[1].replace(/\./g, '/')}.roc`));
+  }
+  return [...seen];
+}
+
+// The checks of the links to other Workers: the service bindings and the Durable Object bindings with `script_name` of
+// the config `cfgFile`, against the manifest of the Worker that has the name. Items as in `checkConfig`. Not a failure:
+// the target is not found, not built, older than its sources (`note`). A failure (`wrong`): the entry point or the class is
+// not in the manifest of the target, or its interface name is not the one of the caller's binding (`Rpc.iface`).
+// `manifestFor(wasm)` gives the checked manifest of a wasm, or throws.
+export function crossCheck(m, cfg, { cfgFile, wasmFile, root, workers, manifestFor, dir = process.cwd() }) {
+  const out = [];
+  const rel = (f) => relative(dir, f) || f;
+  const links = [];
+  for (const sv of at(cfg, 'services') ?? []) if (typeof sv?.service === 'string' && typeof sv.binding === 'string') links.push({ kind: 'service', binding: sv.binding, target: sv.service, entrypoint: sv.entrypoint });
+  for (const o of at(cfg, 'durable_objects.bindings') ?? []) if (typeof o?.script_name === 'string' && typeof o.name === 'string') links.push({ kind: 'object', binding: o.name, target: o.script_name, class: o.class_name });
+  if (!links.length) return out;
+  // The `roc build` command, with paths from the repo root (a platform path of an app can reach outside its directory).
+  const buildHint = (wasm, src) => `: in ${rel(root)} run roc build --target=wasm32 --no-cache --output=${relative(root, wasm)} ${existsSync(src) ? relative(root, src) : '<its app.roc>'}`;
+  const found = workers ?? findWorkers(root);
+  const cache = new Map();
+  for (const l of links) {
+    const caller = m.bindings.find((b) => b.kind === l.kind && b.name === l.binding);
+    const what = l.kind === 'service' ? `service ${l.binding} -> ${l.target}${l.entrypoint ? ` (entry point ${l.entrypoint})` : ''}` : `object ${l.binding} -> ${l.target} (class ${l.class})`;
+    if (!caller) continue; // the config part that the app does not declare has its own note
+    const note = (t) => out.push({ level: 'note', text: `${what}: ${t}` });
+    const cands = found.filter((w) => w.name === l.target && resolve(w.file) !== resolve(cfgFile));
+    if (!cands.length) {
+      note(`no Wrangler config with name = "${l.target}" under ${rel(root)}: the link is not checked`);
+      continue;
+    }
+    const wasms = [...new Set(cands.map(wasmOf))];
+    if (cands.length > 1) note(`${cands.length} Wrangler configs have name = "${l.target}" (${cands.map((w) => rel(w.file)).join(', ')})${wasms.length > 1 ? ': they have different wasm files, so the link is not checked' : ''}`);
+    if (wasms.length > 1) continue;
+    const wasm = wasms[0];
+    const tcfg = cands[0].file;
+    if (!existsSync(wasm)) {
+      const src = join(dirname(wasm), `${basename(wasm, '.wasm')}.roc`);
+      note(`${rel(wasm)} (of ${rel(tcfg)}) is not there, so the link is not checked. Build it${buildHint(wasm, src)}`);
+      continue;
+    }
+    const newer = sourcesOf(wasm).find((f) => statSync(f).mtimeMs > statSync(wasm).mtimeMs);
+    if (newer) note(`${rel(wasm)} is older than ${rel(newer)}: build it again${buildHint(wasm, join(dirname(wasm), `${basename(wasm, '.wasm')}.roc`))}, or the check uses the old names`);
+    let tm = cache.get(wasm);
+    if (tm === undefined) {
+      try {
+        tm = manifestFor(wasm);
+      } catch (e) {
+        tm = { error: e.message };
+      }
+      cache.set(wasm, tm);
+    }
+    if (tm === null || tm?.error !== undefined || tm === undefined) {
+      note(`${rel(wasm)}: no manifest to check (${tm?.error ?? 'the app has no Worker.new, or it is not stack-first'})`);
+      continue;
+    }
+    let callee;
+    let label;
+    if (l.kind === 'service') {
+      label = l.entrypoint ? `the entry point ${l.entrypoint}` : 'the default entry point';
+      if (l.entrypoint && !Object.hasOwn(tm.entrypoints, l.entrypoint)) {
+        out.push({ level: 'wrong', text: `${what}: ${rel(wasm)} has no entry point ${l.entrypoint} (it has ${Object.keys(tm.entrypoints).join(', ') || 'none'}). Check entrypoint in ${rel(cfgFile)}, or the entrypoints of Worker.new in the app of ${rel(tcfg)}` });
+        continue;
+      }
+      callee = l.entrypoint ? tm.entrypoints[l.entrypoint].iface : tm.defaultIface;
+    } else {
+      label = `the class ${l.class}`;
+      if (!Object.hasOwn(tm.objects, l.class)) {
+        out.push({ level: 'wrong', text: `${what}: ${rel(wasm)} has no class ${l.class} (it has ${Object.keys(tm.objects).join(', ') || 'none'}). Check class_name in ${rel(cfgFile)}, or the objects of Worker.new in the app of ${rel(tcfg)}` });
+        continue;
+      }
+      callee = tm.objects[l.class].iface;
+    }
+    // A side with no interface name (a class with no Rpc method, a Worker built before Rpc.iface) has nothing to compare.
+    if (!caller.iface || !callee) out.push({ level: 'ok', text: `${what}: ${label} has ${callee ? 'an interface' : 'no Rpc method'}, so there is no interface to compare` });
+    else if (caller.iface === callee) out.push({ level: 'ok', text: `${what}: interface ${JSON.stringify(callee)} (${rel(wasm)})` });
+    else out.push({ level: 'wrong', text: `${what}: the interfaces differ. Caller: ${JSON.stringify(caller.iface)} in ${rel(cfgFile)} (${rel(wasmFile)}). Callee: ${JSON.stringify(callee)} in ${rel(tcfg)} (${rel(wasm)}). The Roc types cannot see across Workers: use the same Rpc.iface name on both sides, or fix the service or class in the Wrangler config` });
+  }
+  return out;
+}
+
 function sync(argv) {
   const a = parseArgs(argv, ['--check', '--force'], ['--wasm', '--entry', '--config']);
   if (a._.length) usage(`sync takes no argument ${a._[0]}`);
@@ -433,6 +582,28 @@ function sync(argv) {
   }
   console.log(`${cfgName}:`);
   for (const it of items) console.log(`  ${it.level.padEnd(7)} ${it.text}`);
+  // The link to the other Workers of the repo: the interface names of the service bindings and of the namespaces.
+  let links = [];
+  try {
+    const root = repoRoot(dirname(cfgFile));
+    links = crossCheck(m, readConfig(cfgFile), {
+      cfgFile,
+      wasmFile: wasm,
+      root,
+      dir,
+      manifestFor: (f) => {
+        const got = manifestOf(new WebAssembly.Module(readFileSync(f)), manifestEvent());
+        return got === undefined || got === null ? null : checkManifest(got);
+      },
+    });
+  } catch (e) {
+    console.error(`roc-cloudflare-workers: ${e.message}`);
+    process.exit(2);
+  }
+  if (links.length) {
+    console.log(`links to other Workers (${relative(dir, repoRoot(dirname(cfgFile))) || '.'}):`);
+    for (const it of links) console.log(`  ${it.level.padEnd(7)} ${it.text}`);
+  }
   // Two groups: the top-level keys (they go before the first table, and replace a key of the same name) and the
   // tables (at the end). A part of a note is a choice: it is shown as a comment.
   const adds = items.filter((it) => it.add && it.level !== 'ok');
@@ -442,7 +613,7 @@ function sync(argv) {
   const tables = adds.filter((it) => it.add.startsWith('['));
   if (top.length) console.log(`\nSet at the top of ${cfgName}${json}, before the first table (in place of a key of the same name):\n\n${top.map(show).join('\n')}`);
   if (tables.length) console.log(`\nAdd to the end of ${cfgName}${json}:\n\n${tables.map(show).join('\n\n')}`);
-  if (items.some((it) => it.level === 'missing' || it.level === 'wrong')) fail = true;
+  if ([...items, ...links].some((it) => it.level === 'missing' || it.level === 'wrong')) fail = true;
   process.exit(fail ? 1 : 0);
 }
 

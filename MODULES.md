@@ -296,15 +296,17 @@ worker = Worker.new({
 | Message | `makeHandler: the bindings of the app (Worker.new bindings) are not in env:` and one line for each binding: `DB (d1): env has no DB. Add [[d1_databases]] with binding = "DB" to the Wrangler config.` or `DB (d1): env.DB is not a D1 database (it has no prepare).` |
 | Limit of the kind check | A service binding, an assets binding and a local `send_email` binding are RPC stubs: they have a function for each name, so they pass the check of each kind. The check finds each missing binding, and a binding of another kind for the other kinds (`research/b3-sync/kinds`). |
 | `crons` | `Worker.cron(expr, f!)`: the run of `scheduled` with `controller.cron == expr` goes to `f!`. A run of another cron goes to `scheduled!`, and with no `scheduled!` it is `Unhandled` (a failed run). The handler has its own error type, as each field. `scheduled!` stays for an app that wants one handler. |
-| Manifest | `bindings: [{ name, kind, class?, script?, service?, entrypoint? }]` and `crons: [expr, ...]`. `handlers` of the default export has `scheduled` only for a `scheduled!` (the shim always defines `scheduled`). |
+| Manifest | `bindings: [{ name, kind, class?, script?, service?, entrypoint?, iface? }]` and `crons: [expr, ...]`. `handlers` of the default export has `scheduled` only for a `scheduled!` (the shim always defines `scheduled`). `iface`: the interface name (`Rpc.iface("Ledger")`) of a service binding or an object namespace, when it has one. |
+| Interface names | A class, a named entry point and the default export have `ifaces`: the distinct interface names of the methods that they serve (`[]` for none). `makeHandler` and `sync` refuse a list of two names, with both names (two `Rpc.iface` values with different text but the same type). An object namespace of this Worker (no `script`) must have the interface name of its class when both have one: a mismatch stops the load. The checked manifest (`checkManifest`) has the one name as `iface` (`defaultIface` for the default export), `""` for none. The wire format of the calls does not change. |
+| Link across Workers | The types check each Worker alone. A service binding goes to a Worker and an entry point, and a `namespace_remote` goes to a class of a Worker: both links are in the Wrangler config, so no type checks them. `roc-cloudflare-workers sync` (and `sync --check`) compares the interface names of the Workers of one repo (the `roc-cloudflare-workers sync`, links row below). |
 
 Names of classes and methods come from Roc only (`API.md` AQ10). At load, the shim sends the event `Manifest`, and `Worker` answers with the names of its `objects`, `entrypoints` and their `Rpc` methods, the `rpc` methods of the default entry point, and the handlers that each class has (for the default export: the fields `fetch!`, `scheduled!`, `queue!`, `email!` and `tail!` that the app gives):
 
 ```js
-{ default: { handlers: ["fetch", "queue"], methods: ["status"] },
-  objects: { Room: { handlers: ["init", "fetch", "alarm", "webSocketMessage"], methods: ["increment"] } },
-  entrypoints: { Admin: { handlers: ["fetch"], methods: ["purge"] } },
-  bindings: [{ name: "DB", kind: "d1" }, { name: "ROOMS", kind: "object", class: "Room" }],
+{ default: { handlers: ["fetch", "queue"], methods: ["status"], ifaces: ["Front"] },
+  objects: { Room: { handlers: ["init", "fetch", "alarm", "webSocketMessage"], methods: ["increment"], ifaces: ["Room"] } },
+  entrypoints: { Admin: { handlers: ["fetch"], methods: ["purge"], ifaces: ["Admin"] } },
+  bindings: [{ name: "DB", kind: "d1" }, { name: "ROOMS", kind: "object", class: "Room", iface: "Room" }],
   crons: ["*/5 * * * *"] }
 ```
 
@@ -347,7 +349,8 @@ As built in `PLAN.md` 8f, part 1 (`platform/Worker.roc`, `js/index.js`, `js/runn
 | `rpc` methods | A method on the prototype of the class (default export, object, entry point): `Reply` gives the value, a `Reply` of `Rpc.roc` (`{ Ok: value }` or `{ Err: tag }`), also for an `Err` of the handler; `Failed(text)` (an argument that does not parse) is a log line `<class>.<method>: failed: <text>` and `throw new Error(text)`, so the caller gets `RpcErr({ name: "Error", message: text })`; `Unhandled` and a trap are a log line and a throw | MODULES.md 8, "Errors" |
 | `Worker.new`, not `Worker.{ ... }` | A function that takes the record of handlers. The literal `Worker.{ ... }` must match the backing type, so the backing type would need a type variable for each error. The function turns each error into text first, and the backing type has no variables. One field needs `Worker.new({ fetch!: fetch! })`: `{ fetch! }` with one field is a block, not a record (`research/e1-errors/one_field.roc`). | Step 8h |
 | `bindings`, `crons` | `Worker.Binding` and `Worker.Cron` are structural records, so each module gives its `declare` with no import of `Worker` (`Queue`, `Email` and `Object` are imported by `Worker`). `own!` finds the cron handler by `s.cron` first, then `scheduled!`. The manifest has `bindings` and `crons`; `js/manifest.js` checks them, `js/bindings.js` has the kinds. | Step 8h wave B |
-| `roc-cloudflare-workers` | `js/cli.mjs`, the `bin` of the shim package. `sync`: loads `app.wasm` in Node (`manifestOf`, no workerd), writes `worker.js`, reads `wrangler.json`, `wrangler.jsonc` or `wrangler.toml` (this order, as Wrangler) and checks `main`, the date, the flags, the migrations (`new_sqlite_classes`, not `new_classes`), `durable_objects.bindings` (`class_name`, `script_name`), each declared binding, `triggers.crons`. Exit 1 with the config parts to add. A config part of a binding that the app does not declare is a note. `--check`: write nothing (the test of `scripts/test_example.sh`). `init`: the four files of `examples/hello` (`template/` in the package), with the URLs of `release.json` (`scripts/bundle.sh`). `.mjs`, so the module lists of the tests (`*.js`) do not take it. Only the top-level tables of the config: not the `[env.<name>]` parts. | Step 8h wave B |
+| `roc-cloudflare-workers` | `js/cli.mjs`, the `bin` of the shim package. `sync`: loads `app.wasm` in Node (`manifestOf`, no workerd), writes `worker.js`, reads `wrangler.json`, `wrangler.jsonc` or `wrangler.toml` (this order, as Wrangler) and checks `main`, the date, the flags, the migrations (`new_sqlite_classes`, not `new_classes`), `durable_objects.bindings` (`class_name`, `script_name`), each declared binding, `triggers.crons`. Exit 1 with the config parts to add. A config part of a binding that the app does not declare is a note. It also checks the link to the other Workers of the repo (the next row). `--check`: write nothing (the test of `scripts/test_example.sh`). `init`: the four files of `examples/hello` (`template/` in the package), with the URLs of `release.json` (`scripts/bundle.sh`). `.mjs`, so the module lists of the tests (`*.js`) do not take it. Only the top-level tables of the config: not the `[env.<name>]` parts. | Step 8h wave B |
+| `roc-cloudflare-workers sync`, links | For each `[[services]]` entry with `service` (and `entrypoint`) and each `durable_objects.bindings` entry with `script_name`, `sync` finds the target Worker: the Wrangler configs (`wrangler.toml`, `.json`, `.jsonc`, and `wrangler-<x>.toml`) below the repo root (the nearest directory with `.git` at or above the config), without `node_modules`, `.git`, `.cache`, `.claude`, `.wrangler`, `.zig-cache`, `zig-out`, with `name` equal to the target. Its wasm is the file that the `main` entry imports (`import app from './ledger.wasm'`), else `app.wasm` next to `main`, else next to the config. `sync` loads it with `manifestOf` and compares: the entry point (the default one, or `entrypoint`) or the class (`class_name`) must be in the manifest, and its interface name must be the one of the binding of the caller (`Service.binding` or `Object.namespace_remote`). A side with no interface name (a class with no `rpc`) has nothing to compare. A mismatch or a missing entry point or class: `wrong`, exit 1, with both names and the paths of both configs and both wasm files. No config with that name, no wasm file, or a wasm file older than its `.roc` sources (the `<name>.roc` of the wasm and the modules that it imports from its directory): `note`, not a failure, with the `roc build` command. Several configs with the same name: a note that lists them, and the check runs when they have one wasm file. `--check` does the same, and nothing turns it off. | Interface names across Workers (PLAN.md 8h) |
 
 ## 4. HTTP: `Request`, `Response`, `Body`, `Http`
 
@@ -916,7 +919,7 @@ Inside: a class is a record of handlers, all optional, as for `Worker`.
 		web_socket_close! ?: Object.Self, Object.Socket, WebSocket.Closed => Try({}, e),
 		web_socket_error! ?: Object.Self, Object.Socket, Thrown => Try({}, e),
 	} -> Object.Class(iface)
-	Class(iface) := { ... }.{ name : Object.Class(iface) -> Str, erase : Object.Class(iface) -> Object.AnyClass }   # erase: for Worker.new objects
+	Class(iface) := { ... }.{ name : Object.Class(iface) -> Str, iface_name : Object.Class(iface) -> Str, erase : Object.Class(iface) -> Object.AnyClass }   # erase: for Worker.new objects
 	AnyClass : { ... }                                              # a class with its interface erased
 
 	Self := { ... }.{
@@ -967,8 +970,10 @@ Inside: a class is a record of handlers, all optional, as for `Worker`.
 ```roc
 Counter := []                                                  # the interface: a type with no values (MODULES.md 8)
 counters = Object.namespace("COUNTERS", { class: counter })   # counter = Object.class("Counter", ...), below. The namespace has the interface of the class
+counter_api : Rpc.Iface(Counter)                              # the value of the interface: its name goes to the manifest
+counter_api = Rpc.iface("Counter")
 increment : Rpc(Counter, { by : I64 }, I64, [Infra(Rpc.Infra)])
-increment = Rpc.method("increment")
+increment = counter_api.method("increment")
 count : Object.Cell(I64)
 count = Object.cell("count")
 
@@ -1011,9 +1016,10 @@ As built in `PLAN.md` 8f, part 1 (`platform/Object.roc`, `platform/Remote.roc`, 
 | --- | --- | --- |
 | Backing | `Object :: { namespace, jurisdiction, target : [Named(Str), Id(Str)], location_hint }`, `Namespace := { binding, jurisdiction, class, script }` (`""` for none; `class` and `script` are for the manifest only, 3), `Self :: { class, id }` | Data only (MC1) |
 | Namespace and class (step 8h wave B, typed in step 8h wave N) | `Object.namespace(binding, { class, script? })`: `class` is the value of `Object.class`, so the class name is written once, and the namespace has the interface of the class (`Object.Class(iface)`). For a class of this Worker whose value cannot be imported (a module cycle): `Object.namespace_named(binding, "Name", iface)`, the same manifest as `namespace` with no `script`. For a class of another Worker, the app has no value: `Object.namespace_remote(binding, { class: "Name", script: "worker" }, iface)` takes the name as text. `iface` is a value of `Rpc.Iface(iface)`, so a call with no interface does not compile. The class is in the manifest (3), so the shim and `sync` check the Wrangler config against `objects`. | Typed DO namespaces (`research/typed-do-ns/`, option A) |
-| Typed namespaces (step 8h wave N) | Built: option A of `research/typed-do-ns/`. `Rpc(iface, arg, ret, err)`, `Object(iface)`, `Object.Namespace(iface)`, `Object.Class(iface)` and `Service(iface)` carry a phantom interface type: a type of the app with no values (`Gavel.Room := []`). `call!` takes the `Rpc` constants of the interface of its stub only, so `lot_rooms.named(id).call!(Gavel.settle_due, {})` is a type mismatch (`Rpc(Gavel.Ledger, ..)` against `Rpc(Gavel.Room, arg, ret, err)`). `Object.class` takes `rpc: List(Rpc.Serves(iface, Object.Self))`: `Rpc.on` gives a `Rpc.Serves`, so the handlers of one class are of one interface. `Worker.new` takes `objects: List(Object.AnyClass)`: write `LotRoom.class.erase()`. Types only: the wire format and the manifest do not change. A JS peer is not checked: a method that its class has not is `RpcErr` at run time, as before. The cost: `auction` web +181 B and ledger +281 B with `--opt=size` (0.015 % and 0.04 %). | Wrong method at the caller and at the callee is a compile error |
-| The interface argument | `namespace_named`, `namespace_remote`, `Service.binding` and `Service.binding_with` take a value of `Rpc.Iface(iface)` (`Rpc.Iface := {}`, no data). The app makes one for each interface in its shared module: `room_iface : Rpc.Iface(Gavel.Room)` and `room_iface = Rpc.Iface.{}`. Without it, `iface` would come from the first `call!` of the namespace, and a wrong first call would pass. A call with no interface is "too few args". An interface of another type is a type mismatch at the first `call!`. | Q5 of the study |
-| A method of two interfaces | A constant with a free `iface` does not compile ("value is not polymorphic"), so a method that two interfaces serve is a function of `{}`: `ping : {} -> Rpc(iface, { n : I64 }, Str, Rpc.NoErr)`, used as `ping({})` (`conformance/RpcMethods.roc`). | Compiler rule |
+| Typed namespaces (step 8h wave N) | Built: option A of `research/typed-do-ns/`. `Rpc(iface, arg, ret, err)`, `Object(iface)`, `Object.Namespace(iface)`, `Object.Class(iface)` and `Service(iface)` carry a phantom interface type: a type of the app with no values (`Gavel.Room := []`). `call!` takes the `Rpc` constants of the interface of its stub only, so `lot_rooms.named(id).call!(Gavel.settle_due, {})` is a type mismatch (`Rpc(Gavel.Ledger, ..)` against `Rpc(Gavel.Room, arg, ret, err)`). `Object.class` takes `rpc: List(Rpc.Serves(iface, Object.Self))`: `Rpc.on` gives a `Rpc.Serves`, so the handlers of one class are of one interface. `Worker.new` takes `objects: List(Object.AnyClass)`: write `LotRoom.class.erase()`. The wire format does not change. The types check one Worker. The link between Workers is in the Wrangler config, so `sync` checks it with the interface names (next rows, 3). A JS peer is not checked: a method that its class has not is `RpcErr` at run time, as before. The cost: `auction` web +181 B and ledger +281 B with `--opt=size` (0.015 % and 0.04 %). | Wrong method at the caller and at the callee is a compile error |
+| The interface argument | `namespace_named`, `namespace_remote`, `Service.binding` and `Service.binding_with` take a value of `Rpc.Iface(iface)` (`Rpc.Iface := { name : Str }`). The app makes one for each interface in its shared module: `room : Rpc.Iface(Gavel.Room)` and `room = Rpc.iface("Room")`. Without it, `iface` would come from the first `call!` of the namespace, and a wrong first call would pass. A call with no interface is "too few args". An interface of another type is a type mismatch at the first `call!`. | Q5 of the study |
+| A method of two interfaces | A constant with a free `iface` does not compile ("value is not polymorphic"), so a method that two interfaces serve is a function of the interface value: `ping : Rpc.Iface(iface) -> Rpc(iface, { n : I64 }, Str, Rpc.NoErr)`, `ping = \|i\| i.method("ping")`, used as `ping(counter_iface)` (`conformance/RpcMethods.roc`). | Compiler rule |
+| Interface names at run time (PLAN.md 8h, option (b)) | `Rpc.iface("Ledger")` gives an interface value with its name. A method comes from the value (`ledger.method("settle_due")`), so each `Rpc` constant, `Rpc.Serves`, class, entry point and binding carries the name. The manifest records it (3, "Interface names") and `sync` compares it across Workers. A name is text: the same text on both sides is one interface for `sync`, and the type of the app is the check inside one Worker. An entry point has no interface argument in its declaration (`Rpc.entrypoint`): its name comes from its methods. | The user, 2026-10-23: the link is in the Wrangler config, so no type can check it |
 | A class with no `rpc` | `iface` is free: annotate the class (`Object.Class(NoRpc)`, `NoRpc := []`). | A constant needs a concrete type |
 | Twins | `fetch`, `call` (stubs) and `set_alarm_at`, `set_alarm_in`, `get_alarm`, `delete_alarm`, `delete_all` (`Self`) give an `Io`. SQL, cells, `list!` and `id!` do not wait: no twin. | MC3 |
 | `unique!` | A throw of `newUniqueId` is a crash | The type has no error |
@@ -1036,8 +1042,10 @@ As built in `PLAN.md` 8f, part 1 (`platform/Object.roc`, `platform/Remote.roc`, 
 One constant names a method and its types, also the errors that the callee can give. Both sides use it: the caller with `call!`, the callee with `on`.
 
 ```roc
-Rpc(iface, arg, ret, err) :: { name : Str }.{
-	method : Str -> Rpc(iface, arg, ret, err)
+Rpc(iface, arg, ret, err) :: { name : Str, iface_name : Str }.{
+	iface : Str -> Rpc.Iface(iface)                          # the value of an interface: ledger = Rpc.iface("Ledger"). The name goes to the manifest
+	iface_names : List(Rpc.Handler(self)) -> List(Str)       # the distinct names of some handlers (the manifest)
+	iface_name : Rpc(iface, arg, ret, err) -> Str
 	on : Rpc(iface, arg, ret, err), (self, arg => Try(ret, err)) -> Rpc.Serves(iface, self) where [arg.Parseable, ret.Encodable, err.Encodable]   # a Durable Object: self is Object.Self
 	on_worker : Rpc(iface, arg, ret, err), (arg => Try(ret, err)) -> Rpc.Serves(iface, {}) where [arg.Parseable, ret.Encodable, err.Encodable]  # a Worker: no self
 	entrypoint : Str, { fetch! ?: Request => Try(Response, e), rpc ?: List(Rpc.Serves(iface, {})) } -> Rpc.Entrypoint
@@ -1047,13 +1055,13 @@ Rpc(iface, arg, ret, err) :: { name : Str }.{
 	NoErr := []                                               # the err of a method with no errors, with its own codec
 	Handler(self) : { ... }                                  # types erased: CBOR in, CBOR out
 	Serves(iface, self) := { ... }.{ erase : Rpc.Serves(iface, self) -> Rpc.Handler(self) }   # a handler of one interface: a class, an entry point and a Worker take a list of them
-	Iface(iface) := {}                                       # the proof of an interface, for namespace_named, namespace_remote and Service.binding: Rpc.Iface.{}
+	Iface(iface) := { name : Str }.{ method : Rpc.Iface(iface), Str -> Rpc(iface, arg, ret, err), name : Rpc.Iface(iface) -> Str }   # a method: ledger.method("settle_due"). The value is also the argument of namespace_named, namespace_remote and Service.binding
 }
 
 Reply(ret, err) := [Ok(ret), Err(err)]                       # the wire form (private): {"Ok": value} or {"Err": tag}; reply_of parses it
 ok_head, err_head : List(U8)                                 # its first bytes (private): on writes them by hand
 
-Service(iface) :: { name : Str, service : Str, entrypoint : Str }.{
+Service(iface) :: { name : Str, service : Str, entrypoint : Str, iface_name : Str }.{
 	binding : Str, Rpc.Iface(iface) -> Service(iface)
 	binding_with : Str, Rpc.Iface(iface), { service ?: Str, entrypoint ?: Str } -> Service(iface)   # the Worker and entry point, for the manifest only
 	declare : Service(iface) -> Worker.Binding                            # for Worker.new bindings (3): kind service
@@ -1067,8 +1075,11 @@ Auction := []                                                          # the int
 
 RoomErr : [StillOpen, NotFound, Infra(Rpc.Infra)]
 
+auction : Rpc.Iface(Auction)
+auction = Rpc.iface("Auction")
+
 close_out : Rpc(Auction, { id : U64 }, { total : U64 }, RoomErr)
-close_out = Rpc.method("close_out")
+close_out = auction.method("close_out")
 
 close_out! : Object.Self, { id : U64 } => Try({ total : U64 }, RoomErr)   # the callee
 close_out! = |self, { id }| {
@@ -1094,7 +1105,7 @@ relay! = |_self, arg| {
 
 | Item | Rule |
 | --- | --- |
-| Interface | A package of `Rpc` constants is the interface of a service. The caller and the callee import the same package, so their types agree. The first type argument of `Rpc` names the callee (`Auction := []`, a type with no values), and the type of the stub (`Object(iface)`, `Service(iface)`) must have the same one: `call!` of an `Rpc` of another interface does not compile, and a class takes `Rpc.Serves` of one interface only. `namespace_named`, `namespace_remote` and `Service.binding` take the interface as a value (`Rpc.Iface(iface)`). A method that two interfaces serve is a function of `{}` (7, "Typed namespaces"). |
+| Interface | A package of `Rpc` constants is the interface of a service. The caller and the callee import the same package, so their types agree. The first type argument of `Rpc` names the callee (`Auction := []`, a type with no values), and the type of the stub (`Object(iface)`, `Service(iface)`) must have the same one: `call!` of an `Rpc` of another interface does not compile, and a class takes `Rpc.Serves` of one interface only. `namespace_named`, `namespace_remote` and `Service.binding` take the interface as a value (`Rpc.Iface(iface)`, made with `Rpc.iface("Auction")`). The name of the value goes to the manifest, and `sync` compares it across Workers (3). A method that two interfaces serve is a function of the interface value (7, "Typed namespaces"). |
 | On the wire | The table "Formats of typed data" (1). One argument. The module sends it as CBOR, and JS gives the callee the JS value, so a JS callee gets a plain object (a `BigInt` above 2^53, a `Uint8Array` for a `Cbor.Bytes` field, an `Array` of numbers for a `List(U8)` field, MC5). JS sends the reply of a JS callee back as CBOR. |
 | Errors | `err` is a tag union that the callee can give: a handler that gives another tag does not compile. An `Err(e)` of the callee is a normal reply, and the caller gets `Remote(e)`, the same tag. A method with no errors has `err` `Rpc.NoErr`: `[]` has no derived codec (`research/e1-errors/rpc_empty.roc`). A throw (a crash, a JS throw, a bad argument with "bad argument", a missing method) is `Infra(RpcErr(Thrown))`. A reply that does not fit `ret` or `err` is `Infra(BadData)`. |
 | Infrastructure errors (MC9) | Each platform function gives its storage, binding and call errors in one tag, `Infra([its own tags])`. The domain errors of a handler stay plain (`Err(NotFound)`). The `err` of a method closes the platform errors with `Infra(Rpc.Infra)`: the payloads of each `?` merge, and the closed `Rpc.Infra` has a CBOR codec. `Rpc.Infra` costs 3 to 6 KB of wasm for each of its 29 tags in each app that uses it as a closed `err`: an app that cares about size declares `Faults : [the tags that it uses]` and writes `Infra(Faults)` (1, "Cost of `Rpc.Infra`"). A tag that is not in `Faults` is then a compile error. The caller gets one shape: `Infra(..)` when this call failed, `Remote(Infra(..))` when a platform call of the callee failed, `Remote(<domain tag>)` for a domain error. A match with an arm for each domain tag and one `Remote(Infra(_))` arm needs no `_`, so a new domain tag of the callee does not compile until the caller has an arm for it. |
@@ -1120,7 +1131,7 @@ As built in `PLAN.md` 8f, part 1 (`platform/Rpc.roc`, `platform/Service.roc`, `p
 
 | Item | Built as | Why |
 | --- | --- | --- |
-| `Rpc.name` | Public: `Rpc(iface, arg, ret, err) -> Str`, the method name | `Object` and `Service` build the call in `Remote` (not exposed), and `Rpc` is opaque |
+| `Rpc.name`, `Rpc.iface_name` | Public: `Rpc(iface, arg, ret, err) -> Str`, the method name and the name of its interface | `Object` and `Service` build the call in `Remote` (not exposed), and `Rpc` is opaque |
 | `Handler(self)` | `{ name : Str, run! : self, List(U8) => Try(List(U8), Str) }`: `run!` parses the argument with `Cbor.parse`, a parse error is `Err("bad argument: <error>")`. `Ok(r)` and `Err(e)` of the handler are both `Ok(bytes)`: the CBOR of `{"Ok": r}` or `{"Err": e}` | The prototype (15) |
 | `Serves(iface, self)` | `:=` with the same record as `Handler(self)`. `on` and `on_worker` give it, `Object.class`, `Worker.new` and `Rpc.entrypoint` take a list of it (one `iface`) and erase it with `erase` once, when they make the class, the Worker or the entry point. | Typed namespaces: a callee with methods of two interfaces does not compile |
 | The reply on the wire | `{"Ok": value}` or `{"Err": tag}`, the derived CBOR of a tag `Ok(ret)` or `Err(err)`. The type `Reply(ret, err) := [Ok(ret), Err(err)]` (private) has the derived codec. `Rpc.reply_of` (the parser of `call!`) parses it. `on` writes the first bytes by hand (`ok_head`, `err_head`: a map of one entry and its key) and then `Cbor.encode` of the value only, because `Cbor.encode(Reply.Ok(r))` in `on` crashes the compiler when a type module of the app uses `on` (`research/e1-errors/mod`, still on nightly-2026-10-19). The parser of a tag with a `{}` value crashed too, so each `Rpc(_, {}, _)` did (`research/rpc-unit-crash`, fixed in nightly-2026-10-19). A reply that does not parse is `Infra(BadData)`. In JS the reply is a plain object `{ Ok: value }` or `{ Err: tag }` (a tag with no payload is text, `{ Err: "StillOpen" }`), so it passes through to the caller as any reply. A JS callee gives the same shape. | `research/rpc-err-sql-params` (form B) |
@@ -1617,7 +1628,7 @@ Lessons from the compiler (nightlies 10-09 and 10-12):
 | A `where` clause cannot name `List(a)` | `all!` takes the type of the whole result. The caller writes `List(Pkg)`. |
 | A type module `Crypto` shadows the builtin module (`clash/`) | `WebCrypto` |
 | The tags of the nominal `Method` of `roc-lang/http` match in a tuple with a list pattern, from another module | Routing by `match (req.method(), req.segments())` |
-| A phantom type variable on an opaque type (`Rpc(iface, arg, ret, err) :: { name : Str }`) fixes the types of both sides, and its first variable ties a stub to its callee | Typed RPC with one constant, typed namespaces |
+| A phantom type variable on an opaque type (`Rpc(iface, arg, ret, err) :: { name : Str, iface_name : Str }`) fixes the types of both sides, and its first variable ties a stub to its callee | Typed RPC with one constant, typed namespaces |
 | An optional field of a structural record can hold an effectful function with an error type variable | `Object.class` takes a plain record |
 | `Str.inspect` works on the type variable `e` of `Worker(e)` (now of each handler in `Worker.new`) | `Err(e)` becomes a log line |
 | An opaque type over a bare `Str` (`Secret :: Str`) gets the codecs of `Str`: `Json.to_str` and `Cbor.encode` write the hidden text. A hand-written `encoder_for` does not compile (type mismatch on `encode_str`). With a record backing (`Secret :: { text : Str }`), an encode is a compile error, as the Roc docs say for nominal types. The bug is only in the encoder, for a nominal type over `Str` or a number type in a record, a tuple or a tag; a bare value is rejected. Over `Bool`, the same encode crashes the compiler. Repro: `research/roc-bugs/` (also on nightly 10-14). | `Secret` has a record backing. Reported: roc-lang/roc#12309. |

@@ -268,19 +268,20 @@ expect {
 	}
 }
 
-## The names of classes and methods (API.md AQ10): `{ default: { handlers, methods }, objects: { Name: { handlers,
-## methods } }, entrypoints: { Name: { handlers, methods } }, bindings: [{ name, kind, ... }], crons: [...] }`. The shim
+## The names of classes and methods (API.md AQ10): `{ default: { handlers, methods, ifaces }, objects: { Name: { handlers,
+## methods, ifaces } }, entrypoints: { Name: { handlers, methods, ifaces } }, bindings: [{ name, kind, ... }], crons: [...] }`.
+## `ifaces`: the distinct interface names of the methods (none: `[]`). `checkManifest` refuses two names. The shim
 ## defines a JS method only for a name in it (MODULES.md 3). The handlers of the default export: the fields that the app
 ## gives (QO5 of PLAN.md 8f, part 2).
 manifest : Worker -> Js
 manifest = |w| {
 	texts = |names| Arr(names.map(|n| Text(n)))
-	class_of = |handlers, methods| Obj([("handlers", texts(handlers)), ("methods", texts(methods))])
+	class_of = |handlers, methods, ifaces| Obj([("handlers", texts(handlers)), ("methods", texts(methods)), ("ifaces", texts(ifaces))])
 	binding_of = |b| Obj([("name", Text(b.name)), ("kind", Text(b.kind))].concat(b.props.map(|(k, v)| (k, Text(v)))))
 	Obj([
-		("default", class_of(w.handlers, w.rpc.map(|h| h.name))),
-		("objects", Obj(w.objects.map(|c| (c.name, class_of(c.handlers, c.methods))))),
-		("entrypoints", Obj(w.entrypoints.map(|ep| (ep.name, class_of(ep.handlers, ep.rpc.map(|h| h.name)))))),
+		("default", class_of(w.handlers, w.rpc.map(|h| h.name), Rpc.iface_names(w.rpc))),
+		("objects", Obj(w.objects.map(|c| (c.name, class_of(c.handlers, c.methods, c.iface_names))))),
+		("entrypoints", Obj(w.entrypoints.map(|ep| (ep.name, class_of(ep.handlers, ep.rpc.map(|h| h.name), ep.iface_names))))),
 		("bindings", Arr(w.bindings.map(binding_of))),
 		("crons", texts(w.crons)),
 	])
@@ -290,7 +291,41 @@ manifest = |w| {
 expect {
 	consume! = |_batch| Ok({})
 	w = Worker.new({ queue!: consume! })
-	manifest(w) == Obj([("default", Obj([("handlers", Arr([Text("queue")])), ("methods", Arr([]))])), ("objects", Obj([])), ("entrypoints", Obj([])), ("bindings", Arr([])), ("crons", Arr([]))])
+	manifest(w) == Obj([("default", Obj([("handlers", Arr([Text("queue")])), ("methods", Arr([])), ("ifaces", Arr([]))])), ("objects", Obj([])), ("entrypoints", Obj([])), ("bindings", Arr([])), ("crons", Arr([]))])
+}
+
+# The interface names (MODULES.md 3): the default export, a class and an entry point have the names of the methods that they serve.
+# A class with methods of two values with different names has both (`checkManifest` refuses it at load).
+expect {
+	ping : Rpc(NoRpc, {}, {}, Rpc.NoErr)
+	ping = far_iface.method("ping")
+	pong : Rpc(NoRpc, {}, {}, Rpc.NoErr)
+	pong = Rpc.iface("Other").method("pong")
+	w = Worker.new({
+		rpc: [ping.on_worker(|_| Ok({}))],
+		entrypoints: [Rpc.entrypoint("Ep", { rpc: [ping.on_worker(|_| Ok({}))] })],
+		objects: [Object.class("C", { rpc: [ping.on(|_, _| Ok({})), pong.on(|_, _| Ok({}))] }).erase()],
+	})
+	manifest(w) == Obj([
+		("default", Obj([("handlers", Arr([])), ("methods", Arr([Text("ping")])), ("ifaces", Arr([Text("Far")]))])),
+		("objects", Obj([("C", Obj([("handlers", Arr([])), ("methods", Arr([Text("ping"), Text("pong")])), ("ifaces", Arr([Text("Far"), Text("Other")]))]))])),
+		("entrypoints", Obj([("Ep", Obj([("handlers", Arr([])), ("methods", Arr([Text("ping")])), ("ifaces", Arr([Text("Far")]))]))])),
+		("bindings", Arr([])),
+		("crons", Arr([])),
+	])
+}
+
+# A namespace of a class that serves methods has the interface of the class. A class with no method has none.
+expect {
+	ping : Rpc(NoRpc, {}, {}, Rpc.NoErr)
+	ping = far_iface.method("ping")
+	c : Object.Class(NoRpc)
+	c = Object.class("C", { rpc: [ping.on(|_, _| Ok({}))] })
+	w = Worker.new({ objects: [c.erase()], bindings: [Object.namespace("N", { class: c }).declare(), Object.namespace("E", { class: room_class }).declare()] })
+	match manifest(w) {
+		Obj(fields) => fields.find_first(|(k, _)| k == "bindings") == Ok(("bindings", Arr([Obj([("name", Text("N")), ("kind", Text("object")), ("class", Text("C")), ("iface", Text("Far"))]), Obj([("name", Text("E")), ("kind", Text("object")), ("class", Text("Room"))])])))
+		_ => Bool.False
+	}
 }
 
 # The tests below are for the bindings and crons of Worker.new (MODULES.md 3).
@@ -308,7 +343,7 @@ expect {
 		crons: [Worker.cron("*/5 * * * *", |_s| Ok({})), Worker.cron("0 0 * * *", |_s| Ok({}))],
 	})
 	manifest(w) == Obj([
-		("default", Obj([("handlers", Arr([])), ("methods", Arr([]))])),
+		("default", Obj([("handlers", Arr([])), ("methods", Arr([])), ("ifaces", Arr([]))])),
 		("objects", Obj([])),
 		("entrypoints", Obj([])),
 		(
@@ -317,7 +352,7 @@ expect {
 				Obj([("name", Text("DB")), ("kind", Text("d1"))]),
 				Obj([("name", Text("KV")), ("kind", Text("kv"))]),
 				Obj([("name", Text("ROOMS")), ("kind", Text("object")), ("class", Text("Room"))]),
-				Obj([("name", Text("FAR")), ("kind", Text("object")), ("class", Text("Far")), ("script", Text("other"))]),
+				Obj([("name", Text("FAR")), ("kind", Text("object")), ("class", Text("Far")), ("script", Text("other")), ("iface", Text("Far"))]),
 				Obj([("name", Text("FAR2")), ("kind", Text("object")), ("class", Text("Far2")), ("script", Text("other"))]),
 				Obj([("name", Text("CFG")), ("kind", Text("kv"))]),
 			]),
@@ -330,14 +365,14 @@ expect {
 expect {
 	w = Worker.new({ bindings: [Service.binding("A", far_iface).declare(), Service.binding_with("B", far_iface, { service: "svc", entrypoint: "Admin" }).declare()] })
 	manifest(w) == Obj([
-		("default", Obj([("handlers", Arr([])), ("methods", Arr([]))])),
+		("default", Obj([("handlers", Arr([])), ("methods", Arr([])), ("ifaces", Arr([]))])),
 		("objects", Obj([])),
 		("entrypoints", Obj([])),
 		(
 			"bindings",
 			Arr([
-				Obj([("name", Text("A")), ("kind", Text("service"))]),
-				Obj([("name", Text("B")), ("kind", Text("service")), ("service", Text("svc")), ("entrypoint", Text("Admin"))]),
+				Obj([("name", Text("A")), ("kind", Text("service")), ("iface", Text("Far"))]),
+				Obj([("name", Text("B")), ("kind", Text("service")), ("service", Text("svc")), ("entrypoint", Text("Admin")), ("iface", Text("Far"))]),
 			]),
 		),
 		("crons", Arr([])),
@@ -356,7 +391,7 @@ expect {
 NoRpc := []
 
 far_iface : Rpc.Iface(NoRpc)
-far_iface = Rpc.Iface.{}
+far_iface = Rpc.iface("Far")
 
 room_class : Object.Class(NoRpc)
 room_class = Object.class("Room", {})
