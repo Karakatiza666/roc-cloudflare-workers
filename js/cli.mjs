@@ -2,8 +2,8 @@
 // The command of the shim package (README.md "Use it", MODULES.md 3). `.mjs`: the shim runs in workerd, this file only
 // in Node, so the module lists of the tests (`*.js`) do not take it.
 //   roc-cloudflare-workers sync   reads the manifest of app.wasm, writes worker.js, checks the Wrangler config
-//   roc-cloudflare-workers init   writes the four files of a new project (the template is examples/hello)
-import { readFileSync, writeFileSync, existsSync, mkdirSync, realpathSync, readdirSync, statSync } from 'node:fs';
+// `init` is not here: it is `roc-cfw init` of the helper, with the files of template/ (research/talon-fit/TRANSITION.md).
+import { readFileSync, writeFileSync, existsSync, realpathSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { manifestOf, NOT_STACK_FIRST } from './runner.js';
@@ -30,9 +30,9 @@ const USAGE = `usage:
       directory with .git). The interface name of the caller (Rpc.iface) must be the one of the entry point or class.
       --check: write nothing, fail when the entry file is not the one that sync writes.
       --force: write the entry file also when it was not made by sync.
-      Exit 0: all good. Exit 1: a part is missing or wrong. Exit 2: a bad command line or no app.
-  roc-cloudflare-workers init [dir] [--name NAME] [--platform URL] [--force]
-      Writes main.roc, worker.js, wrangler.toml and package.json of a new project (from examples/hello).`;
+      The entry file imports the shim by the relative path from the entry file to the directory of this file
+      (./.roc-cfw/index.js), or by the package name roc-cloudflare-workers when this file is in node_modules/.
+      Exit 0: all good. Exit 1: a part is missing or wrong. Exit 2: a bad command line or no app.`;
 
 // ---- The command line ----
 
@@ -262,15 +262,24 @@ const at = (o, path) => path.split('.').reduce((v, k) => (v === undefined || v =
 
 // ---- sync ----
 
+// The import of the shim in the entry file: the package name when `cliDir` (the directory of this file) is in a
+// node_modules directory (npm), else the relative path from `entryDir` to `cliDir` (the copy `.roc-cfw/` of a project).
+export function shimImportOf(entryDir, cliDir) {
+  if (cliDir.split(/[\\/]/).includes('node_modules')) return 'roc-cloudflare-workers';
+  const rel = relative(entryDir, cliDir).split('\\').join('/');
+  const dir = /^\.\.?(\/|$)/.test(rel) ? rel : `./${rel}`;
+  return `${dir.replace(/\/$/, '')}/index.js`;
+}
+
 // The entry file of the manifest: one export line for each class, then the default export.
-export function entryOf(m, wasmImport) {
+export function entryOf(m, wasmImport, shimImport) {
   const objects = Object.keys(m.objects);
   const entrypoints = Object.keys(m.entrypoints);
   const names = ['makeHandler', ...(objects.length ? ['objectClass'] : []), ...(entrypoints.length ? ['entrypointClass'] : [])];
   const lines = [
     `${MARK} from the manifest of the app. Run it again after a change of the classes in Roc.`,
     `import app from '${wasmImport}';`,
-    `import { ${names.join(', ')} } from 'roc-cloudflare-workers';`,
+    `import { ${names.join(', ')} } from '${shimImport}';`,
     '',
   ];
   for (const c of objects) lines.push(`export const ${c} = objectClass('${c}');`);
@@ -550,7 +559,7 @@ function sync(argv) {
   // The entry file.
   let wasmImport = relative(dirname(entry), wasm).split('\\').join('/');
   if (!wasmImport.startsWith('.')) wasmImport = `./${wasmImport}`;
-  const want = entryOf(m, wasmImport);
+  const want = entryOf(m, wasmImport, shimImportOf(dirname(entry), here));
   const old = existsSync(entry) ? readFileSync(entry, 'utf8') : null;
   const name = relative(dir, entry);
   const counts = `${Object.keys(m.objects).length} object classes, ${Object.keys(m.entrypoints).length} entry points`;
@@ -617,57 +626,6 @@ function sync(argv) {
   process.exit(fail ? 1 : 0);
 }
 
-// ---- init ----
-
-// The template: `template/` of the package (scripts/bundle.sh copies examples/hello there), or examples/hello of the repo.
-function templateDir() {
-  for (const d of [join(here, 'template'), join(here, '..', 'examples', 'hello')]) if (existsSync(join(d, 'main.roc'))) return d;
-  throw new Error('no template: the package has no template/ directory');
-}
-
-// `release.json` (scripts/bundle.sh): the version and the URLs of the release of this package.
-function release() {
-  try {
-    return JSON.parse(readFileSync(join(here, 'release.json'), 'utf8'));
-  } catch {
-    return null;
-  }
-}
-
-function init(argv) {
-  const a = parseArgs(argv, ['--force'], ['--name', '--platform']);
-  if (a._.length > 1) usage('init takes one directory');
-  const dir = resolve(a._[0] ?? '.');
-  const name = a.name ?? (basename(dir).toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '') || 'roc-app');
-  if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) usage(`the name ${JSON.stringify(name)} is not a Worker name (a-z, 0-9, -)`);
-  const rel = release();
-  const platform = a.platform ?? rel?.platform;
-  const t = templateDir();
-  const files = ['main.roc', 'worker.js', 'wrangler.toml', 'package.json'];
-  const there = files.filter((f) => existsSync(join(dir, f)));
-  if (there.length && !a.force) {
-    console.error(`roc-cloudflare-workers: ${there.join(', ')} in ${dir} already: init writes no file over another (--force does)`);
-    process.exit(1);
-  }
-  const read = (f) => readFileSync(join(t, f), 'utf8');
-  const app = read('main.roc')
-    .replace(/platform "[^"]*"/, `platform "${platform ?? '<the platform URL of the release>'}"`)
-    .replace(/^## The platform line is a path.*\n/m, '');
-  const toml = read('wrangler.toml').replace(/^name = ".*"$/m, `name = "${name}"`).replace(/^database_name = ".*"$/m, `database_name = "${name}"`).replace(/wrangler d1 create \S+/g, `wrangler d1 create ${name}`);
-  const pkg = JSON.parse(read('package.json'));
-  pkg.name = name;
-  if (rel?.shim) pkg.dependencies['roc-cloudflare-workers'] = rel.shim;
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'main.roc'), app);
-  writeFileSync(join(dir, 'worker.js'), read('worker.js'));
-  writeFileSync(join(dir, 'wrangler.toml'), toml);
-  writeFileSync(join(dir, 'package.json'), JSON.stringify(pkg, null, 2) + '\n');
-  console.log(`wrote ${files.join(', ')} in ${dir}`);
-  if (!platform) console.log('main.roc: put the platform URL of the release in the platform line (--platform URL).');
-  if (!rel?.shim) console.log('package.json: put the URL of the shim package of the release in dependencies.');
-  console.log('Next: npm install, npm run build (roc build, then roc-cloudflare-workers sync), npm run dev.');
-}
-
 // ---- main ----
 
 // The command runs only when Node runs this file (also through the `bin` link of npm), not on an import of a test.
@@ -682,7 +640,7 @@ if (isMain()) {
   const [cmd, ...rest] = process.argv.slice(2);
   try {
     if (cmd === 'sync') sync(rest);
-    else if (cmd === 'init') init(rest);
+    else if (cmd === 'init') usage('init moved to the helper: roc-cfw init (research/talon-fit/TRANSITION.md)');
     else usage(cmd ? `unknown command ${cmd}` : undefined);
   } catch (e) {
     console.error(`roc-cloudflare-workers: ${e.message}`);

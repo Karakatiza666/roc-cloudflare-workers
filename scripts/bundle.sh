@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Make the release files in dist/ (PLAN.md 11a):
-#   dist/<hash>.tar.zst                      the platform bundle: platform/*.roc, LICENSE, targets/wasm32/host.wasm
-#   dist/roc-cloudflare-workers-<ver>.tgz    the js/ package (npm pack: `npm install <file or URL>` takes it)
+#   dist/<hash>.tar.zst                      the platform bundle: platform/*.roc, LICENSE, targets/wasm32/host.wasm, js/ (TRANSITION.md 4.1)
+#   dist/roc-cloudflare-workers-<ver>.tgz    the js/ package (npm pack: `npm install <file or URL>` takes it). Kept for one release (TRANSITION.md step 8 removes it)
 # Steps: the glue is the glue of the pinned nightly, the production host (zig build), a production app on it
 # (bench/app.roc) with the layout and export checks, the bundle, the package.
 # Usage: ZIG=<zig 0.17> [ROC=<roc>] [REPO=<owner/repo>] scripts/bundle.sh [version]
@@ -43,19 +43,28 @@ mkdir -p "$stage/targets/wasm32"
 cp platform/*.roc "$stage/"
 cp LICENSE "$stage/LICENSE"
 cp platform/targets/wasm32/host.wasm "$stage/targets/wasm32/host.wasm"
-(cd "$stage" && "$ROC" bundle main.roc LICENSE targets/wasm32/host.wasm --output-dir "$OLDPWD/dist" >&2)
+# js/: the shim, cli.mjs, cfw.json, template/ (the files of `roc-cfw init`). js/package.json of the source is the npm
+# package file, so the bundle has a copy with only "type": "module" (node then loads .roc-cfw/*.js as ES modules in a
+# project with no package.json).
+cp -r js "$stage/js"
+printf '{ "type": "module" }\n' > "$stage/js/package.json"
+jsfiles=$(cd "$stage" && find js -type f | LC_ALL=C sort)
+(cd "$stage" && "$ROC" bundle main.roc LICENSE targets/wasm32/host.wasm $jsfiles --output-dir "$OLDPWD/dist" >&2)
 asset=$(echo dist/*.tar.zst)
 zstd -dc "$asset" | tar -t | grep -v '^[A-Z][A-Za-z0-9]*\.roc$' >&2
 if zstd -dc "$asset" | tar -t | grep -E '(^|/)(http|cbor)(/|$)|\.\./'; then echo "FAIL: the bundle has a copy of a package or a path out" >&2; exit 1; fi
+# Each file of js/ is in the bundle (js/package.json: the copy with only the type field).
+listed=$(zstd -dc "$asset" | tar -t | grep '^js/' | grep -v '/$' | LC_ALL=C sort)
+want=$(find js -type f | LC_ALL=C sort)
+if [ "$listed" != "$want" ]; then echo "FAIL: the files of js/ are not the files in the bundle" >&2; diff <(echo "$want") <(echo "$listed") >&2 || true; exit 1; fi
 
-# 5. The js/ package, with the version of the release. The source file keeps 0.0.0-dev. The command
-# `roc-cloudflare-workers` (js/cli.mjs) takes `init` from template/ (the files of examples/hello) and the URLs of this
-# release from release.json.
+# 5. The js/ npm package, with the version of the release. The source file keeps 0.0.0-dev. The command
+# `roc-cloudflare-workers` (js/cli.mjs) has `sync` only: `init` is `roc-cfw init` of the helper. release.json stays for
+# this release (nothing reads it now).
 pkg="$work/js"
-mkdir -p "$pkg/template"
+mkdir -p "$pkg"
 cp js/*.js js/*.mjs js/package.json "$pkg/"
 cp LICENSE "$pkg/LICENSE"
-cp examples/hello/{main.roc,worker.js,wrangler.toml,package.json} "$pkg/template/"
 node -e '
   const [file, version, platform, shim] = process.argv.slice(1);
   require("fs").writeFileSync(file, JSON.stringify({ version, platform, shim }, null, 2) + "\n");

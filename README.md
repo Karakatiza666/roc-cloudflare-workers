@@ -18,7 +18,7 @@ Each release (tag `X.Y.Z`) has 2 files. They have the same version and are used 
 | File | Use |
 | --- | --- |
 | `<hash>.tar.zst` | The platform bundle. It goes in the header of the app. It has the Roc modules, `LICENSE` and the production host `targets/wasm32/host.wasm`. The packages `http` (roc-lang/http 2.0.0) and `cbor` (roc-cbor 0.2.1) stay URLs in the platform header: Roc downloads them. |
-| `roc-cloudflare-workers-X.Y.Z.tgz` | The JS shim, as an npm package (`makeHandler`, `objectClass`, `entrypointClass`), and the command `roc-cloudflare-workers` (`init`, `sync`). `npm install <file or URL>` takes it. |
+| `roc-cloudflare-workers-X.Y.Z.tgz` | The JS shim, as an npm package (`makeHandler`, `objectClass`, `entrypointClass`), and the command `roc-cloudflare-workers` (`sync`). `npm install <file or URL>` takes it. The platform bundle also has the same files in `js/` (with `js/cfw.json`, `js/template/`): see `research/talon-fit/TRANSITION.md`. |
 
 The release notes have both URLs. The package is not on the npm registry: the version of the shim must be the version of the platform, so the shim comes from the same release.
 
@@ -26,16 +26,14 @@ Needs: a Roc nightly (the release notes name it, `compat/last-stack-first-nightl
 
 ## Use it
 
-A project has four files: `main.roc`, `worker.js`, `wrangler.toml`, `package.json`. The command `roc-cloudflare-workers` of the shim package makes them:
+A project has four files: `main.roc`, `worker.js`, `wrangler.toml`, `package.json`. The command `roc-cloudflare-workers` of the shim package writes `worker.js`. `init` is not in it any more: it moves to the helper `roc-cfw init` (`research/talon-fit/TRANSITION.md`, not released yet). Until then, copy `examples/hello`, or the files of `js/template/` in the platform bundle (change the platform line of `main.roc`):
 
 | Command | What it does |
 | --- | --- |
-| `roc-cloudflare-workers init [dir]` | Writes the four files of a new project (`examples/hello`), with the URLs of the release of the package. |
 | `roc-cloudflare-workers sync` | Reads the manifest of `app.wasm`, writes `worker.js` (one export line for each class, then `makeHandler`), and checks `wrangler.toml`: `main`, the compatibility date and flags, `durable_objects.bindings`, `migrations` (`new_sqlite_classes`), the bindings of `Worker.new({ bindings })`, `triggers.crons` of `Worker.new({ crons })`. It also checks the link to the other Workers of the same repo: a service binding or a `namespace_remote` goes to a Worker by its name in the Wrangler config, so `sync` finds that Worker (its config and its built wasm) and compares the interface names (`Rpc.iface("Ledger")`). It prints the parts to add and gives exit 1 when one is missing or wrong. `--check`: write nothing (for CI). |
 
 ```sh
-npx --yes --package=https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/X.Y.Z/roc-cloudflare-workers-X.Y.Z.tgz roc-cloudflare-workers init my-worker
-cd my-worker
+cp -r examples/hello my-worker && cd my-worker   # then: the platform line of main.roc, X.Y.Z in package.json
 npm install
 npm run build     # roc build, then roc-cloudflare-workers sync
 npm run dev       # wrangler dev --local
@@ -78,7 +76,7 @@ roc build --target=wasm32 --no-cache --output=app.wasm main.roc
 
 A `roc build` with type errors still writes the `.wasm` file. It prints "N errors and 0 warnings found ... while successfully building" and exits with 1 (checked 2026-10-20 with one bad line). A build is good only when the exit code is 0 and the text is "0 errors and 0 warnings". A script must check the exit code. In the repo, run the command from the root (a build inside `examples/auction/` gives `PathOutsideWorkspace`).
 
-3. The shim. `npm install https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/X.Y.Z/roc-cloudflare-workers-X.Y.Z.tgz`. The entry of the Worker (`examples/hello/worker.js`) is the file that `roc-cloudflare-workers sync` writes:
+3. The shim. `npm install https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/X.Y.Z/roc-cloudflare-workers-X.Y.Z.tgz`. The entry of the Worker (`examples/hello/worker.js`) is the file that `roc-cloudflare-workers sync` writes. The import is the package name when `cli.mjs` is in `node_modules/`, else the relative path from the entry file to the directory of `cli.mjs` (`./.roc-cfw/index.js`):
 
 ```js
 // Made by roc-cloudflare-workers sync from the manifest of the app. Run it again after a change of the classes in Roc.

@@ -6,6 +6,7 @@
 # Steps (each one fails the script):
 #   1. `roc check` and `roc build` of examples/hello/main.roc and examples/hello/with_cbor.roc against the bundle,
 #      with an empty package cache (XDG_CACHE_HOME) so that http and cbor come from their URLs.
+#   1b. scripts/test_bundle_js.sh: the bundle has the files of js/ (a URL is downloaded first).
 #   2. scripts/test_example.sh: the app of 1 in `wrangler dev --local` with the shim package, then `wrangler deploy --dry-run`.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -50,5 +51,6 @@ for h in $hashes; do
 	[ -d "$XDG_CACHE_HOME/roc/packages/$h" ] || { echo "FAIL: $h is not in the package cache"; exit 1; }
 done
 echo "packages in the cache: $(echo $hashes)"
+if [[ $bundle == https://* ]]; then curl -fsSL -o "$work/bundle.tar.zst" "$bundle"; scripts/test_bundle_js.sh "$work/bundle.tar.zst"; else scripts/test_bundle_js.sh "$bundle"; fi
 scripts/test_example.sh "$work/hello.wasm" "$shim"
 echo "PASS test_bundle"

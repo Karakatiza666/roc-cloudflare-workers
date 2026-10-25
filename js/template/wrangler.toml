@@ -1,0 +1,16 @@
+name = "roc-hello"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+# enable_request_signal (API.md 3b): without it `request.signal` never fires, and a task cannot stop when the client
+# goes away.
+# global_fetch_strictly_public: without it, a `fetch` of another Worker of the same account on workers.dev gives
+# 404 `error code: 1042` on the edge (PLAN.md 11c, E21). With it, `fetch` goes to the public internet for each URL.
+# For a Worker of your own account use a service binding. Drop the flag if the app never fetches such a URL.
+compatibility_flags = ["enable_request_signal", "global_fetch_strictly_public"]
+
+# The binding `DB` of `D1.binding("DB")` in main.roc. Local runs (`wrangler dev`) make an empty database.
+# For a deploy: `wrangler d1 create roc-hello`, and put its id here.
+[[d1_databases]]
+binding = "DB"
+database_name = "roc-hello"
+database_id = "00000000-0000-0000-0000-000000000000"

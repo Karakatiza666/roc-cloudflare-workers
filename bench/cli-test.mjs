@@ -1,9 +1,10 @@
-// Step 8h wave B issue 5: the command `roc-cloudflare-workers` (js/cli.mjs: sync, sync --check, --force, init). Node only.
+// Step 8h wave B issue 5: the command `roc-cloudflare-workers` (js/cli.mjs: sync, sync --check, --force). Node only.
+// `init` is not in js/cli.mjs any more (research/talon-fit/TRANSITION.md step 2): the helper `roc-cfw init` has it.
 // node bench/cli-test.mjs [dir with app_b3.wasm]    (default: bench/out)
 // The app is bench/app_b3.roc: the class Counter, the bindings DB (d1), KV (kv), COUNTERS (object, class Counter), the cron
 // "*/5 * * * *", no scheduled!. Each case is a project dir (app.wasm, a Wrangler config of toml or jsonc) and a run of the command.
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -75,7 +76,7 @@ for (const form of ['toml', 'jsonc']) {
   check(`1a ${form}: a complete config gives exit 0`, r.code === 0, `exit ${r.code}: ${r.all}`);
   check(`1b ${form}: no missing and no wrong item`, !/^ {2}(missing|wrong)/m.test(r.out), r.out);
   const w = existsSync(join(dir, 'worker.js')) ? readFileSync(join(dir, 'worker.js'), 'utf8') : '';
-  check(`1c ${form}: worker.js has the mark, the class line, the import of app.wasm and makeHandler`, w.startsWith(MARK) && w.includes("export const Counter = objectClass('Counter');") && w.includes("import app from './app.wasm';") && w.includes('export default makeHandler(app);') && w.includes("import { makeHandler, objectClass } from 'roc-cloudflare-workers';"), w);
+  check(`1c ${form}: worker.js has the mark, the class line, the import of app.wasm and makeHandler`, w.startsWith(MARK) && w.includes("export const Counter = objectClass('Counter');") && w.includes("import app from './app.wasm';") && w.includes('export default makeHandler(app);') && /^import \{ makeHandler, objectClass \} from '\.{1,2}\/[^']*\/index\.js';$/m.test(w), w);
   check(`1d ${form}: the bindings and the cron are ok in the output`, ['[[d1_databases]] DB (d1)', '[[kv_namespaces]] KV (kv)', '[[durable_objects.bindings]] COUNTERS (object)', 'triggers.crons has "*/5 * * * *"'].every((s) => r.out.includes(`ok      ${s}`)), r.out);
   const c = run(dir, 'sync', '--check');
   check(`1e ${form}: sync --check after sync gives exit 0`, c.code === 0, `exit ${c.code}: ${c.all}`);
@@ -118,8 +119,7 @@ for (const form of ['toml', 'jsonc']) {
     ['an argument that sync does not take', ['sync', 'extra']],
     ['an option with no value', ['sync', '--wasm']],
     ['a wasm that is not there', ['sync', '--wasm', 'none.wasm']],
-    ['init with two directories', ['init', 'a', 'b']],
-    ['init with a bad name', ['init', 'x', '--name', 'Bad Name']],
+    ['init (moved to the helper)', ['init']],
   ];
   for (const [name, args] of bad) {
     const r = run(dir, ...args);
@@ -160,21 +160,29 @@ for (const form of ['toml', 'jsonc']) {
   check('4f --config names the file', o.code === 0 && o.out.includes('other.toml:'), `exit ${o.code}: ${o.out.slice(0, 200)}`);
 }
 
-// ---- 5. init writes the four files, and no file over another ----
+// ---- 5. The import of the shim in worker.js (TRANSITION step 2): R-I1, R-I2 ----
+// R-I1: cli.mjs outside node_modules: the relative path from worker.js to the directory of cli.mjs.
+// R-I2: cli.mjs in node_modules/: the package name roc-cloudflare-workers (the npm setup).
 {
-  const dir = join(tmp, 'new-app');
-  const r = run(tmp, 'init', 'new-app', '--platform', 'https://example.com/p.tar.zst');
-  const files = ['main.roc', 'worker.js', 'wrangler.toml', 'package.json'];
-  check('5a init writes the four files', r.code === 0 && files.every((f) => existsSync(join(dir, f))), `exit ${r.code}: ${r.all.slice(0, 300)}`);
-  const app = readFileSync(join(dir, 'main.roc'), 'utf8');
-  check('5b main.roc has the platform URL', app.includes('platform "https://example.com/p.tar.zst"'), app.split('\n')[0]);
-  check('5b2 init writes no app.roc (the template file is main.roc)', !existsSync(join(dir, 'app.roc')), '');
-  check('5c wrangler.toml and package.json have the name of the directory', /^name = "new-app"$/m.test(readFileSync(join(dir, 'wrangler.toml'), 'utf8')) && JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).name === 'new-app', '');
-  const again = run(tmp, 'init', 'new-app');
-  check('5d init over the files: exit 1 and nothing written', again.code === 1 && again.err.includes('already'), `exit ${again.code}: ${again.all.slice(0, 200)}`);
-  writeFileSync(join(dir, 'main.roc'), 'mine');
-  const forced = run(tmp, 'init', 'new-app', '--force', '--name', 'other-name');
-  check('5e init --force writes over them, with --name', forced.code === 0 && readFileSync(join(dir, 'main.roc'), 'utf8') !== 'mine' && /^name = "other-name"$/m.test(readFileSync(join(dir, 'wrangler.toml'), 'utf8')), `exit ${forced.code}`);
+  const shimLine = (dir) => (readFileSync(join(dir, 'worker.js'), 'utf8').match(/^import \{[^}]*\} from '([^']*)';$/m) ?? [])[1];
+  const jsDir = join(root, 'js');
+  const a = project(complete(), 'toml');
+  cpSync(jsDir, join(a, '.roc-cfw'), { recursive: true });
+  const ra = spawnSync(process.execPath, [join(a, '.roc-cfw/cli.mjs'), 'sync'], { cwd: a, encoding: 'utf8' });
+  check('5a (R-I1) cli.mjs in .roc-cfw/: the import is ./.roc-cfw/index.js', ra.status === 0 && shimLine(a) === './.roc-cfw/index.js', `exit ${ra.status}, import ${shimLine(a)}: ${ra.stdout.slice(0, 200)}`);
+  const ca = spawnSync(process.execPath, [join(a, '.roc-cfw/cli.mjs'), 'sync', '--check'], { cwd: a, encoding: 'utf8' });
+  check('5a2 (R-I1) sync --check after sync gives exit 0', ca.status === 0, `exit ${ca.status}: ${ca.stdout.slice(0, 200)}`);
+  const b = project(complete(), 'toml');
+  cpSync(jsDir, join(b, 'node_modules/roc-cloudflare-workers'), { recursive: true });
+  const rb = spawnSync(process.execPath, [join(b, 'node_modules/roc-cloudflare-workers/cli.mjs'), 'sync'], { cwd: b, encoding: 'utf8' });
+  check('5b (R-I2) cli.mjs in node_modules/: the import is the package name', rb.status === 0 && shimLine(b) === 'roc-cloudflare-workers', `exit ${rb.status}, import ${shimLine(b)}: ${rb.stdout.slice(0, 200)}`);
+  // A worker.js in a subdirectory (--entry): the relative path goes up.
+  const c = project(complete(), 'toml');
+  cpSync(jsDir, join(c, '.roc-cfw'), { recursive: true });
+  mkdirp(join(c, 'sub'));
+  const rc = spawnSync(process.execPath, [join(c, '.roc-cfw/cli.mjs'), 'sync', '--entry', 'sub/worker.js'], { cwd: c, encoding: 'utf8' });
+  const sub = readFileSync(join(c, 'sub/worker.js'), 'utf8');
+  check('5c (R-I1) an entry file in sub/: the import is ../.roc-cfw/index.js', sub.includes("from '../.roc-cfw/index.js';"), `exit ${rc.status}: ${sub.slice(0, 300)}`);
 }
 
 console.log(failed ? 'FAILED' : 'all passed');

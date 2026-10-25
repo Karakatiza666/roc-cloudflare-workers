@@ -19,7 +19,7 @@ A Worker with a Roc app. It shows the files of a project that uses a release of 
 
 ## Use it in your project
 
-1. `npx --yes --package=<the URL of roc-cloudflare-workers-X.Y.Z.tgz> roc-cloudflare-workers init my-worker` writes these four files with the URLs of that release. Or copy this directory, change the platform line of `main.roc` and `X.Y.Z` in `package.json` by hand.
+1. Copy this directory (`roc-cloudflare-workers init` moved to the helper `roc-cfw init`, not released yet), change the platform line of `main.roc` and `X.Y.Z` in `package.json` by hand.
 2. Run `npm install`.
 3. `npm run build` (`roc build --target=wasm32 --no-cache --output=app.wasm main.roc`, then `roc-cloudflare-workers sync`: it writes `worker.js` and checks `wrangler.toml`).
 4. `npm run dev` (`wrangler dev --local`), then `curl http://127.0.0.1:8787/`.

@@ -282,3 +282,43 @@ tln run build        # sync copies the new js/ (new hash), writes worker.js, che
 | The global `roc-cfw` (if a user installed one) has another version than the project | Inside `tln run` and `tln x roc-cfw`, the project version wins (Talon R-PT12). A `roc-cfw` typed in a shell is the global one: the README says to use `tln x roc-cfw` |
 | GC removes the built helper | Talon keeps it while the project is known (R-PT14). After `tln cache clean`, the next run builds it again |
 | Talon does not accept `tln run` (question Q-S1 of the Talon study) | Keep the steps in a `Makefile` or in CI. Steps 1 to 4 and section 4 still remove npm from the project |
+
+## Status of steps 1 and 2 (2026-10-24)
+
+Done: step 1 (`js/` in the bundle) and step 2 (`cli.mjs` has `sync` only, `entryOf` import rule, `js/cfw.json`, `js/template/`). The `.tgz` step stays for one release (step 8 removes it). Not committed.
+
+| File | Change |
+| --- | --- |
+| `js/cli.mjs` | `init` removed (`init` now gives exit 2 and the usage). New `shimImportOf(entryDir, cliDir)`: the package name `roc-cloudflare-workers` when `cliDir` has a `node_modules` part, else the relative path from the directory of the entry file to `cliDir` plus `/index.js`. `entryOf(m, wasmImport, shimImport)` takes the import as an argument |
+| `js/cfw.json` | New: `{ "api": 1 }` |
+| `js/template/` | New: `main.roc` (the body of `examples/hello/main.roc`: no `app` line, no path-platform note), `wrangler.toml` (as `examples/hello`, name `roc-hello`), `talon.toml` (`[scripts]` of 3.1 only), `.gitignore` (`app.wasm`, `.roc-cfw/`, `.wrangler/`) |
+| `scripts/bundle.sh` | The stage has all of `js/`. `js/package.json` in the bundle is `{ "type": "module" }` (the source file is the npm package file). `roc bundle` gets each `js/` file. The bundle check fails when the `js/` files in the bundle list are not the files of `js/`. The `.tgz` has `*.js`, `cli.mjs`, `package.json`, `release.json` (no template: nothing reads it) |
+| `scripts/test_bundle_js.sh` | New: `roc unbundle`, then lists and compares `js/`, `package.json`, `cfw.json`, template files |
+| `scripts/test_bundle.sh` | Calls `test_bundle_js.sh` (a URL bundle is downloaded first) |
+| `bench/cli-test.mjs` | Case 1c: the import is a relative path. `init` cases removed. New case 5: R-I1 (`.roc-cfw/` gives `./.roc-cfw/index.js`, also `../.roc-cfw/index.js` for an entry in `sub/`), R-I2 (`node_modules/roc-cloudflare-workers/` gives the package name) |
+| `conformance/reverts.mjs` | The G7 `init` revert entry is replaced by 2 entries (R-I1, R-I2) |
+| `bench/test-all.sh`, `README.md`, `MODULES.md`, `examples/hello/README.md` | Text: `init` moved to the helper |
+
+Tests (2026-10-24, nightly `compat/last-stack-first-nightly`, Node 26.7):
+
+| Test | Result |
+| --- | --- |
+| `node bench/cli-test.mjs bench/out` | all passed (68 checks) |
+| `node bench/sync-cross-test.mjs` (the 3 link wasm files built first, they were not in `bench/out`) | all passed |
+| `node bench/iface-test.mjs bench/out` (after a rebuild of the stale `conformance.wasm`) | all passed |
+| `ZIG=<0.17> scripts/bundle.sh 0.0.0-local` | pass, 22 `js/` files in the bundle |
+| `scripts/test_bundle_js.sh` | PASS |
+| `scripts/test_bundle.sh` (builds the examples against the bundle, `test_example.sh` with the npm `.tgz`: `sync --check` with the package-name import, `wrangler dev` 6 routes, `deploy --dry-run`) | PASS |
+
+Revert checks (each new test fails when its change is reverted):
+
+| Revert | Caught by |
+| --- | --- |
+| `shimImportOf` without the `node_modules` rule (`conformance/reverts.mjs` entry R-I2) | `cli-test` 5b |
+| `entryOf` import always the package name (entry R-I1) | `cli-test` 1c and 5a |
+| `bundle.sh` stage without `js/cfw.json` | the bundle check of `bundle.sh` (exit 1) |
+| The same, with that check removed by hand | `test_bundle_js.sh` (FAIL, `js/cfw.json` not in the bundle) |
+
+Contract with the helper: no change. `cfw.json` `{ "api": 1 }`, `cli.mjs sync` arguments and exit codes 0, 1, 2 as before. Added: `cli.mjs init` is an error (exit 2). The template `main.roc` has no `app` header, so `roc-cfw init` must add the header that `tln init` wrote. `js/template/talon.toml` holds the `[scripts]` table only, with a leading comment line.
+
+Open: the README no longer has a working `init` command for the npm setup until `roc-cfw` is released. Step 7 owns the README rewrite. `release.json` is still made and packed but nothing reads it.
