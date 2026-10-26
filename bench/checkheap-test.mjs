@@ -24,14 +24,17 @@
 //    sum alarm at its resume (`poke_wait` 1), task A an unclean trap just after its resume
 //    (`fault_next_wait` 5 with 0 words). Both resume in the same job turn, B first: the check of
 //    B's alarm runs while A's catch waits, so `TASK_TOP` and `OWNER` are A's. The host answers
-//    CHECK_BUSY, and the check runs again at A's alarm. Expect: 2 alarms, no failed check, the
-//    instance stays, the next request is correct.
+//    CHECK_BUSY, and the check runs again at A's alarm. Since the first release run (PLAN.md "Status of the first
+//    release run"), A's resume waits until B's catch left wasm (`enterWasm`, js/wait.js), so no check is busy.
+//    Expect: 2 alarms, no busy check, no failed check, the instance stays, the next request is correct.
 // E. 12c: the check that an alarm made due runs before the next resume. As D, but task A makes a
 //    clean trap (a Roc `crash` after its first wait): no alarm, so nothing runs the check at A's
 //    catch. Then task C resumes, still in the same job turn (no timer ran): the gate in the wait
-//    import runs the check before C enters wasm.
+//    import runs the check before C enters wasm. Since the first release run, the check at B's alarm is not busy
+//    (A resumes only after B's catch), so it runs at once. Expect: no busy check, 1 check before C resumes, no
+//    second check at the resume of C.
 // F. 12c: as E, but a new request starts in place of the resume of C: the gate in `run` runs the
-//    check before the new task enters wasm.
+//    check before the new task enters wasm. Since the first release run: as E, the check ran at B's alarm.
 // Exit 1 on a failure.
 import { readFileSync } from 'node:fs';
 import { makeRunner, check, CHECK_NAMES } from './core.js';
@@ -240,7 +243,7 @@ for (const [kind, name] of OVERLAP) {
   const row = { b: `${rb.status} ${rb.alarm}`, a: `${ra.status} ${ra.alarm}`, busy: r.stats.heapBusy, checks: r.stats.byCheck, fails: r.stats.heapFails, replaced: r.x !== x0, next: check('7', next.body ?? '', 3) };
   console.log('D', JSON.stringify(row));
   if (rb.alarm !== 'sum' || ra.alarm !== 'trap') fail(`D: alarms ${row.b}, ${row.a}, want sum and trap`);
-  if (r.stats.heapBusy === 0) fail('D: no check saw a trapped task that is not aborted: the test proves nothing');
+  if (r.stats.heapBusy !== 0) fail(`D: ${r.stats.heapBusy} checks saw a trapped task that is not aborted: an entry did not wait for the owner of the stack`);
   if (r.stats.heapFails !== 0 || r.x !== x0) fail(`D: the instance was replaced: ${JSON.stringify(lines)}`);
   if (!(r.stats.byCheck.alarm >= 1)) fail('D: no check ran after the alarms');
   if (!row.next) fail('D: the next request is wrong');
@@ -269,7 +272,7 @@ for (const [kind, name] of OVERLAP) {
   const row = { b: `${rb.status} ${rb.alarm}`, a: String(ra.trap).slice(0, 30), busy, checksBeforeC: before, checksAtResumeOfC: atResume, fails: r.stats.heapFails, replaced: r.x !== x0, c: check('6402', rc.body ?? '', 6) };
   console.log('E', JSON.stringify(row));
   if (rb.alarm !== 'sum' || ra.alarm || ra.body !== undefined) fail(`E: B ${row.b}, A ${row.a}: want an alarm sum and a clean trap`);
-  if (busy === 0 || before !== 0) fail('E: the check of B was not busy: the test proves nothing');
+  if (busy !== 0 || before !== 1) fail(`E: ${busy} busy checks and ${before} checks before C resumed, want 0 and 1 (an entry did not wait for the owner of the stack)`);
   if (atResume !== 1) fail(`E: ${atResume} checks when C resumed, want 1 (the gate before the resume)`);
   if (r.stats.heapFails !== 0 || !row.c) fail('E: the instance was replaced, or C is wrong');
 }
@@ -292,7 +295,7 @@ for (const [kind, name] of OVERLAP) {
   const rn = await opened(pn, gates);
   const row = { b: `${rb.status} ${rb.alarm}`, a: String(ra.trap).slice(0, 30), busy, checksBefore: before, checksAtStart: atStart, fails: r.stats.heapFails, n: check('6502', rn.body ?? '', 6) };
   console.log('F', JSON.stringify(row));
-  if (busy === 0 || before !== 0) fail('F: the check of B was not busy: the test proves nothing');
+  if (busy !== 0 || before !== 1) fail(`F: ${busy} busy checks and ${before} checks before the new task, want 0 and 1 (an entry did not wait for the owner of the stack)`);
   if (atStart !== 1) fail(`F: ${atStart} checks when the new task started, want 1 (the gate before \`handle\`)`);
   if (r.stats.heapFails !== 0 || !row.n) fail('F: the instance was replaced, or the new request is wrong');
 }

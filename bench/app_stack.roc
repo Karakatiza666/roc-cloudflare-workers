@@ -19,30 +19,33 @@ wait_n! = |waits| {
 	}
 }
 
-## Recurse `n` levels, wait `waits` times at depth 0, then check each level on the way up.
+## Recurse `n` levels, wait `waits` times at depth 0, then recurse `after` levels more (after the resume: a stack
+## overflow after a resume, `bench/stack-test.mjs`), then check each level on the way up.
 ## The canary of a level is a small string ("<salt>:<n>", up to 11 bytes): its bytes are inside
 ## the string value, in the frame of the level (the shadow stack), and the level reads it after
 ## the waits. Returns the number of wrong canaries.
-down! : U64, U64, U64 => U64
-down! = |n, salt, waits| {
+down! : U64, U64, U64, U64 => U64
+down! = |n, salt, waits, after| {
 	tag = "${salt.to_str()}:${n.to_str()}"
 	below = if n == 0 {
-		wait_n!(waits)
+		woken = wait_n!(waits)
+		if (after == 0) woken else woken + down!(after, salt, 0, 0)
 	} else {
-		down!(n - 1, salt, waits)
+		down!(n - 1, salt, waits, after)
 	}
 	want = salt.to_str().concat(":").concat(n.to_str())
 	below + (if (tag == want) 0 else 1)
 }
 
-## Request: "<salt> <depth> <waits>", salt below 100000. Body: "bad=<wrong canaries>".
+## Request: "<salt> <depth> <waits> [<after>]", salt below 100000. Body: "bad=<wrong canaries>".
 handle! : Str => Str
 handle! = |req| {
 	parts = req.split_on(" ")
 	salt = U64.from_str(parts.get(0) ?? "1") ?? 1
 	depth = U64.from_str(parts.get(1) ?? "10") ?? 10
 	waits = U64.from_str(parts.get(2) ?? "1") ?? 1
-	"bad=${down!(depth, salt, waits).to_str()}"
+	after = U64.from_str(parts.get(3) ?? "0") ?? 0
+	"bad=${down!(depth, salt, waits, after).to_str()}"
 }
 
 ## PLAN.md 8b: the request text is the body of a `Fetch` event (`bench/check.js` `benchEvent`), and the answer is the

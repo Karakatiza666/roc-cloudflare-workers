@@ -43,8 +43,11 @@ const reverts = [
     [HP, '      tasks.respond(t, Boolean(s && !s.closed));', '      tasks.respond(t, false);']),
   R('no cancel when the reader cancels the stream', 'js', ['node:cancel'],
     [HP, "        if (!s.closed && t && !t.ended) tasks.cancel(t, 'stream');\n", '']),
-  R('no request.signal for the task (the client that goes away)', 'js', ['workerd:away'],
-    [I, "{ kind: 'Fetch', signal: request.signal, env: this.env", "{ kind: 'Fetch', signal: undefined, env: this.env"]),
+  // workerd 2026-10-23 cancels the response stream too (E11), so `away` fails only when both cancels are gone. A revert of
+  // request.signal alone: bench/signal-workerd.mjs fails (a waiting task with no stream).
+  R('no request.signal and no stream cancel for the task (the client that goes away)', 'js', ['workerd:away'],
+    [I, "{ kind: 'Fetch', signal: request.signal, env: this.env", "{ kind: 'Fetch', signal: undefined, env: this.env"],
+    [HP, "        if (!s.closed && t && !t.ended) tasks.cancel(t, 'stream');\n", '']),
   R('9c: wait_until! does not call ctx.waitUntil', 'build', ['node:waituntil', 'workerd:waituntil'],
     [C, ', Call(Root("ctx"), "waitUntil", [Slot(0)])]', ']']),
   R('9c: the context of a task is freed at its end (no wait for its started programs)', 'js', ['node:started'],

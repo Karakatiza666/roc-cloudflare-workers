@@ -41,6 +41,8 @@ const TESTS = {
   'layout-test': () => [process.execPath, ['bench/layout-test.mjs', 'bench/out/app.wasm']],
   'entry-test': () => [process.execPath, ['bench/entry-test.mjs', 'bench/out/app_events.wasm']],
   'tasks-test': () => [process.execPath, ['bench/tasks-test.mjs']],
+  'stack-test': () => [process.execPath, ['bench/stack-test.mjs', 'bench/out/app_stack.wasm']],
+  'checkheap-test': () => [process.execPath, ['bench/checkheap-test.mjs', 'bench/out/app.wasm']],
   'program-test': () => [process.execPath, ['bench/program-test.mjs']],
   'bindings-test': () => [process.execPath, ['bench/bindings-test.mjs', 'bench/out']],
   'envread-test': () => [process.execPath, ['bench/envread-test.mjs', 'bench/out']],
@@ -78,6 +80,15 @@ const IM = 'rpcerr forward with a domain mapping: NotOpen of the inner callee is
 const IK = 'rpcerr forward: a failure of the inner call itself (the inner callee crashes) is Remote(Infra(RpcErr)) of the outer caller';
 const IW = 'rpcerr infra: the reply on the wire for a JS caller is { Err: { Infra: { <tag>: payload } } }, also when forwarded';
 const reverts = [
+  // The first release run (PLAN.md "Status of the first release run"): one owner of the shadow stack (js/wait.js).
+  R('release run: no entry waits for the owner of the stack', 'stack-test', [],
+    ['js/wait.js', '  if (cell.dead) return undefined;\n', '  return undefined;\n']),
+  R('release run: no entry waits for the owner of the stack (checkheap D, E, F: a busy check)', 'checkheap-test', [],
+    ['js/wait.js', '  if (cell.dead) return undefined;\n', '  return undefined;\n']),
+  R('release run: a new run does not wait for the owner of the stack', 'stack-test', [],
+    ['js/runner.js', '        const w = runner.own(hold, tok);\n        if (w) await w;\n        return await runner.runOwned', '        hold.cell = cur.cell;\n        return await runner.runOwned']),
+  R('release run: a resume does not wait for the owner of the stack', 'stack-test', [],
+    ['js/bridge.js', '      if (owned) await enterWasm(cell, t);\n', '      void enterWasm;\n']),
   // 8h wave C: the builders of the opaque Request and Response (one route, `/http/builders`).
   R('Response.with_status: keeps the status', 'conformance', ['http wave C builders: Request.new with_body, with_method, with_url, and Response.with_status, with_body'], [BP + 'Response.roc', 'with_status = |r, code| { ..r, status: code }', 'with_status = |r, _code| r']),
   R('Request.with_body: keeps the body', 'conformance', ['http wave C builders: Request.new with_body, with_method, with_url, and Response.with_status, with_body'], [BP + 'Request.roc', 'with_body = |r, b| { ..r, body: b }', 'with_body = |r, _b| r']),

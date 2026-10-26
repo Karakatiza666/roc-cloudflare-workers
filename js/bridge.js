@@ -7,7 +7,7 @@
 import { fromJs, toJs, Writer, Refs } from './values.js';
 import { runAwait, runCall, statusOf, errorOf, BadProgram, OK, THROWN, BAD } from './program.js';
 import { makeHelpers } from './helpers.js';
-import { end5 } from './wait.js';
+import { end5, enterWasm, leaveWasm } from './wait.js';
 
 export const STATUS_OOM = 4;
 class OutOfMemory extends Error {}
@@ -86,8 +86,19 @@ export function makeBridge(cell, tasks, shim) {
     crossings.await++;
     const x = cell.x;
     const t = tasks?.get(id);
+    // The task suspends here: the stack is free for other tasks. Each return below resumes it, so each return comes
+    // after `back` (the task owns the stack again: no other task is in wasm, and no trap waits for its catch).
+    // `cell.owned`: the runner keeps the owner (js/runner.js); a test that calls `handle` itself does not.
+    const owned = Boolean(t && cell.owned);
+    if (owned) leaveWasm(cell, t);
+    const back = async () => {
+      if (owned) await enterWasm(cell, t);
+    };
     // A task that was cancelled while it ran ends at its next wait.
-    if (t?.cancelled) return end5(x, t, cell.cancelTrap);
+    if (t?.cancelled) {
+      await back();
+      return end5(x, t, cell.cancelTrap);
+    }
     try {
       const c = contextOf(t);
       let res;
@@ -105,16 +116,18 @@ export function makeBridge(cell, tasks, shim) {
           } finally {
             tasks.waitStop(t);
           }
-          if (t.cancelled) return end5(x, t, cell.cancelTrap);
         } else res = await running;
       } catch (e) {
         res = [statusOf(e), errorOf(e)];
       }
+      await back();
+      if (t?.cancelled) return end5(x, t, cell.cancelTrap);
       // 12c: a global check that is due runs before the resume. A failed check cancels this task.
       cell.gate?.();
       if (t?.cancelled) return end5(x, t, cell.cancelTrap);
       return writeResult(x, out, res[0], res[1], c.refs);
     } catch {
+      await back();
       if (t?.cancelled) return end5(x, t, cell.cancelTrap);
       return STATUS_OOM;
     }

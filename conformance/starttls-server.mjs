@@ -4,7 +4,7 @@
 // Each event goes to `log` with its time, so a run shows if the bytes of a client arrived (a write that hangs) or not.
 // CLI (a run from another place: the edge): node research/starttls/server.mjs <port> <cert.pem> <key.pem>
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { TLSSocket } from 'node:tls';
 
@@ -52,8 +52,15 @@ export function startServer({ cert, key, port = 0, host = '127.0.0.1' }) {
   return new Promise((resolve) => server.listen(port, host, () => resolve({ server, log, port: server.address().port })));
 }
 
-// A test certificate for `localhost` and 127.0.0.1 (needs `openssl`): `cert.pem` and `key.pem` in `dir`.
+// A test CA and a server certificate for `localhost` and 127.0.0.1 that the CA signs (needs `openssl`), in `dir`.
+// `cert` and `key`: the server certificate (CA:FALSE) and its key. `certFile`: the CA certificate, the file to trust.
+// One self-signed certificate is not enough: `openssl req -x509` makes a CA certificate (CA:TRUE), and the TLS client of
+// workerd 2026-10-23 (rustls) refuses a CA certificate as the server certificate (`CaUsedAsEndEntity`).
 export function makeCert(dir) {
-  execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', `${dir}/key.pem`, '-out', `${dir}/cert.pem`, '-days', '30', '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1'], { stdio: 'ignore' });
-  return { cert: readFileSync(`${dir}/cert.pem`), key: readFileSync(`${dir}/key.pem`), certFile: `${dir}/cert.pem` };
+  const ssl = (...args) => execFileSync('openssl', args, { stdio: 'ignore' });
+  ssl('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', `${dir}/ca-key.pem`, '-out', `${dir}/ca.pem`, '-days', '30', '-subj', '/CN=starttls test CA');
+  ssl('req', '-new', '-newkey', 'rsa:2048', '-nodes', '-keyout', `${dir}/key.pem`, '-out', `${dir}/server.csr`, '-subj', '/CN=localhost');
+  writeFileSync(`${dir}/server.ext`, 'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:localhost,IP:127.0.0.1\n');
+  ssl('x509', '-req', '-in', `${dir}/server.csr`, '-CA', `${dir}/ca.pem`, '-CAkey', `${dir}/ca-key.pem`, '-CAcreateserial', '-out', `${dir}/cert.pem`, '-days', '30', '-extfile', `${dir}/server.ext`);
+  return { cert: readFileSync(`${dir}/cert.pem`), key: readFileSync(`${dir}/key.pem`), certFile: `${dir}/ca.pem` };
 }

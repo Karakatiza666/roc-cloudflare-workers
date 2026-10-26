@@ -2,7 +2,7 @@
 // One shared instance: the host copies the shadow stack at each wait.
 import { makeTaskTable } from './tasks.js';
 import { makeBudget } from './budget.js';
-import { hostCancel } from './wait.js';
+import { hostCancel, enterWasm, leaveWasm } from './wait.js';
 import { makeBridge } from './bridge.js';
 import { makePins } from './helpers.js';
 import { Refs } from './values.js';
@@ -39,7 +39,8 @@ function register(x, budget) {
 // A shared instance: the host copies the stack at each wait.
 // `slots`: the most tasks in flight on it (PLAN.md 2c).
 function instanceB(module, tasks, sumMode, budget, shim) {
-  const cell = { x: null, cancelTrap: null };
+  // `owned`: the runner keeps the owner of the stack (`enterWasm`, js/wait.js).
+  const cell = { x: null, cancelTrap: null, owned: true };
   const inst = new WebAssembly.Instance(module, importsOf(cell, tasks, budget, shim));
   const x = (cell.x = inst.exports);
   register(x, budget);
@@ -195,6 +196,10 @@ export function makeRunner(module, opts = {}) {
     replace(reason = 'replace', logged = false) {
       const old = cur;
       cur = fresh(instanceB(module, tasks, sumMode, budget, shim));
+      // The old instance is dropped: no wait for its stack (a task that workerd stopped never leaves it, 5c). Its
+      // cancelled tasks resume at once and end (status 5).
+      old.cell.dead = true;
+      leaveWasm(old.cell, old.cell.inWasm);
       runner.x = cur.x;
       stats.retired++;
       stats.replaces[reason] = (stats.replaces[reason] ?? 0) + 1;
@@ -301,13 +306,39 @@ export function makeRunner(module, opts = {}) {
       runner.gate(it);
       if (it.checkDue) setTimeout(() => runner.gate(it, false), 0);
     },
+    // One run at a time enters wasm (`enterWasm` in `js/wait.js`): a run waits while a task of the current instance runs
+    // in wasm, or trapped and its catch has not called `task_abort` yet. The run owns the stack from here (the checks
+    // and the cancels below enter wasm too) until its task waits or ends, and the task owns it after each resume.
     async run(req, ro = {}) {
       // 5c: workerd stopped the isolate for the CPU limit. No catch ran, so the state of this
-      // instance (task top, stack pointer, owner) is stale: M1, a new instance.
+      // instance (task top, stack pointer, owner) is stale: M1, a new instance. Before the wait for the
+      // stack: the stopped task never leaves wasm (`replace` frees the stack of the old instance).
       if (readFlag(cur.x, '__instance_terminated') === TERMINATED) {
         stats.terminated++;
         runner.replace('terminated');
       }
+      const hold = { cell: null };
+      const tok = {};
+      try {
+        const w = runner.own(hold, tok);
+        if (w) await w;
+        return await runner.runOwned(req, ro, hold, tok);
+      } finally {
+        leaveWasm(hold.cell, tok);
+      }
+    },
+    // `owner` owns the stack of the current instance (`hold.cell`). A replace while it waited: the stack of the new one.
+    // Undefined when no wait was needed (no extra promise job), else a promise.
+    own(hold, owner) {
+      while (hold.cell !== cur.cell) {
+        if (hold.cell) leaveWasm(hold.cell, owner);
+        hold.cell = cur.cell;
+        const w = enterWasm(hold.cell, owner);
+        if (w) return w.then(() => runner.own(hold, owner));
+      }
+      return undefined;
+    },
+    async runOwned(req, ro, hold, tok) {
       // 3b: a new request runs in a live request context, so it cancels the tasks past their deadline.
       tasks.sweep();
       // M7 step 2: a grow was denied in the last `graceMs`, or the new instance of a replace does not fit
@@ -318,6 +349,9 @@ export function makeRunner(module, opts = {}) {
       // 12c: a check that an alarm made due runs before this task enters wasm.
       runner.gate(cur);
       if (every > 0 && cur.sinceCheck >= every) runner.checkHeap('every', cur, true);
+      // A failed check replaced the instance: own the stack of the new one.
+      const w = runner.own(hold, tok);
+      if (w) await w;
       const it = cur;
       const x = it.x;
       // 2c: the host has `slots` task slots. Above that, a shed (M7 step 2): the instance stays.
@@ -326,6 +360,8 @@ export function makeRunner(module, opts = {}) {
         stats.shed++;
         return { trap: 'shed: all task slots are in use', status: 503, shed: true, x };
       }
+      // The task owns the stack now: it leaves at its wait (`js_await`) or at the end of this run.
+      if (it.cell.inWasm === tok) it.cell.inWasm = t;
       it.sinceCheck++;
       it.dirty = true;
       try {
@@ -384,6 +420,8 @@ export function makeRunner(module, opts = {}) {
         tasks.end(t);
         hostEvents(x);
         runner.idle(it, ro.ctx);
+        // After `task_abort` of a trap: the next entry finds a sound stack.
+        leaveWasm(it.cell, t);
       }
     },
   };

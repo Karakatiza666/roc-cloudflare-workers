@@ -208,10 +208,13 @@ try {
     if (text !== 'ok' || at !== undefined || later?.[0] !== 'started') fail('waituntil', `${text} ${at} ${later}`);
   }
 
-  // A client that goes away from an open writer stream (a TCP reset after the first chunk): the task is cancelled by
-  // request.signal (PLAN.md 3, "a wait that never settles after respond! while a stream is open").
+  // A client that goes away from an open writer stream (a TCP reset after the first chunk): the task is cancelled once
+  // (PLAN.md 3, "a wait that never settles after respond! while a stream is open"). The first event cancels it:
+  // workerd 2026-10-12 aborts only request.signal (reason `signal`). workerd 2026-10-23 also cancels the response
+  // stream (as the edge, E11), and that comes first (reason `stream`). request.signal alone: signal-workerd.mjs.
   {
-    const before = (await stats()).byReason.signal ?? 0;
+    const cancels = (s) => (s.byReason.signal ?? 0) + (s.byReason.stream ?? 0);
+    const before = cancels(await stats());
     await new Promise((resolve) => {
       const s = net.connect(PORT, '127.0.0.1');
       s.on('connect', () => s.write('GET /stream?id=s2&n=100&gap=50&after=0 HTTP/1.1\r\nHost: x\r\n\r\n'));
@@ -225,8 +228,8 @@ try {
     });
     await sleep(500);
     const s = await stats();
-    console.log('client goes away:', { signalCancels: (s.byReason.signal ?? 0) - before, byReason: s.byReason, mark: (await marks()).s2, tasks: s.tasks });
-    if ((s.byReason.signal ?? 0) - before !== 1 || (await marks()).s2) fail('away', 'the writer task was not cancelled when the client went away');
+    console.log('client goes away:', { cancels: cancels(s) - before, byReason: s.byReason, mark: (await marks()).s2, tasks: s.tasks });
+    if (cancels(s) - before !== 1 || (await marks()).s2) fail('away', 'the writer task was not cancelled when the client went away');
   }
 
   const s = await stats();
