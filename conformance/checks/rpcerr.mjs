@@ -107,7 +107,7 @@ export const checks = [
     answer(await t.get('/rpcerr/store/fail?name=i1&kind=sql'), `Remote SqlErr ${SQL.join(' | ')}`)],
   ['rpcerr infra: a Durable Object callee that ?s a storage error: Remote(Infra(StorageErr)) with name and message', async (t) =>
     answer(await t.get('/rpcerr/store/fail?name=i2&kind=storage'), `Remote StorageErr ${STORAGE.join(' | ')}`)],
-  ['rpcerr infra: a Durable Object callee that ?s a constraint error: Remote(Infra(Constraint)) with the kind and the message', async (t) =>
+  ['rpcerr infra: a Durable Object callee that ?s a constraint error: Remote(Constraint) (flat, V17) with the kind and the message', async (t) =>
     answer(await t.get('/rpcerr/store/fail?name=i3&kind=constraint'), `Remote Constraint ${CONSTRAINT[0]} | ${CONSTRAINT[1]}`)],
   ['rpcerr infra: a Workers callee (default entry point and Admin) that ?s a D1 error: Remote(Infra(D1Err))', async (t) => {
     for (const k of ['self', 'admin']) {
@@ -177,7 +177,7 @@ export const checks = [
     const d1 = JSON.parse(r.body).self.d1;
     ok(typeof d1?.Err?.Infra?.D1Err?.name === 'string' && /SQLITE_ERROR/.test(d1.Err.Infra.D1Err.message ?? ''), `d1: ${JSON.stringify(d1)}`);
     const want = {
-      store: { sql, constraint: infra('Constraint', { kind: CONSTRAINT[0], message: CONSTRAINT[1] }), storage, domain: { Err: 'NotOpen' } },
+      store: { sql, constraint: { Err: { Constraint: { kind: CONSTRAINT[0], message: CONSTRAINT[1] } } }, storage, domain: { Err: 'NotOpen' } },
       self: { d1, domain: { Err: 'NotOpen' } },
       admin: { d1 },
       relay: { sql, storage, domain: { Err: 'NotOpen' } },

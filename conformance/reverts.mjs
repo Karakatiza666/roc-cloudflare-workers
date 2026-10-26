@@ -67,7 +67,7 @@ const BN = 'websocket broadcast_json!, broadcast_json_with!: a NaN is Err(BadDat
 // The checks of the N5 G1a reverts (the names of conformance/checks/rpcerr.mjs).
 const IS = 'rpcerr infra: a Durable Object callee that ?s a SQL error: the caller gets Remote(Infra(SqlErr)) with name and message';
 const IT = 'rpcerr infra: a Durable Object callee that ?s a storage error: Remote(Infra(StorageErr)) with name and message';
-const IC = 'rpcerr infra: a Durable Object callee that ?s a constraint error: Remote(Infra(Constraint)) with the kind and the message';
+const IC = 'rpcerr infra: a Durable Object callee that ?s a constraint error: Remote(Constraint) (flat, V17) with the kind and the message';
 const ID = 'rpcerr infra: a Workers callee (default entry point and Admin) that ?s a D1 error: Remote(Infra(D1Err))';
 const IN = 'rpcerr infra: a domain error of the same callee is still Remote(NotOpen), and Ok is Ok';
 const IR = 'rpcerr infra: a callee that crashes is Infra(RpcErr) of the caller, not Remote';
@@ -248,7 +248,7 @@ const reverts = [
   R('D1.Session.all_tuples: no limit', 'conformance', ['d1 all_tuples! on a D1.Session: rows above 1 MiB are TooLarge, all_tuples_with! with 2 MiB gives the rows'], [BP + 'D1.roc', 'all_tuples = |s, sql, params| all_tuples_io(session_start(s), sql, Cbor.encode(params), Body.default_max)', 'all_tuples = |s, sql, params| all_tuples_io(session_start(s), sql, Cbor.encode(params), 100_000_000)']),
   R('D1.all_tuples: typed rows parse with no int_from_text (Cbor.parse)', 'conformance', ['d1 all_tuples! of CAST(id AS TEXT) into an I64 item gives the exact ids'], [BP + 'SqlRules.roc', 'typed_tuples = |bytes| match Cbor.parse_with(bytes, { int_from_text: Bool.True }) {', 'typed_tuples = |bytes| match Cbor.parse(bytes) {']),
   R('D1.all_tuples: BadData is Str.inspect of the parse error (no column)', 'conformance', ['d1 all_tuples! with no cast: BadData with the column index, for a positive and a negative id'], [BP + 'SqlRules.roc', 'Err(InvalidCbor(pos)) => Err(BadData(bad_tuple_data(bytes, pos)))', 'Err(InvalidCbor(pos)) => Err(BadData(Str.inspect(InvalidCbor(pos))))']),
-  R('D1.all_tuples: no CAST hint for an integer above 2^53', 'conformance', ['d1 all_tuples! with no cast: BadData with the column index, for a positive and a negative id'], [BP + 'SqlRules.roc', 'Ok([Index(_), Index(c), ..]) =>\n\t\tif rounded_at(bytes, pos) {', 'Ok([Index(_), Index(c), ..]) =>\n\t\tif Bool.False {']),
+  R('D1.all_tuples: no CAST hint for an integer above 2^53', 'conformance', ['d1 all_tuples! with no cast: BadData with the column index, for a positive and a negative id'], [BP + 'SqlRules.roc', 'Rounded => "column ${c.to_str()} (from 0): integer of 2^53 or more, read it with CAST(... AS TEXT) into an I64, U64 or Id64 field"', 'Rounded => "column ${c.to_str()} (from 0): the value does not fit the type"']),
   R('D1.all_tuples: the column index counts from 1', 'conformance', ['d1 all_tuples! with no cast: BadData with the column index, for a positive and a negative id'], [BP + 'SqlRules.roc', '"column ${c.to_str()} (from 0): integer of 2^53 or more', '"column ${(c + 1).to_str()} (from 0): integer of 2^53 or more']),
   R('D1 (roc test) all_tuples: typed rows parse with no int_from_text (Cbor.parse)', 'roc test', [], ['platform/SqlRules.roc', 'typed_tuples = |bytes| match Cbor.parse_with(bytes, { int_from_text: Bool.True }) {', 'typed_tuples = |bytes| match Cbor.parse(bytes) {']),
   R('D1 (roc test) all_tuples: the column index counts from 1', 'roc test', [], ['platform/SqlRules.roc', '"column ${c.to_str()} (from 0): the value does not fit', '"column ${(c + 1).to_str()} (from 0): the value does not fit']),
@@ -495,7 +495,7 @@ const reverts = [
     [BP + 'Http.roc', 'trimmed = t.trim()', 'trimmed = t']),
   R('8h B D1: the old text of a float of 2^53 or more', 'conformance', ['d1 all! with no cast: BadData with the column, for a positive and a negative id', 'd1 all_tuples! with no cast: BadData with the column index, for a positive and a negative id', 'objects sql!: the integer rules of D1 (an Int parameter as text, CAST(v AS TEXT) into an I64, BadData with no cast)'],
     [BP + 'SqlRules.roc', 'integer of 2^53 or more, read it with CAST(${c} AS TEXT) into an I64, U64 or Id64 field', 'integer above 2^53, use CAST(${c} AS TEXT)'],
-    [BP + 'SqlRules.roc', 'integer of 2^53 or more, read it with CAST(... AS TEXT) into an I64, U64 or Id64 field"\n\t\t} else {', 'integer above 2^53, use CAST(... AS TEXT)"\n\t\t} else {']),
+    [BP + 'SqlRules.roc', 'integer of 2^53 or more, read it with CAST(... AS TEXT) into an I64, U64 or Id64 field"\n\t\t\tNull', 'integer above 2^53, use CAST(... AS TEXT)"\n\t\t\tNull']),
   R('8h B D1: 2^53 exactly is not "2^53 or more" (roc test)', 'roc test', [],
     ['platform/SqlRules.roc', 'f.abs() >= 9_007_199_254_740_992.0', 'f.abs() > 9_007_199_254_740_992.0']),
   R('8f Object.get_alarm: call! in place of await!', 'conformance', ['objects get_alarm! after set_alarm!(t) gives t (and the Io twins)'],
@@ -641,8 +641,8 @@ const reverts = [
   R('SQL params: a BigInt binds as a Number', 'conformance', ['d1 params: 2^53 + 1 (I64 and U64) and I64 min bind as text and land as the exact integer', 'd1 params: a U64 of 2^63 - 1 is stored exact', 'objects SQL params: 2^53 + 1 binds as text and lands as the exact integer', 'objects SQL params: a U64 of 2^63 - 1 is stored exact, 2^63 is BadParam and stores no row'], ['js/helpers.js', '        return v.toString();', '        return Number(v);']),
   R('SQL params: no map check (a map goes to the binding)', 'conformance', ['d1 params: a tag item is BadParam with the hint for Sql.or_null; a Bool item is BadParam', 'objects SQL params: a record and {} are BadParam; a tag item is BadParam with the hint; a Bool item is BadParam'], ['js/helpers.js', '    if (v === null || v instanceof Uint8Array) return v;\n', '    return v;\n']),
   R('SQL params: a Bool binds', 'conformance', ['d1 params: a tag item is BadParam with the hint for Sql.or_null; a Bool item is BadParam', 'objects SQL params: a record and {} are BadParam; a tag item is BadParam with the hint; a Bool item is BadParam'], ['js/helpers.js', 'case \'string\': case \'number\': return v;', 'case \'string\': case \'number\': case \'boolean\': return v;']),
-  R('SQL params: no check that the value is an array', 'conformance', ['d1 params: a record and {} are BadParam (a list or a tuple is needed)', 'objects SQL params: a record and {} are BadParam; a tag item is BadParam with the hint; a Bool item is BadParam'], ['js/helpers.js', '  if (!Array.isArray(params)) {', '  if (false) {']),
-  R('SQL params: D1 bind does not check the items (sessions, batch, all forms)', 'conformance', ['d1 params: a U64 of 2^63 is BadParam, and no row (never a negative number) is stored', 'd1 params: a tag item is BadParam with the hint for Sql.or_null; a Bool item is BadParam', 'd1 params: a record and {} are BadParam (a list or a tuple is needed)'], ['js/helpers.js', 'return stmt.bind(...sqlParams(params));', 'return stmt.bind(...params);']),
+  R('SQL params: no check that the value is an array', 'conformance', ['d1 params: a record and {} are BadParam (a list, a tuple or one value is needed)', 'objects SQL params: a record and {} are BadParam; a tag item is BadParam with the hint; a Bool item is BadParam'], ['js/helpers.js', '  if (!Array.isArray(params)) {', '  if (false) {']),
+  R('SQL params: D1 bind does not check the items (sessions, batch, all forms)', 'conformance', ['d1 params: a U64 of 2^63 is BadParam, and no row (never a negative number) is stored', 'd1 params: a tag item is BadParam with the hint for Sql.or_null; a Bool item is BadParam', 'd1 params: a record and {} are BadParam (a list, a tuple or one value is needed)'], ['js/helpers.js', 'return stmt.bind(...sqlParams(params));', 'return stmt.bind(...params);']),
   R('SQL params: Object sqlExec does not check the items', 'conformance', ['objects SQL params: a U64 of 2^63 - 1 is stored exact, 2^63 is BadParam and stores no row', 'objects SQL params: a record and {} are BadParam; a tag item is BadParam with the hint; a Bool item is BadParam'], ['js/helpers.js', 'return sql.exec(text, ...sqlParams(params));', 'return sql.exec(text, ...params);']),
   R('SQL params: Sql.null encodes as text', 'conformance', ['d1 params: Sql.null and Sql.or_null(Err _) store NULL, Sql.or_null(Ok x) stores x', 'objects SQL params: Sql.null and Sql.or_null(Err _) store NULL, Sql.or_null(Ok x) stores x'], [BP + 'Sql.roc', 'where [encoding.encode_null : state -> Try(state, err)]\n\t\tencoder_for = |_| {\n\t\t\tEnc : encoding\n\t\t\t|_, state| Enc.encode_null(state)', 'where [encoding.encode_str : Str, state -> Try(state, err)]\n\t\tencoder_for = |_| {\n\t\t\tEnc : encoding\n\t\t\t|_, state| Enc.encode_str("null", state)']),
   R('SQL params: Sql.or_null(Ok x) encodes as NULL', 'conformance', ['d1 params: Sql.null and Sql.or_null(Err _) store NULL, Sql.or_null(Ok x) stores x', 'objects SQL params: Sql.null and Sql.or_null(Err _) store NULL, Sql.or_null(Ok x) stores x'], [BP + 'Sql.roc', 'Some(x) => enc_a(x, state)', 'Some(_) => Enc.encode_null(state)']),
@@ -744,8 +744,13 @@ const reverts = [
   R('8h B5: D1.declare gives the kind kv (roc test)', 'roc test', [], ['platform/D1.roc', 'kind: "d1", props: []', 'kind: "kv", props: []']),
   R('8h B5: D1.declare gives the kind kv (the load)', 'conformance', ['start'], [BP + 'D1.roc', 'kind: "d1", props: []', 'kind: "kv", props: []']),
   R('8h B5: checkConfig ignores the migrations', 'cli-test', [], ['js/cli.mjs', 'for (const mig of cfg.migrations ?? []) {', 'for (const mig of []) {']),
-  R('TRANSITION 2 R-I2: the import of the shim is not the package name in node_modules/', 'cli-test', [], ['js/cli.mjs', "if (cliDir.split(/[\\\\/]/).includes('node_modules')) return 'roc-cloudflare-workers';", '']),
   R('TRANSITION 2 R-I1: the import of the shim is always the package name', 'cli-test', [], ['js/cli.mjs', "`import { ${names.join(', ')} } from '${shimImport}';`", "`import { ${names.join(', ')} } from 'roc-cloudflare-workers';`"]),
+  // V8 and V21 of research/plugin-probes/v2/FINDINGS-v2-core.md (sync: handlers that Worker.new does not list, the options file).
+  R('V8: sync warns of a handler that the code uses elsewhere (Worker.cron with scheduled!)', 'cli-test', [], ['js/cli.mjs', 'if (!h || uses.has(name) || listed[h.in](h.js)) continue;', 'if (!h || listed[h.in](h.js)) continue;']),
+  R('V8: the scan reads a def in a comment', 'cli-test', [], ['js/cli.mjs', "if (c === '#' || (c === '\\\\' && text[i + 1] === '\\\\')) {", "if (c === '\\\\' && text[i + 1] === '\\\\') {"]),
+  R('V8: the scan reads a def inside brackets as a top-level def', 'cli-test', [], ['js/cli.mjs', 'if (atStart && depth === 0 && def.test(text))', 'if (atStart && def.test(text))']),
+  R('V8: sync --check exits 0 with an unlisted handler', 'cli-test', [], ['js/cli.mjs', "console.log(`sync: ${relative(dir, source)}:${u.line}: ${u.text}`);\n      if (a.check) fail = true;", "console.log(`sync: ${relative(dir, source)}:${u.line}: ${u.text}`);"]),
+  R('V21: sync ignores the options file', 'cli-test', [], ['js/cli.mjs', 'hasOptions ? `./${basename(optionsFile)}` : null', 'null']),
   // 8h wave N (N4, N6, N7, N11). The names start with `8h N` (a filter: `node conformance/reverts.mjs "8h N"`).
   // N4: `Object.namespace` takes the class value; `namespace_remote` takes the class name as text.
   R('8h N4: Object.namespace gives a fixed class name, not the name of the class value', 'conformance', [NS], [BP + 'Object.roc', 'class: opts.class.name(),', 'class: "Counter",']),
@@ -824,9 +829,9 @@ const reverts = [
   R('N5 test: a storage error of a callee loses its message', 'conformance', [IT, IF, IW],
     [BP + 'Object.roc', 'r.map_ok(|_| {}).map_err(|t| Infra(StorageErr(t))),', 'r.map_ok(|_| {}).map_err(|t| Infra(StorageErr({ name: t.name, message: "" }))),']),
   R('N5 test: a constraint error of a callee loses its message', 'conformance', [IC, IF, IW],
-    [BP + 'Object.roc', 'Constraint(c) => Err(Infra(Constraint(c)))', 'Constraint(c) => Err(Infra(Constraint({ ..c, message: "" })))']),
+    [BP + 'Object.roc', 'Constraint(c) => Err(Constraint(c))', 'Constraint(c) => Err(Constraint({ ..c, message: "" }))']),
   R('N5 test: a D1 error of a Workers callee loses its message', 'conformance', [ID, IF, IM, IW],
-    [BP + 'D1.roc', 'Err(NotConstraint) => D1Err(t)', 'Err(NotConstraint) => D1Err({ name: t.name, message: "" })']),
+    [BP + 'D1.roc', 'Err(NotConstraint) => Infra(D1Err(t))', 'Err(NotConstraint) => Infra(D1Err({ name: t.name, message: "" }))']),
   R('N5 test: a domain error of a callee that has Infra in err is not Remote', 'conformance', [IN, IJ, IF, IM, IK],
     [BP + 'Rpc.roc', 'Ok(Reply.Err(e)) => Err(Remote(e))', 'Ok(Reply.Err(e)) => Err(Infra(BadData(Str.inspect(e))))']),
   R('N5 test: a crash of a callee is BadData, not RpcErr (caller and forwarded)', 'conformance', [IR, IK],
@@ -922,6 +927,25 @@ const reverts = [
   R("iface: sync checks the first of several wasm files for one name", "sync-cross-test", [], ["js/cli.mjs", "if (wasms.length > 1) continue;", "if (false) continue;"]),
   R("iface: sync takes the dir of the config as the repo root (no .git search)", "sync-cross-test", [], ["js/cli.mjs", "if (existsSync(join(d, '.git'))) return d;", "if (false) return d;"]),
   R("iface: sync gives exit 0 for a wrong link", "sync-cross-test", [], ["js/cli.mjs", "if ([...items, ...links].some(", "if ([...items].some("]),
+  // The v2 probe fixes (PLAN.md "Status of the v2 probe fixes (2026-10-26)"). The names start with `v2fix` (a filter:
+  // `node conformance/reverts.mjs "v2fix"`). V17: the flat `Constraint`; finding 28: a bare value is one parameter and the old
+  // tag form names the new form; findings 30, 31: the BadData text of a NULL and of a boolean column.
+  R('v2fix V17: a D1 read (first!, batch!) gives Infra(Constraint) again', 'conformance', ['d1 V17: Err(Constraint(..)) matches a duplicate key in run!, first!, batch!, exec! and a session (a 409)'],
+    [BP + 'D1.roc', 'read_error = |t| if (t.name == "TooLarge") Infra(TooLarge) else thrown(t)', 'read_error = |t| if (t.name == "TooLarge") Infra(TooLarge) else match thrown(t) {\n\tConstraint(c) => Infra(D1Err({ name: "Constraint", message: c.message }))\n\tother => other\n}']),
+  R('v2fix V17: a D1 constraint failure is D1Err (no map in thrown)', 'conformance', ['d1 V17: Err(Constraint(..)) matches a duplicate key in run!, first!, batch!, exec! and a session (a 409)'],
+    [BP + 'D1.roc', 'Ok(c) => Constraint(c)\n\tErr(NotConstraint) => Infra(D1Err(t))', 'Ok(_) => Infra(D1Err(t))\n\tErr(NotConstraint) => Infra(D1Err(t))']),
+  R('v2fix V17: an object SQL constraint failure of sql_run! is SqlErr', 'conformance', ['objects SQL: a primary key gives Constraint PrimaryKey'],
+    [BP + 'Object.roc', 'Constraint(c) => Err(Constraint(c))', 'Constraint(_) => Err(Infra(SqlErr(t)))']),
+  R('v2fix 28: a bare value is BadParam (no wrap in sqlParams)', 'conformance', ['d1 params: a bare Str, I64, Dec, Sql.null and Sql.blob are one parameter (all!, first!, run!)', 'd1 params: a bare List(U8) is a list of parameters, not one blob; a bare Bool is BadParam as an item'],
+    ['js/helpers.js', '    params = [params];\n', '    throw new BadParam(`SQL parameters must be a list or a tuple, not ${kindOf(params)}`);\n']),
+  R('v2fix 28: a bare record is wrapped as one parameter (no map check at the top)', 'conformance', ['d1 params: a record and {} are BadParam (a list, a tuple or one value is needed)', 'd1 params: the old Sql tag form ([Text("ann")], a bare Int(5), Blob in a tuple) is BadParam that names the new form'],
+    ['js/helpers.js', '    if (isMap(params)) {\n      const old', '    if (false) {\n      const old']),
+  R('v2fix 28: the old tag form has no text of its own (oldTag gives null)', 'conformance', ['d1 params: the old Sql tag form ([Text("ann")], a bare Int(5), Blob in a tuple) is BadParam that names the new form'],
+    ['js/helpers.js', "  if (keys.length !== 1 || !Object.hasOwn(OLD_TAGS, keys[0])) return null;", '  return null;']),
+  R('v2fix 30: a NULL has no rule in the BadData text', 'conformance', ['d1 reads: NULL into a Str field is BadData that names Try(a, [Null]); a Try(Str, [Null]) field reads it', 'd1 reads: an optional field reads a missing column as absent, and a NULL as BadData with the rule'],
+    [BP + 'SqlRules.roc', '\t\t\tOk(0xf6) | Ok(0xf7) => Null\n', '']),
+  R('v2fix 31: a Bool field of 0 or 1 has no rule in the BadData text', 'conformance', ['d1 reads: a boolean column into a Bool field is BadData that names I64 or U8; a U8 field reads 0 and 1'],
+    [BP + 'SqlRules.roc', '\t\t\tOk(0x00) => Bit(0)\n\t\t\tOk(0x01) => Bit(1)\n', '']),
 ];
 
 // The filter: texts of names, joined by `|` (a revert runs when its name has one of them).
@@ -962,12 +986,16 @@ if (stale.length) {
 }
 
 let bad = false;
-const cleanBuild = build();
+// The clean tree: with a filter, only the tests of the selected reverts run (a filtered run does not wait for the tests of
+// other parts, which another change may break), and the conformance build only when a selected revert reads it.
+const picked = reverts.filter((rv) => !filter || filter.some((f) => rv.name.includes(f)));
+const cleanTests = filter ? Object.keys(TESTS).filter((t) => picked.some((rv) => rv.test === t)) : Object.keys(TESTS);
+const cleanBuild = !filter || picked.some((rv) => rv.test === 'conformance' || rv.test === 'manifest-ifaces') ? build() : null;
 if (cleanBuild) {
   console.log(`the clean tree: ${cleanBuild}`);
   process.exit(1);
 }
-for (const name of Object.keys(TESTS)) {
+for (const name of cleanTests) {
   const c = test(name);
   if (!c.pass) {
     console.log(`the clean tree fails ${name}: ${c.text.slice(-600)}`);

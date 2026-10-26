@@ -15,8 +15,6 @@ bench/app_prod.roc
 bench/hd4/*.bin
 bench/8g/out/
 dist/
-examples/*/node_modules/
-examples/*/app.wasm
 research/starttls/out/
-examples/auction/*.wasm
 bench/app_link_callee_b.roc
+.roc-cfw/

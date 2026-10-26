@@ -322,3 +322,84 @@ Revert checks (each new test fails when its change is reverted):
 Contract with the helper: no change. `cfw.json` `{ "api": 1 }`, `cli.mjs sync` arguments and exit codes 0, 1, 2 as before. Added: `cli.mjs init` is an error (exit 2). The template `main.roc` has no `app` header, so `roc-cfw init` must add the header that `tln init` wrote. `js/template/talon.toml` holds the `[scripts]` table only, with a leading comment line.
 
 Open: the README no longer has a working `init` command for the npm setup until `roc-cfw` is released. Step 7 owns the README rewrite. `release.json` is still made and packed but nothing reads it.
+
+## Status of steps 7 and 8 (no release) (2026-10-26)
+
+Done: step 7 (examples and README to the Talon setup) and step 8 (no npm in the release). One change from the plan: the helper `roc-cfw` has no release, so this repository does not use it. A step of `talon.toml` runs `node ../../js/cli.mjs sync ...` directly. `sync` writes the shim import as the relative path from the entry file to the directory of `cli.mjs`, so the examples import `../../js/index.js`. Wrangler stays an external program (installed on the machine). Not committed. Nothing was released, deployed or pushed.
+
+### What changed
+
+| File | Change |
+| --- | --- |
+| `scripts/bundle.sh` | Default version `0.0.1-local` (Roc refuses `0.0.0`, finding C1 of `research/plugin-probes/FINDINGS-core.md`). A version `0.0.0*` gives exit 1. Step 5 removed (the npm `.tgz`, `release.json`). The last lines are `asset:` and `url:` only. The stage copies `js/` as it is (`js/package.json` is already `{ "type": "module" }`) |
+| `js/package.json` | Only `{ "type": "module" }` |
+| `js/cli.mjs` | `shimImportOf` has no `node_modules` branch: it gives the relative path only. The usage and the comments name `node cli.mjs sync`, not the npm command |
+| `js/index.js` | The error text of a missing binding names `node .roc-cfw/cli.mjs sync`, not `npx` |
+| `bench/cli-test.mjs`, `conformance/reverts.mjs` | Case 5b and revert entry R-I2 removed. R-I1 stays |
+| `talon.toml` (new, root) | `[workspace] members` (3 apps), `[scripts]` `hello`, `auction`, `examples`. Steps are `roc build ...` and `{ in = "examples/...", run = "node ../../js/cli.mjs sync ..." }`. No `[tools]` table |
+| `examples/hello/package.json` | Deleted. No other example had one |
+| `examples/*/worker.js` (3 files) | Import `../../js/index.js` (written by `sync`) |
+| `.gitignore`, `examples/hello/.gitignore`, `examples/auction/.gitignore` | `.roc-cfw/`, `*.wasm` (the root file loses the `examples/*` lines that the new files cover, and the `node_modules` line for examples) |
+| `scripts/test_example.sh` | Takes `<app.wasm> [js dir]` (default: `js/`). Copies the directory to `<project>/.roc-cfw/`, runs `node .roc-cfw/cli.mjs sync` (it writes `worker.js`), `sync --check`, a check that the file is `examples/hello/worker.js` but for the import line, `wrangler dev --local` (6 requests) and `wrangler deploy --dry-run` |
+| `scripts/test_bundle.sh` | One argument (a bundle file or an https URL). Step 2 takes `js/` from the unpacked bundle in the package cache (`$XDG_CACHE_HOME/roc/packages/<hash>/js/`) |
+| `scripts/test_bundle_js.sh` | `js/package.json` is compared like the other files |
+| `.github/workflows/release.yml`, `.github/release-notes.md` | No `shim`, `shim_url` outputs. `gh release create` with the bundle only. The notes have `tln add --platform ...@<tag>` (the `@TAG@` marker) and the manual copy of `js/`; the `.tgz` row is gone. `tln add --tool` waits for the helper release |
+| `README.md`, `examples/hello/README.md`, `examples/auction/README.md`, `MODULES.md`, `API.md`, `PLAN.md` | Repo flow: `tln run hello`, `tln run auction`, `tln run examples`. User flow: the planned `roc-cfw` setup (marked as not released) and the manual way that works today (`cp -r <package cache>/<hash>/js .roc-cfw`, `node .roc-cfw/cli.mjs sync`). No `npm install` in a user doc. PLAN.md row "Examples on Talon" updated |
+
+### How Talon ran here (local build, no network for the compiler)
+
+| Item | Value |
+| --- | --- |
+| Talon | `/home/george/dev/Karakatiza666/talon/.work/bin/tln` (version 0.0.0 build) |
+| Isolated state | `XDG_CACHE_HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME` = `.cache/talon-run/{cache,config,data}` (the variables of Talon CLI R-EV13 that `tests/lib.sh` sets), `TALON_REGISTRY=direct`, `TALON_AUTO_INSTALL=no`. The packages `http` and `cbor` were copied into `.cache/talon-run/cache/roc/packages/` first |
+| Compiler | `tln roc link nightly-2026-10-19-601b54c .cache/nightlies/nightly-2026-10-19-601b54c/roc` (it makes `link-nightly-2026-10-19-601b54c` and downloads nothing), then `tln roc default link-nightly-2026-10-19-601b54c`. The examples have a path platform, so the header has no `roc:` pin. Resolution 13 ranks 6 (the global default) selects the link. A `roc` step in `tln run` runs through the proxy and gets it |
+| Run | `tln run examples`: exit 0. `tln run hello`: exit 0 (7 s) |
+
+Note: `sync` of `auction` prints a note that 18 Wrangler configs have the name `auction-ledger` (and `auction-web`): the copies in `research/g1a-size/work/*/app/`. The link check is then skipped. This is the behavior of `sync` before this change. It is not an error.
+
+### Tests
+
+| Test | Result |
+| --- | --- |
+| `node bench/cli-test.mjs bench/out` | all passed (68 PASS lines, with 5b removed) |
+| `node bench/sync-cross-test.mjs` | all passed (24) |
+| `node bench/iface-test.mjs bench/out` | all passed (28). No stale wasm this time |
+| `ZIG=/home/george/.local/zig/zig-x86_64-linux-0.17.0/zig scripts/bundle.sh` (default version `0.0.1-local`) | exit 0, 22 `js/` files in the bundle, 2 output lines |
+| `roc check` of `examples/hello/main.roc` with the platform URL of version `0.0.1-local` (the bundle put in a package cache with `roc unbundle`) | No errors found. The same URL with `0.0.0-local` gives "invalid package version ... reserved version 0.0.0" |
+| `scripts/test_bundle_js.sh` | PASS |
+| `scripts/test_bundle.sh dist/<hash>.tar.zst` | PASS (the 2 apps build against the bundle, `sync` and `sync --check` on the copy with `.roc-cfw/`, `wrangler dev --local` 6 routes, `wrangler deploy --dry-run`) |
+| `tln run examples`, then a compare of `git diff examples/` before and after | exit 0, no change: the committed `worker.js` files are what `sync` writes |
+| `node js/cli.mjs sync --check` for `hello`, `web` and `ledger` | exit 0 for each |
+
+### Revert checks
+
+The full sweep of `conformance/reverts.mjs` was not run. The filtered run is `ROC=<nightly> node conformance/reverts.mjs "TRANSITION 2 R-I1"`. Each file was restored after each check.
+
+| Revert | Caught by |
+| --- | --- |
+| Entry R-I1 (the import is always the package name), `reverts.mjs` filtered run | `cli-test` 1c (the clean tree passed first) |
+| Hand: `shimImportOf` gives `./.roc-cfw/index.js` always | `cli-test` 5c (`sub/` entry), and `sync --check` of `examples/hello` (exit 1) |
+| Hand: default version of `bundle.sh` back to `0.0.0-local` | The new guard of `bundle.sh` (exit 1, "bad version"). `roc check` refuses that URL |
+| Hand: `js/package.json` with an npm field | `test_bundle_js.sh` (FAIL: `js/package.json` differs from the bundle) |
+| Hand: `examples/hello/worker.js` with the old package import | `test_example.sh` (FAIL: worker.js of sync is not examples/hello/worker.js) |
+| Hand: the `hello` script step without `in` | `tln run hello` exit 2 (`sync` runs in the root, finds no app) |
+| Hand: `examples/auction/worker.js` with the old package import | `sync --check` exit 1 |
+
+### What waits for a release
+
+| Item | Waits for |
+| --- | --- |
+| `[tools]` pin of `roc-cfw` in the root `talon.toml` and in `js/template/talon.toml` (section 3.3 form: `ref` and a locked `url`), and `tln add --tool` in the release notes | The first release of the helper repository |
+| The CI job of 6.1 (`tln install --frozen`, `tln run examples`, `git diff --exit-code examples/`) | A Talon release (CLI R-IN6 form, a fixed version) |
+| The first platform release (`release.yml` has never run; `test-published` runs `test_bundle.sh <url>`) | The user's decision |
+| `--js` flag of `roc-cfw sync` (section 3.3) | Not needed any more in this repository: `node ../../js/cli.mjs` is direct. A user project needs no flag |
+| The README user flow with `roc-cfw` | The helper release. The manual flow works today |
+
+## Change of `sync` (2026-10-26): V8 and V21
+
+| Item | Change |
+| --- | --- |
+| Arguments | `cli.mjs sync` takes `--file <app>.roc` (the app source for the check of unlisted handlers). With no `--file`: `<wasm name>.roc` next to the wasm file, else `main.roc`. The helper `roc-cfw sync --file ...` must pass `--file` on to `cli.mjs` (it reads it for the header too) |
+| Exit codes | The same: 0, 1, 2. An unlisted handler is exit 0 (a warning) and exit 1 with `--check`. A `--file` that is not there is exit 2 |
+| Entry file | With `worker.options.js` next to the entry file, the entry file imports it (`makeHandler(app, options)`). The helper writes no options file. `roc-cfw sync --check` checks the import |
+| `cfw.json` | `{ "api": 1 }` stays: the arguments and the exit codes are compatible |

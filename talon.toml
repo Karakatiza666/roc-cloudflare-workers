@@ -1,0 +1,22 @@
+# Talon (`tln`) file of this repository. The scripts of the examples run from the root: a build inside
+# examples/auction/ gives PathOutsideWorkspace (the platform path goes out of the app directory).
+#   tln run hello      build examples/hello, then write its worker.js and check its wrangler.toml
+#   tln run auction    build both Workers of examples/auction, then sync each one
+#   tln run examples   both
+# `sync` is `node ../../js/cli.mjs sync`: the repository has the shim in js/. A user project has the copy .roc-cfw/
+# (research/talon-fit/TRANSITION.md 3.3, 7). Wrangler is an external program (installed on the machine).
+[workspace]
+members = ["examples/hello/main.roc", "examples/auction/web.roc", "examples/auction/ledger.roc"]
+
+[scripts]
+hello = [
+  "roc build --target=wasm32 --no-cache --output=examples/hello/app.wasm examples/hello/main.roc",
+  { in = "examples/hello", run = "node ../../js/cli.mjs sync" },
+]
+auction = [
+  "roc build --target=wasm32 --no-cache --output=examples/auction/web.wasm examples/auction/web.roc",
+  "roc build --target=wasm32 --no-cache --output=examples/auction/ledger.wasm examples/auction/ledger.roc",
+  { in = "examples/auction", run = "node ../../js/cli.mjs sync --wasm web.wasm --entry worker.js --config wrangler-web.toml" },
+  { in = "examples/auction", run = "node ../../js/cli.mjs sync --wasm ledger.wasm --entry worker-ledger.js --config wrangler-ledger.toml" },
+]
+examples = ["@hello", "@auction"]

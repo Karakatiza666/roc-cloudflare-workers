@@ -5,7 +5,6 @@
 import Io
 import Request
 import Response
-import Sql
 import cbor.Cbor
 
 Rpc(iface, arg, ret, err) :: { name : Str, iface_name : Str }.{
@@ -54,11 +53,12 @@ Rpc(iface, arg, ret, err) :: { name : Str, iface_name : Str }.{
 	}
 
 	## The infrastructure errors of the platform, one closed union (MODULES.md 1, MC9). Each platform function gives
-	## its own tags in `Infra(...)`. The `err` of a method closes them: `[NotOpen, Infra(Rpc.Infra)]`.
+	## its own tags in `Infra(...)`. The `err` of a method closes them: `[NotOpen, Infra(Rpc.Infra)]`. A SQL constraint
+	## failure is not here: it is the flat domain tag `Constraint(Sql.Constraint)`, which a method lists in its `err` when it
+	## passes it on (`[NotOpen, Constraint(Sql.Constraint), Infra(Rpc.Infra)]`).
 	Infra : [
 		StorageErr(Io.Thrown),
 		SqlErr(Io.Thrown),
-		Constraint(Sql.Constraint),
 		D1Err(Io.Thrown),
 		KvErr(Io.Thrown),
 		R2Err(Io.Thrown),

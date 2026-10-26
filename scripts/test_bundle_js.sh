@@ -3,7 +3,7 @@
 # Usage: ROC=<roc> scripts/test_bundle_js.sh [bundle .tar.zst file]    (default: the file of dist/)
 # Checks (each one fails the script):
 #   1. Each file of js/ is in the unpacked bundle, and the unpacked js/ has no other file.
-#   2. Each file but package.json has the content of the file in js/. package.json is `{ "type": "module" }` only.
+#   2. Each file has the content of the file in js/. js/package.json is `{ "type": "module" }` only.
 #   3. js/cfw.json is `{ "api": 1 }`, and js/template/ has main.roc, wrangler.toml, talon.toml, .gitignore.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -20,7 +20,6 @@ got=$(cd "$dir" && find js -type f | LC_ALL=C sort)
 if [ "$want" != "$got" ]; then echo "FAIL: the files of js/ and of the bundle differ"; diff <(echo "$want") <(echo "$got") || true; exit 1; fi
 echo "files of js/ in the bundle: $(echo "$got" | wc -l)"
 for f in $want; do
-	[ "$f" = js/package.json ] && continue
 	cmp -s "$f" "$dir/$f" || { echo "FAIL: $f differs from the bundle"; exit 1; }
 done
 [ "$(tr -d ' \n' < "$dir/js/package.json")" = '{"type":"module"}' ] || { echo "FAIL: js/package.json of the bundle is not only the type field"; exit 1; }

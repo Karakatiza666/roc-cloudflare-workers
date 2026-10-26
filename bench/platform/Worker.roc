@@ -43,7 +43,7 @@ Worker :: {
 	} -> Worker
 	new = |h| {
 		crons = h.?crons ?? []
-		given = [("fetch", h.?fetch!.is_ok()), ("scheduled", h.?scheduled!.is_ok()), ("queue", h.?queue!.is_ok()), ("email", h.?email!.is_ok()), ("tail", h.?tail!.is_ok())]
+		given = [("fetch", h.?fetch!.is_ok()), ("scheduled", h.?scheduled!.is_ok()), ("queue", h.?queue!.is_ok()), ("email", h.?email!.is_ok()), ("tail", h.?tail!.is_ok()), ("other", h.?other!.is_ok())]
 		Worker.{
 			handlers: given.keep_oks(|(name, on)| if (on) Ok(name) else Err(NotGiven)),
 			own!: |ev| match ev {
@@ -272,7 +272,8 @@ expect {
 ## methods, ifaces } }, entrypoints: { Name: { handlers, methods, ifaces } }, bindings: [{ name, kind, ... }], crons: [...] }`.
 ## `ifaces`: the distinct interface names of the methods (none: `[]`). `checkManifest` refuses two names. The shim
 ## defines a JS method only for a name in it (MODULES.md 3). The handlers of the default export: the fields that the app
-## gives (QO5 of PLAN.md 8f, part 2).
+## gives (QO5 of PLAN.md 8f, part 2). `other` is in the list when `other!` is given: no JS method belongs to it, and
+## `roc-cloudflare-workers sync` reads the list to find an `other!` that the app defines and does not list.
 manifest : Worker -> Js
 manifest = |w| {
 	texts = |names| Arr(names.map(|n| Text(n)))
@@ -285,6 +286,12 @@ manifest = |w| {
 		("bindings", Arr(w.bindings.map(binding_of))),
 		("crons", texts(w.crons)),
 	])
+}
+
+## `other!` is in the handlers of the default export (for `sync`, which warns of an `other!` that Worker.new does not list).
+expect {
+	w = Worker.new({ other!: |_kind, payload| Ok(payload) })
+	manifest(w) == Obj([("default", Obj([("handlers", Arr([Text("other")])), ("methods", Arr([])), ("ifaces", Arr([]))])), ("objects", Obj([])), ("entrypoints", Obj([])), ("bindings", Arr([])), ("crons", Arr([]))])
 }
 
 ## QO5: the handlers of the default export are the fields that the app gives, so the shim defines `queue` only here.

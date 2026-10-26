@@ -2862,7 +2862,7 @@ Open (2026-10-21, paused here):
 | Typed DO namespaces | Done (2026-10-22, branch `typed-ns`): option A of `research/typed-do-ns/`. `Rpc(iface, arg, ret, err)`, `Object(iface)`, `Object.Namespace(iface)`, `Object.Class(iface)` (`erase()` for `Worker.new objects`), `Service(iface)`, `Rpc.Serves(iface, self)`. `namespace_named`, `namespace_remote`, `Service.binding` and `Service.binding_with` take the interface as a value (`Rpc.Iface(iface)`). `on_worker` and `Rpc.entrypoint` are typed too. MODULES.md 7 and 8. |
 | Interface names across Workers (option (b)) | Done (2026-10-23, branch `iface-names`). The types check each Worker alone, and the link between Workers (a service binding to a Worker and an entry point, a `namespace_remote` to a class) is in the Wrangler config. So an interface has a name at run time: `Rpc.iface : Str -> Rpc.Iface(iface)` (`ledger = Rpc.iface("Ledger")`), and a method comes from the value (`ledger.method("settle_due")`; a shared method is `ping : Rpc.Iface(iface) -> Rpc(iface, ..)`). The manifest has `ifaces` for the default export, each class and each entry point (two names: a load error with both), and `iface` for each service binding and namespace. `checkManifest` also compares a namespace with the class of the same Worker. `roc-cloudflare-workers sync` (and `--check`) finds the other Worker of the repo by `name`, loads its wasm and compares the interface names: exit 1 with both names and paths for a mismatch, a note when the Worker is not found or not built. No interface argument on entry points (the name comes from the methods). The wire format of calls does not change. MODULES.md 3, 7, 8. Tests: `bench/iface-test.mjs` (manifest `ifaces` and `iface`, the `checkManifest` errors, two fixture apps that do not load), `bench/sync-cross-test.mjs` (the link checks of `sync`, with the fixtures `bench/app_link_*.roc`), the conformance checks of the namespaces (they assert `iface`), and 30 `iface:` reverts. |
 | roc-cbor README | Done (2026-10-23): commit 57f1935 (0.2.1 install URL) pushed. |
-| Examples on Talon | When Talon (`tln`, the parent repo) can build and install apps, switch every example (`examples/hello`, `examples/auction`, the `init` template) from the npm scripts (`npm run build` = `roc build` then `roc-cloudflare-workers sync`) to Talon. A check of the Talon design for this (build step, the `sync` step, the CLI shipped with the platform) is in `research/talon-fit/`. |
+| Examples on Talon | Done locally (2026-10-26, no release): the root `talon.toml` has the scripts `hello`, `auction`, `examples` (`tln run examples`), the examples have no `package.json`, `worker.js` imports `../../js/index.js`, and the release has no npm `.tgz` (`research/talon-fit/TRANSITION.md`, "Status of steps 7 and 8"). Waits for a release: the `[tools]` pin of `roc-cfw` (the helper has no release), the CI job that runs `tln run examples` (needs a Talon release), and the first platform release. |
 
 ## 9. JS shim
 
@@ -2971,10 +2971,10 @@ What each file does:
 
 | File | Does |
 |---|---|
-| `scripts/bundle.sh [version]` | Checks the glue against the pinned nightly (as `bench/ci-layout.sh`). Builds the production host (`zig build`). Builds `bench/app.roc` on `platform/main.roc` and runs `bench/check-layout.mjs --header` and `bench/exports-test.mjs` on it (stack first, 1 MB, the 33 production exports, no bench symbol in the host). Bundles a stage directory (`main.roc`, the modules, `LICENSE`, `targets/wasm32/host.wasm`) into `dist/<hash>.tar.zst`. Fails if the archive has a package copy or a path out. Packs `js/` with the release version into `dist/roc-cloudflare-workers-<version>.tgz`. Prints `url:` and `shim_url:`. |
-| `scripts/test_bundle.sh [bundle] [shim]` | Serves the bundle on `http://127.0.0.1` (or takes an https URL). With empty caches: `roc check` and `roc build` of `examples/hello/main.roc` and `examples/hello/with_cbor.roc` with `--replace-dep ./platform/main.roc <url>`, the layout check, and a check that the package cache has the bundle, `http` and `cbor`, each by its hash. Then `scripts/test_example.sh`. |
-| `scripts/test_example.sh <app.wasm> <shim>` | Copies the project, `npm install` of the shim (file or URL), `wrangler dev --local`, 6 requests (`/`, `/d1`, `/cbor`, `/fetch` 200 and 404, `/nowhere`), then `wrangler deploy --dry-run`. Stops each server it started. |
-| `release.yml` | On a tag `X.Y.Z` or `X.Y.Z-pre`: `tests` (`bench/test-all.sh`), `release` (`scripts/bundle.sh`, `gh release create` with the 2 files and the notes), `test-published` (`scripts/test_bundle.sh <url> <shim url>` on a clean runner). |
+| `scripts/bundle.sh [version]` | Checks the glue against the pinned nightly (as `bench/ci-layout.sh`). Builds the production host (`zig build`). Builds `bench/app.roc` on `platform/main.roc` and runs `bench/check-layout.mjs --header` and `bench/exports-test.mjs` on it (stack first, 1 MB, the 33 production exports, no bench symbol in the host). Bundles a stage directory (`main.roc`, the modules, `LICENSE`, `targets/wasm32/host.wasm`, `js/`) into `dist/<hash>.tar.zst`. Fails if the archive has a package copy, a path out, or not each file of `js/`. Prints `asset:` and `url:`. The default version is `0.0.1-local` (Roc refuses `0.0.0`). No npm package (TRANSITION.md step 8). |
+| `scripts/test_bundle.sh [bundle]` | Serves the bundle on `http://127.0.0.1` (or takes an https URL). With empty caches: `roc check` and `roc build` of `examples/hello/main.roc` and `examples/hello/with_cbor.roc` with `--replace-dep ./platform/main.roc <url>`, the layout check, and a check that the package cache has the bundle, `http` and `cbor`, each by its hash. Then `scripts/test_bundle_js.sh`, then `scripts/test_example.sh` with the `js/` of the unpacked bundle in the package cache. |
+| `scripts/test_example.sh <app.wasm> [js dir]` | Copies the project and the `js/` directory to `.roc-cfw/`, `node .roc-cfw/cli.mjs sync` and `sync --check`, `wrangler dev --local`, 6 requests (`/`, `/d1`, `/cbor`, `/fetch` 200 and 404, `/nowhere`), then `wrangler deploy --dry-run`. Stops each server it started. |
+| `release.yml` | On a tag `X.Y.Z` or `X.Y.Z-pre`: `tests` (`bench/test-all.sh`), `release` (`scripts/bundle.sh`, `gh release create` with the bundle and the notes), `test-published` (`scripts/test_bundle.sh <url>` on a clean runner). |
 
 Local proof (nightly-2026-10-12-2664a27, Zig 0.17.0, wrangler 4.151.0, Node 26.7.0):
 
@@ -2986,7 +2986,7 @@ Local proof (nightly-2026-10-12-2664a27, Zig 0.17.0, wrangler 4.151.0, Node 26.7
 | The bundle gives the same wasm as the path | `cmp` of `examples/hello/main.roc` built with the bundle and with `../../platform/main.roc` (both cold): equal. |
 | `examples/hello/main.roc` (`pf.Cbor`, `pf.D1`, `pf.Http`, no `cbor` entry, no `http` entry) | Builds with the bundle. STACK-FIRST. |
 | `examples/hello/with_cbor.roc` (also a `cbor` entry of the same URL, `pf.Cbor.Bytes` and the package `Bytes` in both directions) | Builds with the bundle. |
-| `wrangler dev --local` with the shim from the `.tgz` (file and `http://127.0.0.1` URL) | `/` gives `hello from Roc`. `/d1` gives `Ok [{ avatar: [1, 2, 3], id: 1, name: "ann" }]`. `/cbor` gives `16 bytes, Ok({ avatar: [1, 2, 3], id: 7 })`. `/fetch` gives `status 200` and `status 404` from a local server. Unknown path: `no route`. |
+| `wrangler dev --local` with the shim from the `.tgz` (file and `http://127.0.0.1` URL; since 2026-10-26: with `js/` copied to `.roc-cfw/`) | `/` gives `hello from Roc`. `/d1` gives `Ok [{ avatar: [1, 2, 3], id: 1, name: "ann" }]`. `/cbor` gives `16 bytes, Ok({ avatar: [1, 2, 3], id: 7 })`. `/fetch` gives `status 200` and `status 404` from a local server. Unknown path: `no route`. |
 | `wrangler deploy --dry-run` | Passes. |
 | Revert: the app answers another text | `scripts/test_example.sh` exits 1 (`FAIL /: got [hello WRONG]`). |
 | Revert: the shim file is missing | `scripts/test_example.sh` exits non-zero. |
@@ -2996,8 +2996,8 @@ Choices:
 | Choice | Reason |
 |---|---|
 | The bundle holds a stage directory, not `platform/`. | The bundle has exactly its files. `platform/targets/` is git-ignored, and `LICENSE` is in the bundle (UPL asks for the notice with copies). `roc bundle` takes `main.roc LICENSE targets/wasm32/host.wasm` and follows the imports. |
-| The shim is an npm package in the release (`.tgz` by `npm pack`), not a registry package and not files to copy. | The shim and the host must have the same version (the ABI of `js_await`, the exports). A file of the same release cannot differ. `npm install <URL>` works with no registry and no account, and the same file can go to the registry later with `npm publish`. A copy of 13 files in each project would lose the version. The package name is `roc-cloudflare-workers` (unscoped): change it in `js/package.json` before the first publish if the user wants a scope. `exports` has `.` only. |
-| `js/package.json` has `0.0.0-dev`. `scripts/bundle.sh` writes the tag in a copy. | No second place for the version in the tree. |
+| The shim is `js/` in the platform bundle (changed 2026-10-26, TRANSITION.md step 8: first an npm `.tgz`, now no npm package). | The shim and the host must have the same version (the ABI of `js_await`, the exports). A file of the same bundle cannot differ. A project copies `js/` to `.roc-cfw/`. |
+| `js/package.json` is `{ "type": "module" }` only (changed 2026-10-26). | `node` loads `.roc-cfw/*.js` as ES modules in a project with no `package.json`. The version is the tag of the release. |
 | The example app has a path platform line, and tests use `--replace-dep`. | The same model as roc-cbor (`examples` keep the path). A user copies the project and writes the URL. |
 | `roc build --no-cache` in the scripts and in the README. | A warm build cache gave other code (see Findings). |
 | `release.yml` runs `bench/test-all.sh` first. | `bench/test-all.sh` needs `WORKERD`: the job installs wrangler and takes the workerd of its package. |
@@ -3034,8 +3034,6 @@ gh run watch
 # 4. The first release (delete the pre-release if the run was green)
 gh release delete 0.1.0-rc.1 --cleanup-tag --yes
 git tag 0.1.0 && git push origin 0.1.0
-# 5. Optional, later: the shim on the npm registry (the .tgz of the release)
-npm publish dist/roc-cloudflare-workers-0.1.0.tgz --access public
 ```
 
 After step 4: put the release URL in `README.md`, and check the `test-published` job.
@@ -3496,6 +3494,71 @@ Decisions on the 12-pre findings (2026-10-16):
 | Foreign units | 12d sums no foreign unit, and checks only their table entries | None exist after `init`. The bench apps and talon use the default build (no boxy runtime), which has none at all. With `--specialize=no`, they appear at the first requests and some change. |
 | Order of `poolInit` | An invariant that 12d checks: no foreign unit below `POOL_LO` | `poolInit` runs at the first `js_alloc`, before the roc runtime takes pages |
 | Constant data | 12d sums it after `set_free_mark` and `init`. The ranges come from linker symbols, not fixed addresses. | `FREE_MARK` is set by JS before `init` |
+
+## Status of the v2 probe fixes (2026-10-26)
+
+Findings: `research/plugin-probes/v2/FINDINGS-v2-core.md` and `FINDINGS-v2-storage-do.md`. Each part below is appended by the agent that made the fix. Not committed, not released.
+
+### D1
+
+Three D1 traps of the probes: V17 (core), 28, 30, 31 (storage-do). The roc-cbor package does not change (0.2.1).
+
+Changes:
+
+| Finding | Fix | Design | Files |
+| --- | --- | --- | --- |
+| V17: a constraint failure is `Err(Infra(Constraint(..)))`, and `Err(Constraint(..))` compiles and never matches | `Constraint(Sql.Constraint)` is flat, beside `Infra([...])`, in each D1 function that runs SQL (`all!`, `first!`, `run!`, `rows!`, `all_tuples!`, `batch!`, `exec!`, the `_with` forms, the twins, the `D1.Session` forms) and in `Object.Self` `sql!`, `sql_with!`, `sql_run!`, `sql_rows!`, `sql_rows_with!` | A unique or primary key failure is a domain result (a 409), not an infrastructure fault (`MODULES.md` 1, "Nested and flat errors"). `thrown` gives `[Constraint(..), Infra([D1Err(..), ..others]), ..e]`, and `read_error` calls it (one map). `Rpc.Infra` loses `Constraint` (28 tags): an `Rpc` method that passes it on lists `Constraint(Sql.Constraint)` in its `err`. The old pattern `Infra(Constraint(_))` is now a compile error at a closed type | `platform/D1.roc`, `platform/Object.roc`, `platform/Rpc.roc`, `platform/Sql.roc` (doc), the copies in `bench/platform/`, `MODULES.md` 1 (MC9, "Named error tags", "Nested and flat errors", "Cost of `Rpc.Infra`") and 5.1, 7, 8, `API.md` 6 and 7, `examples/auction/Gavel.roc` (`Faults` without `Constraint`; `RoomErr` and `SettleErr` with it), `examples/auction/web.roc` (`Constraint(_) => 409`), `research/n5-rpc-errors/g1a-check/both.roc` |
+| 28: a bare parameter (`"ann"`, `5`) compiles and is `BadParam` | One value that is not an array or a map is one parameter: `sqlParams` puts it in a list. A record or `{}` (a map) stays `BadParam("SQL parameters must be a list, a tuple or one value ...")` | `List(U8)` is a CBOR array, so it stays a list of parameters (a blob is `Sql.blob`). A bare `Bool` is `[Bool]`, so it is the `BadParam` of a Bool item | `js/helpers.js`, `MODULES.md` 1 (formats table) and 5.1, `platform/Sql.roc` and `platform/D1.roc` (doc) |
+| 28: a tag (`[Text("ann")]`, `[Int(9)]`) compiles and is `BadParam` with a general text | The `BadParam` names the old form and the new form: `SQL parameter 0: Text("ann") is the old Sql tag form, write "ann"`; `SQL parameters: Int(5) ...` for a bare tag; `Blob([1, 2]) ... write Sql.blob([1, 2])` | Compile time is not possible with no big API change: `params` is any `Cbor.Writable`, a `where` clause cannot leave out a type, and the platform cannot add a method to `Str` or the number types. A nominal parameter type (`Sql.params(...)`) would change each call. The old `Null` (no payload) encodes as the text `"Null"`: JS cannot tell it from text | `js/helpers.js` (`oldTag`), `MODULES.md` 5.1 |
+| 30: a NULL reads only into `Try(a, [Null])`; `Str`, `Try(a, [Missing])`, a tag union and an optional field are `BadData("... does not fit the type")` | The text names the rule: `column t: NULL, read it into a Try(a, [Null]) field` (a tuple: `... item`) | The platform cannot read a NULL into an optional field: JS could drop a NULL key, but then a `Try(a, [Null])` field is `MissingRequiredField` (`research/d1-traps/rows.roc`). An optional field reads a missing column as absent (`.?x` is `Err(MissingField)`) | `platform/SqlRules.roc` (`kind_at`, `bad_data`, `bad_tuple_data`), `MODULES.md` 5.1 "Row fields" |
+| 31: a `Bool` field is `BadData` (D1 gives 0 and 1) | The text names the rule: `column b: the integer 1 does not fit the type, a boolean column gives 0 or 1: read it into an I64 or U8 field, not a Bool` | `parse_bool` of roc-cbor reads only CBOR true and false. The format is in the package, so the platform cannot change it | `platform/SqlRules.roc`, `MODULES.md` 5.1 |
+
+A roc-cbor change for 30 and 31 (not made, not released):
+
+| Change | Why | Repro |
+| --- | --- | --- |
+| An option `bool_from_int ?: Bool` of `Cbor.Options`: `parse_bool` also reads the unsigned integers 0 and 1 | SQLite has no boolean, so a typed row cannot have a `Bool` field | `research/d1-traps/rows.roc`, "Bool from 0": `{"a": 0}` into `{ a : Bool }` is `InvalidCbor(3)` |
+| A NULL value of a key reads as a missing key, for an optional field and a `Try(a, [Missing])` field | A nullable column in an app record is usually `x ?: Str`. Now only `Try(a, [Null])` reads a NULL | `rows.roc`: `{"a": null}` into `{ a ?: Str, .. }` and into `{ a : Try(Str, [Missing]) }` is `InvalidCbor(3)`. Open point: a skip of each NULL key also makes a `Try(a, [Null])` field `MissingRequiredField` (`rows.roc`), so the option must keep `Try(a, [Null])` (a compiler rule for a missing field of that type, or a per-call option). This needs a design decision |
+
+Tests (2026-10-26, nightly-2026-10-19-601b54c, `--no-cache`):
+
+| Test | Result |
+| --- | --- |
+| `roc test platform/main.roc` (with the new `expect`s of `SqlRules.roc`: the NULL and the boolean texts, for records and tuples) | 185 passed |
+| `roc test research/d1-traps/rows.roc` (what roc-cbor 0.2.1 does with a NULL, a missing key and 0 into each field type) | passed |
+| `node conformance/run.mjs` (whole app, built from `conformance/app.roc`) | 469 passed, 0 failed |
+| New D1 checks (`conformance/checks/d1.mjs`): "d1 V17: Err(Constraint(..)) matches ... (a 409)", "d1 V17: a syntax error is still Infra(D1Err) ...", "d1 params: a bare Str, I64, Dec, Sql.null and Sql.blob ...", "... a bare value in a session and in Sql.stmt of a batch", "... a bare List(U8) is a list of parameters ...", "... the old Sql tag form ...", "d1 reads: ..." (4 checks) | passed |
+| Changed checks: the 8d constraint checks (`Err Constraint(..)`), "d1 params: a record and {} ...", `objects.mjs` (the constraint texts, 2 new checks for a bare value, the old form and the row texts), `rpcerr.mjs` (`Remote(Constraint)`, the wire form `{ Err: { Constraint: .. } }`) | passed |
+| `conformance/must-not-compile.sh` | 105 PASS, exit 0 |
+| `bench/cbor-js-test.mjs`, `bench/program-test.mjs` | 57 of 57, 15 of 15 |
+| `roc build` of `examples/auction/web.roc` and `ledger.roc`, `roc test examples/auction/ledger.roc` | 0 errors, 0 warnings; 188 passed |
+
+Reverts (`node conformance/reverts.mjs "v2fix"`, and the old entries that this change made stale):
+
+| Revert | Result |
+| --- | --- |
+| `v2fix V17: a D1 read (first!, batch!) gives Infra(Constraint) again` | caught, 2 checks FAIL |
+| `v2fix V17: a D1 constraint failure is D1Err (no map in thrown)` | caught, 10 |
+| `v2fix V17: an object SQL constraint failure of sql_run! is SqlErr` | caught, 10 |
+| `v2fix 28: a bare value is BadParam (no wrap in sqlParams)` | caught, 6 |
+| `v2fix 28: a bare record is wrapped as one parameter (no map check at the top)` | caught, 3 |
+| `v2fix 28: the old tag form has no text of its own (oldTag gives null)` | caught, 2 |
+| `v2fix 30: a NULL has no rule in the BadData text` | caught, 4 |
+| `v2fix 31: a Bool field of 0 or 1 has no rule in the BadData text` | caught, 2 |
+| Old entries with new texts: `D1.all_tuples: no CAST hint ...`, `8h B D1: the old text ...`, `N5 test: a constraint error of a callee ...`, `N5 test: a D1 error of a Workers callee ...`; old entries run again: `D1: the old map ...`, `D1: no map ...`, `SQL params: D1 bind does not check ...` | all caught (1, 4, 10, 11, 2, 10, 14) |
+
+`Rpc.Infra` changed, so a stale revert of another part is possible: none in the stale scan, except `V21: sync ignores the options file`, which belongs to the `js/cli.mjs` work.
+
+### sync: V8 and V21
+
+| Finding | Fix | Files | Tests |
+| --- | --- | --- | --- |
+| V8: a handler that is defined and not listed never runs | `sync` reads the app source (`--file`; default `<wasm name>.roc` next to the wasm file, else `main.roc`) with a lexical scan (`scanDefs`, `unlistedHandlers` in `js/cli.mjs`). A def at column 0 (`name! =` or `name! :`, outside of brackets, comments and strings) of a handler name that the manifest does not list gives `sync: main.roc:12: scheduled! is defined but Worker.new does not list it; it never runs`. No warning when the code uses the name in another place (`Worker.cron("..", scheduled!)`) or has it only as a record label. Exit 0; `sync --check` exit 1. The manifest `handlers` of the default export has `other` now (`platform/Worker.roc`, `bench/platform/Worker.roc`); the format is the same, one more possible name. Only the app file is read, not the modules that it imports | `js/cli.mjs`, `platform/Worker.roc`, `bench/platform/Worker.roc`, `MODULES.md` 3, `README.md` | `bench/cli-test.mjs` 6a to 6q |
+| V21: an app with `makeHandler` options cannot use `sync` | The file `worker.options.js` next to `worker.js` (for `worker-ledger.js`: `worker-ledger.options.js`) is the options object (default export). The `worker.js` that `sync` writes has `import options from './worker.options.js';` and `makeHandler(app, options)`. `sync --check` checks the import. `sync` never writes the options file and fails when it has no default export. No file: the output is the same byte for byte | `js/cli.mjs` (`entryOf`, `optionsFileOf`), `MODULES.md` 3, `README.md`, `API.md` 6.4 | `bench/cli-test.mjs` 7a to 7m (7k to 7m load the written `worker.js` in Node with `bench/cf-node.mjs`) |
+
+Also: `conformance/reverts.mjs` with a filter runs the clean-tree tests of the selected reverts only (before: all tests, so another change that breaks one test blocked every filtered run). Revert checks: 5 entries with the names `V8: ...` and `V21: ...` (`node conformance/reverts.mjs "V8:|V21:"`). `bench/out/app_events.wasm` was built again (the `other` in the manifest); `bench/build.sh` does the same.
+
+Tests (2026-10-26): `node bench/cli-test.mjs bench/out`, `node bench/sync-cross-test.mjs`, `node bench/iface-test.mjs bench/out`: all passed. `tln run examples`: exit 0, no `sync:` warning, `git diff examples/` the same as before.
 
 ## Done when
 

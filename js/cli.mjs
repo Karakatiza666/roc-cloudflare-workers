@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// The command of the shim package (README.md "Use it", MODULES.md 3). `.mjs`: the shim runs in workerd, this file only
-// in Node, so the module lists of the tests (`*.js`) do not take it.
-//   roc-cloudflare-workers sync   reads the manifest of app.wasm, writes worker.js, checks the Wrangler config
+// The command of the shim (README.md "Use it", MODULES.md 3). `.mjs`: the shim runs in workerd, this file only
+// in Node, so the module lists of the tests (`*.js`) do not take it. There is no npm package: `node js/cli.mjs sync` in
+// this repository, `node .roc-cfw/cli.mjs sync` (or `roc-cfw sync`) in a project.
+//   node cli.mjs sync   reads the manifest of app.wasm, writes worker.js, checks the Wrangler config
 // `init` is not here: it is `roc-cfw init` of the helper, with the files of template/ (research/talon-fit/TRANSITION.md).
 import { readFileSync, writeFileSync, existsSync, realpathSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve, basename } from 'node:path';
@@ -21,17 +22,22 @@ const FLAGS = [
 const MIN_DATE = '2026-10-01';
 
 const USAGE = `usage:
-  roc-cloudflare-workers sync [--wasm app.wasm] [--entry worker.js] [--config wrangler.toml] [--check] [--force]
+  node cli.mjs sync [--wasm app.wasm] [--entry worker.js] [--config wrangler.toml] [--file main.roc] [--check] [--force]
       Reads the manifest of the app (Worker.new), writes the entry file (the objectClass and entrypointClass lines and
       makeHandler), and checks the Wrangler config: the Durable Object bindings and migrations, the bindings of
       Worker.new bindings, triggers.crons of Worker.new crons, and the compatibility flags. It prints the parts to add.
+      It also reads the app source (--file; default: <wasm name>.roc next to the wasm file, else main.roc) and warns of a
+      handler that the source defines at the top level (scheduled!, queue!, alarm!, ...) and that Worker.new, Object.class or
+      Rpc.entrypoint does not list: it never runs. A warning is exit 0, and exit 1 with --check.
+      An options file next to the entry file (worker.options.js for worker.js) is the second argument of makeHandler: the
+      entry file imports its default export. sync never writes the options file.
       It also checks the link to the other Workers of the repo: a service binding (service, entrypoint) and a Durable
       Object binding with script_name go to a Worker whose Wrangler config has that name (found from the repo root, the
       directory with .git). The interface name of the caller (Rpc.iface) must be the one of the entry point or class.
-      --check: write nothing, fail when the entry file is not the one that sync writes.
+      --check: write nothing, fail when the entry file is not the one that sync writes or a handler is not listed.
       --force: write the entry file also when it was not made by sync.
       The entry file imports the shim by the relative path from the entry file to the directory of this file
-      (./.roc-cfw/index.js), or by the package name roc-cloudflare-workers when this file is in node_modules/.
+      (./.roc-cfw/index.js).
       Exit 0: all good. Exit 1: a part is missing or wrong. Exit 2: a bad command line or no app.`;
 
 // ---- The command line ----
@@ -262,17 +268,22 @@ const at = (o, path) => path.split('.').reduce((v, k) => (v === undefined || v =
 
 // ---- sync ----
 
-// The import of the shim in the entry file: the package name when `cliDir` (the directory of this file) is in a
-// node_modules directory (npm), else the relative path from `entryDir` to `cliDir` (the copy `.roc-cfw/` of a project).
+// The import of the shim in the entry file: the relative path from `entryDir` to `cliDir` (the directory of this file:
+// the copy `.roc-cfw/` of a project, or `js/` of this repository).
 export function shimImportOf(entryDir, cliDir) {
-  if (cliDir.split(/[\\/]/).includes('node_modules')) return 'roc-cloudflare-workers';
   const rel = relative(entryDir, cliDir).split('\\').join('/');
   const dir = /^\.\.?(\/|$)/.test(rel) ? rel : `./${rel}`;
   return `${dir.replace(/\/$/, '')}/index.js`;
 }
 
-// The entry file of the manifest: one export line for each class, then the default export.
-export function entryOf(m, wasmImport, shimImport) {
+// The name of the options file of an entry file: `worker.js` has `worker.options.js` (MODULES.md 3, "The options file").
+export function optionsFileOf(entry) {
+  return entry.replace(/\.m?js$/, '') + '.options.js';
+}
+
+// The entry file of the manifest: one export line for each class, then the default export. `optionsImport` (the path
+// of the options file, `./worker.options.js`) is the second argument of makeHandler; none gives the file with no options.
+export function entryOf(m, wasmImport, shimImport, optionsImport = null) {
   const objects = Object.keys(m.objects);
   const entrypoints = Object.keys(m.entrypoints);
   const names = ['makeHandler', ...(objects.length ? ['objectClass'] : []), ...(entrypoints.length ? ['entrypointClass'] : [])];
@@ -280,13 +291,132 @@ export function entryOf(m, wasmImport, shimImport) {
     `${MARK} from the manifest of the app. Run it again after a change of the classes in Roc.`,
     `import app from '${wasmImport}';`,
     `import { ${names.join(', ')} } from '${shimImport}';`,
+    ...(optionsImport ? [`import options from '${optionsImport}';`] : []),
     '',
   ];
   for (const c of objects) lines.push(`export const ${c} = objectClass('${c}');`);
   for (const c of entrypoints) lines.push(`export const ${c} = entrypointClass('${c}');`);
   if (objects.length || entrypoints.length) lines.push('');
-  lines.push('export default makeHandler(app);', '');
+  lines.push(optionsImport ? 'export default makeHandler(app, options);' : 'export default makeHandler(app);', '');
   return lines.join('\n');
+}
+
+// ---- The handlers that the app defines and does not list (MODULES.md 3, "A handler that is not listed") ----
+
+// The handlers of the platform by the Roc name: the JS name of the manifest, and where the manifest lists it. `default`:
+// the fields of Worker.new. `class`: the fields of Object.class. `fetch`: Worker.new, Object.class or Rpc.entrypoint.
+// `other!` is in the `handlers` of the default export since the manifest of this version.
+const HANDLER_DEFS = {
+  'fetch!': { js: 'fetch', in: 'fetch' },
+  'scheduled!': { js: 'scheduled', in: 'default' },
+  'queue!': { js: 'queue', in: 'default' },
+  'email!': { js: 'email', in: 'default' },
+  'tail!': { js: 'tail', in: 'default' },
+  'other!': { js: 'other', in: 'default' },
+  'init!': { js: 'init', in: 'class' },
+  'alarm!': { js: 'alarm', in: 'class' },
+  'web_socket_message!': { js: 'webSocketMessage', in: 'class' },
+  'web_socket_close!': { js: 'webSocketClose', in: 'class' },
+  'web_socket_error!': { js: 'webSocketError', in: 'class' },
+};
+const WHO_LISTS = { default: 'Worker.new does not list it', class: 'no Object.class lists it', fetch: 'Worker.new, Object.class and Rpc.entrypoint do not list it' };
+
+// A lexical scan of a Roc source: `defs` has each name with `!` that is defined at the top level (at column 0, outside of
+// brackets, as `name! =` or `name! :`) with the line of its first definition or annotation. `uses` has each such name that
+// the code also has anywhere else (not after a dot: `Routes.fetch!` is another def). A comment, a string (also its
+// `${...}` parts, which are code) and a `\\` line of a multi-line string are not code.
+export function scanDefs(text) {
+  const defs = new Map();
+  const uses = new Set();
+  const n = text.length;
+  const stack = []; // the bracket depth at each open `${` of a string
+  let i = 0;
+  let line = 1;
+  let depth = 0;
+  let inString = false;
+  let lineStart = true;
+  const ident = /[A-Za-z_][A-Za-z0-9_]*!?/y;
+  const def = /[ \t]*(?:=(?![=>])|:(?!:))/y;
+  const label = /[ \t]*:(?!:)/y;
+  while (i < n) {
+    const c = text[i];
+    if (inString) {
+      if (c === '\\') {
+        if (text[i + 1] === '\n') line++;
+        i += 2;
+      } else if (c === '"') {
+        inString = false;
+        i++;
+      } else if (c === '$' && text[i + 1] === '{') {
+        stack.push(depth++);
+        inString = false;
+        i += 2;
+      } else {
+        if (c === '\n') line++;
+        i++;
+      }
+      continue;
+    }
+    if (c === '\n') {
+      line++;
+      lineStart = true;
+      i++;
+      continue;
+    }
+    const atStart = lineStart;
+    lineStart = false;
+    if (c === '#' || (c === '\\' && text[i + 1] === '\\')) {
+      while (i < n && text[i] !== '\n') i++;
+    } else if (c === '"') {
+      inString = true;
+      i++;
+    } else if (/[A-Za-z_]/.test(c)) {
+      ident.lastIndex = i;
+      const name = ident.exec(text)[0];
+      const dotted = i > 0 && text[i - 1] === '.';
+      i += name.length;
+      if (name.endsWith('!') && !dotted) {
+        def.lastIndex = i;
+        if (atStart && depth === 0 && def.test(text)) {
+          if (!defs.has(name)) defs.set(name, line);
+        } else {
+          // A record label (`scheduled!: handle!`) is not a use of the def of that name.
+          label.lastIndex = i;
+          if (!label.test(text)) uses.add(name);
+        }
+      }
+    } else {
+      if (c === '(' || c === '[' || c === '{') depth++;
+      else if (c === ')' || c === ']' || c === '}') {
+        depth = Math.max(0, depth - 1);
+        if (c === '}' && stack.length && stack.at(-1) === depth) {
+          stack.pop();
+          inString = true;
+        }
+      }
+      i++;
+    }
+  }
+  return { defs, uses };
+}
+
+// The handlers that the source defines at the top level and the manifest does not list, and that the code does not use
+// in another place (a `Worker.cron("...", scheduled!)` uses it): `[{ name, line, text }]` in the order of the lines.
+export function unlistedHandlers(m, source) {
+  const { defs, uses } = scanDefs(source);
+  const classes = [...Object.values(m.objects), ...Object.values(m.entrypoints)];
+  const listed = {
+    default: (js) => m.handlers.includes(js),
+    class: (js) => classes.some((c) => c.handlers.includes(js)),
+    fetch: (js) => m.handlers.includes(js) || classes.some((c) => c.handlers.includes(js)),
+  };
+  const out = [];
+  for (const [name, line] of defs) {
+    const h = HANDLER_DEFS[name];
+    if (!h || uses.has(name) || listed[h.in](h.js)) continue;
+    out.push({ name, line, text: `${name} is defined but ${WHO_LISTS[h.in]}; it never runs` });
+  }
+  return out.sort((x, y) => x.line - y.line);
 }
 
 // The checks of the Wrangler config against the manifest. Each item: `{ level: 'ok' | 'missing' | 'wrong' | 'note',
@@ -541,7 +671,7 @@ export function crossCheck(m, cfg, { cfgFile, wasmFile, root, workers, manifestF
 }
 
 function sync(argv) {
-  const a = parseArgs(argv, ['--check', '--force'], ['--wasm', '--entry', '--config']);
+  const a = parseArgs(argv, ['--check', '--force'], ['--wasm', '--entry', '--config', '--file']);
   if (a._.length) usage(`sync takes no argument ${a._[0]}`);
   const dir = process.cwd();
   const wasm = resolve(a.wasm ?? 'app.wasm');
@@ -559,13 +689,16 @@ function sync(argv) {
   // The entry file.
   let wasmImport = relative(dirname(entry), wasm).split('\\').join('/');
   if (!wasmImport.startsWith('.')) wasmImport = `./${wasmImport}`;
-  const want = entryOf(m, wasmImport, shimImportOf(dirname(entry), here));
+  // The options file of the entry file: the user's file, sync only imports it.
+  const optionsFile = optionsFileOf(entry);
+  const hasOptions = existsSync(optionsFile);
+  const want = entryOf(m, wasmImport, shimImportOf(dirname(entry), here), hasOptions ? `./${basename(optionsFile)}` : null);
   const old = existsSync(entry) ? readFileSync(entry, 'utf8') : null;
   const name = relative(dir, entry);
   const counts = `${Object.keys(m.objects).length} object classes, ${Object.keys(m.entrypoints).length} entry points`;
   if (old === want) console.log(`${name}: up to date (${counts})`);
   else if (a.check) {
-    console.log(`${name}: not the file that sync writes (${counts}). Run roc-cloudflare-workers sync. The file:\n${want}`);
+    console.log(`${name}: not the file that sync writes (${counts}). Run sync (node .roc-cfw/cli.mjs sync). The file:\n${want}`);
     fail = true;
   } else if (old !== null && !old.startsWith(MARK) && !a.force) {
     console.log(`${name}: not written: sync did not make it (no "${MARK}" line). Put these lines in it, or use --force:\n${want}`);
@@ -573,6 +706,24 @@ function sync(argv) {
   } else {
     writeFileSync(entry, want);
     console.log(`${name}: written (${counts})`);
+  }
+  if (hasOptions) {
+    const optionsName = relative(dir, optionsFile);
+    if (/\bexport\s+default\b|\bas\s+default\b/.test(readFileSync(optionsFile, 'utf8'))) console.log(`${optionsName}: the second argument of makeHandler`);
+    else {
+      console.log(`${optionsName}: has no default export. The entry file imports its default export: export default { ... }`);
+      fail = true;
+    }
+  }
+
+  // The handlers that the app defines and Worker.new does not list (a raw event! has no Worker.new to compare).
+  const source = a.file ? resolve(a.file) : [join(dirname(wasm), `${basename(wasm, '.wasm')}.roc`), resolve('main.roc')].find((f) => existsSync(f));
+  if (a.file && !existsSync(source)) usage(`${a.file} is not there`);
+  if (source && got !== null) {
+    for (const u of unlistedHandlers(m, readFileSync(source, 'utf8'))) {
+      console.log(`sync: ${relative(dir, source)}:${u.line}: ${u.text}`);
+      if (a.check) fail = true;
+    }
   }
 
   // The Wrangler config.
@@ -628,7 +779,7 @@ function sync(argv) {
 
 // ---- main ----
 
-// The command runs only when Node runs this file (also through the `bin` link of npm), not on an import of a test.
+// The command runs only when Node runs this file, not on an import of a test.
 const isMain = () => {
   try {
     return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));

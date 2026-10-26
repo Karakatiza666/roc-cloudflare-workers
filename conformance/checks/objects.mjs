@@ -15,7 +15,8 @@ const sqlp = (t, c) => counter(t, `sql_params/${c}`);
 const has = (r, part) => ok(r.status === 200 && r.body.includes(part), `got ${r.status} ${JSON.stringify(r.body.slice(0, 400))}, want a text with ${JSON.stringify(part)}`);
 const ticks = (t) => t.logs.filter((l) => String(l.message).includes('"msg":"ticker alarm"')).map((l) => JSON.parse(String(l.message).slice(String(l.message).indexOf('{'))));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const constraint = (kind, message) => `Err(Infra(Constraint({ kind: ${kind}, message: ${JSON.stringify(message)} })))`;
+// V17: a constraint failure is the flat `Constraint`, not `Infra(Constraint)`.
+const constraint = (kind, message) => `Err(Constraint({ kind: ${kind}, message: ${JSON.stringify(message)} }))`;
 
 // A second Miniflare that must not start: the error names `name`.
 async function loadFails(t, entry, name) {
@@ -66,11 +67,22 @@ export const checks = [
   ['objects SQL params: a record and {} are BadParam; a tag item is BadParam with the hint; a Bool item is BadParam', async (t) => {
     for (const c of ['record', 'empty_record']) {
       const r = await sqlp(t, c);
-      ok(r.body.includes('name: "BadParam"') && r.body.includes('SQL parameters must be a list or a tuple, not a record or a tag'), `${c}: got ${r.body}`);
+      ok(r.body.includes('name: "BadParam"') && r.body.includes('SQL parameters must be a list, a tuple or one value, not a record or a tag'), `${c}: got ${r.body}`);
     }
     has(await sqlp(t, 'tag_item'), 'SQL parameter 1: a record or a tag is not a SQL value, tag values are not SQL values, use Sql.null or Sql.or_null for NULL');
     has(await sqlp(t, 'bool'), 'SQL parameter 1: a Bool is not a SQL value, use 0 or 1');
     has(await sqlp(t, 'bool'), 'name: "BadParam"');
+  }],
+  // v2 probe finding 28: a bare value is one parameter (js/helpers.js `sqlParams`), the old tag form names the new form.
+  ['objects SQL params: a bare value is one parameter; [Text("ann")] is BadParam that names the old and the new form', async (t) => {
+    answer(await sqlp(t, 'bare'), 'Ok([{ t: "one" }])');
+    has(await sqlp(t, 'old_text'), 'SQL parameter 0: Text(\\"ann\\") is the old Sql tag form, write \\"ann\\"');
+    has(await sqlp(t, 'old_text'), 'name: "BadParam"');
+  }],
+  // v2 probe findings 30, 31: the BadData of a NULL and of a boolean column names the rule.
+  ['objects sql!: NULL into a Str field and 1 into a Bool field give BadData that names the rule', async (t) => {
+    answer(await sqlp(t, 'read_null'), 'Err(Infra(BadData("column t: NULL, read it into a Try(a, [Null]) field")))');
+    answer(await sqlp(t, 'read_bool'), 'Err(Infra(BadData("column b: the integer 1 does not fit the type, a boolean column gives 0 or 1: read it into an I64 or U8 field, not a Bool")))');
   }],
   ['objects SQL params: Sql.none and [x] are parameter lists', async (t) => {
     answer(await sqlp(t, 'none'), 'Ok([{ id: 1 }])');

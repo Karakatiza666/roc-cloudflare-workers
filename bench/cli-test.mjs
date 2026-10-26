@@ -6,8 +6,8 @@
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join, relative, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const wasm = resolve(process.argv[2] ?? join(root, 'bench/out'), 'app_b3.wasm');
@@ -160,9 +160,8 @@ for (const form of ['toml', 'jsonc']) {
   check('4f --config names the file', o.code === 0 && o.out.includes('other.toml:'), `exit ${o.code}: ${o.out.slice(0, 200)}`);
 }
 
-// ---- 5. The import of the shim in worker.js (TRANSITION step 2): R-I1, R-I2 ----
-// R-I1: cli.mjs outside node_modules: the relative path from worker.js to the directory of cli.mjs.
-// R-I2: cli.mjs in node_modules/: the package name roc-cloudflare-workers (the npm setup).
+// ---- 5. The import of the shim in worker.js (TRANSITION step 2): R-I1 ----
+// R-I1: the relative path from worker.js to the directory of cli.mjs. There is no npm package: no other form.
 {
   const shimLine = (dir) => (readFileSync(join(dir, 'worker.js'), 'utf8').match(/^import \{[^}]*\} from '([^']*)';$/m) ?? [])[1];
   const jsDir = join(root, 'js');
@@ -172,10 +171,6 @@ for (const form of ['toml', 'jsonc']) {
   check('5a (R-I1) cli.mjs in .roc-cfw/: the import is ./.roc-cfw/index.js', ra.status === 0 && shimLine(a) === './.roc-cfw/index.js', `exit ${ra.status}, import ${shimLine(a)}: ${ra.stdout.slice(0, 200)}`);
   const ca = spawnSync(process.execPath, [join(a, '.roc-cfw/cli.mjs'), 'sync', '--check'], { cwd: a, encoding: 'utf8' });
   check('5a2 (R-I1) sync --check after sync gives exit 0', ca.status === 0, `exit ${ca.status}: ${ca.stdout.slice(0, 200)}`);
-  const b = project(complete(), 'toml');
-  cpSync(jsDir, join(b, 'node_modules/roc-cloudflare-workers'), { recursive: true });
-  const rb = spawnSync(process.execPath, [join(b, 'node_modules/roc-cloudflare-workers/cli.mjs'), 'sync'], { cwd: b, encoding: 'utf8' });
-  check('5b (R-I2) cli.mjs in node_modules/: the import is the package name', rb.status === 0 && shimLine(b) === 'roc-cloudflare-workers', `exit ${rb.status}, import ${shimLine(b)}: ${rb.stdout.slice(0, 200)}`);
   // A worker.js in a subdirectory (--entry): the relative path goes up.
   const c = project(complete(), 'toml');
   cpSync(jsDir, join(c, '.roc-cfw'), { recursive: true });
@@ -183,6 +178,118 @@ for (const form of ['toml', 'jsonc']) {
   const rc = spawnSync(process.execPath, [join(c, '.roc-cfw/cli.mjs'), 'sync', '--entry', 'sub/worker.js'], { cwd: c, encoding: 'utf8' });
   const sub = readFileSync(join(c, 'sub/worker.js'), 'utf8');
   check('5c (R-I1) an entry file in sub/: the import is ../.roc-cfw/index.js', sub.includes("from '../.roc-cfw/index.js';"), `exit ${rc.status}: ${sub.slice(0, 300)}`);
+}
+
+// ---- 6. A handler that the app defines and Worker.new does not list (V8): a warning, exit 0; --check exit 1 ----
+// The source is a fixture `main.roc` next to app.wasm (app_b3.wasm: the default export has `fetch` only, the class Counter
+// has no handler). The scan is lexical: a name at column 0, `name! =` or `name! :`, not in a comment or a string.
+const SCHED = 'scheduled! : Worker.Scheduled => Try({}, _)\nscheduled! = |_s| Ok({})\n';
+const warn = (line, text) => `sync: main.roc:${line}: ${text}; it never runs`;
+{
+  const head = 'app [event!] { pf: platform "x" }\n\nimport pf.Worker\n\nfetch! = |_req| Ok(1)\n\n';
+  const dir = project(complete(), 'toml', { 'main.roc': `${head}${SCHED}\nworker = Worker.new({ fetch!: fetch! })\n` });
+  const r = run(dir, 'sync');
+  check('6a (R-V8-1) a scheduled! that Worker.new does not list: one warning with file and line, exit 0', r.code === 0 && r.out.split('\n').filter((l) => l.startsWith('sync:')).join('|') === warn(7, 'scheduled! is defined but Worker.new does not list it'), `exit ${r.code}\n${r.all}`);
+  const c = run(dir, 'sync', '--check');
+  check('6b (R-V8-2) --check with the same source: the warning and exit 1 (worker.js is up to date)', c.code === 1 && c.out.includes(warn(7, 'scheduled! is defined but Worker.new does not list it')) && c.out.includes('worker.js: up to date'), `exit ${c.code}\n${c.all}`);
+  const lines = (src, ...a) => run(project(complete(), 'toml', { 'main.roc': src }), 'sync', ...a).out.split('\n').filter((l) => l.startsWith('sync:'));
+  check('6c (R-V8-3) the listed fetch! has no warning', lines(`${head}worker = Worker.new({ fetch!: fetch! })\n`).length === 0, '');
+  check('6d (R-V8-4) a def in a comment, in a string and in a multi-line string has no warning', lines(`${head}# scheduled! = |_s| Ok({})\n#queue! : X\ns = "\nemail! = 1\n"\nt = "a \${x} tail! = 2"\nm =\n\\\\ other! = 3\n\\\\ alarm! = 4\n`).length === 0, '');
+  const mention = lines(`${head}${SCHED}# the scheduled! handler\nx = "scheduled!"\n`);
+  check('6d2 (R-V8-4) the name in a comment or in a string is not a use of the def: the warning stays', mention.join('\n') === warn(7, 'scheduled! is defined but Worker.new does not list it'), mention.join('\n'));
+  check('6d3 (R-V8-4) the name in a string interpolation is code, so it is a use', lines(`${head}${SCHED}y = "\${scheduled!}"\n`).length === 0, '');
+  check('6e (R-V8-5) a scheduled! that the code uses (Worker.cron) has no warning', lines(`${head}${SCHED}\nworker = Worker.new({ fetch!: fetch!, crons: [Worker.cron("*/5 * * * *", scheduled!)] })\n`).length === 0, '');
+  check('6f (R-V8-5) a handler under another name (a field label) has no warning', lines(`${head}handle! = |_req| Ok(1)\nworker = Worker.new({ fetch!: handle!, scheduled!: handle! })\n`).length === 0, '');
+  check('6g (R-V8-6) a def inside brackets or indented, and Mod.scheduled!, have no warning', lines(`${head}x = {\nscheduled! = 1\n}\nf = |a| {\n\tqueue! = 2\n\ta\n}\ny = Jobs.email!\n  tail! = 1\n`).length === 0, '');
+  const many = lines(`${head}queue! = |_b| Ok({})\nwork = 1\nother! : Str, Js => Try(Js, _)\nother! = |_k, p| Ok(p)\nalarm! = |_s, _i| Ok({})\nweb_socket_message! = |_a| Ok({})\nfetch! : X\n`);
+  check('6h (R-V8-7) queue!, other!, alarm! and web_socket_message! that are not listed: one warning each, in line order', many.join('\n') === [warn(7, 'queue! is defined but Worker.new does not list it'), warn(9, 'other! is defined but Worker.new does not list it'), warn(11, 'alarm! is defined but no Object.class lists it'), warn(12, 'web_socket_message! is defined but no Object.class lists it')].join('\n'), many.join('\n'));
+  const label = lines(`${head}alarm! = |_s, _i| Ok({})\nc = Object.class("C", { alarm!: other_alarm! })\nd = Mod.alarm!\n`);
+  check('6i (R-V8-5) a record label and Mod.alarm! are not a use of the top-level alarm!: the warning stays', label.join('\n') === warn(7, 'alarm! is defined but no Object.class lists it'), label.join('\n'));
+  // A source that is not main.roc: --file, or <wasm name>.roc next to the wasm file.
+  const f = project(complete(), 'toml', { 'web.roc': SCHED });
+  const rf = run(f, 'sync', '--file', 'web.roc');
+  check('6j (R-V8-8) --file names the source', rf.code === 0 && rf.out.includes('sync: web.roc:1: scheduled! is defined'), rf.all);
+  const rn = run(f, 'sync', '--file', 'none.roc');
+  check('6k (R-V8-8) --file with a file that is not there: exit 2', rn.code === 2, `exit ${rn.code}`);
+  writeFileSync(join(f, 'app.roc'), SCHED);
+  check('6l (R-V8-8) with no --file the source is app.roc next to app.wasm', run(f, 'sync').out.includes('sync: app.roc:1: scheduled! is defined'), '');
+  const none = project(complete(), 'toml');
+  check('6m no source file: no warning, exit 0', run(none, 'sync').code === 0, '');
+}
+// The real sources: the apps of the bench and the conformance app list all their handlers. app_events.wasm must be built from
+// the platform of this tree (its `other!` is in the manifest since the V8 change): run bench/build.sh when 6o fails.
+for (const [name, wasmName, src] of [['6n the conformance app (all kinds, classes and entry points)', 'conformance', 'conformance/app.roc'], ['6o app_events (fetch!, scheduled!, queue!, other!)', 'app_events', 'bench/app_events.roc'], ['6p app_b3', 'app_b3', 'bench/app_b3.roc'], ['6q app_link_callee', 'app_link_callee', 'bench/app_link_callee.roc']]) {
+  const dir = project(complete(), 'toml');
+  copyFileSync(resolve(wasm, '..', `${wasmName}.wasm`), join(dir, 'app.wasm'));
+  const r = run(dir, 'sync', '--file', join(root, src));
+  check(`${name}: no warning`, !r.out.includes('sync: ') && !r.err, r.all);
+}
+
+// ---- 7. The options file (V21): worker.options.js next to worker.js is the second argument of makeHandler ----
+{
+  const OPTS = "export default { other: ['ping'] };\n";
+  const shim = (dir) => `${relative(dir, join(root, 'js')).split('\\').join('/')}/index.js`;
+  const golden = (dir, opts) => `${MARK} from the manifest of the app. Run it again after a change of the classes in Roc.\nimport app from './app.wasm';\nimport { makeHandler, objectClass } from '${shim(dir)}';\n${opts ? "import options from './worker.options.js';\n" : ''}\nexport const Counter = objectClass('Counter');\n\nexport default makeHandler(app${opts ? ', options' : ''});\n`;
+  const text = (dir, f) => readFileSync(join(dir, f), 'utf8');
+  const none = project(complete(), 'toml');
+  const rn = run(none, 'sync');
+  check('7a (R-V21-1) no options file: worker.js is the same as before, byte for byte', rn.code === 0 && text(none, 'worker.js') === golden(none, false), text(none, 'worker.js'));
+  const dir = project(complete(), 'toml', { 'worker.options.js': OPTS });
+  const r = run(dir, 'sync');
+  check('7b (R-V21-2) an options file: worker.js imports its default export and passes it to makeHandler', r.code === 0 && text(dir, 'worker.js') === golden(dir, true), `exit ${r.code}\n${text(dir, 'worker.js')}\n${r.all}`);
+  check('7c (R-V21-3) sync never writes the options file', text(dir, 'worker.options.js') === OPTS, '');
+  const c = run(dir, 'sync', '--check');
+  check('7d (R-V21-4) sync --check passes with the import', c.code === 0 && c.out.includes('worker.js: up to date'), `exit ${c.code}\n${c.all}`);
+  // The options file is added after worker.js was written (or removed): --check finds the import missing (or extra).
+  writeFileSync(join(none, 'worker.options.js'), OPTS);
+  const a = run(none, 'sync', '--check');
+  check('7e (R-V21-4) --check: an options file and a worker.js with no import gives exit 1', a.code === 1 && a.out.includes('not the file that sync writes') && a.out.includes("import options from './worker.options.js';"), `exit ${a.code}\n${a.out}`);
+  rmSync(join(dir, 'worker.options.js'));
+  const b = run(dir, 'sync', '--check');
+  check('7f (R-V21-4) --check: worker.js has the import and the options file is gone: exit 1', b.code === 1, `exit ${b.code}`);
+  check('7g sync writes the file with no import again', run(dir, 'sync').code === 0 && text(dir, 'worker.js') === golden(dir, false), '');
+  // The name of the options file follows the name of the entry file (also in a subdirectory). The config has main = worker.js,
+  // so these runs exit 1 for the config: only the files are checked.
+  const e = project(complete(), 'toml', { 'worker-ledger.options.js': OPTS, 'worker.options.js': 'throw new Error("not this file");' });
+  mkdirp(join(e, 'sub'));
+  writeFileSync(join(e, 'sub/w.options.js'), OPTS);
+  run(e, 'sync', '--entry', 'worker-ledger.js');
+  run(e, 'sync', '--entry', 'sub/w.js');
+  check('7h (R-V21-5) the options file of worker-ledger.js is worker-ledger.options.js, of sub/w.js it is sub/w.options.js', text(e, 'worker-ledger.js').includes("import options from './worker-ledger.options.js';") && text(e, 'sub/w.js').includes("import options from './w.options.js';"), `${text(e, 'worker-ledger.js')}\n${text(e, 'sub/w.js')}`);
+  // An options file with no default export: the entry file would not bundle. Exit 1 and a message.
+  const bad = project(complete(), 'toml', { 'worker.options.js': 'export const opts = {};\n' });
+  const rb = run(bad, 'sync');
+  check('7i (R-V21-6) an options file with no default export: exit 1 and a message', rb.code === 1 && rb.out.includes('worker.options.js: has no default export'), `exit ${rb.code}\n${rb.out}`);
+  // A worker.js that sync did not make is still not overwritten (the options file does not change this).
+  const own = '// my own entry\nexport default {};\n';
+  const h = project(complete(), 'toml', { 'worker.js': own, 'worker.options.js': OPTS });
+  const rh = run(h, 'sync');
+  check('7j a hand-written worker.js with an options file is still not overwritten', rh.code === 1 && text(h, 'worker.js') === own && rh.out.includes("import options from './worker.options.js';"), `exit ${rh.code}\n${rh.out}`);
+
+  // The Worker loads the options: the worker.js that sync wrote runs in Node. Two lines change: workerd resolves the .wasm
+  // import and Node does not, and the shim comes through bench/cf-node.mjs (the stand-in of `cloudflare:workers`). A child
+  // process: objectClass registers a name for the process.
+  const load = (d) => {
+    const w = text(d, 'worker.js')
+      .replace("import app from './app.wasm';", `import { readFileSync } from 'node:fs';\nconst app = new WebAssembly.Module(readFileSync(${JSON.stringify(join(d, 'app.wasm'))}));`)
+      .replace(/from '[^']*\/index\.js';/, `from ${JSON.stringify(pathToFileURL(join(root, 'bench/cf-node.mjs')).href)};`)
+      .replace('export default makeHandler', 'const Handler = makeHandler');
+    writeFileSync(join(d, 'worker.test.mjs'), `${w}\nconsole.log('ping:' + typeof Handler.prototype.ping);\n`);
+    writeFileSync(join(d, 'package.json'), '{ "type": "module" }');
+    return spawnSync(process.execPath, [join(d, 'worker.test.mjs')], { cwd: d, encoding: 'utf8' });
+  };
+  const withOpts = project(complete(), 'toml', { 'worker.options.js': OPTS });
+  run(withOpts, 'sync');
+  const lo = load(withOpts);
+  check('7k (R-V21-7) the Worker loads the options: other: ["ping"] gives a ping method', lo.status === 0 && lo.stdout.trim() === 'ping:function', `exit ${lo.status}\n${lo.stdout}${lo.stderr.slice(0, 400)}`);
+  const noOpts = project(complete(), 'toml');
+  run(noOpts, 'sync');
+  const ln = load(noOpts);
+  check('7l (R-V21-7) with no options file the same Worker has no ping method', ln.status === 0 && ln.stdout.trim() === 'ping:undefined', `exit ${ln.status}\n${ln.stdout}${ln.stderr.slice(0, 400)}`);
+  const badOpts = project(complete(), 'toml', { 'worker.options.js': 'export default { bogus: 1 };\n' });
+  run(badOpts, 'sync');
+  const lb = load(badOpts);
+  check('7m (R-V21-7) a bad option name in the options file is a load error of makeHandler', lb.status !== 0 && /unknown option "bogus"/.test(lb.stderr), `exit ${lb.status}\n${lb.stderr.slice(0, 400)}`);
 }
 
 console.log(failed ? 'FAILED' : 'all passed');

@@ -8,6 +8,7 @@ import pf.Service
 import pf.Object
 import pf.Io
 import pf.D1
+import pf.Sql
 import RpcMethods
 import Q
 
@@ -103,24 +104,25 @@ unit_text = |r| match r {
 
 ## The text of a call of `fail` or `relay`: the caller matches the tags of `Remote(Infra(..))` by name, so the payload of
 ## each one is read as its own type. `Infra(RpcErr)` and `Infra(BadData)` are the failures of the call itself.
-fail_text : Try(I64, [Infra([RpcErr(Io.Thrown), BadData(Str)]), Remote([NotOpen, Infra(Rpc.Infra)])]) -> Str
+fail_text : Try(I64, [Infra([RpcErr(Io.Thrown), BadData(Str)]), Remote([NotOpen, Constraint(Sql.Constraint), Infra(Rpc.Infra)])]) -> Str
 fail_text = |r| match r {
 	Ok(v) => "Ok ${v.to_str()}"
 	Err(Remote(NotOpen)) => "NotOpen"
 	Err(Remote(Infra(StorageErr(t)))) => "Remote StorageErr ${t.name} | ${t.message}"
 	Err(Remote(Infra(SqlErr(t)))) => "Remote SqlErr ${t.name} | ${t.message}"
 	Err(Remote(Infra(D1Err(t)))) => "Remote D1Err ${t.name} | ${t.message}"
-	Err(Remote(Infra(Constraint(c)))) => "Remote Constraint ${Str.inspect(c.kind)} | ${c.message}"
+	Err(Remote(Constraint(c))) => "Remote Constraint ${Str.inspect(c.kind)} | ${c.message}"
 	Err(Remote(Infra(RpcErr(t)))) => "Remote RpcErr ${t.message}"
 	Err(Remote(Infra(i))) => "Remote other ${Str.inspect(i)}"
 	Err(Infra(RpcErr(t))) => "RpcErr ${t.message}"
 	Err(Infra(BadData(_))) => "BadData"
 }
 
-map_text : Try(I64, [Infra([RpcErr(Io.Thrown), BadData(Str)]), Remote([Shut, Infra(Rpc.Infra)])]) -> Str
+map_text : Try(I64, [Infra([RpcErr(Io.Thrown), BadData(Str)]), Remote([Shut, Constraint(Sql.Constraint), Infra(Rpc.Infra)])]) -> Str
 map_text = |r| match r {
 	Ok(v) => "Ok ${v.to_str()}"
 	Err(Remote(Shut)) => "Shut"
+	Err(Remote(Constraint(c))) => "Remote Constraint ${Str.inspect(c.kind)} | ${c.message}"
 	Err(Remote(Infra(StorageErr(t)))) => "Remote StorageErr ${t.name} | ${t.message}"
 	Err(Remote(Infra(SqlErr(t)))) => "Remote SqlErr ${t.name} | ${t.message}"
 	Err(Remote(Infra(D1Err(t)))) => "Remote D1Err ${t.name} | ${t.message}"
@@ -164,7 +166,7 @@ mismatch! : self, { n : I64 } => Try(I64, [Surprise])
 mismatch! = |_self, { n }| if (n >= 0) Err(Surprise) else Ok(n)
 
 # N5 G1a: the callees of `fail` in the Workers (the default export and `Admin`). A D1 error is `Infra(D1Err)`: the handler passes it on with `?`.
-fail_svc! : self, { kind : Str } => Try(I64, [NotOpen, Infra(Rpc.Infra)])
+fail_svc! : self, { kind : Str } => Try(I64, [NotOpen, Constraint(Sql.Constraint), Infra(Rpc.Infra)])
 fail_svc! = |_self, { kind }| match kind {
 	"d1" => {
 		db.exec!("SELEC 1")?
@@ -176,18 +178,19 @@ fail_svc! = |_self, { kind }| match kind {
 }
 
 # `Rpc.forward(|e| e)`: the same `err` as `fail`.
-relay_svc! : self, { kind : Str } => Try(I64, [NotOpen, Infra(Rpc.Infra)])
+relay_svc! : self, { kind : Str } => Try(I64, [NotOpen, Constraint(Sql.Constraint), Infra(Rpc.Infra)])
 relay_svc! = |_self, arg| {
 	v = self_service.call!(RpcMethods.fail(RpcMethods.default_iface), arg) ? Rpc.forward(|e| e)
 	Ok(v)
 }
 
 # `Rpc.forward` with a domain mapping: `NotOpen` is `Shut`, `Infra` stays.
-relay_map_svc! : self, { kind : Str } => Try(I64, [Shut, Infra(Rpc.Infra)])
+relay_map_svc! : self, { kind : Str } => Try(I64, [Shut, Constraint(Sql.Constraint), Infra(Rpc.Infra)])
 relay_map_svc! = |_self, arg| {
 	v = self_service.call!(RpcMethods.fail(RpcMethods.default_iface), arg) ? Rpc.forward(
 		|e| match e {
 			NotOpen => Shut
+			Constraint(c) => Constraint(c)
 			Infra(i) => Infra(i)
 		},
 	)

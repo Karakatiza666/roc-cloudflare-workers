@@ -12,7 +12,7 @@ import pf.Cbor
 
 db = D1.binding("DB")
 
-all_rows! : Str => Try(rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
+all_rows! : Str => Try(rows, [Constraint(Sql.Constraint), Infra([D1Err(Io.Thrown), BadData(Str), TooLarge])]) where [rows.Cbor.Parseable([InvalidCbor(U64), ..errs])]
 all_rows! = |sql| db.all!(sql, Sql.none)
 
 fetch! : Request => Try(Response, [])

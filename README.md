@@ -10,34 +10,64 @@ Status: phases A and B are built (`PLAN.md`). The release files are made by `scr
 | `MODULES.md` | Each platform module: what it does, its errors, its limits |
 | `PLAN.md` | The build plan, the status of each step, the measurements |
 | `examples/hello/` | A Worker project that uses a release |
+| `talon.toml` | The scripts of the examples (`tln run hello`) |
 
 ## What a release has
 
-Each release (tag `X.Y.Z`) has 2 files. They have the same version and are used together.
+Each release (tag `X.Y.Z`) has 1 file. The platform and the shim have the same version, because they are in the same file.
 
 | File | Use |
 | --- | --- |
-| `<hash>.tar.zst` | The platform bundle. It goes in the header of the app. It has the Roc modules, `LICENSE` and the production host `targets/wasm32/host.wasm`. The packages `http` (roc-lang/http 2.0.0) and `cbor` (roc-cbor 0.2.1) stay URLs in the platform header: Roc downloads them. |
-| `roc-cloudflare-workers-X.Y.Z.tgz` | The JS shim, as an npm package (`makeHandler`, `objectClass`, `entrypointClass`), and the command `roc-cloudflare-workers` (`sync`). `npm install <file or URL>` takes it. The platform bundle also has the same files in `js/` (with `js/cfw.json`, `js/template/`): see `research/talon-fit/TRANSITION.md`. |
+| `<hash>.tar.zst` | The platform bundle. It goes in the header of the app. It has the Roc modules, `LICENSE`, the production host `targets/wasm32/host.wasm`, and the JS shim in `js/` (`index.js` and the other `*.js` files: `makeHandler`, `objectClass`, `entrypointClass`; `cli.mjs`: the command `sync`; `cfw.json`; `template/`). The packages `http` (roc-lang/http 2.0.0) and `cbor` (roc-cbor 0.2.1) stay URLs in the platform header: Roc downloads them. |
 
-The release notes have both URLs. The package is not on the npm registry: the version of the shim must be the version of the platform, so the shim comes from the same release.
+There is no npm package and no `package.json` in a project. The release notes have the URL.
 
-Needs: a Roc nightly (the release notes name it, `compat/last-stack-first-nightly` is the one that the release was built with), Node and `wrangler` (the tests use Node 26 and Wrangler 4).
+Needs: a Roc nightly (the release notes name it, `compat/last-stack-first-nightly` is the one that the release was built with), Node (JSPI: the tests use Node 26) and `wrangler` (the tests use Wrangler 4). Install Wrangler on the machine (see the Cloudflare documentation). It is a program, not a file of a project.
 
-## Use it
+## Use it in this repository
 
-A project has four files: `main.roc`, `worker.js`, `wrangler.toml`, `package.json`. The command `roc-cloudflare-workers` of the shim package writes `worker.js`. `init` is not in it any more: it moves to the helper `roc-cfw init` (`research/talon-fit/TRANSITION.md`, not released yet). Until then, copy `examples/hello`, or the files of `js/template/` in the platform bundle (change the platform line of `main.roc`):
+The root `talon.toml` has the scripts of the examples. They need Talon (`tln`), the Roc nightly of `compat/last-stack-first-nightly` (`tln roc install <name>`), and Node.
 
 | Command | What it does |
 | --- | --- |
-| `roc-cloudflare-workers sync` | Reads the manifest of `app.wasm`, writes `worker.js` (one export line for each class, then `makeHandler`), and checks `wrangler.toml`: `main`, the compatibility date and flags, `durable_objects.bindings`, `migrations` (`new_sqlite_classes`), the bindings of `Worker.new({ bindings })`, `triggers.crons` of `Worker.new({ crons })`. It also checks the link to the other Workers of the same repo: a service binding or a `namespace_remote` goes to a Worker by its name in the Wrangler config, so `sync` finds that Worker (its config and its built wasm) and compares the interface names (`Rpc.iface("Ledger")`). It prints the parts to add and gives exit 1 when one is missing or wrong. `--check`: write nothing (for CI). |
+| `tln run hello` | `roc build` of `examples/hello/main.roc`, then `node js/cli.mjs sync` (it writes `examples/hello/worker.js` and checks `wrangler.toml`) |
+| `tln run auction` | `roc build` of `web.roc` and `ledger.roc`, then `sync` of each Worker |
+| `tln run examples` | Both |
+
+The scripts run from the root: a build inside `examples/auction/` gives `PathOutsideWorkspace`. The `worker.js` files of the examples import `../../js/index.js`: the relative path from the entry file to `js/`, where `sync` runs from. `git diff --exit-code examples/` after `tln run examples` must be empty.
+
+## Use it in your project
+
+A project has three files: `main.roc`, `worker.js`, `wrangler.toml`. A fourth, `talon.toml`, holds the scripts. The shim is a copy of `js/` of the platform bundle in `.roc-cfw/` (put `.roc-cfw/` in `.gitignore`). The command `sync` of the shim writes `worker.js`.
+
+Planned setup, with the helper `roc-cfw` (`research/talon-fit/TRANSITION.md`; it has no release yet, so this does not work today):
 
 ```sh
-cp -r examples/hello my-worker && cd my-worker   # then: the platform line of main.roc, X.Y.Z in package.json
-npm install
-npm run build     # roc build, then roc-cloudflare-workers sync
-npm run dev       # wrangler dev --local
+tln init --platform Karakatiza666/roc-cloudflare-workers    # main.roc with the platform line
+tln add --tool Karakatiza666/roc-cloudflare-workers-cli     # [tools] roc-cfw in talon.toml
+tln x roc-cfw -- init                                       # app body, wrangler.toml, [scripts], .gitignore
+tln run build                                               # roc build, then roc-cfw sync
+tln run dev                                                 # wrangler dev --local
 ```
+
+The manual way, which works today:
+
+```sh
+mkdir my-worker && cd my-worker
+cp /path/to/this/repo/examples/hello/{main.roc,wrangler.toml} .   # or the files of js/template/ in the bundle
+# 1. In main.roc, write the release URL in the platform line.
+# 2. roc check main.roc downloads the bundle into the Roc package cache. Copy its js/ to .roc-cfw/:
+cp -r ~/.cache/roc/packages/<hash>/js .roc-cfw    # <hash>: the file name in the URL, without .tar.zst. $XDG_CACHE_HOME/roc/packages/ when it is set
+roc build --target=wasm32 --no-cache --output=app.wasm main.roc
+node .roc-cfw/cli.mjs sync      # writes worker.js, checks wrangler.toml
+wrangler dev --local
+```
+
+Update of the platform: write the new URL in `main.roc`, copy `js/` of the new bundle to `.roc-cfw/` again, and run `sync`. The shim and the host must come from the same release.
+
+| Command | What it does |
+| --- | --- |
+| `node .roc-cfw/cli.mjs sync` | Reads the manifest of `app.wasm`, writes `worker.js` (one export line for each class, then `makeHandler`), and checks `wrangler.toml`: `main`, the compatibility date and flags, `durable_objects.bindings`, `migrations` (`new_sqlite_classes`), the bindings of `Worker.new({ bindings })`, `triggers.crons` of `Worker.new({ crons })`. It also checks the link to the other Workers of the same repo: a service binding or a `namespace_remote` goes to a Worker by its name in the Wrangler config, so `sync` finds that Worker (its config and its built wasm) and compares the interface names (`Rpc.iface("Ledger")`). It prints the parts to add and gives exit 1 when one is missing or wrong. `--check`: write nothing (for CI). |
 
 The steps below say what each file has.
 
@@ -76,17 +106,17 @@ roc build --target=wasm32 --no-cache --output=app.wasm main.roc
 
 A `roc build` with type errors still writes the `.wasm` file. It prints "N errors and 0 warnings found ... while successfully building" and exits with 1 (checked 2026-10-20 with one bad line). A build is good only when the exit code is 0 and the text is "0 errors and 0 warnings". A script must check the exit code. In the repo, run the command from the root (a build inside `examples/auction/` gives `PathOutsideWorkspace`).
 
-3. The shim. `npm install https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/X.Y.Z/roc-cloudflare-workers-X.Y.Z.tgz`. The entry of the Worker (`examples/hello/worker.js`) is the file that `roc-cloudflare-workers sync` writes. The import is the package name when `cli.mjs` is in `node_modules/`, else the relative path from the entry file to the directory of `cli.mjs` (`./.roc-cfw/index.js`):
+3. The shim. It is `js/` of the platform bundle, copied to `.roc-cfw/` (see above). The entry of the Worker is the file that `sync` writes. The import is the relative path from the entry file to the directory of `cli.mjs` (`./.roc-cfw/index.js` in a project, `../../js/index.js` in `examples/hello/worker.js`):
 
 ```js
 // Made by roc-cloudflare-workers sync from the manifest of the app. Run it again after a change of the classes in Roc.
 import app from './app.wasm';
-import { makeHandler } from 'roc-cloudflare-workers';
+import { makeHandler } from './.roc-cfw/index.js';
 
 export default makeHandler(app);
 ```
 
-`makeHandler(module, opts)` throws at load for a bad option, a module that is not stack-first, a class with no export line, and a binding of `Worker.new({ bindings })` that is not in `env` with its kind. The options are in `js/options.js`. A Durable Object class or a named entry point of the app is one export line before the default export (`objectClass("Room")`, `entrypointClass("Admin")`, `API.md` AQ10): `sync` writes these lines. An app with options writes its own entry file: `sync` does not write over a file that it did not make, and prints the lines.
+`makeHandler(module, opts)` throws at load for a bad option, a module that is not stack-first, a class with no export line, and a binding of `Worker.new({ bindings })` that is not in `env` with its kind. The options are in `js/options.js`. A Durable Object class or a named entry point of the app is one export line before the default export (`objectClass("Room")`, `entrypointClass("Admin")`, `API.md` AQ10): `sync` writes these lines. An app with options (`ops` and others) puts them in `worker.options.js` next to `worker.js`: its default export is the options object. `sync` then writes `import options from './worker.options.js';` and `makeHandler(app, options)`, and `sync --check` checks the import. `sync` never writes the options file (`MODULES.md` 3, "The options file"). `sync` also reads the app source (`--file`, default `<wasm name>.roc`, else `main.roc`) and warns of a handler that the app defines and `Worker.new` does not list (`sync --check` fails for it; `MODULES.md` 3).
 
 4. The Wrangler config (`examples/hello/wrangler.toml`):
 

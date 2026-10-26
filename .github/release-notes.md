@@ -6,14 +6,18 @@ In the header of your app (a Roc nightly is needed: @NIGHTLY@):
 app [event!] { pf: platform "@URL@" }
 ```
 
-The JS shim is the file @SHIM_NAME@ of this release:
+The bundle has the JS shim in `js/` (`makeHandler`, `objectClass`, `entrypointClass`, and `cli.mjs` with the command `sync`).
+There is no npm package. With Talon (`tln`):
 
 ```sh
-npm install @SHIM_URL@
+tln add --platform Karakatiza666/roc-cloudflare-workers@@TAG@
 ```
 
-Then `roc build --target=wasm32 --output=app.wasm main.roc`, and a `worker.js` with
-`import app from './app.wasm'; import { makeHandler } from 'roc-cloudflare-workers'; export default makeHandler(app);`.
+The helper `roc-cfw` copies `js/` to `.roc-cfw/` of your project and runs `sync` (planned: it has no release yet).
+Until it has one, copy `js/` of the bundle to `.roc-cfw/` by hand and run `node .roc-cfw/cli.mjs sync`.
+`sync` writes the `worker.js` that imports `./.roc-cfw/index.js`.
+
+Then `roc build --target=wasm32 --no-cache --output=app.wasm main.roc`.
 The compatibility flag `enable_request_signal` is required in the Wrangler config. The README has the full steps.
 
 ## No `cbor` entry in the app header
@@ -28,7 +32,6 @@ of the package is wanted. If the app adds another version of roc-cbor, its types
 
 | File | What it is |
 | --- | --- |
-| `@BUNDLE_NAME@` | The platform bundle: the Roc modules, `LICENSE`, and the production host `targets/wasm32/host.wasm`. The packages `http` and `cbor` stay URLs. |
-| `@SHIM_NAME@` | The `roc-cloudflare-workers` package: `makeHandler`, `objectClass`, `entrypointClass`. It must have the same version as the platform bundle. |
+| `@BUNDLE_NAME@` | The platform bundle: the Roc modules, `LICENSE`, the production host `targets/wasm32/host.wasm`, and the shim in `js/`. The packages `http` and `cbor` stay URLs. The shim and the host are in one file, so they have the same version. |
 
 Built with Roc `@NIGHTLY@` and Zig 0.17.0.

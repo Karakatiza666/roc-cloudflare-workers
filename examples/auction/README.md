@@ -14,12 +14,21 @@ Two Workers and a Durable Object class over the platform. `REVIEW.md` is the erg
 Run the commands from the root of the repository. The platform line of each app is a relative path (`../../platform/main.roc`): a build inside `examples/auction/` gives `PathOutsideWorkspace`.
 
 ```sh
-roc build --target=wasm32 --no-cache --output=examples/auction/web.wasm examples/auction/web.roc
-roc build --target=wasm32 --no-cache --output=examples/auction/ledger.wasm examples/auction/ledger.roc
-roc test examples/auction/ledger.roc
+tln run auction
 ```
 
-The `.wasm` files are next to the entry files (`worker.js` imports `./web.wasm`, `worker-ledger.js` imports `./ledger.wasm`). Git ignores them.
+The script `auction` of the root `talon.toml` has 4 steps:
+
+| Step | Command |
+| --- | --- |
+| 1 | `roc build --target=wasm32 --no-cache --output=examples/auction/web.wasm examples/auction/web.roc` |
+| 2 | `roc build --target=wasm32 --no-cache --output=examples/auction/ledger.wasm examples/auction/ledger.roc` |
+| 3 | In `examples/auction`: `node ../../js/cli.mjs sync --wasm web.wasm --entry worker.js --config wrangler-web.toml` |
+| 4 | In `examples/auction`: `node ../../js/cli.mjs sync --wasm ledger.wasm --entry worker-ledger.js --config wrangler-ledger.toml` |
+
+Both `.wasm` files come first: a `sync` that reads the wasm file of the other Worker then finds it. To test the Roc code: `roc test examples/auction/ledger.roc`.
+
+The `.wasm` files are next to the entry files (`worker.js` imports `./web.wasm`, `worker-ledger.js` imports `./ledger.wasm`). Git ignores them (`.gitignore` of this directory). The entry files import `../../js/index.js`: the shim of this repository.
 
 A `roc build` with type errors still writes the `.wasm` file. It prints "N errors and 0 warnings found ... while successfully building" and exits with 1. The build is good only when the exit code is 0 and the text is "0 errors and 0 warnings". A script checks the exit code, not the file.
 
@@ -29,7 +38,7 @@ A one-field record is a block: write `{ name: name }`, not `{ name }` (`MODULES.
 
 | Step | Command |
 | --- | --- |
-| Write the entry files and check the config of auction-web | `cd examples/auction && roc-cloudflare-workers sync --wasm web.wasm --entry worker.js --config wrangler-web.toml` |
-| The same for auction-ledger | `roc-cloudflare-workers sync --wasm ledger.wasm --entry worker-ledger.js --config wrangler-ledger.toml` |
+| Write the entry files and check the config of auction-web | Step 3 of `tln run auction` (`sync --wasm web.wasm --entry worker.js --config wrangler-web.toml`) |
+| The same for auction-ledger | Step 4 of `tln run auction` (`sync --wasm ledger.wasm --entry worker-ledger.js --config wrangler-ledger.toml`) |
 | The link between the two Workers | Each `sync` also checks the link to the other Worker (`sync --check` too): the service binding `LEDGER` of `wrangler-web.toml` goes to `auction-ledger`, so `sync` finds `wrangler-ledger.toml` by its `name`, reads `ledger.wasm` and compares the interface name `Ledger` (`Gavel.ledger`) with the one of its default entry point. The namespace `LOT_ROOM` of `wrangler-ledger.toml` (`script_name = "auction-web"`) is checked against the class `LotRoom` in `web.wasm` (`Room`). A Worker that is not built is a note. |
 | Run | `wrangler dev --config wrangler-web.toml` |

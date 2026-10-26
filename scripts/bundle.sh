@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
-# Make the release files in dist/ (PLAN.md 11a):
-#   dist/<hash>.tar.zst                      the platform bundle: platform/*.roc, LICENSE, targets/wasm32/host.wasm, js/ (TRANSITION.md 4.1)
-#   dist/roc-cloudflare-workers-<ver>.tgz    the js/ package (npm pack: `npm install <file or URL>` takes it). Kept for one release (TRANSITION.md step 8 removes it)
+# Make the release file in dist/ (PLAN.md 11a):
+#   dist/<hash>.tar.zst    the platform bundle: platform/*.roc, LICENSE, targets/wasm32/host.wasm, js/ (TRANSITION.md 4.1)
 # Steps: the glue is the glue of the pinned nightly, the production host (zig build), a production app on it
-# (bench/app.roc) with the layout and export checks, the bundle, the package.
+# (bench/app.roc) with the layout and export checks, the bundle.
 # Usage: ZIG=<zig 0.17> [ROC=<roc>] [REPO=<owner/repo>] scripts/bundle.sh [version]
-# The default version is the tag of HEAD, else 0.0.0-local. The default ROC is the nightly of compat/last-stack-first-nightly.
-# The last lines are `asset:`, `url:`, `shim:`, `shim_url:` (the release workflow reads them).
+# The default version is the tag of HEAD, else 0.0.1-local. Roc refuses the version 0.0.0 in a platform URL
+# (research/plugin-probes/FINDINGS-core.md, C1), so the default is not 0.0.0-local.
+# The default ROC is the nightly of compat/last-stack-first-nightly.
+# The last lines are `asset:` and `url:` (the release workflow reads them).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 : "${ZIG:?set ZIG to the Zig 0.17 binary}"
-version=${1:-$(git describe --tags --exact-match 2>/dev/null || echo 0.0.0-local)}
+version=${1:-$(git describe --tags --exact-match 2>/dev/null || echo 0.0.1-local)}
 repo=${REPO:-${GITHUB_REPOSITORY:-Karakatiza666/roc-cloudflare-workers}}
 [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "bad version: $version (X.Y.Z or X.Y.Z-pre)" >&2; exit 1; }
+[[ $version == 0.0.0* ]] && { echo "bad version: $version (Roc refuses the version 0.0.0 in a platform URL: use 0.0.1 or newer)" >&2; exit 1; }
 ROC=${ROC:-$(bench/get-roc.sh)}
 # The package cache (http, cbor) is XDG_CACHE_HOME/roc/packages. ROC_CACHE_DIR is the build cache.
 export ROC_CACHE_DIR=${ROC_CACHE_DIR:-$PWD/.cache/roc} XDG_CACHE_HOME=${XDG_CACHE_HOME:-$PWD/.cache} ZIG_GLOBAL_CACHE_DIR=${ZIG_GLOBAL_CACHE_DIR:-$PWD/.cache/zig}
@@ -43,44 +45,18 @@ mkdir -p "$stage/targets/wasm32"
 cp platform/*.roc "$stage/"
 cp LICENSE "$stage/LICENSE"
 cp platform/targets/wasm32/host.wasm "$stage/targets/wasm32/host.wasm"
-# js/: the shim, cli.mjs, cfw.json, template/ (the files of `roc-cfw init`). js/package.json of the source is the npm
-# package file, so the bundle has a copy with only "type": "module" (node then loads .roc-cfw/*.js as ES modules in a
-# project with no package.json).
+# js/: the shim, cli.mjs, cfw.json, template/ (the files of `roc-cfw init`). js/package.json is only
+# { "type": "module" }: node then loads .roc-cfw/*.js as ES modules in a project with no package.json.
 cp -r js "$stage/js"
-printf '{ "type": "module" }\n' > "$stage/js/package.json"
 jsfiles=$(cd "$stage" && find js -type f | LC_ALL=C sort)
 (cd "$stage" && "$ROC" bundle main.roc LICENSE targets/wasm32/host.wasm $jsfiles --output-dir "$OLDPWD/dist" >&2)
 asset=$(echo dist/*.tar.zst)
 zstd -dc "$asset" | tar -t | grep -v '^[A-Z][A-Za-z0-9]*\.roc$' >&2
 if zstd -dc "$asset" | tar -t | grep -E '(^|/)(http|cbor)(/|$)|\.\./'; then echo "FAIL: the bundle has a copy of a package or a path out" >&2; exit 1; fi
-# Each file of js/ is in the bundle (js/package.json: the copy with only the type field).
+# Each file of js/ is in the bundle.
 listed=$(zstd -dc "$asset" | tar -t | grep '^js/' | grep -v '/$' | LC_ALL=C sort)
 want=$(find js -type f | LC_ALL=C sort)
 if [ "$listed" != "$want" ]; then echo "FAIL: the files of js/ are not the files in the bundle" >&2; diff <(echo "$want") <(echo "$listed") >&2 || true; exit 1; fi
 
-# 5. The js/ npm package, with the version of the release. The source file keeps 0.0.0-dev. The command
-# `roc-cloudflare-workers` (js/cli.mjs) has `sync` only: `init` is `roc-cfw init` of the helper. release.json stays for
-# this release (nothing reads it now).
-pkg="$work/js"
-mkdir -p "$pkg"
-cp js/*.js js/*.mjs js/package.json "$pkg/"
-cp LICENSE "$pkg/LICENSE"
-node -e '
-  const [file, version, platform, shim] = process.argv.slice(1);
-  require("fs").writeFileSync(file, JSON.stringify({ version, platform, shim }, null, 2) + "\n");
-' "$pkg/release.json" "$version" "https://github.com/$repo/releases/download/$version/$(basename "$asset")" "https://github.com/$repo/releases/download/$version/roc-cloudflare-workers-$version.tgz"
-node -e '
-  const fs = require("fs");
-  const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-  p.version = process.argv[2];
-  fs.writeFileSync(process.argv[1], JSON.stringify(p, null, 2) + "\n");
-' "$pkg/package.json" "$version"
-(cd "$pkg" && npm pack --silent --pack-destination "$OLDPWD/dist" >&2)
-shim=dist/roc-cloudflare-workers-$version.tgz
-test -s "$shim"
-tar -tzf "$shim" >&2
-
 echo "asset: $asset"
 echo "url: https://github.com/$repo/releases/download/$version/$(basename "$asset")"
-echo "shim: $shim"
-echo "shim_url: https://github.com/$repo/releases/download/$version/$(basename "$shim")"

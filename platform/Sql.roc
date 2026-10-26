@@ -1,6 +1,7 @@
 ## SQL values and results (MODULES.md 5.1): the same types for D1 and, in phase B, for the storage of a Durable
 ## Object. `rows!` (no types) gives `Sql` values. A parameter is any value that encodes to a CBOR array: a list `[x]` or a
-## tuple `(a, b)`. Use `Sql.null` and `Sql.or_null` for NULL, `Sql.blob` for a blob.
+## tuple `(a, b)`. One value that is not a list, a tuple, a record or a tag is one parameter (`x` is `[x]`). Use `Sql.null`
+## and `Sql.or_null` for NULL, `Sql.blob` for a blob (a `List(U8)` is a list of parameters).
 ## Typed data: the format, what a JS peer sees, and what survives a round trip are in MODULES.md 1, "Formats of typed data".
 import Cbor
 
@@ -88,6 +89,6 @@ Sql := [Null, Int(I64), Real(F64), Text(Str), Blob(List(U8))].{
 	Rows : { columns : List(Str), rows : List(List(Sql)) }
 
 	## A constraint failure (MC9): the kind from the extended code in the message text, and the SQLite text
-	## (5.1, table "Constraint kinds").
+	## (5.1, table "Constraint kinds"). A flat domain tag `Constraint(Sql.Constraint)`, not in `Infra`.
 	Constraint : { kind : [PrimaryKey, Unique, ForeignKey, Check, NotNull, Trigger, Datatype, Other], message : Str }
 }

@@ -231,7 +231,7 @@ export function makeHandler(module, opts = {}) {
   const envChecked = new WeakSet();
   const envError = (env) => {
     const problems = bindingProblems(manifest.bindings, env);
-    return problems.length ? new Error(`makeHandler: the bindings of the app (Worker.new bindings) are not in env:\n  ${problems.join('\n  ')}\nnpx roc-cloudflare-workers sync prints the parts of the Wrangler config to add.`) : null;
+    return problems.length ? new Error(`makeHandler: the bindings of the app (Worker.new bindings) are not in env:\n  ${problems.join('\n  ')}\nThe command sync (node .roc-cfw/cli.mjs sync) prints the parts of the Wrangler config to add.`) : null;
   };
   const loadEnv = cf.env;
   if (manifest.bindings.length && loadEnv && typeof loadEnv === 'object') {

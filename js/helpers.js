@@ -215,17 +215,42 @@ export function makePins(limit = 1000, now = () => Date.now()) {
   };
 }
 
-// SQL parameters (MODULES.md 5.1, "Parameters"): the decoded CBOR array of the call, as the arguments of `bind` or `exec`.
+// SQL parameters (MODULES.md 5.1, "Parameters"): the decoded CBOR value of the call, as the arguments of `bind` or `exec`.
+// An array is the list of parameters. Any other value that is not a map is one parameter (`db.run!(sql, "ann")` is
+// `[ "ann" ]`): a `List(U8)` is an array, so it stays a list of parameters (use `Sql.blob` for a blob).
 // null, text, a Number and a Uint8Array go as they are. A BigInt is an integer of 2^53 or more: it goes as decimal text
 // (D1 takes no BigInt, a Number rounds) when it fits I64, else it is a BadParam. A map is a tag or a record: BadParam.
+// A map of one key `Int`, `Real`, `Text` or `Blob` is the old `Sql` tag form (`[Text("ann")]`): the BadParam names the
+// old form and the new form. (The old `Null` has no payload: it encodes as the text "Null", which JS cannot tell from text.)
 const I64_MIN = -(1n << 63n), I64_MAX = (1n << 63n) - 1n;
 class BadParam extends Error {
   constructor(message) { super(message); this.name = 'BadParam'; }
 }
 const kindOf = (v) => (Array.isArray(v) ? 'a list' : v instanceof Uint8Array ? 'bytes' : v === null ? 'null' : typeof v === 'object' ? 'a record or a tag' : typeof v);
+const isMap = (v) => v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Uint8Array) && !isDec(v);
+const short = (text) => (text.length > 40 ? `${text.slice(0, 37)}...` : text);
+const showValue = (v) => (typeof v === 'string' ? JSON.stringify(v) : typeof v === 'bigint' ? v.toString() : isDec(v) ? String(decNumber(v)) : Array.isArray(v) ? `[${v.join(', ')}]` : String(v));
+// The old `Sql` tag form: an anonymous tag with a payload encodes as a map of one key (roc-cbor). The text gives the
+// old form and the new form, or null for another map.
+const OLD_TAGS = {
+  Int: (v) => showValue(v),
+  Real: (v) => showValue(v),
+  Text: (v) => showValue(v),
+  Blob: (v) => `Sql.blob(${showValue(v)})`,
+};
+function oldTag(v) {
+  const keys = Object.keys(v);
+  if (keys.length !== 1 || !Object.hasOwn(OLD_TAGS, keys[0])) return null;
+  const tag = keys[0], payload = v[tag];
+  return `${short(`${tag}(${showValue(payload)})`)} is the old Sql tag form, write ${short(OLD_TAGS[tag](payload))}`;
+}
 export function sqlParams(params) {
   if (!Array.isArray(params)) {
-    throw new BadParam(`SQL parameters must be a list or a tuple, not ${kindOf(params)}: write [x] for one parameter and (a, b) for more`);
+    if (isMap(params)) {
+      const old = oldTag(params);
+      throw new BadParam(old ? `SQL parameters: ${old}` : `SQL parameters must be a list, a tuple or one value, not ${kindOf(params)}: write x or [x] for one parameter and (a, b) for more`);
+    }
+    params = [params];
   }
   return params.map((v, i) => {
     switch (typeof v) {
@@ -239,7 +264,9 @@ export function sqlParams(params) {
     if (v === null || v instanceof Uint8Array) return v;
     // A tag 4 value (a Dec with a fraction) is a Number here: SQLite has no exact decimal.
     if (isDec(v)) return decNumber(v);
-    throw new BadParam(`SQL parameter ${i}: ${kindOf(v)} is not a SQL value${v !== null && typeof v === 'object' && !Array.isArray(v) ? ', tag values are not SQL values, use Sql.null or Sql.or_null for NULL' : ''}`);
+    const old = isMap(v) ? oldTag(v) : null;
+    if (old) throw new BadParam(`SQL parameter ${i}: ${old}`);
+    throw new BadParam(`SQL parameter ${i}: ${kindOf(v)} is not a SQL value${isMap(v) ? ', tag values are not SQL values, use Sql.null or Sql.or_null for NULL' : ''}`);
   });
 }
 

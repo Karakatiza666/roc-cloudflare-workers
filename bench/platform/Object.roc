@@ -197,14 +197,14 @@ Object(iface) :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id
 
 		## Rows as the type of the call (`rows : List(Row)`), to `Body.default_max` bytes of CBOR: `sql.exec(...).toArray()`,
 		## then `pf.pack`. The integer rules of `D1.all!` (MODULES.md 5.1): `CAST(x AS TEXT)` reads into an `I64`.
-		sql! : Object.Self, Str, params => Try(rows, [Infra([SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
+		sql! : Object.Self, Str, params => Try(rows, [Constraint(Sql.Constraint), Infra([SqlErr(Io.Thrown), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
 		sql! = |self, sql, params| sql_typed!(self, sql, Cbor.encode(params), Body.default_max)
 
-		sql_with! : Object.Self, Str, params, { max_bytes : U64 } => Try(rows, [Infra([SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
+		sql_with! : Object.Self, Str, params, { max_bytes : U64 } => Try(rows, [Constraint(Sql.Constraint), Infra([SqlErr(Io.Thrown), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
 		sql_with! = |self, sql, params, opts| sql_typed!(self, sql, Cbor.encode(params), opts.max_bytes)
 
 		## A write: `rowsRead` and `rowsWritten` of the cursor (an object cursor has no `changes` and no last row id).
-		sql_run! : Object.Self, Str, params => Try(Object.SqlInfo, [Infra([SqlErr(Io.Thrown), Constraint(Sql.Constraint)])]) where [params.Cbor.Writable]
+		sql_run! : Object.Self, Str, params => Try(Object.SqlInfo, [Constraint(Sql.Constraint), Infra([SqlErr(Io.Thrown)])]) where [params.Cbor.Writable]
 		sql_run! = |_self, sql, params| match Js.call!(sql_ops(sql, Cbor.encode(params)).concat([Call(Slot(2), "toArray", []), Fields(Slot(2), ["rowsRead", "rowsWritten"])])) {
 			Ok(Obj(fields)) => match (field(fields, "rowsRead"), field(fields, "rowsWritten")) {
 				(Int(r), Int(w)) => Ok({ rows_read: r.to_u64_try() ?? 0, rows_written: w.to_u64_try() ?? 0 })
@@ -212,17 +212,17 @@ Object(iface) :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id
 			}
 			Ok(other) => Err(Infra(SqlErr({ name: "BadData", message: "the cursor gave ${Str.inspect(other)}" })))
 			Err(t) => match sql_error(t) {
-				Constraint(c) => Err(Infra(Constraint(c)))
+				Constraint(c) => Err(Constraint(c))
 				SqlErr(e) => Err(Infra(SqlErr(e)))
 				TooLarge => Err(Infra(SqlErr(t)))
 			}
 		}
 
 		## Rows with no types: the column names, then the values (`raw()`), to `Body.default_max` bytes.
-		sql_rows! : Object.Self, Str, params => Try(Sql.Rows, [Infra([SqlErr(Io.Thrown), Constraint(Sql.Constraint), TooLarge])]) where [params.Cbor.Writable]
+		sql_rows! : Object.Self, Str, params => Try(Sql.Rows, [Constraint(Sql.Constraint), Infra([SqlErr(Io.Thrown), TooLarge])]) where [params.Cbor.Writable]
 		sql_rows! = |self, sql, params| sql_raw!(self, sql, Cbor.encode(params), Body.default_max)
 
-		sql_rows_with! : Object.Self, Str, params, { max_bytes : U64 } => Try(Sql.Rows, [Infra([SqlErr(Io.Thrown), Constraint(Sql.Constraint), TooLarge])]) where [params.Cbor.Writable]
+		sql_rows_with! : Object.Self, Str, params, { max_bytes : U64 } => Try(Sql.Rows, [Constraint(Sql.Constraint), Infra([SqlErr(Io.Thrown), TooLarge])]) where [params.Cbor.Writable]
 		sql_rows_with! = |self, sql, params, opts| sql_raw!(self, sql, Cbor.encode(params), opts.max_bytes)
 
 		## `storage.setAlarm(epoch_ms)`: a promise, one wait. `epoch_ms` is a time of the clock (`Time.now_ms!`), not a
@@ -648,7 +648,7 @@ sql_ops = |sql, params| [
 	Call(Root("pf"), "sqlExec", [Slot(1), Lit(Text(sql)), Lit(Packed(params))]),
 ]
 
-sql_typed! : Object.Self, Str, List(U8), U64 => Try(rows, [Infra([SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs)]
+sql_typed! : Object.Self, Str, List(U8), U64 => Try(rows, [Constraint(Sql.Constraint), Infra([SqlErr(Io.Thrown), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs)]
 sql_typed! = |_self, sql, params, max| match Js.call!(sql_ops(sql, params).concat([Call(Slot(2), "toArray", []), Call(Root("pf"), "pack", [Slot(3), Lit(Int(limit(max)))])])) {
 	Ok(Packed(bytes)) => match SqlRules.typed(bytes) {
 		Ok(v) => Ok(v)
@@ -656,13 +656,13 @@ sql_typed! = |_self, sql, params, max| match Js.call!(sql_ops(sql, params).conca
 	}
 	Ok(other) => crash "Object.Self.sql!: pf.pack gave ${Str.inspect(other)}"
 	Err(t) => match sql_error(t) {
-		Constraint(c) => Err(Infra(Constraint(c)))
+		Constraint(c) => Err(Constraint(c))
 		SqlErr(e) => Err(Infra(SqlErr(e)))
 		TooLarge => Err(Infra(TooLarge))
 	}
 }
 
-sql_raw! : Object.Self, Str, List(U8), U64 => Try(Sql.Rows, [Infra([SqlErr(Io.Thrown), Constraint(Sql.Constraint), TooLarge])])
+sql_raw! : Object.Self, Str, List(U8), U64 => Try(Sql.Rows, [Constraint(Sql.Constraint), Infra([SqlErr(Io.Thrown), TooLarge])])
 sql_raw! = |_self, sql, params, max| {
 	ops = sql_ops(sql, params).concat([
 		Get(Slot(2), "columnNames"),
@@ -679,14 +679,14 @@ sql_raw! = |_self, sql, params, max| {
 		}
 		Ok(other) => crash "Object.Self.sql_rows!: the cursor gave ${Str.inspect(other)}"
 		Err(t) => match sql_error(t) {
-			Constraint(c) => Err(Infra(Constraint(c)))
+			Constraint(c) => Err(Constraint(c))
 			SqlErr(e) => Err(Infra(SqlErr(e)))
 			TooLarge => Err(Infra(TooLarge))
 		}
 	}
 }
 
-## MC9 and MC11: the limit of `pf.pack` and `pf.limit` is `TooLarge`, a constraint failure is `Constraint` (the texts of
+## MC9 and MC11: the limit of `pf.pack` and `pf.limit` is `TooLarge`, a constraint failure is the flat `Constraint` (the texts of
 ## D1 with no `D1_ERROR: `, MODULES.md 5.1), each other throw `SqlErr`.
 sql_error : Io.Thrown -> [SqlErr(Io.Thrown), Constraint(Sql.Constraint), TooLarge]
 sql_error = |t|

@@ -420,11 +420,11 @@ boom! = |_self, { n }| Err(Nope(n))
 echo! : Object.Self, { big : U64 } => Try({ big : U64 }, Rpc.NoErr)
 echo! = |_self, v| Ok(v)
 
-# N5 G1a (checks/rpcerr.mjs, "infra"): the callee `fail` in `Store` `?`s a platform error: SqlErr, Constraint, StorageErr (the class
-# has no `alarm!`). The `Counter` callees `relay` and `relay_map` call it and pass its errors on with `Rpc.forward`.
+# N5 G1a (checks/rpcerr.mjs, "infra"): the callee `fail` in `Store` `?`s a platform error: SqlErr, StorageErr (the class
+# has no `alarm!`), and the flat domain tag Constraint. The `Counter` callees `relay` and `relay_map` call it and pass its errors on with `Rpc.forward`.
 store_ns = Object.namespace_named("STORES", "Store", RpcMethods.store_iface)
 
-store_fail! : Object.Self, { kind : Str } => Try(I64, [NotOpen, Infra(Rpc.Infra)])
+store_fail! : Object.Self, { kind : Str } => Try(I64, [NotOpen, Constraint(Sql.Constraint), Infra(Rpc.Infra)])
 store_fail! = |self, { kind }| match kind {
 	"sql" => {
 		_ = self.sql_run!("SELEC 1", Sql.none)?
@@ -446,17 +446,18 @@ store_fail! = |self, { kind }| match kind {
 	_ => Ok(7)
 }
 
-relay! : Object.Self, { kind : Str } => Try(I64, [NotOpen, Infra(Rpc.Infra)])
+relay! : Object.Self, { kind : Str } => Try(I64, [NotOpen, Constraint(Sql.Constraint), Infra(Rpc.Infra)])
 relay! = |_self, arg| {
 	v = store_ns.named("relay").call!(RpcMethods.fail(RpcMethods.store_iface), arg) ? Rpc.forward(|e| e)
 	Ok(v)
 }
 
-relay_map! : Object.Self, { kind : Str } => Try(I64, [Shut, Infra(Rpc.Infra)])
+relay_map! : Object.Self, { kind : Str } => Try(I64, [Shut, Constraint(Sql.Constraint), Infra(Rpc.Infra)])
 relay_map! = |_self, arg| {
 	v = store_ns.named("relay").call!(RpcMethods.fail(RpcMethods.store_iface), arg) ? Rpc.forward(
 		|e| match e {
 			NotOpen => Shut
+			Constraint(c) => Constraint(c)
 			Infra(i) => Infra(i)
 		},
 	)
@@ -465,7 +466,7 @@ relay_map! = |_self, arg| {
 
 # Store: `init!` waits 100 ms, then makes a table (PLAN.md 8f). No `alarm!`: `set_alarm_at!` gives `StorageErr`.
 
-store_init! : Object.Self => Try({}, [Infra([SqlErr(Io.Thrown), Constraint(Sql.Constraint)])])
+store_init! : Object.Self => Try({}, [Constraint(Sql.Constraint), Infra([SqlErr(Io.Thrown)])])
 store_init! = |self| {
 	Time.sleep!(100)
 	_ = self.sql_run!("CREATE TABLE IF NOT EXISTS items (k TEXT)", Sql.none)?
@@ -512,7 +513,7 @@ ticker_alarm! = |_self, info| {
 }
 
 # KvOnly: a class in a `new_classes` migration (KV-backed). The shim stops its first event with the class name.
-kv_only_fetch! : Object.Self, Request => Try(Response, [Infra([SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])])
+kv_only_fetch! : Object.Self, Request => Try(Response, [Constraint(Sql.Constraint), Infra([SqlErr(Io.Thrown), BadData(Str), TooLarge])])
 kv_only_fetch! = |self, _req| {
 	rows : List({ x : I64 })
 	rows = self.sql!("SELECT 1 AS x", Sql.none)?
@@ -580,6 +581,28 @@ sql_params! = |self, case| match case {
 		answer(Str.inspect(self.sql_run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("tag_item", bare))))
 	}
 	"bool" => answer(Str.inspect(self.sql_run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("bool", Bool.True))))
+	# v2 probe finding 28: a bare value is one parameter; the old `Sql` tag form is BadParam with the new form.
+	"bare" => {
+		r : Try(List(TextRow), _)
+		r = self.sql!("SELECT ? AS t", "one")
+		answer(Str.inspect(r))
+	}
+	"old_text" => {
+		old : List([Text(Str)])
+		old = [Text("ann")]
+		answer(Str.inspect(self.sql_run!("INSERT INTO pi (k, v) VALUES ('old_text', ?)", old)))
+	}
+	# v2 probe findings 30, 31: a NULL and a boolean column in `sql!` (the rules of `D1.all!`).
+	"read_null" => {
+		r : Try(List(TextRow), _)
+		r = self.sql!("SELECT NULL AS t", Sql.none)
+		answer(Str.inspect(r))
+	}
+	"read_bool" => {
+		r : Try(List({ b : Bool }), _)
+		r = self.sql!("SELECT 1 = 1 AS b", Sql.none)
+		answer(Str.inspect(r))
+	}
 	"none" => {
 		r : Try(List({ id : I64 }), _)
 		r = self.sql!("SELECT 1 AS id", Sql.none)

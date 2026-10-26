@@ -1,6 +1,6 @@
 # On a tag X.Y.Z (or X.Y.Z-pre): test, build the production host with the pinned nightly, check the layout, make the
-# bundle and the shim package (scripts/bundle.sh), publish the GitHub Release with both files, then build the example
-# from the published URLs on a clean runner (scripts/test_bundle.sh).
+# bundle (scripts/bundle.sh: the platform and the shim files in js/), publish the GitHub Release with that one file,
+# then build the example from the published URL on a clean runner (scripts/test_bundle.sh).
 # The first run of this file is the first real run: PLAN.md "Status of steps 11a, 11b" lists what was only run locally.
 name: release
 on:
@@ -40,7 +40,6 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     outputs:
       url: ${{ steps.make.outputs.url }}
-      shim_url: ${{ steps.make.outputs.shim_url }}
     steps:
       - uses: actions/checkout@v4
       - name: Check the tag
@@ -64,7 +63,7 @@ jobs:
         run: |
           export ZIG=$(which zig)
           scripts/bundle.sh "$TAG" | tee bundle.txt
-          for key in asset url shim shim_url; do echo "$key=$(sed -n "s/^$key: //p" bundle.txt)" >> "$GITHUB_OUTPUT"; done
+          for key in asset url; do echo "$key=$(sed -n "s/^$key: //p" bundle.txt)" >> "$GITHUB_OUTPUT"; done
       - name: Publish
         env:
           TAG: ${{ github.ref_name }}
@@ -72,13 +71,12 @@ jobs:
           nightly=$(tr -d '\r\n' < compat/last-stack-first-nightly)
           pre=()
           [[ "$TAG" == *-* ]] && pre=(--prerelease)
-          sed -e "s|@URL@|${{ steps.make.outputs.url }}|g" \
-              -e "s|@SHIM_URL@|${{ steps.make.outputs.shim_url }}|g" \
+          sed -e "s|@TAG@|$TAG|g" \
+              -e "s|@URL@|${{ steps.make.outputs.url }}|g" \
               -e "s|@BUNDLE_NAME@|$(basename '${{ steps.make.outputs.asset }}')|g" \
-              -e "s|@SHIM_NAME@|$(basename '${{ steps.make.outputs.shim }}')|g" \
               -e "s|@NIGHTLY@|$nightly|g" \
               .github/release-notes.md > notes.md
-          gh release create "$TAG" '${{ steps.make.outputs.asset }}' '${{ steps.make.outputs.shim }}' \
+          gh release create "$TAG" '${{ steps.make.outputs.asset }}' \
             --title "$TAG" --notes-file notes.md --verify-tag "${pre[@]}"
   test-published:
     needs: release
@@ -93,4 +91,4 @@ jobs:
           node-version: '26'
       - run: npm install -g wrangler
       - name: Build and run the example from the release URLs
-        run: scripts/test_bundle.sh '${{ needs.release.outputs.url }}' '${{ needs.release.outputs.shim_url }}'
+        run: scripts/test_bundle.sh '${{ needs.release.outputs.url }}'

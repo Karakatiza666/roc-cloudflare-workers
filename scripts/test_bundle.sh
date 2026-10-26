@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Test a release (PLAN.md 11a, 11b): build the examples against the bundle, run one in wrangler with the shim package.
-# Usage: ROC=<roc> scripts/test_bundle.sh [bundle .tar.zst file or https URL] [shim .tgz file or URL]
-# Defaults: the files of dist/ (made by scripts/bundle.sh). A file is served on http://127.0.0.1 (Roc allows plain
+# Test a release (PLAN.md 11a, 11b): build the examples against the bundle, run one in wrangler with the js/ of the bundle.
+# Usage: ROC=<roc> scripts/test_bundle.sh [bundle .tar.zst file or https URL]
+# Default: the file of dist/ (made by scripts/bundle.sh). A file is served on http://127.0.0.1 (Roc allows plain
 # http only for localhost). `--replace-dep OLD NEW` changes no file: OLD is the platform path of the examples, from here.
 # Steps (each one fails the script):
 #   1. `roc check` and `roc build` of examples/hello/main.roc and examples/hello/with_cbor.roc against the bundle,
 #      with an empty package cache (XDG_CACHE_HOME) so that http and cbor come from their URLs.
 #   1b. scripts/test_bundle_js.sh: the bundle has the files of js/ (a URL is downloaded first).
-#   2. scripts/test_example.sh: the app of 1 in `wrangler dev --local` with the shim package, then `wrangler deploy --dry-run`.
+#   2. scripts/test_example.sh: the app of 1 in `wrangler dev --local` with the js/ of the bundle (the unpacked bundle in
+#      the package cache of step 1: $XDG_CACHE_HOME/roc/packages/<hash>/js/), then `wrangler deploy --dry-run`.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROC=${ROC:-$(bench/get-roc.sh)}
 bundle=${1:-$(echo dist/*.tar.zst)}
-shim=${2:-$(echo dist/*.tgz)}
 work=$PWD/.cache/test-bundle
 export TMPDIR=${TMPDIR:-$PWD/.cache/tmp}
 mkdir -p "$TMPDIR"
@@ -34,7 +34,6 @@ else
 	done
 fi
 echo "bundle: $url"
-echo "shim: $shim"
 
 for app in hello with_cbor; do
 	src=examples/hello/$app.roc
@@ -52,5 +51,8 @@ for h in $hashes; do
 done
 echo "packages in the cache: $(echo $hashes)"
 if [[ $bundle == https://* ]]; then curl -fsSL -o "$work/bundle.tar.zst" "$bundle"; scripts/test_bundle_js.sh "$work/bundle.tar.zst"; else scripts/test_bundle_js.sh "$bundle"; fi
-scripts/test_example.sh "$work/hello.wasm" "$shim"
+# The js/ of the unpacked bundle in the package cache: the shim that a user gets with the platform.
+bundle_js=$XDG_CACHE_HOME/roc/packages/$(basename "$url" .tar.zst)/js
+test -f "$bundle_js/cli.mjs" || { echo "FAIL: $bundle_js/cli.mjs is not in the package cache"; exit 1; }
+scripts/test_example.sh "$work/hello.wasm" "$bundle_js"
 echo "PASS test_bundle"

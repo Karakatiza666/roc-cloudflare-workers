@@ -83,6 +83,10 @@ D1Routes :: [].{
 			["id64"] => id64!(Q.num(req, "k"))
 			# PLAN.md 8h item 3: parameters as an `Encodable` tuple or list (`params!`).
 			["params", case] => params!(case)
+			# v2 probe findings 30, 31: a NULL and a boolean column in typed reads (`reads!`).
+			["reads", case] => reads!(case)
+			# v2 probe finding V17: a constraint failure is the flat `Constraint`, matched by the natural pattern (`conflict!`).
+			["conflict", case] => conflict!(case, Q.text(req, "k"))
 			["session"] => session!(Q.text(req, "k"))
 			["session_after"] => session_after!(Q.text(req, "b"), Q.text(req, "k"))
 			_ => Response.from_text(404, "no route")
@@ -199,7 +203,7 @@ all_tuples! = |ty, sql, p, how| match ty {
 	}
 }
 
-all_tuples_by! : Str, List(Sql), How => Try(rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs)]
+all_tuples_by! : Str, List(Sql), How => Try(rows, [Constraint(Sql.Constraint), Infra([D1Err(Io.Thrown), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs)]
 all_tuples_by! = |sql, p, how| match how {
 	Direct => db.all_tuples!(sql, p)
 	Twin => Io.run!(db.all_tuples(sql, p))
@@ -258,7 +262,7 @@ first! = |ty, sql, p, how| match ty {
 	}
 }
 
-all_by! : Str, List(Sql), How => Try(rows, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs)]
+all_by! : Str, List(Sql), How => Try(rows, [Constraint(Sql.Constraint), Infra([D1Err(Io.Thrown), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs)]
 all_by! = |sql, p, how| match how {
 	Direct => db.all!(sql, p)
 	Twin => Io.run!(db.all(sql, p))
@@ -266,7 +270,7 @@ all_by! = |sql, p, how| match how {
 	WithTwin(m) => Io.run!(db.all_with(sql, p, { max_bytes: m }))
 }
 
-first_by! : Str, List(Sql), How => Try(row, [NotFound, Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge])]) where [row.Cbor.Readable(errs)]
+first_by! : Str, List(Sql), How => Try(row, [NotFound, Constraint(Sql.Constraint), Infra([D1Err(Io.Thrown), BadData(Str), TooLarge])]) where [row.Cbor.Readable(errs)]
 first_by! = |sql, p, how| match how {
 	Direct => db.first!(sql, p)
 	Twin => Io.run!(db.first(sql, p))
@@ -471,6 +475,78 @@ params! = |case| match case {
 		_ = db.run!("INSERT INTO pt (k, a, b, c, d) VALUES (?, ?, ?, ?, ?)", items)
 		typed!("rt")
 	}
+	# v2 probe finding 28: a bare value that is not a list or a tuple is one parameter.
+	"bare_str" => {
+		r : Try(List(TextRow), _)
+		r = db.all!("SELECT ? AS t", "one")
+		out(r)
+	}
+	"bare_int" => {
+		r : Try(IdRow, _)
+		r = db.first!("SELECT ? AS id", 7.I64)
+		out(r)
+	}
+	"bare_dec" => {
+		r : Try(IdRow, _)
+		r = db.first!("SELECT ? + 1 AS id", 41)
+		out(r)
+	}
+	"bare_null" => {
+		r : Try(TextRow, _)
+		r = db.first!("SELECT typeof(?) AS t", Sql.null)
+		out(r)
+	}
+	"bare_blob" => {
+		r : Try(TextRow, _)
+		r = db.first!("SELECT typeof(?1) || ':' || hex(?1) AS t", Sql.blob([1, 2]))
+		out(r)
+	}
+	# A `List(U8)` is a list of parameters, not one blob (use `Sql.blob`).
+	"bare_bytes" => {
+		bytes : List(U8)
+		bytes = [1, 2]
+		out(db.rows!("SELECT ? AS a, ? AS b", bytes))
+	}
+	"bare_bool" => out(db.run!("INSERT INTO pi (k, v) VALUES ('bare_bool', ?)", Bool.True))
+	"bare_run" => {
+		_ = db.run!("INSERT INTO pt (k, a) VALUES ('bare_run', ?)", "x")
+		r : Try(TextRow, _)
+		r = db.first!("SELECT a AS t FROM pt WHERE k = ?", "bare_run")
+		out(r)
+	}
+	"bare_session" => match db.with_session!(Primary) {
+		Ok(s) => {
+			r : Try(TextRow, _)
+			r = s.first!("SELECT ? AS t", "in session")
+			out(r)
+		}
+		Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+	}
+	"bare_batch" => match db.batch!([Sql.stmt("SELECT ? AS t", "in batch")]) {
+		Ok([res]) => {
+			r : Try(TextRow, _)
+			r = res.first()
+			out(r)
+		}
+		Ok(other) => Response.from_text(200, "Ok results=${other.len().to_str()}")
+		Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+	}
+	# The old `Sql` tag form: an anonymous tag encodes as a map. The BadParam names the old form and the new form.
+	"old_text" => {
+		old : List([Text(Str)])
+		old = [Text("ann")]
+		out(db.run!("INSERT INTO pi (k, v) VALUES ('old_text', ?)", old))
+	}
+	"old_int" => {
+		old : [Int(I64)]
+		old = Int(5)
+		out(db.run!("INSERT INTO pi (k, v) VALUES ('old_int', ?)", old))
+	}
+	"old_blob" => {
+		old : [Blob(List(U8))]
+		old = Blob([1, 2])
+		out(db.run!("INSERT INTO pt (k, d) VALUES (?, ?)", ("old_blob", old)))
+	}
 	"session" => match db.with_session!(Primary) {
 		Ok(s) => {
 			_ = s.run!("INSERT INTO pt (k, a, b, c, d) VALUES (?, ?, ?, ?, ?)", ("session", "s", 3.I64, 0.5.F64, Sql.blob([4])))
@@ -485,3 +561,117 @@ params! = |case| match case {
 
 missing : Try(I64, [Nope])
 missing = Err(Nope)
+
+## The row types of `reads!` (v2 probe findings 30, 31).
+NullRow : { t : Try(Str, [Null]) }
+
+BoolRow : { b : Bool }
+
+BitRow : { b : U8 }
+
+OptRow : { id : I64, nick ?: Str }
+
+## v2 probe findings 30, 31: what a typed read does with a NULL and with a boolean column.
+reads! : Str => Response
+reads! = |case| match case {
+	# NULL into a Str field: BadData that names the Try(a, [Null]) rule.
+	"null_str" => {
+		r : Try(TextRow, _)
+		r = db.first!("SELECT NULL AS t", Sql.none)
+		out(r)
+	}
+	# NULL into a Try(Str, [Null]) field: Err(Null). A value: Ok.
+	"null_try" => {
+		a : Try(List(NullRow), _)
+		a = db.all!("SELECT NULL AS t UNION ALL SELECT 'x'", Sql.none)
+		out(a)
+	}
+	# An optional field: a missing column is absent, a NULL is BadData with the rule.
+	"opt_missing" => {
+		r : Try(OptRow, _)
+		r = db.first!("SELECT 1 AS id", Sql.none)
+		out(r.map_ok(|row| { id: row.id, nick: row.?nick }))
+	}
+	"opt_null" => {
+		r : Try(OptRow, _)
+		r = db.first!("SELECT 1 AS id, NULL AS nick", Sql.none)
+		out(r.map_ok(|row| { id: row.id, nick: row.?nick }))
+	}
+	# A boolean column (SQLite gives 0 or 1): a Bool field is BadData with the rule, a U8 field reads it.
+	"bool" => {
+		r : Try(List(BoolRow), _)
+		r = db.all!("SELECT 1 = 1 AS b", Sql.none)
+		out(r)
+	}
+	"bool_false" => {
+		r : Try(BoolRow, _)
+		r = db.first!("SELECT 1 = 2 AS b", Sql.none)
+		out(r)
+	}
+	"bit" => {
+		r : Try(List(BitRow), _)
+		r = db.all!("SELECT 1 = 1 AS b UNION ALL SELECT 1 = 2", Sql.none)
+		out(r)
+	}
+	# The same rules in a tuple (`all_tuples!`) and in a batch result (`D1.Result.first`).
+	"tuple_null" => {
+		r : Try(List(PersonT), _)
+		r = db.all_tuples!("SELECT 1, NULL", Sql.none)
+		out(r)
+	}
+	"batch_bool" => match db.batch!([Sql.stmt("SELECT 1 = 1 AS b", Sql.none)]) {
+		Ok([res]) => {
+			r : Try(BoolRow, _)
+			r = res.first()
+			out(r)
+		}
+		Ok(other) => Response.from_text(200, "Ok results=${other.len().to_str()}")
+		Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+	}
+	_ => Response.from_text(404, "no case")
+}
+
+## V17: each form inserts the key `k` of `kv` twice. The handler matches the flat `Err(Constraint(..))` (a 409) and
+## `Err(Infra(..))` (a 500), as an app does.
+conflict! : Str, Str => Response
+conflict! = |case, k| match conflict_try!(case, k) {
+	Ok({}) => Response.from_text(200, "Ok")
+	Err(Constraint({ kind, message })) => Response.from_text(409, "Constraint ${Str.inspect(kind)} | ${message}")
+	Err(NotFound) => Response.from_text(404, "NotFound")
+	Err(Infra(e)) => Response.from_text(500, "Infra ${Str.inspect(e)}")
+}
+
+conflict_try! : Str, Str => Try({}, _)
+conflict_try! = |case, k| {
+	insert = "INSERT INTO kv (k, v) VALUES (?, 'c')"
+	match case {
+		"run" => {
+			_ = db.run!(insert, k)?
+			_ = db.run!(insert, k)?
+			Ok({})
+		}
+		"first" => {
+			_a : TextRow
+			_a = db.first!("${insert} RETURNING k AS t", k)?
+			_b : TextRow
+			_b = db.first!("${insert} RETURNING k AS t", k)?
+			Ok({})
+		}
+		"batch" => {
+			_ = db.batch!([Sql.stmt(insert, k), Sql.stmt(insert, k)])?
+			Ok({})
+		}
+		"exec" => db.exec!("INSERT INTO kv (k, v) VALUES ('${k}', 'c'); INSERT INTO kv (k, v) VALUES ('${k}', 'c')")
+		"session" => {
+			s = db.with_session!(Primary)?
+			_ = s.run!(insert, k)?
+			_ = s.run!(insert, k)?
+			Ok({})
+		}
+		"syntax" => {
+			_ = db.run!("INSERT INTO kv (k, v) VALUS (?, 'c')", k)?
+			Ok({})
+		}
+		_ => Ok({})
+	}
+}

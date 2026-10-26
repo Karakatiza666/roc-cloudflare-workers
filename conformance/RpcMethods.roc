@@ -3,6 +3,7 @@
 import pf.Rpc
 import pf.Cbor
 import pf.Io
+import pf.Sql
 
 RpcMethods :: [].{
 
@@ -101,19 +102,20 @@ RpcMethods :: [].{
 
 	## N5 G1a (checks/rpcerr.mjs, "infra"): the callee `?`s a platform error. The `err` has a domain tag and `Infra(Rpc.Infra)`:
 	## the caller gets `Remote(NotOpen)` or `Remote(Infra(<tag>))`, and `Infra(RpcErr)` or `Infra(BadData)` when its own call failed.
+	## A SQL constraint failure is the flat domain tag `Constraint` (MODULES.md 1, MC9): the caller gets `Remote(Constraint(..))`.
 	## `kind`: "domain", "crash" and, for the Durable Object `Store`: "sql", "constraint", "storage"; for the Workers: "d1".
-	fail : Rpc.Iface(iface) -> Rpc(iface, { kind : Str }, I64, [NotOpen, Infra(Rpc.Infra)])
+	fail : Rpc.Iface(iface) -> Rpc(iface, { kind : Str }, I64, [NotOpen, Constraint(Sql.Constraint), Infra(Rpc.Infra)])
 	fail = |i| i.method("fail")
 
 	## A JS callee (`conformance/worker.js`) that gives the plain objects of the wire form, with an infra tag in `Err`.
-	jsfail : Rpc(RpcMethods.Default, { kind : Str }, I64, [NotOpen, Infra(Rpc.Infra)])
+	jsfail : Rpc(RpcMethods.Default, { kind : Str }, I64, [NotOpen, Constraint(Sql.Constraint), Infra(Rpc.Infra)])
 	jsfail = RpcMethods.default_iface.method("jsfail")
 
 	## `Rpc.forward` with `|e| e`: the callee calls `fail` and passes its errors on. The same `err` as `fail`.
-	relay : Rpc.Iface(iface) -> Rpc(iface, { kind : Str }, I64, [NotOpen, Infra(Rpc.Infra)])
+	relay : Rpc.Iface(iface) -> Rpc(iface, { kind : Str }, I64, [NotOpen, Constraint(Sql.Constraint), Infra(Rpc.Infra)])
 	relay = |i| i.method("relay")
 
 	## `Rpc.forward` with a domain mapping: the callee calls `fail` and maps `NotOpen` to `Shut`.
-	relay_map : Rpc.Iface(iface) -> Rpc(iface, { kind : Str }, I64, [Shut, Infra(Rpc.Infra)])
+	relay_map : Rpc.Iface(iface) -> Rpc(iface, { kind : Str }, I64, [Shut, Constraint(Sql.Constraint), Infra(Rpc.Infra)])
 	relay_map = |i| i.method("relay_map")
 }

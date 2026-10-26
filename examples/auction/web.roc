@@ -63,7 +63,8 @@ route! = |req| {
 }
 
 ## `Infra(..)`: a platform call of this Worker failed. `Remote(Infra(..))`: a platform call of the lot room failed.
-error_response! : [NotFound, Unauthorized, BadRequest(Str), BadData(Str), Infra(Gavel.Faults), Remote(Gavel.RoomErr), ..] => Response
+## `Constraint(..)`: a SQL constraint failure of this Worker (a flat domain tag, MODULES.md 1, MC9): the lot id exists.
+error_response! : [NotFound, Unauthorized, BadRequest(Str), BadData(Str), Constraint(Sql.Constraint), Infra(Gavel.Faults), Remote(Gavel.RoomErr), ..] => Response
 error_response! = |e| match e {
 	NotFound => Response.from_text(404, "not found")
 	Remote(NotOpen) => Response.from_text(404, "the lot room is not open")
@@ -76,7 +77,7 @@ error_response! = |e| match e {
 	Unauthorized => Response.from_text(401, "admin token needed")
 	BadRequest(msg) => Response.from_text(400, msg)
 	BadData(msg) => Response.from_text(400, msg)
-	Infra(Constraint(_)) => Response.from_text(409, "the lot exists")
+	Constraint(_) => Response.from_text(409, "the lot exists")
 	_ => {
 		Log.error!("request failed", Str.inspect(e))
 		Response.from_text(500, "server error")

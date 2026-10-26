@@ -26,14 +26,14 @@ Gavel :: [].{
 
 	## The platform errors of this app: the tags that its platform calls can give. A tag of `Rpc.Infra` that is not here is a compile error.
 	## The closed union has code for each tag (3 to 6 KB of wasm), so the app lists only its own tags in place of `Rpc.Infra`.
-	Faults : [StorageErr(Io.Thrown), SqlErr(Io.Thrown), Constraint(Sql.Constraint), BadData(Str), TooLarge, D1Err(Io.Thrown), KvErr(Io.Thrown), R2Err(Io.Thrown), ObjectErr(Io.Thrown), RpcErr(Io.Thrown), MissingEnv(Str)]
+	Faults : [StorageErr(Io.Thrown), SqlErr(Io.Thrown), BadData(Str), TooLarge, D1Err(Io.Thrown), KvErr(Io.Thrown), R2Err(Io.Thrown), ObjectErr(Io.Thrown), RpcErr(Io.Thrown), MissingEnv(Str)]
 
 	## What a lot room can answer. Each Rpc method of the room has this error type, and the callee cannot give another tag.
-	## `Infra`: a platform call of the room failed (storage, SQL).
-	RoomErr : [NotOpen, AlreadyOpen, StillOpen, Infra(Gavel.Faults)]
+	## `Infra`: a platform call of the room failed (storage, SQL). `Constraint`: a SQL constraint failure, a domain result.
+	RoomErr : [NotOpen, AlreadyOpen, StillOpen, Constraint(Sql.Constraint), Infra(Gavel.Faults)]
 
-	## What `settle_due` can answer: only platform errors (D1, KV).
-	SettleErr : [Infra(Gavel.Faults)]
+	## What `settle_due` can answer: platform errors (D1, KV), and a SQL constraint failure.
+	SettleErr : [Constraint(Sql.Constraint), Infra(Gavel.Faults)]
 
 	## The interfaces: one type for each callee, with no values. `Rpc(Gavel.Room, ..)` is a method of a lot room. A call of a
 	## method of another interface does not compile, and a class takes the methods of one interface only.
@@ -94,7 +94,7 @@ Gavel :: [].{
 	]
 }
 
-create_tables! : () => Try({}, [Infra([D1Err(Io.Thrown), Constraint(Sql.Constraint)])])
+create_tables! : () => Try({}, [Constraint(Sql.Constraint), Infra([D1Err(Io.Thrown)])])
 create_tables! = || {
 	for sql in Gavel.schema {
 		_ = Gavel.db.run!(sql, Sql.none)?

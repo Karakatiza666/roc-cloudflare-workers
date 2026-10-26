@@ -217,6 +217,7 @@ export const checks = [
     return `bookmark ${m[1]}`;
   }],
   // PLAN.md 8d: constraint failures (MODULES.md 5.1, table "Constraint kinds"). Each check keeps the JS text in `seen`.
+  // V17 (2026-10-26): the tag is the flat `Constraint`, not `Infra(Constraint)`.
   ...[
     ['a primary key', 'PrimaryKey', "INSERT INTO t (id, u, n, c) VALUES (1, 'b', 1, 1)", 'UNIQUE constraint failed: t.id'],
     ['a UNIQUE column', 'Unique', "INSERT INTO t (id, u, n, c) VALUES (2, 'a', 1, 1)", 'UNIQUE constraint failed: t.u'],
@@ -226,13 +227,13 @@ export const checks = [
     ['a STRICT column', 'Datatype', "INSERT INTO s (id, v) VALUES (1, 'x')", 'cannot store TEXT value in INTEGER column s.v'],
     ["a trigger RAISE(ABORT, 'UNIQUE constraint failed: x')", 'Trigger', "INSERT INTO t (id, u, n, c) VALUES (97, 'y', 1, 1)", 'UNIQUE constraint failed: x'],
   ].map(([what, kind, sql, message]) => [`d1 8d: ${what} gives Constraint ${kind}`, async (t) => {
-    answer(await route(t, 'run', sql), `Err Infra(Constraint({ kind: ${kind}, message: "${message}" }))`);
+    answer(await route(t, 'run', sql), `Err Constraint({ kind: ${kind}, message: "${message}" })`);
     seen[kind] = await jsError(t, sql);
     return seen[kind];
   }]),
   ["d1 8d: a trigger RAISE(ABORT, 'label-conflict') in a batch! gives Trigger, and the batch writes nothing", async (t) => {
     const sql = "INSERT INTO t (id, u, n, c) VALUES (50, 'w', 1, 1);INSERT INTO t (id, u, n, c) VALUES (99, 'z', 1, 1)";
-    answer(await route(t, 'batch', sql), 'Err Infra(Constraint({ kind: Trigger, message: "label-conflict" }))');
+    answer(await route(t, 'batch', sql), 'Err Constraint({ kind: Trigger, message: "label-conflict" })');
     const db = await t.mf.getD1Database('DB');
     eq((await db.prepare('SELECT count(*) AS n FROM t WHERE id = 50').first()).n, 0, 'rows of the first insert');
     seen.batchTrigger = await jsError(t, null, sql);
@@ -240,7 +241,7 @@ export const checks = [
   }],
   ['d1 8d: exec! of a primary key failure gives PrimaryKey, with the line and the SQL in the message', async (t) => {
     const sql = "INSERT INTO t (id, u, n, c) VALUES (1, 'q', 1, 1)";
-    answer(await route(t, 'exec', sql), `Err Infra(Constraint({ kind: PrimaryKey, message: "Error in line 1: ${sql}: UNIQUE constraint failed: t.id" }))`);
+    answer(await route(t, 'exec', sql), `Err Constraint({ kind: PrimaryKey, message: "Error in line 1: ${sql}: UNIQUE constraint failed: t.id" })`);
   }],
   ['d1 a syntax error is D1Err', async (t) => {
     answer(await route(t, 'run', 'SELEC 1'), 'Err Infra(D1Err({ message: "D1_ERROR: near \\"SELEC\\": syntax error at offset 0: SQLITE_ERROR", name: "Error" }))');
@@ -267,10 +268,10 @@ export const checks = [
     answer(await par(t, 'p53_u64'), 'Ok [{ t: "integer", v: "9007199254740993" }]');
     answer(await par(t, 'i64min'), 'Ok [{ t: "integer", v: "-9223372036854775808" }]');
   }],
-  ['d1 params: a record and {} are BadParam (a list or a tuple is needed)', async (t) => {
+  ['d1 params: a record and {} are BadParam (a list, a tuple or one value is needed)', async (t) => {
     for (const c of ['record', 'empty_record']) {
       const r = await par(t, c);
-      ok(r.body.startsWith('Err Infra(D1Err({ message: "SQL parameters must be a list or a tuple, not a record or a tag') && r.body.includes('name: "BadParam"'), `${c}: got ${r.body}`);
+      ok(r.body.startsWith('Err Infra(D1Err({ message: "SQL parameters must be a list, a tuple or one value, not a record or a tag') && r.body.includes('name: "BadParam"'), `${c}: got ${r.body}`);
     }
   }],
   ['d1 params: a tag item is BadParam with the hint for Sql.or_null; a Bool item is BadParam', async (t) => {
@@ -300,9 +301,78 @@ export const checks = [
     answer(await par(t, 'runtime_list'), 'Ok [{ a: "text", b: 5, c: 2.5, hd: "09", ta: "text", tb: "integer", tc: "real", td: "blob" }]');
     answer(await par(t, 'session'), 'Ok { t: "sblob" }');
   }],
+  // v2 probe finding V17: the natural pattern `Err(Constraint(..))` matches (a 409 of the route), in each D1 form that can
+  // raise it. `Err(Infra(..))` is the rest (a 500).
+  ['d1 V17: Err(Constraint(..)) matches a duplicate key in run!, first!, batch!, exec! and a session (a 409)', async (t) => {
+    const want = () => 'Constraint PrimaryKey | UNIQUE constraint failed: kv.k';
+    for (const c of ['run', 'first', 'batch', 'session']) {
+      const r = await t.get(`/d1/conflict/${c}?k=v17-${c}`);
+      eq(r.status, 409, `${c}: status (${r.body})`);
+      eq(r.body, want(c), `${c}: body`);
+    }
+    const e = await t.get('/d1/conflict/exec?k=v17-exec');
+    eq(e.status, 409, `exec: status (${e.body})`);
+    ok(e.body.startsWith('Constraint PrimaryKey | Error in line 1: '), `exec: got ${e.body}`);
+  }],
+  ['d1 V17: a syntax error is still Infra(D1Err), not Constraint (a 500)', async (t) => {
+    const r = await t.get('/d1/conflict/syntax?k=v17-syntax');
+    eq(r.status, 500, `status (${r.body})`);
+    ok(r.body.startsWith('Infra D1Err({ message: "D1_ERROR: near \\"VALUS\\": syntax error'), `got ${r.body}`);
+  }],
+  // v2 probe finding 28: a bare value that is not a list, a tuple or a record is one parameter (js/helpers.js `sqlParams`).
+  ['d1 params: a bare Str, I64, Dec, Sql.null and Sql.blob are one parameter (all!, first!, run!)', async (t) => {
+    answer(await par(t, 'bare_str'), 'Ok [{ t: "one" }]');
+    answer(await par(t, 'bare_int'), 'Ok { id: 7 }');
+    answer(await par(t, 'bare_dec'), 'Ok { id: 42 }');
+    answer(await par(t, 'bare_null'), 'Ok { t: "null" }');
+    answer(await par(t, 'bare_blob'), 'Ok { t: "blob:0102" }');
+    answer(await par(t, 'bare_run'), 'Ok { t: "x" }');
+  }],
+  ['d1 params: a bare value in a session and in Sql.stmt of a batch', async (t) => {
+    answer(await par(t, 'bare_session'), 'Ok { t: "in session" }');
+    answer(await par(t, 'bare_batch'), 'Ok { t: "in batch" }');
+  }],
+  ['d1 params: a bare List(U8) is a list of parameters, not one blob; a bare Bool is BadParam as an item', async (t) => {
+    answer(await par(t, 'bare_bytes'), 'Ok { columns: ["a", "b"], rows: [[Int(1), Int(2)]] }');
+    const b = await par(t, 'bare_bool');
+    ok(b.body.includes('name: "BadParam"') && b.body.includes('SQL parameter 0: a Bool is not a SQL value, use 0 or 1'), `got ${b.body}`);
+  }],
+  ['d1 params: the old Sql tag form ([Text("ann")], a bare Int(5), Blob in a tuple) is BadParam that names the new form', async (t) => {
+    for (const [c, text] of [
+      ['old_text', 'SQL parameter 0: Text(\\"ann\\") is the old Sql tag form, write \\"ann\\"'],
+      ['old_int', 'SQL parameters: Int(5) is the old Sql tag form, write 5'],
+      ['old_blob', 'SQL parameter 1: Blob([1, 2]) is the old Sql tag form, write Sql.blob([1, 2])'],
+    ]) {
+      const r = await par(t, c);
+      ok(r.body.startsWith('Err Infra(D1Err({ message: ') && r.body.includes(text) && r.body.includes('name: "BadParam"'), `${c}: got ${r.body}`);
+    }
+    const db = await t.mf.getD1Database('DB');
+    eq((await db.prepare("SELECT count(*) AS n FROM pi WHERE k IN ('old_text', 'old_int')").first()).n, 0, 'rows of the refused inserts');
+  }],
+  // v2 probe findings 30, 31: a NULL reads only into Try(a, [Null]); the BadData of a NULL and of a boolean column names
+  // the rule. An optional field reads a missing column as absent (roc-cbor), not a NULL.
+  ['d1 reads: NULL into a Str field is BadData that names Try(a, [Null]); a Try(Str, [Null]) field reads it', async (t) => {
+    answer(await rd(t, 'null_str'), 'Err Infra(BadData("column t: NULL, read it into a Try(a, [Null]) field"))');
+    answer(await rd(t, 'null_try'), 'Ok [{ t: Err(Null) }, { t: Ok("x") }]');
+  }],
+  ['d1 reads: an optional field reads a missing column as absent, and a NULL as BadData with the rule', async (t) => {
+    answer(await rd(t, 'opt_missing'), 'Ok { id: 1, nick: Err(MissingField) }');
+    answer(await rd(t, 'opt_null'), 'Err Infra(BadData("column nick: NULL, read it into a Try(a, [Null]) field"))');
+  }],
+  ['d1 reads: a boolean column into a Bool field is BadData that names I64 or U8; a U8 field reads 0 and 1', async (t) => {
+    const bad = (n) => `Err Infra(BadData("column b: the integer ${n} does not fit the type, a boolean column gives 0 or 1: read it into an I64 or U8 field, not a Bool"))`;
+    answer(await rd(t, 'bool'), bad(1));
+    answer(await rd(t, 'bool_false'), bad(0));
+    answer(await rd(t, 'bit'), 'Ok [{ b: 1 }, { b: 0 }]');
+    answer(await rd(t, 'batch_bool'), bad(1));
+  }],
+  ['d1 reads: all_tuples! of a NULL into a Str item is BadData that names the column index and Try(a, [Null])', async (t) => {
+    answer(await rd(t, 'tuple_null'), 'Err Infra(BadData("column 1 (from 0): NULL, read it into a Try(a, [Null]) item"))');
+  }],
 ];
 
 const par = (t, c) => t.get(`/d1/params/${c}`);
+const rd = (t, c) => t.get(`/d1/reads/${c}`);
 
 // The `name: message` that the binding throws for `sql` (one statement), or for a batch of `batch` (split at `;`).
 async function jsError(t, sql, batch) {
