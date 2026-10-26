@@ -50,7 +50,8 @@ for h in $hashes; do
 	[ -d "$XDG_CACHE_HOME/roc/packages/$h" ] || { echo "FAIL: $h is not in the package cache"; exit 1; }
 done
 echo "packages in the cache: $(echo $hashes)"
-if [[ $bundle == https://* ]]; then curl -fsSL -o "$work/bundle.tar.zst" "$bundle"; scripts/test_bundle_js.sh "$work/bundle.tar.zst"; else scripts/test_bundle_js.sh "$bundle"; fi
+# roc unbundle reads the hash from the file name, so the download keeps the name of the asset.
+if [[ $bundle == https://* ]]; then name=${bundle##*/}; curl -fsSL -o "$work/$name" "$bundle"; scripts/test_bundle_js.sh "$work/$name"; else scripts/test_bundle_js.sh "$bundle"; fi
 # The js/ of the unpacked bundle in the package cache: the shim that a user gets with the platform.
 bundle_js=$XDG_CACHE_HOME/roc/packages/$(basename "$url" .tar.zst)/js
 test -f "$bundle_js/cli.mjs" || { echo "FAIL: $bundle_js/cli.mjs is not in the package cache"; exit 1; }
