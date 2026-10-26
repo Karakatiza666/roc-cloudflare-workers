@@ -1,0 +1,4 @@
+name = "smoke-websockets"
+main = "w_websockets.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["enable_request_signal"]

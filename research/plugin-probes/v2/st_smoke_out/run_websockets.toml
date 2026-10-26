@@ -1,0 +1,12 @@
+name = "smoke-ws"
+main = "w_websockets.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["enable_request_signal", "global_fetch_strictly_public"]
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]

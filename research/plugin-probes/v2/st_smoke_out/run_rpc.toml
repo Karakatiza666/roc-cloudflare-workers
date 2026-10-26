@@ -1,0 +1,13 @@
+name = "front-worker"
+main = "w_rpc.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["enable_request_signal", "global_fetch_strictly_public"]
+
+[[services]]
+binding = "LEDGER"
+service = "ledger-worker"
+
+[[services]]
+binding = "ADMIN"
+service = "front-worker"
+entrypoint = "Admin"

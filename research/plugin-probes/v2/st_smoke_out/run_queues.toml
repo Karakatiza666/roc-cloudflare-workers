@@ -1,0 +1,23 @@
+name = "smoke-queues"
+main = "w_queues.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["enable_request_signal", "global_fetch_strictly_public"]
+
+[[queues.producers]]
+binding = "JOBS"
+queue = "crawl-jobs"
+
+[[queues.producers]]
+binding = "MAILS"
+queue = "mails"
+
+[[queues.consumers]]
+queue = "crawl-jobs"
+max_batch_size = 10
+max_retries = 5
+max_batch_timeout = 1
+
+[[queues.consumers]]
+queue = "mails"
+max_batch_size = 10
+max_batch_timeout = 1

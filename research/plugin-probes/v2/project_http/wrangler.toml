@@ -1,0 +1,8 @@
+name = "probe-http"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["enable_request_signal", "global_fetch_strictly_public"]
+
+[vars]
+WEBHOOK_SECRET = "s3cret"
+GITHUB_TOKEN = "t"

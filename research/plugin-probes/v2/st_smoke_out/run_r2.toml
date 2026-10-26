@@ -1,0 +1,8 @@
+name = "smoke-r2"
+main = "w_r2.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["enable_request_signal", "global_fetch_strictly_public"]
+
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "smoke"

@@ -1,0 +1,25 @@
+name = "plugin-probe"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["enable_request_signal", "global_fetch_strictly_public"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "probe"
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room", "Ticker"]
+
+[[durable_objects.bindings]]
+name = "TICKERS"
+class_name = "Ticker"
+
+[[kv_namespaces]]
+binding = "CFG"
+id = "00000000000000000000000000000001"

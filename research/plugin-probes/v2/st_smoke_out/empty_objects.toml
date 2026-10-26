@@ -1,0 +1,4 @@
+name = "smoke-objects"
+main = "w_objects.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["enable_request_signal"]

@@ -1,0 +1,9 @@
+name = "smoke-d1"
+main = "w_d1.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["enable_request_signal", "global_fetch_strictly_public"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "smoke"
+database_id = "00000000-0000-0000-0000-000000000001"
