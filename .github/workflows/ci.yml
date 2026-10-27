@@ -30,6 +30,12 @@ jobs:
           tln roc default "$(cat compat/last-stack-first-nightly)"
       - name: Install packages
         run: tln install --frozen
+      # The examples use the platform from source: its host (platform/targets/wasm32/host.wasm) is a build output.
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+      - name: Build the platform host
+        run: zig build
       - name: Build the examples and sync
         run: tln run examples
       - name: The committed worker.js files are what sync writes
