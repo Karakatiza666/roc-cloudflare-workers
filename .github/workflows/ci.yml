@@ -1,0 +1,36 @@
+# The examples with Talon (research/talon-fit/TRANSITION.md 6.1): install tln, install the pinned
+# nightly and make it the default compiler, fetch the closure, build each example and
+# run its sync, then check that the committed worker.js files are what sync writes.
+# No npm: sync is `node js/cli.mjs`. No Wrangler: sync reads wrangler.toml as text.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  examples:
+    runs-on: ubuntu-24.04
+    env:
+      TALON_AUTO_INSTALL: 'yes'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      - name: Install Talon
+        run: |
+          curl -fsSL https://github.com/roc-talon/talon/releases/download/v0.0.1/install.sh | sh -s -- --yes --version 0.0.1
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      # tln setup already set the newest nightly as the default, so set the pin as the default too.
+      - name: Install the pinned nightly
+        run: |
+          tln roc install "$(cat compat/last-stack-first-nightly)"
+          tln roc default "$(cat compat/last-stack-first-nightly)"
+      - name: Install packages
+        run: tln install --frozen
+      - name: Build the examples and sync
+        run: tln run examples
+      - name: The committed worker.js files are what sync writes
+        run: git diff --exit-code examples/
