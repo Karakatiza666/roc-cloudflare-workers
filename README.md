@@ -24,7 +24,7 @@ There is no npm package and no `package.json` in a project. The release notes ha
 
 ## Changes in 0.0.2
 
-0.0.2 has 4 changes that can break an app of 0.0.1 (the first 4 rows), and a note about the Roc nightly 2026-10-26 (the last row). The rest of the changes since 0.0.1 are in CI and in test scripts (`ci.yml`, `scripts/test_bundle.sh`). They do not change the platform.
+0.0.2 has 4 changes that can break an app of 0.0.1 (the first 4 rows), one change that only removes an error (row 5), and a note about the Roc nightly 2026-10-26 (the last row). The rest of the changes since 0.0.1 are in CI and in test scripts (`ci.yml`, `scripts/test_bundle.sh`). They do not change the platform.
 
 | Change | In 0.0.1 | In 0.0.2 | What the app author does |
 | --- | --- | --- | --- |
@@ -32,9 +32,12 @@ There is no npm package and no `package.json` in a project. The release notes ha
 | SQL rows: NULL and `Bool` (roc-cbor 0.2.2) | A NULL read only into a `Try(a, [Null])` field. A `Bool` field was `BadData`. | In a record, a NULL is the same as no key. An optional field `x ?: a` is absent. A `x : Try(a, [Missing])` field is `Err(Missing)`. A required field, also `x : Try(a, [Null])`, is `BadData("column x: missing or NULL, read a nullable column into x ?: a or Try(a, [Missing])")`. A `Bool` field reads 0 and 1. In a tuple (`all_tuples!`) a NULL still reads only into a `Try(a, [Null])` item. | Read a nullable column into `x ?: a` or `x : Try(a, [Missing])`. A `Bool` field now reads a boolean column. Code that matched the old `BadData` texts changes. |
 | A record that crosses as CBOR has no `Try(a, [Null])` field | `Err(Null)` and `Sql.null` in a record field wrote `null`, and a `Try(a, [Null])` field read it back. | The writer writes no key for them. A `Try(a, [Null])` field reads back as `MissingRequiredField`. | In an RPC argument or reply, a queue message, a cell, a `Memo` value or an attachment, use `x ?: a` or `x : Try(a, [Missing])` for a field that can be empty. A list item, a tuple item, a `Dict` value and the root keep `Err(Null)`. No type of the platform has such a field. |
 | `Memo` has no error type: the loader is an argument of `get!` | `Memo(a, e)`. `Memo.new(name, { max_age_ms, load! })`, then `memo.get!()`. On Roc nightly 2026-10-21 and later, a `Memo` constant that another module uses (or that two uses join with other `Infra(...)` errors) is a type mismatch at `?`, so the `Memo` had to be a function. | `Memo(a)`. `Memo.new(name, { max_age_ms })`, then `memo.get!(load!)`: `get! : Memo(a), (() => Try(a, e)) => Try(a, e)`. The error type comes from the loader at each call, so a `Memo` constant works in each module. The cache is the same: the pin of the name, `max_age_ms`, `clear!`. | Remove `load!` from `Memo.new`, give it to each `get!`, and write `Memo(a)` in place of `Memo(a, e)`. A `Memo` that was a function (`config = \|\| Memo.new(...)`) can be a constant again. Give the same loader at each call of one `Memo` (`MODULES.md` 9). |
-| Roc nightly 2026-10-26 | The platform gave a warning (exit code 2). | `roc check` and `roc build` of the platform and the examples give 0 errors and 0 warnings. The pinned nightly (2026-10-19, `compat/last-stack-first-nightly`) works too. | A top-level `Io` value that another module joins with other `Infra(...)` errors is a type mismatch at `?` on 10-21 and later: write it as a function (`MODULES.md` 9). A `Memo` has no such problem in 0.0.2 (the row above). |
+| `Kv.get_with!` raises a `cache_ttl_ms` under 30 s to 30 s | A `cache_ttl_ms` under 30,000 was `Err(Infra(KvErr(..)))` (KV refuses a `cacheTtl` under 30 s). | The platform raises it to 30,000, so the read is `Ok`. The same for `get_with_metadata_with!` and the `Io` twins. This is the rule of `put_with!`, which raises a `ttl_ms` under 60 s to 60 s. | Nothing. Code that matched that `KvErr` can drop the match (`MODULES.md` 5.2). |
+| Roc nightly 2026-10-26 | The platform gave a warning (exit code 2). | `roc check` and `roc build` of the platform and the examples give 0 errors and 0 warnings. The nightly 2026-10-19 works too. `compat/last-stack-first-nightly` pins 2026-10-26. | A top-level `Io` value that another module joins with other `Infra(...)` errors is a type mismatch at `?` on 10-21 and later: write it as a function (`MODULES.md` 9). A `Memo` has no such problem in 0.0.2 (the row above). |
 
 The platform header has roc-cbor 0.2.2: an app that adds the roc-cbor URL too uses the same URL (`examples/hello/with_cbor.roc`).
+
+The module names do not change. `MODULES.md` 1, "Modules", now marks the low-level modules (`Cbor`, `Native`, `Io`, `Js`): an app needs only `Cbor`, `Native` and the `Io` functions `run!`, `both!`, `all!`, `race!`, `timeout`. `Io.new` and `Io.sync` (for a binding author) stay in `Io`: they cannot move to `Js` (Roc refuses the import cycle).
 
 Needs: a Roc nightly (the release notes name it, `compat/last-stack-first-nightly` is the one that the release was built with), Node (JSPI: the tests use Node 26) and `wrangler` (the tests use Wrangler 4). Install Wrangler on the machine (see the Cloudflare documentation). It is a program, not a file of a project.
 
@@ -52,32 +55,103 @@ The scripts run from the root: a build inside `examples/auction/` gives `PathOut
 
 ## Use it in your project
 
-A project has three files: `main.roc`, `worker.js`, `wrangler.toml`. A fourth, `talon.toml`, holds the scripts. The shim is a copy of `js/` of the platform bundle in `.roc-cfw/` (put `.roc-cfw/` in `.gitignore`). The command `sync` of the shim writes `worker.js`.
+A project has three files: `main.roc`, `worker.js`, `wrangler.toml`. A fourth, `talon.toml`, holds the scripts and the pin of the helper `roc-cfw`. The shim is a copy of `js/` of the platform bundle in `.roc-cfw/` (gitignored). `roc-cfw sync` makes the copy and runs the command `sync` of the shim, which writes `worker.js`.
 
-Planned setup, with the helper `roc-cfw` (`research/talon-fit/TRANSITION.md`; it has no release yet, so this does not work today):
+| Program | Version that was checked (2026-10-27) | Note |
+| --- | --- | --- |
+| Talon (`tln`) | 0.0.1 | `install.sh` of the release |
+| Platform | 0.0.1 | `tln init` selects the newest release |
+| `roc-cfw` | 0.0.1 (`Karakatiza666/roc-cloudflare-workers-cli`) | Pinned in `talon.toml` `[tools]` of each project. No global install |
+| Node | 26 (JSPI) | `sync` runs the app in Node to read its manifest |
+| Wrangler | 4.151.0 | Installed on the machine, not a project file |
 
-```sh
-tln init --platform Karakatiza666/roc-cloudflare-workers    # main.roc with the platform line
-tln add --tool Karakatiza666/roc-cloudflare-workers-cli     # [tools] roc-cfw in talon.toml
-tln x roc-cfw -- init                                       # app body, wrangler.toml, [scripts], .gitignore
-tln run build                                               # roc build, then roc-cfw sync
-tln run dev                                                 # wrangler dev --local
+The steps, with the output of a real run (`research/talon-fit/trial-0.0.1/`):
+
+```text
+$ mkdir hello && cd hello
+$ tln init --platform Karakatiza666/roc-cloudflare-workers
+check: passed
+build: passed
+.../hello/main.roc
+  + roc: nightly-2026-10-27-de79a0f
+created main.roc                       # the platform URL, the roc: pin, a stub body
+created .github/workflows/ci.yml
+
+$ tln add --tool Karakatiza666/roc-cloudflare-workers-cli --as roc-cfw
+building Karakatiza666/roc-cloudflare-workers-cli 0.0.1 with nightly-2026-10-14-38a3029
+added tool roc-cfw 0.0.1 (Karakatiza666/roc-cloudflare-workers-cli)
+.../hello/talon.toml: tools.roc-cfw = { ref = "Karakatiza666/roc-cloudflare-workers-cli@^0.0.1", url = "https://github.com/.../0.0.1/9fJGynVVjWajYb1sgwTGs7bFLRxB75VHuxMxnGu75UU8.tar.zst" }
+
+$ tln x roc-cfw -- init
+roc-cfw: wrote main.roc, ./wrangler.toml (name hello), ./talon.toml, ./.gitignore
+roc-cfw: next: tln run build
+
+$ tln run build                        # with platform 0.0.1: exit 2 after the build, see the note
+0 errors and 1 warning found in 5.7s while successfully building:
+    app.wasm
+
+$ tln x roc-cfw -- sync                # the second step of build
+roc-cfw: copied .../roc/packages/GcDNxAwPR5tSzqU8T2Kdj35CK3sQMRQDB8ywwfZKdrm/js to .roc-cfw
+worker.js: written (0 object classes, 0 entry points)
+wrangler.toml:
+  ok      main = "worker.js"
+  ok      compatibility_date = "2026-10-01"
+  ok      compatibility_flags has enable_request_signal
+  ok      compatibility_flags has global_fetch_strictly_public
+  ok      [[d1_databases]] DB (d1)
+
+$ wrangler dev --local                 # tln run dev runs build first, so it stops as build does
+$ curl http://127.0.0.1:8787/
+hello from Roc
 ```
 
-The manual way, which works today:
+| Step | Writes |
+| --- | --- |
+| `tln init --platform ...` | `main.roc`: the platform URL, the pin `roc: "<nightly>"` (the newest nightly that passes the check and the build), the body `event! = \|_\| crash "write the app"`. Also `.github/workflows/ci.yml` |
+| `tln add --tool ... --as roc-cfw` | `talon.toml` `[tools] roc-cfw`: the range (`ref`) and the locked release URL (`url`). Talon builds the tool with its own nightly. `--as roc-cfw` sets the key that the template scripts use (the default key is the repository name) |
+| `tln x roc-cfw -- init` | The template of the platform (`js/template/` of the bundle): the app body in `main.roc` (the header stays), `wrangler.toml` with the directory name, `[scripts]` in `talon.toml` (`[tools]` stays), `.gitignore` (`app.wasm`, `.roc-cfw/`, `.wrangler/`) |
+| `tln run build` | `roc build --target=wasm32 --no-cache --output=app.wasm main.roc`, then `roc-cfw sync`: `.roc-cfw/`, `worker.js` |
+
+The scripts that `init` writes:
+
+| Script | Steps |
+| --- | --- |
+| `build` | `roc build ... main.roc`, `roc-cfw sync` |
+| `check` | `roc build ... main.roc`, `roc-cfw sync --check` (for CI: writes nothing) |
+| `dev` | `@build`, `wrangler dev --local` |
+| `deploy` | `@check`, `wrangler deploy` (first `wrangler d1 create <name>` and the id in `wrangler.toml`) |
+
+The commands of `roc-cfw` (run them with `tln x roc-cfw -- <command>`, or as a step of `[scripts]`, where the key `roc-cfw` is the project pin):
+
+| Command | What it does |
+| --- | --- |
+| `roc-cfw shim [--file main.roc]` | Finds `js/` of the platform of the app (`tln path pf`), checks `js/cfw.json` (`api` 1), and copies `js/` to `.roc-cfw/` when the platform hash changed (stamp `.roc-cfw/.platform`). Runs no node |
+| `roc-cfw sync [--file main.roc] [sync args]` | `shim`, then `node .roc-cfw/cli.mjs sync --file <app> [sync args]` (the table below). The exit code is the exit code of `sync` |
+| `roc-cfw init [--name <name>]` | Writes the template (the table above). It replaces only a stub body and never writes over a `wrangler.toml` |
+| `roc-cfw help` | The usage |
+
+Gaps of the released versions (2026-10-27):
+
+| Gap | Cause | What to do today | Fixed by |
+| --- | --- | --- | --- |
+| `tln run build` (and `dev`, `check`, `deploy`) stops after the `roc build` step with exit 2. `app.wasm` is written | Platform 0.0.1: the type `R2.Range` shadows a builtin type. `roc build` gives exit 2 for a warning, with each nightly. Talon 0.0.1 has no `ok-exit` for a step | Run the next step by hand: `tln x roc-cfw -- sync` (or `sync --check`), then `wrangler dev --local` | The next platform release (`R2.ByteRange`). Talon after 0.0.1 also has `ok-exit = [2]` for a step (Talon R-RUN18) |
+| `tln init --platform` gives `no release of Karakatiza666/roc-cloudflare-workers is old enough for min-release-age`, and `tln add --tool` finds no release of the helper | `min-release-age` is 2 days. Platform 0.0.1 is from 2026-10-26 20:41 UTC, `roc-cfw` 0.0.1 from 2026-10-27 07:52 UTC. Talon 0.0.1 has no `@<version>` for `init --platform` and no `min-release-age-exclude` | Wait for the age, or set `min-release-age = "0d"` in the Talon `config.toml` for this one setup | Time (the platform from 2026-10-28 20:41 UTC, the helper from 2026-10-29 07:52 UTC) |
+
+Update of the platform: `tln update pf` (a new URL in `main.roc`), then `tln run build`. `roc-cfw sync` sees a new hash and copies the new `js/`. The shim and the host must come from the same release. `tln update roc-cfw` moves the helper inside its range.
+
+The manual way, with no helper (a fallback):
 
 ```sh
-mkdir my-worker && cd my-worker
-cp /path/to/this/repo/examples/hello/{main.roc,wrangler.toml} .   # or the files of js/template/ in the bundle
-# 1. In main.roc, write the release URL in the platform line.
-# 2. roc check main.roc downloads the bundle into the Roc package cache. Copy its js/ to .roc-cfw/:
-cp -r ~/.cache/roc/packages/<hash>/js .roc-cfw    # <hash>: the file name in the URL, without .tar.zst. $XDG_CACHE_HOME/roc/packages/ when it is set
+# main.roc with the release URL (tln init --platform ...), wrangler.toml and .gitignore from js/template/ of the bundle
+cp -r "$(tln path pf)/js" .roc-cfw    # tln path pf: the directory of the platform in the package cache
 roc build --target=wasm32 --no-cache --output=app.wasm main.roc
-node .roc-cfw/cli.mjs sync      # writes worker.js, checks wrangler.toml
+node .roc-cfw/cli.mjs sync           # writes worker.js, checks wrangler.toml
 wrangler dev --local
 ```
 
-Update of the platform: write the new URL in `main.roc`, copy `js/` of the new bundle to `.roc-cfw/` again, and run `sync`. The shim and the host must come from the same release.
+For an update, copy `js/` of the new bundle to `.roc-cfw/` again and run `sync`. Here `roc` is the proxy that `tln setup` installs.
+
+The command `sync` of the shim (`roc-cfw sync` runs it):
 
 | Command | What it does |
 | --- | --- |

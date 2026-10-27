@@ -1,0 +1,21 @@
+ok   compiles      | C x + 1
+ok   compiles      | C x - 1, x * 2, x // 2, x % 2, -x
+ok   compiles      | C x == 5, x != 5
+ok   compiles      | C x > 0, 0 < x, x >= 0, 0 <= x
+ok   compiles      | C 5 == x
+ok   fails (MISSING METHOD) | C 1 + x (literal on the left)
+ok   compiles      | C 1 + x, the result annotated
+ok   fails (MISSING METHOD) | C 2 * x + 1 (literal on the left)
+ok   compiles      | C a literal suffix 7.DbInt
+ok   fails (TYPE MISMATCH) | C x + n (I64)
+ok   fails (TYPE MISMATCH) | C x == n (I64)
+ok   compiles      | C x.to_i64() + n
+ok   fails (MISSING METHOD) | C x.abs() (no wrapper)
+ok   fails (MISSING METHOD) | C x.plus_try(1) (no wrapper)
+ok   fails (MISSING METHOD) | C x..<x (range)
+ok   fails (invalid number) | C a too big literal
+ok   compiles      | C x in CBOR (SQL parameter)
+ok   compiles      | C x in JSON
+ok   compiles      | C x.to_str()
+ok   compiles      | A I64: 1 + n, 2 * n + 1
+ok   compiles      | A I64: n + 1, 0 < n, 5 == n

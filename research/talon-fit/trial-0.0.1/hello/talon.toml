@@ -1,0 +1,8 @@
+[tools]
+roc-cfw = { ref = "Karakatiza666/roc-cloudflare-workers-cli@^0.0.1", url = "https://github.com/Karakatiza666/roc-cloudflare-workers-cli/releases/download/0.0.1/9fJGynVVjWajYb1sgwTGs7bFLRxB75VHuxMxnGu75UU8.tar.zst" }
+
+[scripts]
+build = ["roc build --target=wasm32 --no-cache --output=app.wasm main.roc", "roc-cfw sync"]
+check = ["roc build --target=wasm32 --no-cache --output=app.wasm main.roc", "roc-cfw sync --check"]
+dev = ["@build", "wrangler dev --local"]
+deploy = ["@check", "wrangler deploy"]

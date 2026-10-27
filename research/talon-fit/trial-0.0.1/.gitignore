@@ -1,0 +1,6 @@
+# Build outputs and the isolated Talon state of the trial (env.sh): tln binary, compilers, package cache, logs
+*.wasm
+.roc-cfw/
+.wrangler/
+node_modules/
+.state/

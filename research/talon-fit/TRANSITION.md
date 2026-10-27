@@ -58,7 +58,7 @@ The steps are in dependency order. A step with a Talon dependency waits for that
 | 1 | Platform | Put `js/` in the platform bundle (section 4). Keep the `.tgz` for one release | Nothing | Yes |
 | 2 | Platform | `cli.mjs`: `sync` only. `init` moves to the helper. Add `js/cfw.json` (`{ "api": 1 }`). `entryOf` writes the import as the relative path from `worker.js` to the directory of `cli.mjs` (`./.roc-cfw/index.js`), and the package name `roc-cloudflare-workers` only when `cli.mjs` is in `node_modules/` | Nothing | Yes (the import depends on where `cli.mjs` is) |
 | 3 | Platform | Done (2026-10-23). Renamed `examples/hello/app.roc` to `main.roc` (G7): `js/cli.mjs` `init`, `scripts/bundle.sh`, `scripts/test_bundle.sh`, `examples/hello/package.json`, the docs | Nothing | Yes, after a change of the scripts that name `app.roc` |
-| 4 | Helper | New repository `roc-cloudflare-workers-cli`: `roc-cfw shim`, `sync`, `init` (section 5) | basic-cli. `tln path` (step 6), or the cache rule as a fallback | Not used yet |
+| 4 | Helper | Done (2026-10-27, release 0.0.1). New repository `roc-cloudflare-workers-cli`: `roc-cfw shim`, `sync`, `init` (section 5) | basic-cli. `tln path` (step 6), or the cache rule as a fallback | Not used yet |
 | 5 | Talon | G1: the build target (R-TG1 to R-TG6) | Talon P0 | n/a |
 | 6 | Talon | `tln run`, `[scripts]`, `--each` order (R-RUN1 to R-RUN17, R-EA1 to R-EA8), `[tools]` (R-PT1 to R-PT16), `tln path` (R-PTH1 to R-PTH5) | Talon P1 | n/a |
 | 7 | Platform | Examples and README to the Talon setup (section 3). Remove `package.json` of the examples | Steps 2 to 6 | No: this is the switch |
@@ -393,7 +393,7 @@ The full sweep of `conformance/reverts.mjs` was not run. The filtered run is `RO
 | The CI job of 6.1 (`tln install --frozen`, `tln run examples`, `git diff --exit-code examples/`) | A Talon release (CLI R-IN6 form, a fixed version) |
 | The first platform release (`release.yml` has never run; `test-published` runs `test_bundle.sh <url>`) | The user's decision |
 | `--js` flag of `roc-cfw sync` (section 3.3) | Not needed any more in this repository: `node ../../js/cli.mjs` is direct. A user project needs no flag |
-| The README user flow with `roc-cfw` | The helper release. The manual flow works today |
+| The README user flow with `roc-cfw` | Done (2026-10-27): see "Status of step 4 and section 7 with released versions" |
 
 ## Change of `sync` (2026-10-26): V8 and V21
 
@@ -403,3 +403,34 @@ The full sweep of `conformance/reverts.mjs` was not run. The filtered run is `RO
 | Exit codes | The same: 0, 1, 2. An unlisted handler is exit 0 (a warning) and exit 1 with `--check`. A `--file` that is not there is exit 2 |
 | Entry file | With `worker.options.js` next to the entry file, the entry file imports it (`makeHandler(app, options)`). The helper writes no options file. `roc-cfw sync --check` checks the import |
 | `cfw.json` | `{ "api": 1 }` stays: the arguments and the exit codes are compatible |
+
+## Status of step 4 and section 7 with released versions (2026-10-27)
+
+Step 4 is done: `roc-cfw` 0.0.1 is released (`Karakatiza666/roc-cloudflare-workers-cli`, one app bundle `9fJGynVVjWajYb1sgwTGs7bFLRxB75VHuxMxnGu75UU8.tar.zst`). The steps of section 7 ran in `trial-0.0.1/` with released versions only. Nothing was released, deployed or pushed.
+
+| Item | Value |
+| --- | --- |
+| Talon | 0.0.1 (`roc-talon/talon`, asset `tln-x64musl`, sha256 checked) |
+| Platform | 0.0.1 (`GcDNxAwPR5tSzqU8T2Kdj35CK3sQMRQDB8ywwfZKdrm`) |
+| `roc-cfw` | 0.0.1, built by Talon with `nightly-2026-10-14-38a3029` |
+| App compiler | `nightly-2026-10-27-de79a0f` (the `roc:` pin that `tln init` wrote) |
+| Node, Wrangler | 26.7.0, 4.151.0 |
+| Isolated state | `trial-0.0.1/env.sh`: `XDG_*` in `trial-0.0.1/.state/` (gitignored). `config.toml` there has `min-release-age = "0d"` (gap T2) |
+
+| Section 7 step | Result |
+| --- | --- |
+| `tln init --platform Karakatiza666/roc-cloudflare-workers` | Pass (with gap T2). `main.roc` with the URL, the `roc:` pin and the R-SM2 stub. Also `.github/workflows/ci.yml` |
+| `tln add --tool Karakatiza666/roc-cloudflare-workers-cli --as roc-cfw` | Pass. `[tools] roc-cfw = { ref = "...@^0.0.1", url = ".../0.0.1/9fJ....tar.zst" }`. The plan had no `--as`: the default key is the repository name |
+| `tln x roc-cfw -- init` | Pass. `main.roc` body, `wrangler.toml` (name `hello`), `[scripts]` merged after `[tools]`, `.gitignore` |
+| `tln run build` | Fail, exit 2 (gap T1). `app.wasm` is written. The `sync` step does not run |
+| `tln x roc-cfw -- sync`, then `sync --check` | Pass, exit 0 both. `.roc-cfw/` with the stamp `.platform` = the platform hash, `worker.js` imports `./.roc-cfw/index.js`. `tln path pf` found the package (no fallback note) |
+| `wrangler dev --local`, `curl /` | `200`, `hello from Roc`. `/cbor` and `/d1` also gave the README answers. Wrangler stopped. No deploy |
+| `tln run dev` | Not run: it runs `@build` first, so it stops as `tln run build` does |
+
+| Gap | Command and output | Cause | Owner | README text |
+| --- | --- | --- | --- | --- |
+| T1 | `tln run build`: `The type Range shadows a builtin type.` (`R2.roc:318`), `0 errors and 1 warning ... successfully building: app.wasm`, exit 2 | Platform 0.0.1 has `R2.Range`. `roc build` gives exit 2 on a warning (also with `nightly-2026-10-19-601b54c`, the nightly of the release). Talon 0.0.1 refuses `ok-exit` in a step (`a table step needs the strings in and run, and no other key`, exit 19) | Platform: fixed on `main` (`R2.ByteRange`, commit 32a0a8c), not released. Talon: R-RUN18 `ok-exit` on master, not released | Run `tln x roc-cfw -- sync` by hand after the build |
+| T2 | `tln init --platform ...`: `error[usage]: no release of Karakatiza666/roc-cloudflare-workers is old enough for min-release-age`, exit 2 | Default `min-release-age` 2 days (R-C7). Talon 0.0.1 has no `init --platform owner/repo@<version>` (R-IN9) and no `min-release-age-exclude` (R-C11) | Time only. With `TALON_NOW=2026-10-29T12:00:00Z` and the default config, `init` and `add --tool` pass | Wait, or `min-release-age = "0d"` in `config.toml` |
+| T3 | Non-interactive shell: `error[consent]: 1 compiler download (73.8 MB) needs consent`, exit 13 | R-DL1 to R-DL6: the expected behavior | None | Not in the README (an interactive run prompts) |
+| T4 | The template comment of `main.roc` names `roc-cloudflare-workers sync` | Old text in `js/template/main.roc` and `examples/hello/main.roc` (also on `main`) | Platform (text only) | None |
+

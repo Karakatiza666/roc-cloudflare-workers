@@ -175,8 +175,9 @@ cases=(
   's.cron as a field|sched|scheduled! : Worker.Scheduled => Try({}, [])\nscheduled! = |s| if (s.cron == "") Ok({}) else Ok({})|need a record'
   'control: Js.await!|fetch|\t_ = Js.await!([])|-'
   'Io.await! (moved to Js)|fetch|\t_ = Io.await!([])|await!'
-  'control: Memo.new with a () loader|top|keys = Memo.new("k", { max_age_ms: 5, load!: || Ok("v") })|-'
-  'Memo.new with a {} loader|top|keys = Memo.new("k", { max_age_ms: 5, load!: |{}| Ok("v") })|TYPE MISMATCH'
+  # Memo (6c0f7a0, research/memo-error-join/DESIGN-NOTE.md): the loader is an argument of `get!`, not a field of `Memo.new`.
+  'control: Memo.get! with a () loader|fetch|\tv = Memo.new("k", { max_age_ms: 5 }).get!(|| Ok("v"))\n\t_ = v|-'
+  'Memo.get! with a {} loader|fetch|\tv = Memo.new("k", { max_age_ms: 5 }).get!(|{}| Ok("v"))\n\t_ = v|expects 0 arguments but got 1'
 )
 for c in "${cases[@]}"; do
   IFS='|' read -r name kind rest <<< "$c"

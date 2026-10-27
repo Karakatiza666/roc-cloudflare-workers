@@ -1,0 +1,53 @@
+{
+ "meta_last_row_id": "UNSAFE 9007199254740992",
+ "all": [
+  {
+   "id": "UNSAFE 9007199254740992",
+   "n": "UNSAFE -9007199254740992"
+  }
+ ],
+ "raw": [
+  [
+   "UNSAFE 9007199254740992",
+   "UNSAFE -9007199254740992"
+  ]
+ ],
+ "first": {
+  "id": "UNSAFE 9007199254740992",
+  "n": "UNSAFE -9007199254740992"
+ },
+ "first_col": "UNSAFE 9007199254740992",
+ "typeof": {
+  "a": "integer",
+  "b": "integer"
+ },
+ "cast_text": {
+  "id": "9007199254740993",
+  "n": "-9007199254740993"
+ },
+ "printf": {
+  "id": "9007199254740993"
+ },
+ "concat": {
+  "id": "9007199254740993"
+ },
+ "json_object": {
+  "j": "{\"id\":9007199254740993}"
+ },
+ "returning": {
+  "id": "9007199254740995"
+ },
+ "compare_text_param": {
+  "c": 1
+ },
+ "add_in_sql": {
+  "id": "9007199254740994"
+ },
+ "cast_real_no_affinity": {
+  "t": "real",
+  "v": "5.0"
+ },
+ "has_fetcher": "object",
+ "fetcher_text": "[{\"success\":true,\"results\":{\"columns\":[\"id\"],\"rows\":[[9007199254740992],[9007199254740996]]},\"meta\":{\"served_by\":\"miniflare.db\",\"served_by_primary\":true,\"total_attempts\":1,\"timings\":{\"sql_duration_ms\":0},\"duration\":0,\"changes\":0,\"last_row_id\":1,\"changed_db\":false,\"size_after\":16384,\"rows_read\":2,\"rows_written\":0}}]",
+ "has_query_rpc": "function"
+}

@@ -94,11 +94,14 @@ export const checks = [
     ok(grew < 1_048_576, `wasm memory grew by ${grew} bytes`);
     return `${grew} bytes`;
   }],
-  ['kv get_with! cache_ttl_ms: 30 s is Ok, less is KvErr', async (t) => {
-    answer(await route(t, 'get_cache', 'small', '&ttl=30000'), 'Ok "hello"');
-    const r = await route(t, 'get_cache', 'small', '&ttl=5000');
-    ok(r.body.startsWith('Err Infra(KvErr('), `cache_ttl_ms of 5 s: ${r.body}`);
-    return r.body.slice(0, 200);
+  // 2e: a cache_ttl_ms under 30 s is raised to 30 s (MODULES.md 5.2), as ttl_ms of put_with! is raised to 60 s. KV throws
+  // for a cacheTtl under 30 s, so Ok shows the clamp. `roc test` (platform/Kv.roc, read_options) checks the value that is sent.
+  ['kv get_with! cache_ttl_ms under 30 s is raised to 30 s (get_with!, the Io twin, get_with_metadata_with!)', async (t) => {
+    for (const ms of [0, 1, 5000, 29_999, 30_000, 90_000]) {
+      answer(await route(t, 'get_cache', 'small', `&ttl=${ms}`), 'Ok "hello"');
+    }
+    answer(await route(t, 'get_cache_io', 'small', '&ttl=5000'), 'Ok "hello"');
+    answer(await route(t, 'get_meta_cache', 'small', '&ttl=5000'), 'Ok { metadata: Err(Missing), value: "hello" }');
   }],
   // PLAN.md 8f: `put_with!` metadata and `get_with_metadata!`.
   ['kv put_with! metadata, and get_with_metadata!', async (t) => {

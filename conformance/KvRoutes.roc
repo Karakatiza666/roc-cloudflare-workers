@@ -97,6 +97,8 @@ KvRoutes :: [].{
 			["len_with"] => len(plain.get_with!(k, { max_bytes: max }))
 			["len_with_io"] => len(Io.run!(plain.get_with(k, { max_bytes: max })))
 			["get_cache"] => show(plain.get_with!(k, { cache_ttl_ms: ttl }))
+			["get_cache_io"] => show(Io.run!(plain.get_with(k, { cache_ttl_ms: ttl })))
+			["get_meta_cache"] => meta_of(plain.get_with_metadata_with!(k, { cache_ttl_ms: ttl }))
 			["put"] => show(plain.put!(k, v))
 			["put_io"] => show(Io.run!(plain.put(k, v)))
 			["put_ttl"] => show(plain.put_with!(k, v, { ttl_ms: ttl }))

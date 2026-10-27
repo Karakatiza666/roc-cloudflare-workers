@@ -69,7 +69,7 @@ Kv(a) :: { name : Str, write : a -> Try(Js, Str), read : List(U8) -> Try(a, Str)
 	find! : Kv(a), Str => Try(Try(a, [NotFound]), [Infra([KvErr(Io.Thrown), BadData(Str), TooLarge])])
 	find! = |kv, key| Io.run!(kv.find(key))
 
-	## `cache_ttl_ms`: 30 s or more (KV throws for less: `KvErr`). `max_bytes`: the limit of the value.
+	## `cache_ttl_ms`: a value under 30 s is raised to 30 s (KV throws for less). `max_bytes`: the limit of the value.
 	get_with : Kv(a), Str, { cache_ttl_ms ?: U64, max_bytes ?: U64 } -> Io(a, [NotFound, Infra([KvErr(Io.Thrown), BadData(Str), TooLarge])])
 	get_with = |kv, key, opts| get_io(kv, key, opts.?cache_ttl_ms, opts.?max_bytes ?? Body.default_max)
 
@@ -302,13 +302,17 @@ expiry = |ttl_ms, expires_ms| {
 
 read_options : Try(U64, [MissingField]) -> List((Str, Js))
 read_options = |cache_ttl_ms| match cache_ttl_ms {
-	Ok(ms) => [("type", Text("stream")), ("cacheTtl", seconds(ms))]
+	Ok(ms) => [("type", Text("stream")), ("cacheTtl", seconds(ms.max(min_cache_ttl_ms)))]
 	Err(_) => [("type", Text("stream"))]
 }
 
 ## KV throws for an `expirationTtl` under 60 s: `ttl_ms` is raised to this.
 min_ttl_ms : U64
 min_ttl_ms = 60_000
+
+## KV throws for a `cacheTtl` under 30 s: `cache_ttl_ms` is raised to this.
+min_cache_ttl_ms : U64
+min_cache_ttl_ms = 30_000
 
 ## MC10: KV takes whole seconds, so the module rounds up.
 seconds : U64 -> Js
@@ -371,4 +375,8 @@ expect error({ name: "Error", message: "x" }) == KvErr({ name: "Error", message:
 expect seconds(1) == Int(1)
 expect seconds(60_000) == Int(60)
 expect read_options(Ok(30_001)) == [("type", Text("stream")), ("cacheTtl", Int(31))]
+# 2e: a cache_ttl_ms under 30 s is raised to 30 s, as ttl_ms of put_with is raised to 60 s.
+expect read_options(Ok(0)) == [("type", Text("stream")), ("cacheTtl", Int(30))]
+expect read_options(Ok(29_999)) == [("type", Text("stream")), ("cacheTtl", Int(30))]
+expect read_options(Ok(30_000)) == [("type", Text("stream")), ("cacheTtl", Int(30))]
 expect page_of(Obj([("keys", Arr([Obj([("name", Text("a")), ("expiration", Int(5))]), Obj([("name", Text("b"))])])), ("cursor", Text("c1"))])).next == More("c1")

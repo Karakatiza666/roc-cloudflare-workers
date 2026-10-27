@@ -58,7 +58,7 @@ fetch_url! = |url| match Http.get!(url) {
 	Err(e) => Response.from_text(502, "Err ${Str.inspect(e)}")
 }
 
-## `bindings`: the manifest lists the D1 binding, so the shim checks `env.DB` at load, and `roc-cloudflare-workers sync`
+## `bindings`: the manifest lists the D1 binding, so the shim checks `env.DB` at load, and `roc-cfw sync`
 ## checks `wrangler.toml`.
 worker = Worker.new({ fetch!: fetch!, bindings: [db.declare()] })
 

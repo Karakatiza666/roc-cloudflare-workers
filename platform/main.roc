@@ -2,7 +2,7 @@ platform ""
 	requires {
 		event! : Worker.Event => Worker.Outcome
 	}
-	# The app modules first. Last, the low level (MODULES.md 1, "Modules"): `Cbor`, `Native`, `Io`, then `Js` (the escape hatch).
+	# `roc fmt` sorts this list by name. The groups (the app modules, and the low level `Cbor`, `Native`, `Io`, `Js`) are in MODULES.md 1, "Modules".
 	exposes [Ai, Analytics, Assets, Body, Cache, Cbor, Ctx, D1, Email, Env, Http, Hyperdrive, Id64, Io, Js, Kv, Log, Memo, Native, Object, Queue, R2, RateLimit, Request, Response, Rpc, Secret, SecretsStore, Service, Sql, Tcp, Time, Vectorize, Version, WebCrypto, WebSocket, Worker, Workflows]
 	packages {
 		cbor: "https://github.com/Karakatiza666/roc-cbor/releases/download/0.2.2/Cn5TmeqTbMewyChxexex2F3izTnMriXRv5ZMLVV3eUYb.tar.zst",

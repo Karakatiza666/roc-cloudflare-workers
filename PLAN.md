@@ -3064,6 +3064,34 @@ Not released, not tagged. The new version has 4 changes for app authors and one 
 | Reverts | `v2fix 31` is gone (no `Bit`). `v2fix 30` is the NULL of a tuple. New: `v2fix 30: a missing or NULL required field ...`, and 3 `cbor 0.2.2` entries that edit the cached package (null skip, Bool 0 and 1, `Err(Null)` writer). The path of the cached package in `conformance/reverts.mjs` is the 0.2.2 hash. | Filtered run: `node conformance/reverts.mjs 'v2fix 30\|cbor 0.2.2\|D1: BadData is Str.inspect\|dec0.2'` (all caught). Also: `bench/test-all.sh` ALL PASS (pinned nightly, `--no-cache`, Zig 0.17.0, workerd 2026-10-23), `conformance/run.mjs` 471 passed. |
 | Version text | README (status, section "Changes in 0.0.2", roc-cbor 0.2.2), `.github/release-notes.md` (roc-cbor 0.2.2, a pointer to the section), `scripts/bundle.sh` (local default `0.0.2-local`). The earlier changes since 0.0.1 are in CI and in `scripts/test_bundle.sh` only. | |
 
+### Status of the design-issue doc fixes, 2e and 9 (2026-10-27)
+
+Not released, not committed. The list is `design_issues_tmp.md` (each row has its state and evidence). Nightly: the pinned 2026-10-26 (`compat/last-stack-first-nightly`).
+
+| Item | Change | Test |
+| --- | --- | --- |
+| 2e | `Kv.get_with!`, `get_with_metadata_with!` and the `Io` twins raise a `cache_ttl_ms` under 30 s to 30 s (`min_cache_ttl_ms` in `read_options`, `platform/Kv.roc`, `bench/platform/Kv.roc`), as `put_with!` raises a `ttl_ms` under 60 s. `Kv.Cell` has no read options. Docs: the doc comment, `MODULES.md` 5.2 (row `cache_ttl_ms`), `API.md` 7, README "Changes in 0.0.2". | 3 new `expect`s (`read_options`, `roc test platform/main.roc`: 194 passed). Conformance: new routes `get_cache_io`, `get_meta_cache` and the check `kv get_with! cache_ttl_ms under 30 s is raised to 30 s ...` (0, 1, 5000, 29,999, 30,000, 90,000 ms, the twin, the metadata form); it replaces the old check "30 s is Ok, less is KvErr". |
+| 9 | No API change. `Io.new` and `Io.sync` cannot move to `Js`: `import Io` in `Js` is "import cycle detected" (`research/doc-fixes/i9_io_cycle/run.sh`). The other way (the `Io` type in `Js`) makes apps write `Js.Io`. `roc fmt` sorts `exposes` by name, so the order cannot show the groups: the comment in both `main.roc` and the module index of `MODULES.md` 1 mark the low-level modules. | `roc fmt` of a reordered header gives the sorted list again (2026-10-26). |
+| 2a, X4, X5, X7, X8, X9 | Checked: the docs already agree (commit afec79f and the V8 work). X5 and X6 are checked again on 2026-10-26. X9: a note on the `complete!` line of `MODULES.md` 5.3. | `research/doc-fixes/*.roc` (README there has both nightlies); conformance `dec D1 BLOB` (2a) |
+| X6 | On 2026-10-26 a bare `?` on `key.metadata` compiles when the annotated error union has `Missing` (2026-10-19: a type mismatch). `MODULES.md` 5.2 and 15 say both. | `x6_*.roc` on both nightlies |
+| X1 | `MODULES.md` 5.1: a `U64` time binds as a SQL parameter as it is, an `I64` record field takes `to_i64_wrap()`. | `roc check` of the example |
+| X2, 7b | Rule MC16 and the table "Annotate the binding of a parsed read" (`MODULES.md` 1) with the error texts. The error is now at the read. | `research/doc-fixes/x2_*.roc` (8 probes) |
+| 2b | Decided: no helper (`research/d1-int-helper/README.md`). `MODULES.md` 5.1 "64-bit integers: recipe" and "Known limits". | Docs only |
+| 5, 8 | Decisions in `MODULES.md` 3 (`sync` row: the shim is not on npm, `roc-cfw` copies `js/`) and 1 (the formats table is the single reference) | Docs only |
+| v2 findings 35, 48, 52 | `MODULES.md` 7: an `Rpc` constant needs an annotation ("unresolved polymorphic type"); a class with no `rpc` needs none when `Worker.new` and `Object.namespace` use it; 12.4: an `Err` of a socket handler is a log line and the socket stays open | `research/doc-fixes/v2_do_p11.roc` (1 error), `v2_do_p35.roc`, `v2_do_p06.roc` (0) |
+| Comments | `roc-cfw sync` in place of `roc-cloudflare-workers sync`: `js/template/main.roc`, `examples/hello/main.roc`, `MODULES.md` 3 | |
+
+Reverts (`node conformance/reverts.mjs '2e Kv|cache_ttl_ms is not sent'`): all caught.
+
+| Revert | Test | Result |
+| --- | --- | --- |
+| `Kv.get_with!: cache_ttl_ms is not sent (8f2)` (now a `roc test` entry on `platform/Kv.roc`: KV takes any `cacheTtl` of 30 s or more, so only the `expect`s see the value) | `roc test` | caught (`platform/Kv.roc:377`) |
+| `2e Kv: cache_ttl_ms is not raised to 30 s` | conformance | caught (`Invalid cache_ttl of 0`) |
+| `2e Kv: cache_ttl_ms is raised to 60 s` | `roc test` | caught |
+| `2e Kv: cache_ttl_ms is raised to 29 s` | conformance | caught (`Invalid cache_ttl of 29`) |
+
+Tests: `node conformance/run.mjs` 472 passed, 0 failed (with the 2e check and a 2a check that was then removed: `dec D1 BLOB` already covers it). `bench/test-all.sh` (Zig 0.17.0, workerd of Wrangler 4.151.0, Node 26.7.0, nightly 2026-10-26): 54 steps pass, also `conformance/run.mjs` on the final tree. One fails: `conformance/must-not-compile.sh`, the case `wave C control: Memo.new with a () loader`. Its control still uses the old `Memo` API (`load!` in `Memo.new`), which the 0.0.2 `Memo` change removed. It is not from this work (no `Memo` change here). The test must be updated by a test agent (TW18).
+
 ## 12. One instance per isolate: check memory at resume
 
 Goal: one wasm instance per isolate takes all requests (variant B), also after a host bug. Each task sums its memory when it waits. When it resumes after other tasks ran, it sums again. A difference shows that another task wrote into it. Only that task fails. The instance stays when its shared state passes a check.

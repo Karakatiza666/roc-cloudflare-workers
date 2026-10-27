@@ -1,0 +1,21 @@
+--- platform/Js.roc	2026-10-20 19:05:46.764240102 +0400
++++ platform/Js.roc	2026-10-27 21:52:12.903568948 +0400
+@@ -2,6 +2,8 @@
+ ## the raw runs of a program (`await!`, `call!`), and the pin table. An app uses it only for a Workers API that no
+ ## module has. To make an `Io` from ops, use `Io.new` and `Io.sync` (`Io` imports `Js`, so they cannot be here).
+ ## The Zig host encodes and decodes the CBOR form (API.md 5.1). Roc never sees the bytes.
++import Io
++
+ Js := [
+ 	Undefined,
+ 	Null,
+@@ -92,6 +94,9 @@
+ 		Err(t) => crash "Js.unpin!: ${t.name}: ${t.message}"
+ 	}
+ 
++	io_new : List(Js.Op), (Try(Js, Js.Thrown) -> Try(a, e)) -> Io(a, e)
++	io_new = |ops, read| Io.new(ops, read)
++
+ 	## The ops as one `Js` array, the format that the JS interpreter reads (OP5):
+ 	## `[["get", target, name], ["call", target, name, [args]], ...]`.
+ 	program : List(Js.Op) -> Js

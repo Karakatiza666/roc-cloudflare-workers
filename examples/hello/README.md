@@ -28,15 +28,18 @@ The scripts are in the `talon.toml` of the repository root. Run them from the ro
 
 ## Use it in your project
 
-There is no `package.json` and no npm package. The shim is a copy of `js/` of the platform bundle in `.roc-cfw/`.
+There is no `package.json` and no npm package. The helper `roc-cfw` 0.0.1 writes this example from `js/template/` of the bundle (`main.roc` body, `wrangler.toml`, `.gitignore`, `[scripts]` in `talon.toml`) and copies `js/` of the bundle to `.roc-cfw/`.
 
-1. Copy `main.roc`, `wrangler.toml` and `.gitignore` of this directory (the helper `roc-cfw init`, not released yet, will do this from `js/template/` of the bundle). In `main.roc`, write the release URL in the platform line.
-2. Run `roc check main.roc`. Roc puts the bundle in its package cache. Copy `js/` of the bundle to `.roc-cfw/`: `cp -r ~/.cache/roc/packages/<hash>/js .roc-cfw` (`<hash>` is the file name in the URL, without `.tar.zst`).
-3. `roc build --target=wasm32 --no-cache --output=app.wasm main.roc`, then `node .roc-cfw/cli.mjs sync`: it writes `worker.js` (with `import ... from './.roc-cfw/index.js'`) and checks `wrangler.toml`.
-4. `wrangler dev --local`, then `curl http://127.0.0.1:8787/`.
-5. For `wrangler deploy`: `wrangler d1 create roc-hello` and put its id in `wrangler.toml`.
+| Step | Command |
+| --- | --- |
+| 1 | `tln init --platform Karakatiza666/roc-cloudflare-workers` |
+| 2 | `tln add --tool Karakatiza666/roc-cloudflare-workers-cli --as roc-cfw` |
+| 3 | `tln x roc-cfw -- init` |
+| 4 | `tln run build`: `roc build`, then `roc-cfw sync` (it writes `worker.js` with `import ... from './.roc-cfw/index.js'` and checks `wrangler.toml`) |
+| 5 | `wrangler dev --local`, then `curl http://127.0.0.1:8787/` |
+| 6 | For `wrangler deploy`: `wrangler d1 create <name>` and put its id in `wrangler.toml` |
 
-The planned setup with the helper `roc-cfw` and `talon.toml` scripts (`tln run build`, `tln run dev`) is in the `README.md` of the repository root. The helper has no release yet.
+With platform 0.0.1, step 4 stops with exit 2 after the build (a warning in the platform). Then run `tln x roc-cfw -- sync`. The `README.md` of the repository root has the output of a real run, the gaps and the manual way with no helper.
 
 ## Test in the repo
 
