@@ -22,7 +22,7 @@ The compatibility flag `enable_request_signal` is required in the Wrangler confi
 
 ## No `cbor` entry in the app header
 
-The platform has its own module `Cbor`: `import pf.Cbor`. It wraps roc-cbor 0.2.1, which the platform
+The platform has its own module `Cbor`: `import pf.Cbor`. It wraps roc-cbor 0.2.2, which the platform
 header takes by URL. An app needs no `cbor` entry and no `http` entry.
 
 An app may add the same roc-cbor URL. The types are the same: a `Cbor.Bytes` of `pf.Cbor` goes where a `Bytes`
@@ -35,3 +35,5 @@ of the package is wanted. If the app adds another version of roc-cbor, its types
 | `@BUNDLE_NAME@` | The platform bundle: the Roc modules, `LICENSE`, the production host `targets/wasm32/host.wasm`, and the shim in `js/`. The packages `http` and `cbor` stay URLs. The shim and the host are in one file, so they have the same version. |
 
 Built with Roc `@NIGHTLY@` and Zig 0.17.0.
+
+Breaking changes for app authors: the section "Changes in <version>" of `README.md` at the tag.

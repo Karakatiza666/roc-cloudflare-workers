@@ -21,6 +21,12 @@ Tag := Str.{
 
 TagRow : { tag : Tag }
 
+NullRec : { id : I64, note : Try(Str, [Null]) }
+
+OptRec : { id : I64, note ?: Str }
+
+MissRec : { id : I64, note : Try(Str, [Missing]) }
+
 ## A helper with the `where` aliases of the module.
 round_trip : a -> Try(a, _) where [a.Cbor.Encodable([]), a.Cbor.Parseable([InvalidCbor(U64), ..errs])]
 round_trip = |value| Cbor.parse(Cbor.encode(value))
@@ -71,6 +77,25 @@ CborRoutes :: [].{
 				bad : Try(List({ name : Str, id : U64 }), _)
 				bad = Cbor.parse(raw)
 				text(Str.inspect(bad), Str.inspect(error_path(raw, bad)))
+			}
+			# roc-cbor 0.2.2: `Err(Null)` in a record field writes no key (one key, the head 0xa1). Read back, the field is
+			# required for `Try(a, [Null])` (`MissingRequiredField`), absent for `?:` and `Err(Missing)` for `Try(a, [Missing])`.
+			# Outside a record a null reads into `Try(a, [Null])` (a list item), and a `Bool` reads 0 and 1.
+			["null"] => {
+				nullable : Try(Str, [Null])
+				nullable = Err(Null)
+				raw = Cbor.encode({ id: 7.I64, note: nullable })
+				required : Try(NullRec, _)
+				required = Cbor.parse(raw)
+				optional : Try(OptRec, _)
+				optional = Cbor.parse(raw)
+				missing : Try(MissRec, _)
+				missing = Cbor.parse(raw)
+				items : Try(List(Try(Str, [Null])), _)
+				items = round_trip([Ok("a"), Err(Null)])
+				bools : Try(List(Bool), _)
+				bools = Cbor.parse([0x84, 0xf4, 0xf5, 0x00, 0x01])
+				text("${Str.inspect(raw)} ${Str.inspect(required)} ${Str.inspect(optional.map_ok(|r| r.?note))}", "${Str.inspect(missing.map_ok(|r| r.note))} ${Str.inspect(items)} ${Str.inspect(bools)}")
 			}
 			_ => Response.from_text(404, "no route")
 		}

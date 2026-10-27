@@ -30,8 +30,8 @@ for (const d of readdirSync(`${root}.cache/tmp`)) {
 }
 const BP = 'bench/platform/';
 const IX = 'js/index.js';
-// The roc-cbor 0.2.0 package in the cache of the build (XDG_CACHE_HOME=.cache): a revert of `Cbor.Bytes` edits it.
-const CBOR = '.cache/roc/packages/GTUNBR1419Xvgw1eightgb14scrrWkoiTVkBPJ94yHMA/Cbor.roc';
+// The roc-cbor 0.2.2 package in the cache of the build (XDG_CACHE_HOME=.cache): a revert of `Cbor.Bytes` edits it.
+const CBOR = '.cache/roc/packages/Cn5TmeqTbMewyChxexex2F3izTnMriXRv5ZMLVV3eUYb/Cbor.roc';
 // The tests. `conformance`: run.mjs, which prints `FAIL <name>`; the others: a command whose exit code is the result.
 const TESTS = {
   conformance: () => [process.execPath, ['conformance/run.mjs', `${out}/conformance.wasm`]],
@@ -241,8 +241,8 @@ const reverts = [
   R('D1: an Int parameter goes as text only above 2^53', 'conformance', ['d1 an Int parameter outside ±(2^53 - 1) stores the exact value'], ['js/helpers.js', '        return v.toString();', '        return v < 0n ? Number(v) : v.toString();']),
   R('D1: typed rows parse with no int_from_text (Cbor.parse)', 'conformance', ['d1 all! of CAST(id AS TEXT) into { id : I64 } gives the exact ids', 'd1 D1.Result.first of a batch! with no cast: BadData with the column'],
     [BP + 'SqlRules.roc', 'Cbor.parse_with(bytes, { int_from_text: Bool.True })', 'Cbor.parse(bytes)']),
-  R('D1: BadData is Str.inspect of the parse error (no column)', 'conformance', ['d1 all! with no cast: BadData with the column, for a positive and a negative id', 'd1 D1.Result.first of a batch! with no cast: BadData with the column', "d1 the text '01' and '9223372036854775808' into an I64 field give BadData", 'd1 a missing column gives BadData("column id: missing")'],
-    [BP + 'SqlRules.roc', 'Err(InvalidCbor(pos)) => Err(BadData(bad_data(bytes, pos)))\n\t\tErr(MissingRequiredField(name)) => Err(BadData("column ${name}: missing"))\n\t\tErr(other) => Err(BadData(Str.inspect(other)))', 'Err(InvalidCbor(pos)) => Err(BadData(Str.inspect(InvalidCbor(pos))))\n\t\tErr(other) => Err(BadData(Str.inspect(other)))']),
+  R('D1: BadData is Str.inspect of the parse error (no column)', 'conformance', ['d1 all! with no cast: BadData with the column, for a positive and a negative id', 'd1 D1.Result.first of a batch! with no cast: BadData with the column', "d1 the text '01' and '9223372036854775808' into an I64 field give BadData", 'd1 a missing column gives BadData("column id: missing or NULL, ...")'],
+    [BP + 'SqlRules.roc', 'Err(InvalidCbor(pos)) => Err(BadData(bad_data(bytes, pos)))\n\t\tErr(MissingRequiredField(name)) => Err(BadData("column ${name}: missing or NULL, read a nullable column into ${name} ?: a or Try(a, [Missing])"))\n\t\tErr(other) => Err(BadData(Str.inspect(other)))', 'Err(InvalidCbor(pos)) => Err(BadData(Str.inspect(InvalidCbor(pos))))\n\t\tErr(other) => Err(BadData(Str.inspect(other)))']),
   R('D1.all: no Get "results" (API.md 6.2)', 'conformance', ['d1 all!'], [BP + 'D1.roc', 'Get(Slot(s + 1), "results"), Call(Root("pf"), "pack", [Slot(s + 2), Lit(Int(limit(max)))])', 'Call(Root("pf"), "pack", [Slot(s + 1), Lit(Int(limit(max)))])']),
   R('D1.all: no limit in pf.pack', 'conformance', ['d1 all! of rows above 1 MiB is TooLarge, all_with! with max_bytes of 2 MiB gives the rows'], [BP + 'D1.roc', '"pack", [Slot(s + 2), Lit(Int(limit(max)))]', '"pack", [Slot(s + 2)]']),
   R('D1.Session.bookmark!: getBookmark of null read as text', 'conformance', ['d1 with_session!: bookmark! before and after a query, and After(bookmark)'], [BP + 'D1.roc', 'Ok(Null) => Err(NotFound)', 'Ok(Null) => Ok("")']),
@@ -825,8 +825,8 @@ const reverts = [
     [CBOR, '\t\t\t\tif whole.abs_diff(0) > 170141183460469231731 {', '\t\t\t\tif Bool.True {']),
   R('dec0.2: Cbor.Bytes reads no array (a D1 BLOB)', 'conformance', ['dec D1 BLOB: reads into a Cbor.Bytes field and into List(U8)'],
     [CBOR, '} else if h.major == 4 and h.arg <= state.bytes.len() - h.next {', '} else if Bool.False {']),
-  R('dec0.2: a missing column is the inspect text', 'conformance', ['dec D1 a missing column x of a typed row is BadData("column x: missing") (all! and first!)', 'd1 a missing column gives BadData("column id: missing")'],
-    [BP + 'SqlRules.roc', '\t\tErr(MissingRequiredField(name)) => Err(BadData("column ${name}: missing"))\n', '']),
+  R('dec0.2: a missing column is the inspect text', 'conformance', ['dec D1 a missing column x of a typed row is BadData("column x: missing or NULL, ...") (all! and first!)', 'd1 a missing column gives BadData("column id: missing or NULL, ...")'],
+    [BP + 'SqlRules.roc', '\t\tErr(MissingRequiredField(name)) => Err(BadData("column ${name}: missing or NULL, read a nullable column into ${name} ?: a or Try(a, [Missing])"))\n', '']),
   R('dec0.2: typed reads pass no int_from_text (the Options are optional)', 'conformance', ['d1 all! of CAST(id AS TEXT) into { id : I64 } gives the exact ids'],
     [BP + 'SqlRules.roc', 'Cbor.parse_with(bytes, { int_from_text: Bool.True }) {\n\t\tOk(v) => Ok(v)\n\t\tErr(InvalidCbor(pos)) => Err(BadData(bad_data(', 'Cbor.parse_with(bytes, {}) {\n\t\tOk(v) => Ok(v)\n\t\tErr(InvalidCbor(pos)) => Err(BadData(bad_data(']),
   R('dec0.2: parse_with ignores int_from_text', 'conformance', ['dec Cbor.parse_with: {} is parse, { int_from_text: True } reads the text'],
@@ -953,10 +953,17 @@ const reverts = [
     ['js/helpers.js', '    if (isMap(params)) {\n      const old', '    if (false) {\n      const old']),
   R('v2fix 28: the old tag form has no text of its own (oldTag gives null)', 'conformance', ['d1 params: the old Sql tag form ([Text("ann")], a bare Int(5), Blob in a tuple) is BadParam that names the new form'],
     ['js/helpers.js', "  if (keys.length !== 1 || !Object.hasOwn(OLD_TAGS, keys[0])) return null;", '  return null;']),
-  R('v2fix 30: a NULL has no rule in the BadData text', 'conformance', ['d1 reads: NULL into a Str field is BadData that names Try(a, [Null]); a Try(Str, [Null]) field reads it', 'd1 reads: an optional field reads a missing column as absent, and a NULL as BadData with the rule'],
+  R('v2fix 30: a NULL in a tuple has no rule in the BadData text', 'conformance', ['d1 reads: all_tuples! of a NULL into a Str item is BadData that names the column index and Try(a, [Null])'],
     [BP + 'SqlRules.roc', '\t\t\tOk(0xf6) | Ok(0xf7) => Null\n', '']),
-  R('v2fix 31: a Bool field of 0 or 1 has no rule in the BadData text', 'conformance', ['d1 reads: a boolean column into a Bool field is BadData that names I64 or U8; a U8 field reads 0 and 1'],
-    [BP + 'SqlRules.roc', '\t\t\tOk(0x00) => Bit(0)\n\t\t\tOk(0x01) => Bit(1)\n', '']),
+  R('v2fix 30: a missing or NULL required field has the short text (no rule)', 'conformance', ['d1 reads: NULL into a Str field or a Try(Str, [Null]) field is BadData that names ?: and Try(a, [Missing])', 'objects sql!: NULL into a Str field gives BadData that names the rule, and 1 into a Bool field is Ok'],
+    [BP + 'SqlRules.roc', '"column ${name}: missing or NULL, read a nullable column into ${name} ?: a or Try(a, [Missing])"', '"column ${name}: missing"']),
+  // roc-cbor 0.2.2 in the cache of the build: the two rules that the rows need. A revert edits the package.
+  R('cbor 0.2.2: a null value in a map is not skipped (the record reader sees it)', 'conformance', ['d1 reads: NULL into a Str field or a Try(Str, [Null]) field is BadData that names ?: and Try(a, [Missing])', 'd1 reads: NULL into a Try(Str, [Missing]) field is Err(Missing)', 'd1 reads: an optional field reads a missing column and a NULL as absent'],
+    [CBOR, '\t\t\tOk(0xf6) | Ok(0xf7) => Ok(Continue(at(state, key.rest.pos + 1)))\n', '']),
+  R('cbor 0.2.2: a Bool does not read 0 and 1', 'conformance', ['d1 reads: a boolean column (0 or 1) into a Bool field is Ok; a U8 field reads it; 2 is BadData', 'objects sql!: NULL into a Str field gives BadData that names the rule, and 1 into a Bool field is Ok', 'cbor null: Err(Null) in a record writes no key and reads back as MissingRequiredField, an absent ?: field or Err(Missing); a Bool reads 0 and 1'],
+    [CBOR, '\t\t\t\t\tOk({ value: 0, rest }) => Ok({ value: Bool.False, rest })\n\t\t\t\t\tOk({ value: 1, rest }) => Ok({ value: Bool.True, rest })\n', '']),
+  R('cbor 0.2.2: Err(Null) in a record field is written as null', 'conformance', ['cbor null: Err(Null) in a record writes no key and reads back as MissingRequiredField, an absent ?: field or Err(Missing); a Bool reads 0 and 1'],
+    [CBOR, 'if written.len() == value_start + 1 and written.last() == Ok(0xf6) {', 'if Bool.False {']),
 ];
 
 // The filter: texts of names, joined by `|` (a revert runs when its name has one of them).

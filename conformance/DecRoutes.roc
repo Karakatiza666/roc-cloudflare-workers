@@ -1,4 +1,4 @@
-## `Dec` and the other value rules of roc-cbor 0.2.0 (MODULES.md 1 "Formats of typed data", "The Dec in JS"; 5.1). Route
+## `Dec` and the other value rules of roc-cbor 0.2.0 and later (MODULES.md 1 "Formats of typed data", "The Dec in JS"; 5.1). Route
 ## `/dec/<name>`; `checks/dec.mjs` checks them. `?v=` picks a `Dec` from `dec_of`. The D1 tables are made by `checks/dec.mjs`.
 import pf.Request
 import pf.Response
@@ -102,7 +102,7 @@ DecRoutes :: [].{
 				c = db.all!("SELECT x'' AS b", Sql.none)
 				Response.from_text(200, "bytes=${Str.inspect(a.map_ok(|rows| rows.map(|r| r.b.to_list())))} list=${Str.inspect(b.map_ok(|rows| rows.map(|r| r.b)))} empty=${Str.inspect(c.map_ok(|rows| rows.map(|r| r.b.to_list())))}")
 			}
-			# A missing column of a typed row is `BadData("column x: missing")`.
+			# A missing column of a typed row is `BadData("column x: missing or NULL, ...")`.
 			["d1_missing"] => {
 				a : Try(List(NeedsX), _)
 				a = db.all!("SELECT 1 AS y", Sql.none)

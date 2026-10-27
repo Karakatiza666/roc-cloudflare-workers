@@ -2,7 +2,7 @@
 
 A Roc platform for Cloudflare Workers. The app compiles to a wasm32 reactor. The host is in Zig. Effects (fetch, D1, R2, KV, Cache API, Durable Object SQL) are direct-style hosted functions that wait on JS promises through JSPI.
 
-Status: phases A and B are built (`PLAN.md`). The release files are made by `scripts/bundle.sh` and published by `.github/workflows/release.yml` (`PLAN.md` 11). No release exists yet.
+Status: phases A and B are built (`PLAN.md`). The release files are made by `scripts/bundle.sh` and published by `.github/workflows/release.yml` (`PLAN.md` 11). The latest release is 0.0.1. This branch is 0.0.2 (not released yet): see "Changes in 0.0.2".
 
 | Document | Content |
 | --- | --- |
@@ -18,9 +18,22 @@ Each release (tag `X.Y.Z`) has 1 file. The platform and the shim have the same v
 
 | File | Use |
 | --- | --- |
-| `<hash>.tar.zst` | The platform bundle. It goes in the header of the app. It has the Roc modules, `LICENSE`, the production host `targets/wasm32/host.wasm`, and the JS shim in `js/` (`index.js` and the other `*.js` files: `makeHandler`, `objectClass`, `entrypointClass`; `cli.mjs`: the command `sync`; `cfw.json`; `template/`). The packages `http` (roc-lang/http 2.0.0) and `cbor` (roc-cbor 0.2.1) stay URLs in the platform header: Roc downloads them. |
+| `<hash>.tar.zst` | The platform bundle. It goes in the header of the app. It has the Roc modules, `LICENSE`, the production host `targets/wasm32/host.wasm`, and the JS shim in `js/` (`index.js` and the other `*.js` files: `makeHandler`, `objectClass`, `entrypointClass`; `cli.mjs`: the command `sync`; `cfw.json`; `template/`). The packages `http` (roc-lang/http 2.0.0) and `cbor` (roc-cbor 0.2.2) stay URLs in the platform header: Roc downloads them. |
 
 There is no npm package and no `package.json` in a project. The release notes have the URL.
+
+## Changes in 0.0.2
+
+0.0.2 has 3 changes that can break an app of 0.0.1 (the first 3 rows), and a note about the Roc nightly 2026-10-26 (the last row). The rest of the changes since 0.0.1 are in CI and in test scripts (`ci.yml`, `scripts/test_bundle.sh`). They do not change the platform.
+
+| Change | In 0.0.1 | In 0.0.2 | What the app author does |
+| --- | --- | --- | --- |
+| The type `R2.Range` is `R2.ByteRange` | `R2.Range` shadows a builtin type of Roc nightly 2026-10-26 and later. `roc build` prints a warning and exits with code 2, so `tln run build` stops. | `R2.ByteRange`. The values are the same: `From({ offset_bytes, length_bytes })` and `Suffix(n)`. | Write `R2.ByteRange` where the app names the type (`{ range ?: R2.ByteRange }`). An app that only writes the values changes nothing. |
+| SQL rows: NULL and `Bool` (roc-cbor 0.2.2) | A NULL read only into a `Try(a, [Null])` field. A `Bool` field was `BadData`. | In a record, a NULL is the same as no key. An optional field `x ?: a` is absent. A `x : Try(a, [Missing])` field is `Err(Missing)`. A required field, also `x : Try(a, [Null])`, is `BadData("column x: missing or NULL, read a nullable column into x ?: a or Try(a, [Missing])")`. A `Bool` field reads 0 and 1. In a tuple (`all_tuples!`) a NULL still reads only into a `Try(a, [Null])` item. | Read a nullable column into `x ?: a` or `x : Try(a, [Missing])`. A `Bool` field now reads a boolean column. Code that matched the old `BadData` texts changes. |
+| A record that crosses as CBOR has no `Try(a, [Null])` field | `Err(Null)` and `Sql.null` in a record field wrote `null`, and a `Try(a, [Null])` field read it back. | The writer writes no key for them. A `Try(a, [Null])` field reads back as `MissingRequiredField`. | In an RPC argument or reply, a queue message, a cell, a `Memo` value or an attachment, use `x ?: a` or `x : Try(a, [Missing])` for a field that can be empty. A list item, a tuple item, a `Dict` value and the root keep `Err(Null)`. No type of the platform has such a field. |
+| Roc nightly 2026-10-26 | The platform gave a warning (exit code 2). | `roc check` and `roc build` of the platform and the examples give 0 errors and 0 warnings. The pinned nightly (2026-10-19, `compat/last-stack-first-nightly`) works too. | A `Memo` constant that `?` joins with other `Infra(...)` errors can be a type mismatch on 10-26. Write the `Memo` as a function (`MODULES.md` 9). |
+
+The platform header has roc-cbor 0.2.2: an app that adds the roc-cbor URL too uses the same URL (`examples/hello/with_cbor.roc`).
 
 Needs: a Roc nightly (the release notes name it, `compat/last-stack-first-nightly` is the one that the release was built with), Node (JSPI: the tests use Node 26) and `wrangler` (the tests use Wrangler 4). Install Wrangler on the machine (see the Cloudflare documentation). It is a program, not a file of a project.
 

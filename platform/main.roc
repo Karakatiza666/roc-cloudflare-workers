@@ -5,7 +5,7 @@ platform ""
 	# The app modules first. Last, the low level (MODULES.md 1, "Modules"): `Cbor`, `Native`, `Io`, then `Js` (the escape hatch).
 	exposes [Ai, Analytics, Assets, Body, Cache, Cbor, Ctx, D1, Email, Env, Http, Hyperdrive, Id64, Io, Js, Kv, Log, Memo, Native, Object, Queue, R2, RateLimit, Request, Response, Rpc, Secret, SecretsStore, Service, Sql, Tcp, Time, Vectorize, Version, WebCrypto, WebSocket, Worker, Workflows]
 	packages {
-		cbor: "https://github.com/Karakatiza666/roc-cbor/releases/download/0.2.1/9jD8bxEKhNu6CzBKej1nA1hzymTedJsfhiGgiMPGA1mu.tar.zst",
+		cbor: "https://github.com/Karakatiza666/roc-cbor/releases/download/0.2.2/Cn5TmeqTbMewyChxexex2F3izTnMriXRv5ZMLVV3eUYb.tar.zst",
 		http: "https://github.com/roc-lang/http/releases/download/2.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
 	}
 	provides { "roc_event": event_for_host! }

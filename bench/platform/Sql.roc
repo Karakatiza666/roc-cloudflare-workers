@@ -56,6 +56,10 @@ Sql := [Null, Int(I64), Real(F64), Text(Str), Blob(List(U8))].{
 
 	## A parameter that can be NULL: `Ok(x)` encodes as `x`, `Err(_)` as NULL, for any error type. A bare `Err(Null)` of
 	## an annotated `Try(a, [Null])` also encodes as CBOR null (NULL). A tag with a payload encodes as a map: `BadParam`.
+	## The parameters are an array (a list or a tuple), so a NULL item stays. In a record that crosses as CBOR (an RPC
+	## argument or reply, a queue message, a cell, a `Memo` value, an attachment) a field of `Sql.null`, of `Sql.or_null` or of
+	## `Err(Null)` writes no key (roc-cbor 0.2.2). The record reads back only into `x ?: a` or `x : Try(a, [Missing])`, not
+	## into `x : Try(a, [Null])` (`MissingRequiredField`). Use `?:` or `Try(a, [Missing])` for a field that can be empty.
 	or_null : Try(a, _) -> Sql.OrNull(a)
 	or_null = |t| match t {
 		Ok(x) => Sql.OrNull.Some(x)

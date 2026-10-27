@@ -1,4 +1,4 @@
-## Typed data as CBOR (MODULES.md MC5, API.md 5.2). The module wraps `Cbor` of the package `roc-cbor` 0.2.0, so an app
+## Typed data as CBOR (MODULES.md MC5, API.md 5.2). The module wraps `Cbor` of the package `roc-cbor` 0.2.2, so an app
 ## needs no `cbor` entry in its header: `import pf.Cbor`. Each type here is an alias of the type of the package, not a new
 ## type. An app that also adds the same package URL gets the same types, and values pass between the two.
 ##
@@ -117,7 +117,7 @@ Cbor :: [].{
 	encode = |value| CborPkg.encode(value)
 }
 
-# roc-cbor 0.2.0: a BLOB (a JS array of 0..255) reads into Bytes, a Dec literal list is CBOR integers.
+# roc-cbor 0.2.0 and later: a BLOB (a JS array of 0..255) reads into Bytes, a Dec literal list is CBOR integers.
 expect {
 	got : Try({ b : Cbor.Bytes }, _)
 	got = Cbor.parse(Cbor.encode({ b: [1.U8, 2, 255] }))

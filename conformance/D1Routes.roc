@@ -562,8 +562,10 @@ params! = |case| match case {
 missing : Try(I64, [Nope])
 missing = Err(Nope)
 
-## The row types of `reads!` (v2 probe findings 30, 31).
+## The row types of `reads!` (v2 probe findings 30, 31; roc-cbor 0.2.2: a NULL is a missing key in a record).
 NullRow : { t : Try(Str, [Null]) }
+
+MissRow : { t : Try(Str, [Missing]) }
 
 BoolRow : { b : Bool }
 
@@ -571,22 +573,30 @@ BitRow : { b : U8 }
 
 OptRow : { id : I64, nick ?: Str }
 
-## v2 probe findings 30, 31: what a typed read does with a NULL and with a boolean column.
+## v2 probe findings 30, 31 with roc-cbor 0.2.2: what a typed read does with a NULL and with a boolean column.
+## A NULL is no key: an optional field is absent, a `Try(a, [Missing])` field is `Err(Missing)`, a required field
+## (also `Try(a, [Null])`) is BadData that names the rule. A Bool reads 0 and 1.
 reads! : Str => Response
 reads! = |case| match case {
-	# NULL into a Str field: BadData that names the Try(a, [Null]) rule.
+	# NULL into a Str field: BadData that names the rule (`x ?: a` or `Try(a, [Missing])`).
 	"null_str" => {
 		r : Try(TextRow, _)
 		r = db.first!("SELECT NULL AS t", Sql.none)
 		out(r)
 	}
-	# NULL into a Try(Str, [Null]) field: Err(Null). A value: Ok.
+	# NULL into a Try(Str, [Null]) field: a required field, so the same BadData.
 	"null_try" => {
 		a : Try(List(NullRow), _)
 		a = db.all!("SELECT NULL AS t UNION ALL SELECT 'x'", Sql.none)
 		out(a)
 	}
-	# An optional field: a missing column is absent, a NULL is BadData with the rule.
+	# NULL into a Try(Str, [Missing]) field: Err(Missing). A value: Ok.
+	"null_missing" => {
+		a : Try(List(MissRow), _)
+		a = db.all!("SELECT NULL AS t UNION ALL SELECT 'x'", Sql.none)
+		out(a)
+	}
+	# An optional field: a missing column and a NULL are both absent.
 	"opt_missing" => {
 		r : Try(OptRow, _)
 		r = db.first!("SELECT 1 AS id", Sql.none)
@@ -597,7 +607,12 @@ reads! = |case| match case {
 		r = db.first!("SELECT 1 AS id, NULL AS nick", Sql.none)
 		out(r.map_ok(|row| { id: row.id, nick: row.?nick }))
 	}
-	# A boolean column (SQLite gives 0 or 1): a Bool field is BadData with the rule, a U8 field reads it.
+	# A boolean column (SQLite gives 0 or 1): a Bool field reads it, a U8 field too. Another integer is not a Bool.
+	"bool_two" => {
+		r : Try(BoolRow, _)
+		r = db.first!("SELECT 2 AS b", Sql.none)
+		out(r)
+	}
 	"bool" => {
 		r : Try(List(BoolRow), _)
 		r = db.all!("SELECT 1 = 1 AS b", Sql.none)

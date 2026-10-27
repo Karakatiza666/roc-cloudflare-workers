@@ -41,7 +41,7 @@ R2 :: { name : Str }.{
 	get! = |bucket, key| Io.run!(get(bucket, key))
 
 	## `range`: the bytes to read. `only_if`: a failed condition is `PreconditionFailed` (R2 gives the object with no body).
-	get_with : R2, Str, { range ?: R2.Range, only_if ?: R2.Cond } -> Io(R2.Object, [NotFound, PreconditionFailed, Infra([R2Err(Io.Thrown)])])
+	get_with : R2, Str, { range ?: R2.ByteRange, only_if ?: R2.Cond } -> Io(R2.Object, [NotFound, PreconditionFailed, Infra([R2Err(Io.Thrown)])])
 	get_with = |bucket, key, opts| {
 		given = get_program(bucket, key, opts)
 		Io.new(
@@ -55,7 +55,7 @@ R2 :: { name : Str }.{
 		)
 	}
 
-	get_with! : R2, Str, { range ?: R2.Range, only_if ?: R2.Cond } => Try(R2.Object, [NotFound, PreconditionFailed, Infra([R2Err(Io.Thrown)])])
+	get_with! : R2, Str, { range ?: R2.ByteRange, only_if ?: R2.Cond } => Try(R2.Object, [NotFound, PreconditionFailed, Infra([R2Err(Io.Thrown)])])
 	get_with! = |bucket, key, opts| Io.run!(get_with(bucket, key, opts))
 
 	## The HTTP response of an object: status 200, the body (a stream, no copy into wasm), the HTTP metadata of the object
@@ -73,7 +73,7 @@ R2 :: { name : Str }.{
 	respond : R2, Str, Request -> Io(Response, [Infra([R2Err(Io.Thrown)])])
 	respond = |bucket, key, req| {
 		wanted = wanted_range(req)
-		opts0 : { range ?: R2.Range, only_if ?: R2.Cond }
+		opts0 : { range ?: R2.ByteRange, only_if ?: R2.Cond }
 		opts0 = { only_if: R2.from_headers(req.headers()) }
 		opts = match wanted {
 			Ok(range) => { ..opts0, range }
@@ -290,7 +290,7 @@ R2 :: { name : Str }.{
 
 	## `range`: the bytes that R2 read, only for a call with a `range` option (the edge and Miniflare give a range
 	## also for a read of the whole object).
-	Object : { meta : R2.Meta, body : Body, range ?: R2.Range }
+	Object : { meta : R2.Meta, body : Body, range ?: R2.ByteRange }
 
 	Meta : { key : Str, version : Str, size_bytes : U64, etag : Str, http_etag : Str, uploaded_ms : U64, http : R2.Http, custom : List((Str, Str)), checksums : R2.Checksums }
 
@@ -315,7 +315,7 @@ R2 :: { name : Str }.{
 	absent : R2.Cond
 	absent = { etag_does_not_match: "*" }
 
-	Range : [From({ offset_bytes : U64, length_bytes ?: U64 }), Suffix(U64)]
+	ByteRange : [From({ offset_bytes : U64, length_bytes ?: U64 }), Suffix(U64)]
 }
 
 # ---- Programs ----
@@ -324,7 +324,7 @@ R2 :: { name : Str }.{
 Fetched : [Found(R2.Object), NotMet(R2.Meta), Absent]
 
 ## The program of `get` with options. `with_range`: the call had a `range`.
-get_program : R2, Str, { range ?: R2.Range, only_if ?: R2.Cond } -> { ops : List(Js.Op), with_range : Bool }
+get_program : R2, Str, { range ?: R2.ByteRange, only_if ?: R2.Cond } -> { ops : List(Js.Op), with_range : Bool }
 get_program = |bucket, key, opts| {
 	built = get_options(opts, 1)
 	with_range = match opts.?range {
@@ -368,14 +368,14 @@ validator_headers : R2.Meta -> List(Header)
 validator_headers = |meta| meta_headers(meta).keep_if(|h| h.name == "etag" or h.name == "cache-control" or h.name == "expires")
 
 ## The range of the request, when R2 can read it: a `Range` with one range, and no `If-Range`.
-wanted_range : Request -> Try(R2.Range, [NoRange])
+wanted_range : Request -> Try(R2.ByteRange, [NoRange])
 wanted_range = |req| match (req.header("if-range"), req.header("range")) {
 	(Err(_), Ok(text)) => parse_range(text)
 	_ => Err(NoRange)
 }
 
 ## `bytes=a-b`, `bytes=a-`, `bytes=-n`. A range that ends before it starts, and `bytes=-0`, are not used.
-parse_range : Str -> Try(R2.Range, [NoRange])
+parse_range : Str -> Try(R2.ByteRange, [NoRange])
 parse_range = |text| {
 	t = text.trim()
 	if t.starts_with("bytes=") and !t.contains(",") {
@@ -395,7 +395,7 @@ parse_range = |text| {
 
 ## The first and the last byte that a range reads, in an object of `size` bytes. `Err(Unsatisfiable)`: it starts at or
 ## after the end.
-range_span : R2.Range, U64 -> Try({ first : U64, last : U64 }, [Unsatisfiable])
+range_span : R2.ByteRange, U64 -> Try({ first : U64, last : U64 }, [Unsatisfiable])
 range_span = |range, size| match range {
 	From(r) => if r.offset_bytes >= size {
 		Err(Unsatisfiable)
@@ -409,7 +409,7 @@ range_span = |range, size| match range {
 	Suffix(n) => if (size == 0) Err(Unsatisfiable) else Ok({ first: size - U64.min(n, size), last: size - 1 })
 }
 
-found_response : R2.Object, Try(R2.Range, [NoRange]) -> Response
+found_response : R2.Object, Try(R2.ByteRange, [NoRange]) -> Response
 found_response = |obj, wanted| {
 	plain = R2.to_response(obj).with_headers(meta_headers(obj.meta).append(Header.{ name: "accept-ranges", value: "bytes" }))
 	size = obj.meta.size_bytes
@@ -631,7 +631,7 @@ include_name = |i| match i {
 }
 
 ## The options of `get`: `{ range, onlyIf }`.
-get_options : { range ?: R2.Range, only_if ?: R2.Cond }, U32 -> { ops : List(Js.Op), slot : U32 }
+get_options : { range ?: R2.ByteRange, only_if ?: R2.Cond }, U32 -> { ops : List(Js.Op), slot : U32 }
 get_options = |opts, base| {
 	with_range = match opts.?range {
 		Ok(From(r)) => {
@@ -734,7 +734,7 @@ object_of = |got, with_range| match field(got.fields, "body") {
 	_ => Err(NoBody)
 }
 
-range_of : Js -> Try(R2.Range, [NoRange])
+range_of : Js -> Try(R2.ByteRange, [NoRange])
 range_of = |v| match v {
 	Obj(f) => match (field(f, "offset"), field(f, "length"), field(f, "suffix")) {
 		(_, _, Int(n)) => Ok(Suffix(to_u64(Int(n), "range suffix")))

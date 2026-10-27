@@ -23,7 +23,7 @@ SqlRules :: [].{
 	typed = |bytes| match Cbor.parse_with(bytes, { int_from_text: Bool.True }) {
 		Ok(v) => Ok(v)
 		Err(InvalidCbor(pos)) => Err(BadData(bad_data(bytes, pos)))
-		Err(MissingRequiredField(name)) => Err(BadData("column ${name}: missing"))
+		Err(MissingRequiredField(name)) => Err(BadData("column ${name}: missing or NULL, read a nullable column into ${name} ?: a or Try(a, [Missing])"))
 		Err(other) => Err(BadData(Str.inspect(other)))
 	}
 
@@ -87,9 +87,7 @@ bad_data = |bytes, pos| {
 		Ok(c) =>
 			match kind_at(bytes, pos) {
 				Rounded => "column ${c}: integer of 2^53 or more, read it with CAST(${c} AS TEXT) into an I64, U64 or Id64 field"
-				Null => "column ${c}: NULL, read it into a Try(a, [Null]) field"
-				Bit(b) => "column ${c}: the integer ${b.to_str()} does not fit the type, a boolean column gives 0 or 1: read it into an I64 or U8 field, not a Bool"
-				Other => "column ${c}: the value does not fit the type"
+				Null | Other => "column ${c}: the value does not fit the type"
 			}
 		Err(_) => "the value at byte ${pos.to_str()} does not fit the type"
 	}
@@ -102,7 +100,6 @@ bad_tuple_data = |bytes, pos| match Cbor.path_at(bytes, pos) {
 		match kind_at(bytes, pos) {
 			Rounded => "column ${c.to_str()} (from 0): integer of 2^53 or more, read it with CAST(... AS TEXT) into an I64, U64 or Id64 field"
 			Null => "column ${c.to_str()} (from 0): NULL, read it into a Try(a, [Null]) item"
-			Bit(b) => "column ${c.to_str()} (from 0): the integer ${b.to_str()} does not fit the type, a boolean column gives 0 or 1: read it into an I64 or U8 item, not a Bool"
 			Other => "column ${c.to_str()} (from 0): the value does not fit the type"
 		}
 	Ok([Index(r)]) => "row ${r.to_str()}: the row does not fit the type"
@@ -110,17 +107,15 @@ bad_tuple_data = |bytes, pos| match Cbor.path_at(bytes, pos) {
 }
 
 ## The kind of the item at `pos` that a typed read refused (MODULES.md 5.1, "Row fields"): a rounded integer of D1, a
-## NULL (only a `Try(a, [Null])` field reads it), the integer 0 or 1 (a boolean column of SQLite, which a `Bool` does not
-## read), or another value.
-kind_at : List(U8), U64 -> [Rounded, Null, Bit(U8), Other]
+## NULL (in a record, a NULL is a missing key and never reaches here: only an item of a tuple or of a list can be a NULL
+## that the type does not read), or another value. A `Bool` reads 0 and 1 (roc-cbor 0.2.2), so there is no kind for them.
+kind_at : List(U8), U64 -> [Rounded, Null, Other]
 kind_at = |bytes, pos|
 	if rounded_at(bytes, pos) {
 		Rounded
 	} else {
 		match bytes.get(pos) {
 			Ok(0xf6) | Ok(0xf7) => Null
-			Ok(0x00) => Bit(0)
-			Ok(0x01) => Bit(1)
 			_ => Other
 		}
 	}
@@ -171,11 +166,47 @@ expect SqlRules.constraint_of("D1_ERROR: CHECK constraint failed: c >= 0: SQLITE
 expect bad_data([0x81, 0xa1, 0x62, 0x69, 0x64, 0xfb, 0x43, 0x40, 0, 0, 0, 0, 0, 0], 5) == "column id: integer of 2^53 or more, read it with CAST(id AS TEXT) into an I64, U64 or Id64 field"
 expect bad_data([0x81, 0xa1, 0x62, 0x69, 0x64, 0xfb, 0x3f, 0xf8, 0, 0, 0, 0, 0, 0], 5) == "column id: the value does not fit the type"
 
-# v2 probe findings 30, 31: [{"id": null}] names the Try(a, [Null]) rule, [{"id": 1}] and [{"id": 0}] the boolean rule, [{"id": 2}] none.
-expect bad_data([0x81, 0xa1, 0x62, 0x69, 0x64, 0xf6], 5) == "column id: NULL, read it into a Try(a, [Null]) field"
-expect bad_data([0x81, 0xa1, 0x62, 0x69, 0x64, 0x01], 5) == "column id: the integer 1 does not fit the type, a boolean column gives 0 or 1: read it into an I64 or U8 field, not a Bool"
-expect bad_data([0x81, 0xa1, 0x62, 0x69, 0x64, 0x00], 5) == "column id: the integer 0 does not fit the type, a boolean column gives 0 or 1: read it into an I64 or U8 field, not a Bool"
+# v2 probe findings 30, 31 (roc-cbor 0.2.2): [{"id": 2}] into a Bool does not fit. A NULL in a record is a missing key (`MissingRequiredField`, the text of `typed`),
+# and 0 and 1 read into a Bool.
 expect bad_data([0x81, 0xa1, 0x62, 0x69, 0x64, 0x02], 5) == "column id: the value does not fit the type"
+
+row_ids : List(U8) -> Try(List({ id : I64 }), [BadData(Str)])
+row_ids = |bytes| SqlRules.typed(bytes)
+
+# A NULL into a required field is a missing key; a missing key is the same. The text names the rule.
+expect row_ids([0x81, 0xa1, 0x62, 0x69, 0x64, 0xf6]) == Err(BadData("column id: missing or NULL, read a nullable column into id ?: a or Try(a, [Missing])"))
+expect row_ids([0x81, 0xa0]) == Err(BadData("column id: missing or NULL, read a nullable column into id ?: a or Try(a, [Missing])"))
+# A required field of a Try(a, [Null]) type is required too (roc-cbor 0.2.2).
+expect {
+	r : Try(List({ id : Try(I64, [Null]) }), [BadData(Str)])
+	r = SqlRules.typed([0x81, 0xa1, 0x62, 0x69, 0x64, 0xf6])
+	r == Err(BadData("column id: missing or NULL, read a nullable column into id ?: a or Try(a, [Missing])"))
+}
+# A nullable column: an optional field is absent and a Try(a, [Missing]) field is Err(Missing).
+expect {
+	r : Try(List({ id ?: I64 }), [BadData(Str)])
+	r = SqlRules.typed([0x81, 0xa1, 0x62, 0x69, 0x64, 0xf6])
+	match r {
+		Ok([row]) => row.?id == Err(MissingField)
+		_ => Bool.False
+	}
+}
+expect {
+	r : Try(List({ id : Try(I64, [Missing]) }), [BadData(Str)])
+	r = SqlRules.typed([0x81, 0xa1, 0x62, 0x69, 0x64, 0xf6])
+	r == Ok([{ id: Err(Missing) }])
+}
+# A Bool reads 0 and 1 (SQLite has no boolean), not 2.
+expect {
+	r : Try(List({ id : Bool }), [BadData(Str)])
+	r = SqlRules.typed([0x82, 0xa1, 0x62, 0x69, 0x64, 0x01, 0xa1, 0x62, 0x69, 0x64, 0x00])
+	r == Ok([{ id: Bool.True }, { id: Bool.False }])
+}
+expect {
+	r : Try(List({ id : Bool }), [BadData(Str)])
+	r = SqlRules.typed([0x81, 0xa1, 0x62, 0x69, 0x64, 0x02])
+	r == Err(BadData("column id: the value does not fit the type"))
+}
 
 # PLAN.md 8g P1: rows as arrays (`D1.all_tuples!`) with the integer rules of 5.1. Each row is a CBOR array of two items.
 tuples2 : List(U8) -> Try(List((I64, I64)), [BadData(Str)])
@@ -191,12 +222,23 @@ expect tuples2([0x82, 0x82, 0x01, 0x02, 0x82, 0xfb, 0xc3, 0x40, 0, 0, 0, 0, 0, 0
 # 1.5 and the text "01" do not fit.
 expect tuples2([0x81, 0x82, 0x01, 0xfb, 0x3f, 0xf8, 0, 0, 0, 0, 0, 0]) == Err(BadData("column 1 (from 0): the value does not fit the type"))
 expect tuples2([0x81, 0x82, 0x01, 0x62, 0x30, 0x31]) == Err(BadData("column 1 (from 0): the value does not fit the type"))
-# A NULL into an I64 item, and 1 into a Bool item.
+# A NULL into an I64 item. In a tuple a NULL is not a missing key: only a Try(a, [Null]) item reads it.
 expect tuples2([0x81, 0x82, 0x01, 0xf6]) == Err(BadData("column 1 (from 0): NULL, read it into a Try(a, [Null]) item"))
 expect {
+	r : Try(List((I64, Try(I64, [Null]))), [BadData(Str)])
+	r = SqlRules.typed_tuples([0x81, 0x82, 0x01, 0xf6])
+	r == Ok([(1, Err(Null))])
+}
+# 1 and 0 read into a Bool item (roc-cbor 0.2.2), 2 does not.
+expect {
 	r : Try(List((I64, Bool)), [BadData(Str)])
-	r = SqlRules.typed_tuples([0x81, 0x82, 0x01, 0x01])
-	r == Err(BadData("column 1 (from 0): the integer 1 does not fit the type, a boolean column gives 0 or 1: read it into an I64 or U8 item, not a Bool"))
+	r = SqlRules.typed_tuples([0x82, 0x82, 0x01, 0x01, 0x82, 0x02, 0x00])
+	r == Ok([(1, Bool.True), (2, Bool.False)])
+}
+expect {
+	r : Try(List((I64, Bool)), [BadData(Str)])
+	r = SqlRules.typed_tuples([0x81, 0x82, 0x01, 0x02])
+	r == Err(BadData("column 1 (from 0): the value does not fit the type"))
 }
 # A row with one item for a tuple of two.
 expect tuples2([0x81, 0x81, 0x01]) == Err(BadData("row 0: the row does not fit the type"))

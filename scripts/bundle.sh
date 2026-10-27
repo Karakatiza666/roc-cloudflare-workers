@@ -4,14 +4,14 @@
 # Steps: the glue is the glue of the pinned nightly, the production host (zig build), a production app on it
 # (bench/app.roc) with the layout and export checks, the bundle.
 # Usage: ZIG=<zig 0.17> [ROC=<roc>] [REPO=<owner/repo>] scripts/bundle.sh [version]
-# The default version is the tag of HEAD, else 0.0.1-local. Roc refuses the version 0.0.0 in a platform URL
+# The default version is the tag of HEAD, else 0.0.2-local. Roc refuses the version 0.0.0 in a platform URL
 # (research/plugin-probes/FINDINGS-core.md, C1), so the default is not 0.0.0-local.
 # The default ROC is the nightly of compat/last-stack-first-nightly.
 # The last lines are `asset:` and `url:` (the release workflow reads them).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 : "${ZIG:?set ZIG to the Zig 0.17 binary}"
-version=${1:-$(git describe --tags --exact-match 2>/dev/null || echo 0.0.1-local)}
+version=${1:-$(git describe --tags --exact-match 2>/dev/null || echo 0.0.2-local)}
 repo=${REPO:-${GITHUB_REPOSITORY:-Karakatiza666/roc-cloudflare-workers}}
 [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "bad version: $version (X.Y.Z or X.Y.Z-pre)" >&2; exit 1; }
 [[ $version == 0.0.0* ]] && { echo "bad version: $version (Roc refuses the version 0.0.0 in a platform URL: use 0.0.1 or newer)" >&2; exit 1; }

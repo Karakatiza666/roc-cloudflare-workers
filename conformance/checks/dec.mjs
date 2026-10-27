@@ -132,8 +132,9 @@ export const checks = [
     answer(await t.get('/dec/d1_blob'), 'bytes=Ok([[1, 2, 255]]) list=Ok([[1, 2, 255]]) empty=Ok([[]])');
   }],
   // Item 8: the text of a missing column.
-  ['dec D1 a missing column x of a typed row is BadData("column x: missing") (all! and first!)', async (t) => {
-    answer(await t.get('/dec/d1_missing'), 'all=Err(Infra(BadData("column x: missing"))) first=Err(Infra(BadData("column x: missing")))');
+  ['dec D1 a missing column x of a typed row is BadData("column x: missing or NULL, ...") (all! and first!)', async (t) => {
+    const e = 'Err(Infra(BadData("column x: missing or NULL, read a nullable column into x ?: a or Try(a, [Missing])")))';
+    answer(await t.get('/dec/d1_missing'), `all=${e} first=${e}`);
   }],
   // Item 9: Dec exact, Roc to Roc.
   ['dec Object.Cell: a Dec is exact (a fraction and the lowest Dec)', async (t) => {

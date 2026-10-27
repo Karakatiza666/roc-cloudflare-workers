@@ -122,8 +122,8 @@ export const checks = [
     answer(await route(t, 'all', "SELECT '01' AS id", '', '&type=id'), 'Err Infra(BadData("column id: the value does not fit the type"))');
     answer(await route(t, 'all', "SELECT '9223372036854775808' AS id", '', '&type=id'), 'Err Infra(BadData("column id: the value does not fit the type"))');
   }],
-  ['d1 a missing column gives BadData("column id: missing")', async (t) => {
-    answer(await route(t, 'all', 'SELECT name FROM people WHERE id = 1', '', '&type=id'), 'Err Infra(BadData("column id: missing"))');
+  ['d1 a missing column gives BadData("column id: missing or NULL, ...")', async (t) => {
+    answer(await route(t, 'all', 'SELECT name FROM people WHERE id = 1', '', '&type=id'), 'Err Infra(BadData("column id: missing or NULL, read a nullable column into id ?: a or Try(a, [Missing])"))');
   }],
   ['d1 an I64 column of 2^53 - 1 and an F64 column of 2^60 (no cast) read as numbers', async (t) => {
     answer(await route(t, 'first', 'SELECT i AS id FROM nums WHERE k = 1', '', '&type=id'), 'Ok { id: 9007199254740991 }');
@@ -349,22 +349,25 @@ export const checks = [
     const db = await t.mf.getD1Database('DB');
     eq((await db.prepare("SELECT count(*) AS n FROM pi WHERE k IN ('old_text', 'old_int')").first()).n, 0, 'rows of the refused inserts');
   }],
-  // v2 probe findings 30, 31: a NULL reads only into Try(a, [Null]); the BadData of a NULL and of a boolean column names
-  // the rule. An optional field reads a missing column as absent (roc-cbor), not a NULL.
-  ['d1 reads: NULL into a Str field is BadData that names Try(a, [Null]); a Try(Str, [Null]) field reads it', async (t) => {
-    answer(await rd(t, 'null_str'), 'Err Infra(BadData("column t: NULL, read it into a Try(a, [Null]) field"))');
-    answer(await rd(t, 'null_try'), 'Ok [{ t: Err(Null) }, { t: Ok("x") }]');
+  // v2 probe findings 30, 31 with roc-cbor 0.2.2: a NULL in a record is a missing key; a Bool reads 0 and 1.
+  ['d1 reads: NULL into a Str field or a Try(Str, [Null]) field is BadData that names ?: and Try(a, [Missing])', async (t) => {
+    const text = 'Err Infra(BadData("column t: missing or NULL, read a nullable column into t ?: a or Try(a, [Missing])"))';
+    answer(await rd(t, 'null_str'), text);
+    answer(await rd(t, 'null_try'), text);
   }],
-  ['d1 reads: an optional field reads a missing column as absent, and a NULL as BadData with the rule', async (t) => {
+  ['d1 reads: NULL into a Try(Str, [Missing]) field is Err(Missing)', async (t) => {
+    answer(await rd(t, 'null_missing'), 'Ok [{ t: Err(Missing) }, { t: Ok("x") }]');
+  }],
+  ['d1 reads: an optional field reads a missing column and a NULL as absent', async (t) => {
     answer(await rd(t, 'opt_missing'), 'Ok { id: 1, nick: Err(MissingField) }');
-    answer(await rd(t, 'opt_null'), 'Err Infra(BadData("column nick: NULL, read it into a Try(a, [Null]) field"))');
+    answer(await rd(t, 'opt_null'), 'Ok { id: 1, nick: Err(MissingField) }');
   }],
-  ['d1 reads: a boolean column into a Bool field is BadData that names I64 or U8; a U8 field reads 0 and 1', async (t) => {
-    const bad = (n) => `Err Infra(BadData("column b: the integer ${n} does not fit the type, a boolean column gives 0 or 1: read it into an I64 or U8 field, not a Bool"))`;
-    answer(await rd(t, 'bool'), bad(1));
-    answer(await rd(t, 'bool_false'), bad(0));
+  ['d1 reads: a boolean column (0 or 1) into a Bool field is Ok; a U8 field reads it; 2 is BadData', async (t) => {
+    answer(await rd(t, 'bool'), 'Ok [{ b: True }]');
+    answer(await rd(t, 'bool_false'), 'Ok { b: False }');
     answer(await rd(t, 'bit'), 'Ok [{ b: 1 }, { b: 0 }]');
-    answer(await rd(t, 'batch_bool'), bad(1));
+    answer(await rd(t, 'batch_bool'), 'Ok { b: True }');
+    answer(await rd(t, 'bool_two'), 'Err Infra(BadData("column b: the value does not fit the type"))');
   }],
   ['d1 reads: all_tuples! of a NULL into a Str item is BadData that names the column index and Try(a, [Null])', async (t) => {
     answer(await rd(t, 'tuple_null'), 'Err Infra(BadData("column 1 (from 0): NULL, read it into a Try(a, [Null]) item"))');

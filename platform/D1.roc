@@ -34,7 +34,9 @@ D1 :: { name : Str }.{
 	## `all` with the rows as tuples (D1 `raw()`): `rows : List((Str, I64))`. The tuple has one item for each column of the SELECT, in
 	## its order, so the caller keeps the order in the SQL. About twice as fast as `all` for 200 rows (PLAN.md 8g). The same
 	## limit and integer rules as `all`; `BadData` names the column by its index (from 0), not by name. A NULL reads only into a
-	## `Try(a, [Null])` item.
+	## `Try(a, [Null])` item (a tuple has no keys). In a record (`all`, `first`) a NULL is a missing key: it reads into
+	## `x ?: a` (absent) or `x : Try(a, [Missing])` (`Err(Missing)`), and a required field is `BadData` (roc-cbor 0.2.2).
+	## A `Bool` item or field reads 0 and 1.
 	all_tuples : D1, Str, params -> Io(rows, [Constraint(Sql.Constraint), Infra([D1Err(Io.Thrown), BadData(Str), TooLarge])]) where [rows.Cbor.Readable(errs), params.Cbor.Writable]
 	all_tuples = |db, sql, params| all_tuples_io(start(db), sql, Cbor.encode(params), Body.default_max)
 

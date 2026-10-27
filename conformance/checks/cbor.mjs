@@ -1,4 +1,4 @@
-// The platform module `Cbor` (a wrapper of roc-cbor 0.2.0): routes of conformance/CborRoutes.roc. The app has no `cbor`
+// The platform module `Cbor` (a wrapper of roc-cbor 0.2.2): routes of conformance/CborRoutes.roc. The app has no `cbor`
 // entry in its header, so these checks also show that an app needs none.
 import { answer } from '../assert.mjs';
 
@@ -16,4 +16,7 @@ export const checks = [
     answer(await t.get('/cbor/options'), 'Ok({ user_id: 5 }) Ok({ user_id: 5 }) | Err(MissingRequiredField("user_id"))')],
   ['cbor path: path_at finds the field of an InvalidCbor position', async (t) =>
     answer(await t.get('/cbor/path'), 'Err(InvalidCbor(5)) | Ok([Index(0), Key("id")])')],
+  // roc-cbor 0.2.2: Err(Null) in a record field writes no key; a null is a missing key in a record; a Bool reads 0 and 1.
+  ['cbor null: Err(Null) in a record writes no key and reads back as MissingRequiredField, an absent ?: field or Err(Missing); a Bool reads 0 and 1', async (t) =>
+    answer(await t.get('/cbor/null'), '[161, 98, 105, 100, 7] Err(MissingRequiredField("note")) Ok(Err(MissingField)) | Ok(Err(Missing)) Ok([Ok("a"), Err(Null)]) Ok([False, True, False, True])')],
 ];

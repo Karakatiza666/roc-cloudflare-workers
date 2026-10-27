@@ -80,12 +80,14 @@ Gavel :: [].{
 	default_config = { fee_percent: 5, max_step_cents: 100_000, currencies: ["EUR", "GBP", "JPY"] }
 
 	## The site config, loaded once for each isolate. A missing key gives the default.
-	config : Memo(Gavel.Config, _)
-	config = Memo.new("gavel-config", { max_age_ms: 60_000, load!: || Gavel.config_cell.get_or!(Gavel.default_config) })
+	## This is a function (`Gavel.config().get!()`), not a constant: the error type of a constant has one closed type, and the
+	## compiler (nightly 2026-10-26 and later) cannot join it with the other `Infra` tags of the caller. A function gives each caller its own type.
+	config : () -> Memo(Gavel.Config, _)
+	config = || Memo.new("gavel-config", { max_age_ms: 60_000, load!: || Gavel.config_cell.get_or!(Gavel.default_config) })
 
 	## Both Workers share one D1 database. Each Worker creates the tables once for each isolate.
-	tables : Memo({}, _)
-	tables = Memo.new("gavel-tables", { max_age_ms: 3_600_000, load!: create_tables! })
+	tables : () -> Memo({}, _)
+	tables = || Memo.new("gavel-tables", { max_age_ms: 3_600_000, load!: create_tables! })
 
 	schema : List(Str)
 	schema = [

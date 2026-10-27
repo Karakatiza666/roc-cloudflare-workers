@@ -79,10 +79,10 @@ export const checks = [
     has(await sqlp(t, 'old_text'), 'SQL parameter 0: Text(\\"ann\\") is the old Sql tag form, write \\"ann\\"');
     has(await sqlp(t, 'old_text'), 'name: "BadParam"');
   }],
-  // v2 probe findings 30, 31: the BadData of a NULL and of a boolean column names the rule.
-  ['objects sql!: NULL into a Str field and 1 into a Bool field give BadData that names the rule', async (t) => {
-    answer(await sqlp(t, 'read_null'), 'Err(Infra(BadData("column t: NULL, read it into a Try(a, [Null]) field")))');
-    answer(await sqlp(t, 'read_bool'), 'Err(Infra(BadData("column b: the integer 1 does not fit the type, a boolean column gives 0 or 1: read it into an I64 or U8 field, not a Bool")))');
+  // v2 probe findings 30, 31 with roc-cbor 0.2.2: a NULL into a required field is BadData that names the rule; a Bool reads 1.
+  ['objects sql!: NULL into a Str field gives BadData that names the rule, and 1 into a Bool field is Ok', async (t) => {
+    answer(await sqlp(t, 'read_null'), 'Err(Infra(BadData("column t: missing or NULL, read a nullable column into t ?: a or Try(a, [Missing])")))');
+    answer(await sqlp(t, 'read_bool'), 'Ok([{ b: True }])');
   }],
   ['objects SQL params: Sql.none and [x] are parameter lists', async (t) => {
     answer(await sqlp(t, 'none'), 'Ok([{ id: 1 }])');

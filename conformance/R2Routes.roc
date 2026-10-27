@@ -196,9 +196,9 @@ put_options = |req| {
 	}
 }
 
-get_options : Request -> { range ?: R2.Range, only_if ?: R2.Cond }
+get_options : Request -> { range ?: R2.ByteRange, only_if ?: R2.Cond }
 get_options = |req| {
-	o0 : { range ?: R2.Range, only_if ?: R2.Cond }
+	o0 : { range ?: R2.ByteRange, only_if ?: R2.Cond }
 	o0 = {}
 	o1 = match req.query("suffix") {
 		Ok(_) => { ..o0, range: Suffix(Q.num(req, "suffix")) }
