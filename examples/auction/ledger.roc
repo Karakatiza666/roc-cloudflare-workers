@@ -40,8 +40,8 @@ fetch! = |req| match (req.method(), req.segments()) {
 
 settle_due! : {} => Try({ settled : U32 }, Gavel.SettleErr)
 settle_due! = |{}| {
-	Gavel.tables().get!()?
-	cfg = Gavel.config().get!()?
+	Gavel.tables.get!(Gavel.create_tables!)?
+	cfg = Gavel.config.get!(Gavel.load_config!)?
 	now = Time.now_ms!()
 	rates = Gavel.rates_cell.get_or!(Gavel.no_rates)?
 	due : List({ id : Str })
@@ -133,7 +133,7 @@ has_all = |currencies, ticks| currencies.all(|c| ticks.any(|t| t.currency == c))
 ## Subscribe, read ticks until each currency has a rate or the time limit ends, then store the rates in KV.
 refresh_rates! : () => Try({ stored : U64 }, _)
 refresh_rates! = || {
-	cfg = Gavel.config().get!()?
+	cfg = Gavel.config.get!(Gavel.load_config!)?
 	ws = WebSocket.connect!(feed_url)?
 	_ = ws.send_json!({ op: "subscribe", base: "USD", currencies: cfg.currencies })
 	deadline = Time.now_ms!() + feed_limit_ms

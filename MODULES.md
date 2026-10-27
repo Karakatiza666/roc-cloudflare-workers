@@ -27,7 +27,7 @@ In the signatures, `a.Encodable` stands for `a.Cbor.Writable` (the short alias o
 | MC11 | A read into wasm memory has a limit, because wasm memory never gets smaller (`PLAN.md` problem 4). The default limit is 1 MiB (`Body.default_max`). A larger read names its limit. Large data stays a `Body` stream in JS. Each typed read has the default limit: a body, `Kv.get!`, `D1.all!`, `first!`, `rows!` and `batch!`, `Object.Self.sql!` and `sql_rows!`. JS checks the size before the copy, and a read above the limit is `Err(TooLarge)`. The `_with` form takes `max_bytes`. A queue batch has the limit of the Queues config (6). A tail batch drops log lines past the limit (3). | `req.json!()`, `req.bytes_with!({ max_bytes: 30_000_000 })`, `db.all_with!(sql, params, { max_bytes: 8_000_000 })` |
 | MC12 | Names are the Workers names in snake_case, so the Workers docs apply. A name changes only for a Roc reason. Each name that changes is in the table "Exceptions to MC10 and MC12" below, with its reason. | `kv.get_with_metadata!` for `getWithMetadata`, `queue.send_batch!` for `sendBatch`, `cache.get!` for `match` (a keyword) |
 | MC13 | A value that holds a ref (a `Body` stream, a `D1.Session`, a socket, an imported key) is good for one task (RS1). All other module values are plain data: a test can make them and compare them. A value that holds a ref has its own type. It is never a binding (MC1). | `db.with_session!(Primary)` gives a `D1.Session`, not a `D1` |
-| MC14 | A function with no argument has the type `() => a`. The call is `f!()`, the lambda is `\|\| ...`, as in the Roc docs. This is also so for the callbacks that the app gives (`Response.after`, `Memo` `load!`). `{}` is only a value: an RPC argument of the type `{}` (`Rpc({}, ret, err)`), `Ok({})`. A Worker RPC method has no `self` (`Rpc.on_worker`, 8). | `Time.now_ms!()`, `res.after(\|\| work!())` |
+| MC14 | A function with no argument has the type `() => a`. The call is `f!()`, the lambda is `\|\| ...`, as in the Roc docs. This is also so for the callbacks that the app gives (`Response.after`, the loader of `Memo.get!`). `{}` is only a value: an RPC argument of the type `{}` (`Rpc({}, ret, err)`), `Ok({})`. A Worker RPC method has no `self` (`Rpc.on_worker`, 8). | `Time.now_ms!()`, `res.after(\|\| work!())` |
 | MC15 | A type that the platform gives the app to read is opaque (`::`): `Request`, `Response`, `Worker.Scheduled`, `Worker.TraceItem`, `Queue.Batch`, `Queue.Message`, `Email.Mail`. The app reads it with methods. A field read does not compile. Reason: a method call waits for the type, a field read does not. On an unannotated handler, `req.method` makes `req` a record, and the error is far away at `Worker.new`. With `req.method()`, the type comes from `Worker.new`, and an error is at the use (`research/c-sweep-probe/`). The data that the app defines (rows, `R2.Object`, `Sql.Info`, `WebSocket.Closed`) stays a record. | `req.method()`, `res.status()`, `batch.messages()` |
 
 Limits of MC5:
@@ -1193,7 +1193,7 @@ As built in `PLAN.md` 8f, part 1 (`platform/Rpc.roc`, `platform/Service.roc`, `p
 
 Three declarations of a typed value with the same shape: a name and a type at the top of a module, then `get!` and `set!`.
 
-`Kv.Cell` and `Object.Cell` also have `get_or!(default)` (`get_or!(self, default)` for `Object.Cell`): the same errors as `get!` without `NotFound`, so a cell that has no value gives the default and no `match` lists the other errors again. `Kv` has `get_or!(key, default)` and an `Io` twin `get_or` (also on `Kv.Cell`). `Kv`, `Kv.Cell` and `Object.Cell` also have `find!`: it gives `Try(Try(a, [NotFound]), errs)`, with the other errors of `get!` in `errs`. The caller reads the outer `Try` with `?` and matches the inner one, so a closed error type of the caller has no `NotFound` and no re-match of the other tags: `match cell.find!(self)? { Ok(v) => ..., Err(NotFound) => ... }`. `Kv.Cell.declare()` is the binding of its `Kv` for `bindings` (3). `Memo` has nothing to add: its `load!` is the default. `Memo` across deploys already holds: a pinned value that does not parse as the new type (an older type with the same name) is dropped and `load!` runs again (`Memo.get!`, `platform/Memo.roc`). `Object.Attachment` and `Object.Cell` have no such fallback: a value of an old type that does not parse is `BadData`, and a value of an old type that still parses (a record with more fields) loads. `Object.Attachment` has one slot for each socket: two constants on one socket share it, and the name only shows in the text of `BadData`.
+`Kv.Cell` and `Object.Cell` also have `get_or!(default)` (`get_or!(self, default)` for `Object.Cell`): the same errors as `get!` without `NotFound`, so a cell that has no value gives the default and no `match` lists the other errors again. `Kv` has `get_or!(key, default)` and an `Io` twin `get_or` (also on `Kv.Cell`). `Kv`, `Kv.Cell` and `Object.Cell` also have `find!`: it gives `Try(Try(a, [NotFound]), errs)`, with the other errors of `get!` in `errs`. The caller reads the outer `Try` with `?` and matches the inner one, so a closed error type of the caller has no `NotFound` and no re-match of the other tags: `match cell.find!(self)? { Ok(v) => ..., Err(NotFound) => ... }`. `Kv.Cell.declare()` is the binding of its `Kv` for `bindings` (3). `Memo` has nothing to add: the loader of `get!` is the default. `Memo` across deploys already holds: a pinned value that does not parse as the new type (an older type with the same name) is dropped and the loader runs again (`Memo.get!`, `platform/Memo.roc`). `Object.Attachment` and `Object.Cell` have no such fallback: a value of an old type that does not parse is `BadData`, and a value of an old type that still parses (a record with more fields) loads. `Object.Attachment` has one slot for each socket: two constants on one socket share it, and the name only shows in the text of `BadData`.
 
 | Wrapper | Where the value is | Readers | Consistency | Cost of `get!` | Lost when |
 | --- | --- | --- | --- | --- | --- |
@@ -1202,37 +1202,39 @@ Three declarations of a typed value with the same shape: a name and a type at th
 | `Object.Cell` | The sync KV storage (`ctx.storage.kv`) of one SQLite-backed Durable Object (7), as CBOR bytes | That object | Strong | One `call!`, no wait | `cell.delete!`, or `self.delete_all!()` (7) |
 
 ```roc
-Memo(a, e) := { ... }.{
-	new : Str, { max_age_ms : U64, load! : () => Try(a, e) } -> Memo(a, e) where [a.Encodable, a.Parseable]
-	get! : Memo(a, e) => Try(a, e)
-	clear! : Memo(a, e) => {}
+Memo(a) := { ... }.{
+	new : Str, { max_age_ms : U64 } -> Memo(a) where [a.Cbor.Writable, a.Cbor.Readable(errs)]
+	get! : Memo(a), (() => Try(a, e)) => Try(a, e)
+	clear! : Memo(a) => {}
 }
 
-jwks : Memo(Jwks, _)
-jwks = Memo.new("github-jwks", { max_age_ms: 3_600_000, load!: load_jwks! })
+jwks : Memo(Jwks)
+jwks = Memo.new("github-jwks", { max_age_ms: 3_600_000 })
 
-keys = jwks.get!()?    # the first call in an isolate runs load_jwks!, later calls do not
+keys = jwks.get!(load_jwks!)?    # the first call in an isolate runs load_jwks!, later calls do not
 ```
 
-Nightly 2026-10-26 and later (platform 0.0.2): a constant has one type, so the error type of `jwks` is one closed union with closed `Infra([...])` payloads. A function that joins `jwks.get!()?` with calls of other modules (`?`, each with its own `Infra([...])`) gets a "type mismatch" at the `?` that comes second, also when its error type is `_`. The nightly of 2026-10-19 accepts this. For code that builds with both, write the `Memo` as a function. Each call gives the caller its own error type, and the name and the age make the same pin:
+The loader is an argument of `get!`, as the default is an argument of `cell.get_or!(default)`. The error type of `get!` is the error type of the loader at that call. A `Memo` has no error type, so it can be a constant in any module, and each caller joins the errors of the loader with its own errors. Give the same loader at each call of one `Memo`: the first call in the isolate pins the value, and the other calls get that value. `examples/auction/Gavel.roc` has the constants `config` and `tables` with their loaders `load_config!` and `create_tables!`.
 
-```roc
-jwks : () -> Memo(Jwks, _)
-jwks = || Memo.new("github-jwks", { max_age_ms: 3_600_000, load!: load_jwks! })
+A constant and its error type (roc PR #12330, nightly 2026-10-21 and later; `research/memo-error-join/DESIGN-NOTE.md`):
 
-keys = jwks().get!()?
-```
+| Binding | Row of its tags |
+| --- | --- |
+| Function (`c = \|\| ...`) | Each call gets a new open row. Each caller widens it. |
+| Top-level value, in its module | One row for all uses in the module. The uses widen it together, then it closes when the module is checked. |
+| Top-level value, in an importer | The closed row of its module. An importer cannot widen it. |
+| Annotated value | The rows of the annotation, closed as written. |
 
-`examples/auction/Gavel.roc` does so for `config` and `tables`. A `Memo` that is used in one function only, or with the same error type everywhere, can stay a constant (the conformance app has such `Memo` values).
+A `?` on a closed error row adds its head tags to the error type of the function. It does not widen a nested payload: a closed `Infra([...])` payload must be equal to the `Infra` payload of the caller. So a top-level value whose type holds an error row (a type parameter that is a tag union) gives a "type mismatch" at a `?` when an importer joins it with other `Infra([...])` errors, or when two uses in its module have other rows. Platform 0.0.2 has no such constant: `Memo`, `Kv.Cell`, `Object.Cell`, `Kv`, `Queue`, `Workflows`, `D1`, `Service` and `Object` hold no error type, and an `Rpc` method holds the error type of its annotation (the callee error, one type for all callers). An `Io(a, e)` value holds its error type: write an `Io` that another module joins as a function (`cfg = || cell.get_or(default)`), not as a constant (`research/memo-error-join/platform-probes/consts`).
 
 A value with one field: `cell.set!({ name: name })`. `{ name }` is a block, not a record (12.1).
 
 | Item | Rule |
 | --- | --- |
 | Content | CBOR bytes (MC5). JS does not parse them. No JS objects. A key needs no `Memo`: `WebCrypto` imports it in the same crossing as its use (10), so RN6 keeps the JWKS as data. For a JS object, use `Js.pin!` (RS2). The table "Formats of typed data" (1). |
-| Two tasks at once | Both can run `load!`. The second pin replaces the first. So `load!` must give an equal value each time. |
+| Two tasks at once | Both can run the loader. The second pin replaces the first. So the loader must give an equal value each time. |
 | Instance replace (`PLAN.md` M1) | The pin table is in JS, so the values stay. |
-| As built (`PLAN.md` 8c) | `Memo(a, e) := { name, max_age_ms, load!, write, read }`: `new` keeps the two functions of the `Cbor` format (MC6). `get!` is one `call!` of `pf.pinned` (no wait); a hit is parsed with `Cbor.parse`. A miss runs `load!`, then one `call!` of `pf.pin(name, bytes, max_age_ms)`. A pinned value that does not parse (an older type with the same name) loads again. A pin that fails (a full pin table, `pinLimit`) does not fail `get!`: the value is a cache. The name is the name in the pin table, with no prefix, so a `Memo` and a `Js.pin!` of the same name share an entry. |
+| As built (`PLAN.md` 8c) | `Memo(a) := { name, max_age_ms, write, read }`: `new` keeps the two functions of the `Cbor` format (MC6). `get!` is one `call!` of `pf.pinned` (no wait); a hit is parsed with `Cbor.parse`. A miss runs the loader of the call, then one `call!` of `pf.pin(name, bytes, max_age_ms)`. A pinned value that does not parse (an older type with the same name) loads again. A pin that fails (a full pin table, `pinLimit`) does not fail `get!`: the value is a cache. The name is the name in the pin table, with no prefix, so a `Memo` and a `Js.pin!` of the same name share an entry. |
 
 ## 10. Security: `WebCrypto`, `Env`, `Secret`, `RateLimit`
 

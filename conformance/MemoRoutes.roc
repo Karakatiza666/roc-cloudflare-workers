@@ -12,26 +12,26 @@ Keys : { kid : Str, big : U64, made : Str }
 load_keys! : () => Try(Keys, [LoadErr])
 load_keys! = || Ok({ kid: "k1", big: 1_152_921_504_606_846_976, made: WebCrypto.random_uuid!() })
 
-keys : Memo(Keys, [LoadErr])
-keys = Memo.new("conformance-keys", { max_age_ms: 600_000, load!: load_keys! })
+keys : Memo(Keys)
+keys = Memo.new("conformance-keys", { max_age_ms: 600_000 })
 
 ## A short age: a `get!` after 100 ms loads again.
-short : Memo(Keys, [LoadErr])
-short = Memo.new("conformance-short", { max_age_ms: 50, load!: load_keys! })
+short : Memo(Keys)
+short = Memo.new("conformance-short", { max_age_ms: 50 })
 
 MemoRoutes :: [].{
 	route! : Request, List(Str) => Response
 	route! = |_req, path| match path {
-		["get"] => show(keys.get!())
+		["get"] => show(keys.get!(load_keys!))
 		["clear"] => {
 			keys.clear!()
 			Response.from_text(200, "cleared")
 		}
 		# Two `get!` of `short`, 100 ms apart: two ids.
 		["short"] => {
-			a = short.get!()
+			a = short.get!(load_keys!)
 			Time.sleep!(100)
-			b = short.get!()
+			b = short.get!(load_keys!)
 			Response.from_text(200, "same=${Str.inspect(a == b)}")
 		}
 		_ => Response.from_text(404, "no route")

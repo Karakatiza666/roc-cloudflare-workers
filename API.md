@@ -429,7 +429,7 @@ The full surface. Each module is pure Roc over `Js` (6) or `Native` (8). `MODULE
 | `Js` | everything (6.4) | `await!`, `call!`, `Js` value helpers, `pin!`, `pinned!`, `unpin!` (9, RS2). As built: `await!`, `call!`, `pin!`, `pinned!` and `unpin!` are in `Io` (4: no import cycles). | per program | A |
 | `Io` | none: one operation as a value (6.5) | `new`, `sync`, `map`, `recover`, `timeout`, `timeout_at`, `run!`, `both!`, `all!`, `race!`, `start!` | per call | A |
 | `Worker` | none: a wrapper (7.1, 10.1) | `Worker.new({ fetch!, scheduled!, ... })` with optional fields, each with its own result type and error type, and `event!` (`MODULES.md` 3) | | A |
-| `Memo` | none: a wrapper over the pin table | `new(name, { max_age_ms, load! })`, `get!`, `clear!`. The value is data, kept as CBOR bytes. (`MODULES.md` 9) | the first `get!` in an isolate runs `load!` | A |
+| `Memo` | none: a wrapper over the pin table | `new(name, { max_age_ms })`, `get!(load!)`, `clear!`. The loader is an argument of `get!`, so a `Memo` has no error type. The value is data, kept as CBOR bytes. (`MODULES.md` 9) | the first `get!` in an isolate runs its loader | A |
 | `RateLimit` | Rate limiting binding | `limit!(key) => Try({}, [RateLimited, _])` (RN10) | Yes | A |
 | `Native` | none: Zig `std` in the host | `zstd_decode!`, `Blake3` and `Sha256` with state across chunks (8) | No | A (the registry hashes archives in chunks, RF5) |
 | `Kv` | `KVNamespace` | A typed namespace: `Kv.json`, `Kv.text`, `Kv.bytes`. `get!` (to 1 MiB, `TooLarge`), `get_with!`, `get_with_metadata!` (typed metadata), `put!`, `put_with!`, `delete!`, `list!`, `cell` (5.2) | Yes | B |
@@ -460,7 +460,7 @@ Rules that let a wrapper be written in the platform or outside it:
 | --- | --- | --- |
 | WR1 | A declaration is a pure constant: a binding (`D1.binding("DB")`, 6.3), a typed binding (`Kv.json("PREFS")`), a `Memo`, a cell, an `Rpc` method, a handler record. Effects run only when a function with `!` uses it. | A declaration can be at the top of a module, with no init step |
 | WR2 | Each function that waits has an `Io` twin (6.5) | A wrapper can join operations into one crossing, or run them at the same time |
-| WR3 | An optional record field can hold an effectful function (AQ6) | Records of handlers or hooks, with defaults: `Worker`, `Object.class`, `Memo` |
+| WR3 | An optional record field can hold an effectful function (AQ6) | Records of handlers or hooks, with defaults: `Worker`, `Object.class` |
 | WR4 | A wrapper uses only the public modules (`Js`, `Io`, the typed modules). A wrapper outside the platform is a normal Roc package with the same reach as a platform module. | Wrappers can ship with the platform or come from anyone |
 | WR5 | Typed values use the codecs that Roc derives for the `Cbor` format (5.2, `MODULES.md` MC5). A declaration that has one type for all its values keeps the two functions of its format (MC6). The app writes a type, never a codec. | Typed storage in the pin table, KV, a queue or a Durable Object, with no codec code |
 | WR6 | A wrapper that needs JS code adds its functions to `ops` (6.4), and its docs tell the app to add them | Rare. The platform wrappers need none. |
@@ -470,7 +470,7 @@ Wrappers:
 | Wrapper | Declaration | Use | Under it | Phase |
 | --- | --- | --- | --- | --- |
 | `Worker` | `worker = Worker.new({ fetch!, scheduled! })`, then `event! = \|e\| worker.event!(e)` | One field for each event kind, all optional, each with its own result type and error type. A new kind is a new optional field, so it does not change the app (10.1). | `event!` | A |
-| `Memo` | `jwks = Memo.new("github-jwks", { max_age_ms: 3_600_000, load!: load_jwks! })` | `keys = jwks.get!()?`: a value kept in the isolate across requests (`MODULES.md` 9) | the pin table (RS2) | A |
+| `Memo` | `jwks = Memo.new("github-jwks", { max_age_ms: 3_600_000 })` | `keys = jwks.get!(load_jwks!)?`: a value kept in the isolate across requests (`MODULES.md` 9) | the pin table (RS2) | A |
 | `Kv.Cell` | `theme = prefs.cell("theme")`, where `prefs : Kv(Prefs)` | `theme.get!()`, `theme.find!()` (`Ok(Err(NotFound))` for a missing key), `theme.set!(p)`, `theme.declare()` (the binding for `bindings`): the `localStorage` wrapper, but shared by all isolates, and it stays | `Kv` | B |
 | `Object.Cell` | `count : Object.Cell(I64)`, `count = Object.cell("count")` | `count.get!(self)`, `count.set!(self, n)`: strong consistency, inside one object | `Object` | B |
 | `Rpc` | `Counter := []`, `increment : Rpc(Counter, { by : I64 }, I64, [TooBig])`, `counter = Rpc.iface("Counter")`, `increment = counter.method("increment")` | The caller: `stub.call!(increment, { by: 1 })` (`stub : Object(Counter)`), an `Err` of the callee is `Remote(TooBig)`. The callee: `increment.on(\|self, { by }\| ...)`. One constant, so both sides have the same types and errors. | `Object`, `Service` | B |

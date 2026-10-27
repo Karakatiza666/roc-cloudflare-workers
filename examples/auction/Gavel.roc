@@ -79,27 +79,31 @@ Gavel :: [].{
 	default_config : Gavel.Config
 	default_config = { fee_percent: 5, max_step_cents: 100_000, currencies: ["EUR", "GBP", "JPY"] }
 
-	## The site config, loaded once for each isolate. A missing key gives the default.
-	## This is a function (`Gavel.config().get!()`), not a constant: the error type of a constant has one closed type, and the
-	## compiler (nightly 2026-10-26 and later) cannot join it with the other `Infra` tags of the caller. A function gives each caller its own type.
-	config : () -> Memo(Gavel.Config, _)
-	config = || Memo.new("gavel-config", { max_age_ms: 60_000, load!: || Gavel.config_cell.get_or!(Gavel.default_config) })
+	## The site config, loaded once for each isolate: `Gavel.config.get!(Gavel.load_config!)`. A `Memo` has no error type,
+	## so each caller joins the errors of the loader with its own errors (MODULES.md 9).
+	config : Memo(Gavel.Config)
+	config = Memo.new("gavel-config", { max_age_ms: 60_000 })
 
-	## Both Workers share one D1 database. Each Worker creates the tables once for each isolate.
-	tables : () -> Memo({}, _)
-	tables = || Memo.new("gavel-tables", { max_age_ms: 3_600_000, load!: create_tables! })
+	## A missing key gives the default.
+	load_config! : () => Try(Gavel.Config, [Infra([KvErr(Io.Thrown), BadData(Str), TooLarge])])
+	load_config! = || Gavel.config_cell.get_or!(Gavel.default_config)
+
+	## Both Workers share one D1 database. Each Worker creates the tables once for each isolate:
+	## `Gavel.tables.get!(Gavel.create_tables!)`.
+	tables : Memo({})
+	tables = Memo.new("gavel-tables", { max_age_ms: 3_600_000 })
+
+	create_tables! : () => Try({}, [Constraint(Sql.Constraint), Infra([D1Err(Io.Thrown)])])
+	create_tables! = || {
+		for sql in Gavel.schema {
+			_ = Gavel.db.run!(sql, Sql.none)?
+		}
+		Ok({})
+	}
 
 	schema : List(Str)
 	schema = [
 		"CREATE TABLE IF NOT EXISTS lots (id TEXT PRIMARY KEY, title TEXT NOT NULL, reserve_cents INTEGER NOT NULL, close_ms INTEGER NOT NULL, min_step_cents INTEGER NOT NULL, max_step_cents INTEGER NOT NULL)",
 		"CREATE TABLE IF NOT EXISTS settlements (lot_id TEXT PRIMARY KEY, winner TEXT NOT NULL, amount_cents INTEGER NOT NULL, settled_ms INTEGER NOT NULL)",
 	]
-}
-
-create_tables! : () => Try({}, [Constraint(Sql.Constraint), Infra([D1Err(Io.Thrown)])])
-create_tables! = || {
-	for sql in Gavel.schema {
-		_ = Gavel.db.run!(sql, Sql.none)?
-	}
-	Ok({})
 }

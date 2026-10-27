@@ -51,3 +51,20 @@ Not committed, not released. The plugin pin is still the old bundle, so the prob
 | # | State | How |
 | --- | --- | --- |
 | V17 | Fixed | A constraint failure is the flat `Err(Constraint({ kind, message }))`, beside `Infra([...])`, in each D1 function (also `batch!`, `exec!`, the `_with` forms, the twins, `D1.Session`) and in `Object.Self` `sql!`, `sql_run!`, `sql_rows!` (`platform/D1.roc` `thrown`, `read_error`; `platform/Object.roc`). `Rpc.Infra` does not have `Constraint` now (28 tags): a method that passes it on lists `Constraint(Sql.Constraint)` in its `err`. The old pattern `Infra(Constraint(_))` is a compile error at a closed type (an `Rpc` err, an annotated handler) and never matches at an open type. Checks: `conformance/checks/d1.mjs` "d1 V17: ...", the 8d checks, `objects.mjs`, `rpcerr.mjs` |
+
+## Probes for plugin 0.0.2 (2026-10-26, 2026-10-27)
+
+The `r_*` probes check the V17 fix. Their header pins the release bundle `0.0.1` (`GcDNxAwP...`). The `s_*` probes prepare plugin 0.0.2. Their header pins the release bundle `0.0.2` (`5xpAVbae...`). Result: `roc check` with nightly-2026-10-26-3c0fffe (exit code). With the `0.0.1` bundle each check also gives the warning "The type Range shadows a builtin type" (`R2.roc`), so 0 errors gives exit 2.
+
+| Probe | What it shows | Result on 10-26 |
+| --- | --- | --- |
+| `r_constraint` | The old pattern `Err(Infra(Constraint(_)))` and the new `Err(Constraint(_))` both compile at an open error type (`_`) | 0 errors (exit 2) |
+| `r_constraint2` | The old pattern alone compiles at an open type, so it never matches and nothing tells the user (V17, Silent) | 0 errors (exit 2) |
+| `r_constraint3` | The old pattern at a closed type `[Constraint(Sql.Constraint), Infra([D1Err(Io.Thrown)])]` is a compile error | 1 error: type mismatch at `Err(e) => Err(e)` (exit 1) |
+| `r_rpc_no` | An RPC method with `err` `[Infra(Rpc.Infra)]` cannot pass on `sql_run!?`: `Rpc.Infra` has no `Constraint` | 1 error: type mismatch at `add_hit.on` (exit 1) |
+| `r_rpc_yes` | The same method with `err` `[Constraint(Sql.Constraint), Infra(Rpc.Infra)]` compiles | 0 errors (exit 2) |
+| `s_r2_range_old` | `R2.Range` is gone in 0.0.2 (now `R2.ByteRange`): old code gets a clear error | 1 error: "The type Range is not exposed by the module pf.R2" (exit 1). Same on 10-19 |
+| `s_memo_const` | A `Memo` constant whose `get!()?` joins with `D1` errors in a function with a closed error type (`[Constraint(Sql.Constraint), Infra(Faults)]`) | 0 errors (exit 0). Same on 10-19 |
+| `s_memo_fn` | The same app with each `Memo` as a function (`tables().get!()?`), the form of `MODULES.md` 9 | 0 errors (exit 0). Same on 10-19 |
+
+`s_memo_const` does not show the 10-26 type mismatch of `MODULES.md` 9 and `PLAN.md` ("Nightly 2026-10-26, second error"): with this closed error type, the constant also checks on both nightlies.

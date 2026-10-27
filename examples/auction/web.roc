@@ -50,7 +50,7 @@ fetch! = |req| match route!(req) {
 
 route! : Request => Try(Response, _)
 route! = |req| {
-	Gavel.tables().get!()?
+	Gavel.tables.get!(Gavel.create_tables!)?
 	match (req.method(), req.segments()) {
 		(GET, ["lots"]) => list_lots!()
 		(POST, ["lots"]) => create_lot!(req)
@@ -114,7 +114,7 @@ show_lot! : Str => Try(Response, _)
 show_lot! = |id| {
 	lot = find_lot!(id)?
 	snapshot = lot_rooms.named(id).call!(Gavel.snapshot, {})?
-	cfg = Gavel.config().get!()?
+	cfg = Gavel.config.get!(Gavel.load_config!)?
 	Ok(Response.from_json(200, { lot, snapshot, fee_percent: cfg.fee_percent, currencies: cfg.currencies }))
 }
 
@@ -126,7 +126,7 @@ create_lot! = |req| {
 	if new.id == "" or new.close_ms <= Time.now_ms!() {
 		return Err(BadRequest("id is empty or the close time is past"))
 	}
-	cfg = Gavel.config().get!()?
+	cfg = Gavel.config.get!(Gavel.load_config!)?
 	step = if (new.reserve_cents / 100 > 100) new.reserve_cents / 100 else 100
 	lot : Gavel.Lot
 	lot = { id: new.id, title: new.title, reserve_cents: new.reserve_cents, close_ms: new.close_ms, min_step_cents: step, max_step_cents: cfg.max_step_cents }

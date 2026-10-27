@@ -52,8 +52,8 @@ echo_dec = RpcMethods.default_iface.method("echo_dec")
 ## (a pinned value that does not parse loads again, so the equal Decs alone would not show a failed parse).
 Kept : { a : Dec, b : Dec, id : Str }
 
-pair_memo : Memo(Kept, [LoadErr])
-pair_memo = Memo.new("conformance-dec", { max_age_ms: 600_000, load!: load_pair! })
+pair_memo : Memo(Kept)
+pair_memo = Memo.new("conformance-dec", { max_age_ms: 600_000 })
 
 load_pair! : () => Try(Kept, [LoadErr])
 load_pair! = || Ok({ a: exact_pair.a, b: exact_pair.b, id: WebCrypto.random_uuid!() })
@@ -129,8 +129,8 @@ DecRoutes :: [].{
 			# A `Dec` in a Memo: the first `get!` loads, the second reads the cache.
 			["memo"] => {
 				pair_memo.clear!()
-				first = pair_memo.get!()
-				second = pair_memo.get!()
+				first = pair_memo.get!(load_pair!)
+				second = pair_memo.get!(load_pair!)
 				same_id = match (first, second) {
 					(Ok(x), Ok(y)) => x.id == y.id
 					_ => Bool.False
