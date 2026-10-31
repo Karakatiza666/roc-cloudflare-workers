@@ -112,7 +112,15 @@ object_event = |js| {
 			}
 			SocketMessage(socket(get(f, "socket")), msg)
 		}
-		Text("socketClose") => SocketClose(socket(get(f, "socket")), { code: u16(get(f, "code"), "code"), reason: text(get(f, "reason"), "reason"), clean: get(f, "clean") == Bool(Bool.True) })
+		Text("socketClose") => {
+			by = match get(f, "by") {
+				Text("us") => Us
+				Text("transport") => Transport
+				Text("peer") => Peer
+				other => crash "Entry: the socket close has by ${Str.inspect(other)}"
+			}
+			SocketClose(socket(get(f, "socket")), { code: u16(get(f, "code"), "code"), reason: text(get(f, "reason"), "reason"), clean: get(f, "clean") == Bool(Bool.True), by })
+		}
 		Text("socketError") => SocketError(
 			socket(get(f, "socket")),
 			match get(f, "error") {

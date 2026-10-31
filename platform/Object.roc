@@ -152,17 +152,24 @@ Object(iface) :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id
 		is_eq : Object.Socket, Object.Socket -> Bool
 		is_eq = |a, b| a.ref == b.ref
 
-		send! : Object.Socket, WebSocket.Message => Try({}, [Closed])
+		## As `WebSocket.send!`: `Closed` when this side or the peer closed the socket, `SocketErr` for another throw.
+		send! : Object.Socket, WebSocket.Message => Try({}, [Closed, Infra([SocketErr(Io.Thrown)])])
 		send! = |sock, msg| Remote.socket_send!(sock.ref, frame(msg))
 
 		## A value that JSON cannot show (a `NaN` in an `F64`) is `BadData`, and nothing is sent.
-		send_json! : Object.Socket, a => Try({}, [Closed, Infra([BadData(Str)])]) where [a.Json.Encodable(enc)]
+		send_json! : Object.Socket, a => Try({}, [Closed, Infra([BadData(Str), SocketErr(Io.Thrown)])]) where [a.Json.Encodable(enc)]
 		send_json! = |sock, value| match Json.to_str_try(value) {
-			Ok(text) => Remote.socket_send!(sock.ref, Text(text)).map_err(|_| Closed)
+			Ok(text) => match Remote.socket_send!(sock.ref, Text(text)) {
+				Ok({}) => Ok({})
+				Err(Closed) => Err(Closed)
+				Err(Infra(SocketErr(t))) => Err(Infra(SocketErr(t)))
+			}
 			Err(e) => Err(Infra(BadData(Str.inspect(e))))
 		}
 
-		close! : Object.Socket, U16, Str => {}
+		## As `WebSocket.close!`: `BadCode` (1000 to 4999 only, not 1004 to 1006 or 1015), `TooLarge` (a reason of more than
+		## 123 bytes). In `web_socket_close!`, the code of the peer can be 1005 or 1006, which the app cannot send.
+		close! : Object.Socket, U16, Str => Try({}, [BadCode, TooLarge])
 		close! = |sock, code, reason| Remote.socket_close!(sock.ref, code, reason)
 
 		## `ctx.getTags(ws)`: the tags of `accept_with!`.
@@ -328,15 +335,18 @@ Object(iface) :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id
 		## with the client end, in one `call!`. The object can leave memory while the socket is open: its messages come
 		## as events. `NotUpgrade` when the request has no `Upgrade: websocket`.
 		accept! : Object.Self, Request => Try({ socket : Object.Socket, response : Response }, [NotUpgrade])
-		accept! = |self, req| match accept_tags!(self, req, []) {
+		accept! = |self, req| match accept_tags!(self, req, [], []) {
 			Ok(r) => Ok(r)
 			Err(NotUpgrade) => Err(NotUpgrade)
 			Err(TooLarge) => crash "Object.Self.accept!: acceptWebSocket threw with no tags"
 		}
 
 		## `tags`: 10 or less, 256 characters or less each (Workers), else `TooLarge`. `sockets_with!` finds them.
-		accept_with! : Object.Self, Request, { tags ?: List(Str) } => Try({ socket : Object.Socket, response : Response }, [NotUpgrade, TooLarge])
-		accept_with! = |self, req, opts| accept_tags!(self, req, opts.?tags ?? [])
+		## `protocols`: the subprotocols of the object, in its order. The 101 response has the first that the client asks
+		## for in `Sec-WebSocket-Protocol` (`WebSocket.pick_protocol(req, protocols)` gives it; keep it in the attachment
+		## if a later event needs it).
+		accept_with! : Object.Self, Request, { tags ?: List(Str), protocols ?: List(Str) } => Try({ socket : Object.Socket, response : Response }, [NotUpgrade, TooLarge])
+		accept_with! = |self, req, opts| accept_tags!(self, req, opts.?tags ?? [], opts.?protocols ?? [])
 
 		## `ctx.getWebSockets()`: the open sockets of the object.
 		sockets! : Object.Self => List(Object.Socket)
@@ -726,9 +736,10 @@ frame = |msg| match msg {
 	Bytes(b) => Bytes(b)
 }
 
-## `accept!` with tags: a throw of `acceptWebSocket` (more than 10 tags, a tag too long) is `TooLarge`.
-accept_tags! : Object.Self, Request, List(Str) => Try({ socket : Object.Socket, response : Response }, [NotUpgrade, TooLarge])
-accept_tags! = |_self, req, tags|
+## `accept!` with tags: a throw of `acceptWebSocket` (more than 10 tags, a tag too long) is `TooLarge`. The 101 response
+## has the subprotocol of `WebSocket.pick_protocol`, if there is one.
+accept_tags! : Object.Self, Request, List(Str), List(Str) => Try({ socket : Object.Socket, response : Response }, [NotUpgrade, TooLarge])
+accept_tags! = |_self, req, tags, protocols|
 	if !WebSocket.is_upgrade(req) {
 		Err(NotUpgrade)
 	} else {
@@ -740,7 +751,13 @@ accept_tags! = |_self, req, tags|
 			Array([Slot(1), Slot(2)]),
 		]
 		match Js.call!(ops) {
-			Ok(Arr([Ref(client), Ref(server)])) => Ok({ socket: Object.Socket.{ ref: server }, response: Response.from_status(101).with_web_socket(client) })
+			Ok(Arr([Ref(client), Ref(server)])) => {
+				response = Response.from_status(101).with_web_socket(client)
+				match WebSocket.pick_protocol(req, protocols) {
+					Ok(p) => Ok({ socket: Object.Socket.{ ref: server }, response: response.with_header("Sec-WebSocket-Protocol", p) })
+					Err(NotFound) => Ok({ socket: Object.Socket.{ ref: server }, response })
+				}
+			}
 			Ok(other) => crash "Object.Self.accept!: the pair is ${Str.inspect(other)}"
 			Err(_) => Err(TooLarge)
 		}
@@ -759,7 +776,7 @@ sockets_of! = |args| match Js.call!([Call(Root("ctx"), "getWebSockets", args)]) 
 	Err(t) => crash "Object.Self.sockets!: ${t.name}: ${t.message}"
 }
 
-## `send!` to each socket. A closed socket does not count.
+## `send!` to each socket. A closed socket (and a send that throws) does not count.
 send_each! : List(Object.Socket), WebSocket.Message => U64
 send_each! = |socks, msg| {
 	var $sent = 0
@@ -768,6 +785,7 @@ send_each! = |socks, msg| {
 			Ok(_) => {
 				$sent = $sent + 1
 			}
+			Err(Infra(SocketErr(_))) => {}
 			Err(Closed) => {}
 		}
 	}

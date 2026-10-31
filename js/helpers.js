@@ -2,7 +2,7 @@
 // cannot have (OP4). One `pf` object for each task: `spawn`, `writer`, `respond` and `passThrough` use its task.
 import { Packed, Limited, TooLarge, isDec, decNumber, plain } from './values.js';
 import { runAwait, errorOf, onLoss } from './program.js';
-import { responseOf } from './events.js';
+import { responseOf, closedBy } from './events.js';
 
 // The read state of each stream that `readUpTo`, `chunk` or `sha256` read (a stream is a ref of one task, RS1): its
 // reader, the rest of a chunk that `chunk` cut, the end, and `consumed` (read to its end by `readUpTo`).
@@ -128,13 +128,33 @@ const writerOfStream = new WeakMap();
 const writerOf = new WeakMap();
 
 // WebSockets of `WebSocket.accept!` and `connect!` (MODULES.md 12.2): the state of each socket that `wsAccept` accepted.
-// `queue`: the messages that came before a `receive` (text, or bytes as a `Uint8Array`). `waiters`: the `receive` calls
-// that wait. `closed`: `{ code, reason, clean }` after the close. `onClose`: hooks (the end of a 101 response).
+// `queue`: the messages that came before a `receive` (text, or bytes as a `Uint8Array`), `queued` their size in bytes
+// (UTF-8 bytes of a text). `max`: the limit of `queued` (`max_queued_bytes`). `waiters`: the `receive` calls that wait.
+// `full`: the limit closed the socket. `closing`: the app (or the limit) called `close` first. `closed`: `{ code, reason, clean, by }` after the close.
+// `onClose`: hooks (the end of a 101 response).
 const sockets = new WeakMap();
 // The server end of a `wsPair`, by its client end (the `webSocket` of a 101 response of `respond`).
 const serverOf = new WeakMap();
-function acceptSocket(ws) {
-  const st = { queue: [], waiters: [], closed: null, onClose: [] };
+// The close code and reason that the shim sends when a message comes while the queue holds `max` bytes or more.
+export const WS_QUEUE_FULL = [1008, 'receive queue full'];
+// The UTF-8 size of a JS string, with no copy.
+export function utf8Bytes(s) {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    const u = s.charCodeAt(i);
+    if (u < 0x80) n += 1;
+    else if (u < 0x800) n += 2;
+    else if (u >= 0xd800 && u <= 0xdbff && i + 1 < s.length && (s.charCodeAt(i + 1) & 0xfc00) === 0xdc00) {
+      n += 4;
+      i++;
+    } else n += 3;
+  }
+  return n;
+}
+const sizeOf = (v) => (typeof v === 'string' ? utf8Bytes(v) : v.byteLength);
+export function acceptSocket(ws, max) {
+  if (typeof max !== 'number' || !(max >= 0)) throw new TypeError(`acceptSocket: max_queued_bytes is ${max}`);
+  const st = { queue: [], queued: 0, max, full: false, waiters: [], closing: false, closed: null, onClose: [] };
   sockets.set(ws, st);
   ws.accept();
   // Bytes as an `ArrayBuffer`: with the compatibility flag of the standard `binaryType` the default is `blob`, which a
@@ -142,22 +162,43 @@ function acceptSocket(ws) {
   try {
     ws.binaryType = 'arraybuffer';
   } catch {}
-  const close = (closed) => {
+  const close = (code, reason, clean) => {
     if (st.closed) return;
-    st.closed = closed;
-    for (const w of st.waiters.splice(0)) w.give(closed);
+    st.closed = { code, reason, clean, by: closedBy(code, st.closing) };
+    for (const w of st.waiters.splice(0)) w.give(st.closed);
     for (const f of st.onClose.splice(0)) f();
   };
   ws.addEventListener('message', (e) => {
     const v = typeof e.data === 'string' ? e.data : new Uint8Array(e.data);
     const w = st.waiters.shift();
-    if (w) w.give(v);
-    else st.queue.push(v);
+    if (w) return w.give(v);
+    // Workers has no backpressure on a WebSocket: the peer can send faster than the app reads. A message that comes
+    // while the queue holds `max` bytes or more closes the socket (1008) and is dropped; so are the messages after it.
+    // The messages in the queue stay for `receive`, then `Closed`.
+    if (st.full) return;
+    if (st.queue.length && st.queued >= st.max) {
+      st.full = true;
+      st.closing = true;
+      ws.close(...WS_QUEUE_FULL);
+      return;
+    }
+    st.queue.push(v);
+    st.queued += sizeOf(v);
   });
-  ws.addEventListener('close', (e) => close({ code: e.code, reason: e.reason ?? '', clean: Boolean(e.wasClean) }));
-  ws.addEventListener('error', (e) => close({ code: 1006, reason: String(e?.message ?? e?.error?.message ?? 'error'), clean: false }));
+  ws.addEventListener('close', (e) => close(e.code, e.reason ?? '', Boolean(e.wasClean)));
+  ws.addEventListener('error', (e) => close(1006, String(e?.message ?? e?.error?.message ?? 'error'), false));
   return st;
 }
+// A message out of the queue, and back to its front (OP8).
+const shift = (st) => {
+  const m = st.queue.shift();
+  st.queued -= sizeOf(m);
+  return m;
+};
+const unshift = (st, m) => {
+  st.queue.unshift(m);
+  st.queued += sizeOf(m);
+};
 
 // TCP sockets of `Tcp` (MODULES.md 12.3): the reader, the writer, a read that a lost race branch left (`pending`), the
 // rest of a chunk that `max` cut, and the close.
@@ -360,33 +401,50 @@ export function makeHelpers(t, c, shim, tasks) {
       const keys = res.keys.map((k) => ({ name: k.name, expiration: k.expiration, metadata: k.metadata === null || k.metadata === undefined ? undefined : new Packed(k.metadata) }));
       return { keys, cursor: res.list_complete ? undefined : res.cursor };
     },
-    // `WebSocket.accept!` (MODULES.md 12.2): `new WebSocketPair()`, `accept()` of the server end with its message queue.
-    // Gives `[client, server]`.
-    wsPair() {
+    // `WebSocket.accept!` (MODULES.md 12.2): `new WebSocketPair()`, `accept()` of the server end with its message queue
+    // of at most `max` bytes. Gives `[client, server]`.
+    wsPair(max) {
       const [client, server] = Object.values(new WebSocketPair());
-      acceptSocket(server);
+      acceptSocket(server, max);
       serverOf.set(client, server);
       return [client, server];
     },
-    // `WebSocket.connect!`: `accept()` of the `webSocket` of a response, with its message queue. No socket (the server did
-    // not answer 101): undefined (`NotUpgrade`).
-    wsAccept(ws) {
+    // `WebSocket.connect!`: `accept()` of the `webSocket` of the response `res`, with its message queue of at most `max`
+    // bytes. Gives `[ws, protocol]`: the subprotocol is the `Sec-WebSocket-Protocol` header of the 101 response (a
+    // client socket of workerd has `protocol` "", research/ws-gaps-probe/out.txt). No socket (the server did not answer
+    // 101): undefined (`NotUpgrade`).
+    wsAccept(ws, res, max) {
       if (ws === null || ws === undefined) return undefined;
-      acceptSocket(ws);
-      return ws;
+      acceptSocket(ws, max);
+      return [ws, res.headers.get('sec-websocket-protocol') ?? ''];
     },
-    // `WebSocket.receive!`: the next message (text, or bytes), or `{ code, reason, clean }` after the close. A wait on a
-    // socket has no deadline (API.md 10.2). When `signal` aborts (a lost branch of `Io.race!`), the call stops and the
+    // `send!` of `WebSocket` and `Object.Socket`: "closed" when the socket is closing or closed (`readyState` 2 or 3:
+    // the app or the peer closed it), else `ws.send(data)`. A throw goes to Roc (`SocketErr`).
+    wsSend(ws, data) {
+      if (ws.readyState >= 2) return 'closed';
+      ws.send(data);
+      return undefined;
+    },
+    // `close!` of `WebSocket` and `Object.Socket`: `ws.close(code, reason)`, and the mark that the app closed first (the
+    // `by` of the close record of a socket of `accept!` or `connect!`). A throw goes to Roc: `InvalidAccessError` (the
+    // code) and `SyntaxError` (the reason is more than 123 bytes).
+    wsClose(ws, code, reason) {
+      ws.close(code, reason);
+      const st = sockets.get(ws);
+      if (st) st.closing = true;
+    },
+    // `WebSocket.receive!`: the next message (text, or bytes), or `{ code, reason, clean, by }` after the close. A wait on
+    // a socket has no deadline (API.md 10.2). When `signal` aborts (a lost branch of `Io.race!`), the call stops and the
     // message stays for the next call (OP8). A message that a lost branch took goes back to the front of the queue
     // (`onLoss`), also when the branch took it in the same turn as the end of the race.
     wsReceive(ws, signal) {
       const st = sockets.get(ws);
       if (!st) throw new TypeError('wsReceive: not a socket of WebSocket.accept! or connect!');
       const taken = (m) => {
-        onLoss(signal, () => st.queue.unshift(m));
+        onLoss(signal, () => unshift(st, m));
         return m;
       };
-      if (st.queue.length) return taken(st.queue.shift());
+      if (st.queue.length) return taken(shift(st));
       if (st.closed) return st.closed;
       c.socketWait = true;
       return new Promise((resolve, reject) => {

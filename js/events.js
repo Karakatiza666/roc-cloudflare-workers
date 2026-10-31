@@ -183,7 +183,13 @@ export const objectFetch = (request) => ({ kind: 'fetch', request: requestOf(req
 export const objectAlarm = (info) => ({ kind: 'alarm', retry_count: Number(info?.retryCount ?? 0), is_retry: Boolean(info?.isRetry ?? false) });
 export const objectRpc = (method, arg) => ({ kind: 'rpc', method, arg: argOf(arg) });
 export const objectSocketMessage = (ws, message) => ({ kind: 'socketMessage', socket: ws, message });
-export const objectSocketClose = (ws, code, reason, wasClean) => ({ kind: 'socketClose', socket: ws, code: Number(code), reason: String(reason ?? ''), clean: Boolean(wasClean) });
+// Who closed: `transport` for 1006 (no close frame, RFC 6455 7.1.5; also the `error` event), `us` when the app called
+// `close` first (a socket of `WebSocket`: the mark of `pf.wsClose`), else `peer`.
+export const closedBy = (code, us) => (code === 1006 ? 'transport' : us ? 'us' : 'peer');
+// The `socketClose` of an object. `by`: `transport` for 1006 (no close frame). Else `us` when the socket is CLOSED (`readyState` 3) at the event: this
+// side sent its close frame first and the event is the reply of the peer; at a close of the peer the socket is CLOSING
+// (2) until the object answers. The state is in workerd, so it holds after a hibernation too (research/ws-gaps-probe/out.txt).
+export const objectSocketClose = (ws, code, reason, wasClean) => ({ kind: 'socketClose', socket: ws, code: Number(code), reason: String(reason ?? ''), clean: Boolean(wasClean), by: closedBy(Number(code), ws.readyState === 3) });
 export const objectSocketError = (ws, error) => ({ kind: 'socketError', socket: ws, error: error instanceof Error ? error : new Error(String(error)) });
 
 // The event `Manifest` (API.md 10.1, AQ10): once, at load.

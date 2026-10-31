@@ -41,19 +41,24 @@ Remote :: [].{
 		)
 	}
 
-	## `ws.send(data)` on a socket of `WebSocket` or `Object.Socket` (MODULES.md 12, "One API"), one `call!`. A throw (the
-	## socket is closed) is `Closed`.
-	socket_send! : Js.Ref, Js => Try({}, [Closed])
-	socket_send! = |ref, data| match Js.call!([Call(Ref(ref), "send", [Lit(data)])]) {
+	## `send!` on a socket of `WebSocket` or `Object.Socket` (MODULES.md 12, "One API"), one `call!` of `pf.wsSend`:
+	## "closed" when the socket is closing or closed (`readyState` 2 or 3) is `Closed`, a throw of `send` is `SocketErr`.
+	socket_send! : Js.Ref, Js => Try({}, [Closed, Infra([SocketErr(Io.Thrown)])])
+	socket_send! = |ref, data| match Js.call!([Call(Root("pf"), "wsSend", [Lit(Ref(ref)), Lit(data)])]) {
+		Ok(Text("closed")) => Err(Closed)
 		Ok(_) => Ok({})
-		Err(_) => Err(Closed)
+		Err(t) => Err(Infra(SocketErr(t)))
 	}
 
-	## `ws.close(code, reason)`, one `call!`. A throw (a code that the app cannot send, a closed socket) is dropped.
-	socket_close! : Js.Ref, U16, Str => {}
-	socket_close! = |ref, code, reason| {
-		_ = Js.call!([Call(Ref(ref), "close", [Lit(Int(code.to_i64())), Lit(Text(reason))])])
-		{}
+	## `close!` on a socket, one `call!` of `pf.wsClose`: `ws.close(code, reason)` and the mark that this side closed
+	## first. Workers checks the code (`InvalidAccessError`: `BadCode`) and the length of the reason (`SyntaxError`:
+	## `TooLarge`, more than 123 bytes). A close of a closed socket does not throw (research/ws-gaps-probe/out.txt).
+	socket_close! : Js.Ref, U16, Str => Try({}, [BadCode, TooLarge])
+	socket_close! = |ref, code, reason| match Js.call!([Call(Root("pf"), "wsClose", [Lit(Ref(ref)), Lit(Int(code.to_i64())), Lit(Text(reason))])]) {
+		Ok(_) => Ok({})
+		Err({ name: "InvalidAccessError", message: _ }) => Err(BadCode)
+		Err({ name: "SyntaxError", message: _ }) => Err(TooLarge)
+		Err(t) => crash "close!: ws.close threw ${t.name}: ${t.message}"
 	}
 
 	## The limit of one RPC call of Workers (32 MiB, Cloudflare docs): the limit of a reply that crosses into wasm.

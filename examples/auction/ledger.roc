@@ -157,7 +157,7 @@ refresh_rates! = || {
 			Err(Closed(_)) => break
 		}
 	}
-	ws.close!(1000, "done")
+	_ = ws.close!(1000, "done")
 	missing = cfg.currencies.keep_if(|c| !$ticks.any(|t| t.currency == c))
 	if !missing.is_empty() {
 		return Err(MissingRates(missing))

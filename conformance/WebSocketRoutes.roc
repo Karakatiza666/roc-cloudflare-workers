@@ -77,7 +77,7 @@ WebSocketRoutes :: [].{
 				Ok(ws) => {
 					sent = ws.send!(Text("hi"))
 					reply = ws.receive!()
-					ws.close!(1000, "done")
+					_ = ws.close!(1000, "done")
 					"sent=${Str.inspect(sent)} got=${Str.inspect(reply)}"
 				}
 				Err(e) => "Err ${Str.inspect(e)}"
@@ -90,7 +90,7 @@ WebSocketRoutes :: [].{
 				Ok(ws) => {
 					_ = ws.send!(Text("twin"))
 					reply = Io.run!(ws.receive())
-					ws.close!(1000, "done")
+					_ = ws.close!(1000, "done")
 					"got=${Str.inspect(reply)}"
 				}
 				Err(e) => "Err ${Str.inspect(e)}"
@@ -112,8 +112,56 @@ WebSocketRoutes :: [].{
 					}
 					_ = ws.send!(Bytes([0, 1, 255]))
 					bytes = ws.receive!()
-					ws.close!(1000, "done")
-					"info=${Str.inspect(info)} json=${Str.inspect(json)} parsed=${Str.inspect(parsed)} bytes=${Str.inspect(bytes)}"
+					_ = ws.close!(1000, "done")
+					"info=${Str.inspect(info)} json=${Str.inspect(json)} parsed=${Str.inspect(parsed)} bytes=${Str.inspect(bytes)} protocol=${ws.protocol()}"
+				}
+				Err(e) => "Err ${Str.inspect(e)}"
+			}
+			Response.from_text(200, got)
+		}
+		# The subprotocol of a client with no `protocols`: "".
+		["client_proto"] => {
+			got = match WebSocket.connect!(Q.text(req, "url")) {
+				Ok(ws) => {
+					_ = ws.close!(1000, "done")
+					"protocol=${Str.inspect(ws.protocol())}"
+				}
+				Err(e) => "Err ${Str.inspect(e)}"
+			}
+			Response.from_text(200, got)
+		}
+		# `close!` with a code that the app cannot send and with a long reason, then a close, a `send!` after it, and a
+		# second close.
+		["client_close"] => {
+			got = match WebSocket.connect!(Q.text(req, "url")) {
+				Ok(ws) => {
+					bad_code = ws.close!(1005, "")
+					long = ws.close!(1000, Str.repeat("r", 124))
+					sent = ws.send!(Text("before"))
+					reply = ws.receive!()
+					closed = ws.close!(1000, "done")
+					after = ws.send!(Text("after"))
+					again = ws.close!(1000, "again")
+					"bad_code=${Str.inspect(bad_code)} long=${Str.inspect(long)} sent=${Str.inspect(sent)} reply=${Str.inspect(reply)} closed=${Str.inspect(closed)} after=${Str.inspect(after)} again=${Str.inspect(again)}"
+				}
+				Err(e) => "Err ${Str.inspect(e)}"
+			}
+			Response.from_text(200, got)
+		}
+		# The server closes ("close me"): `receive!` gives `Closed` with `by: Peer`. A close of this side: `by: Us`.
+		["client_closed_by"] => {
+			got = match WebSocket.connect!(Q.text(req, "url")) {
+				Ok(ws) => {
+					_ = ws.send!(Text("close me"))
+					peer = ws.receive!()
+					match WebSocket.connect!(Q.text(req, "url")) {
+						Ok(ws2) => {
+							_ = ws2.close!(4006, "us")
+							us = ws2.receive!()
+							"peer=${Str.inspect(peer)} us=${Str.inspect(us)}"
+						}
+						Err(e) => "Err ${Str.inspect(e)}"
+					}
 				}
 				Err(e) => "Err ${Str.inspect(e)}"
 			}
@@ -127,7 +175,7 @@ WebSocketRoutes :: [].{
 					_ = ws.send!(Text("delay 100 m"))
 					first = Io.race!([ws.receive().map(|m| Got(m)), Time.sleep(50).map(|_| TimedOut)])
 					next = Io.race!([ws.receive().map(|m| Got(m)), Time.sleep(1_000).map(|_| TimedOut)])
-					ws.close!(1000, "done")
+					_ = ws.close!(1000, "done")
 					"first=${first.index.to_str()} ${Str.inspect(first.result)} next=${Str.inspect(next.result)}"
 				}
 				Err(e) => "Err ${Str.inspect(e)}"
@@ -141,7 +189,7 @@ WebSocketRoutes :: [].{
 					_ = ws.send!(Text("delay 100 m"))
 					first = ws.receive().timeout(50).run!()
 					next = ws.receive().timeout(1_000).run!()
-					ws.close!(1000, "done")
+					_ = ws.close!(1000, "done")
 					"first=${Str.inspect(first)} next=${Str.inspect(next)}"
 				}
 				Err(e) => "Err ${Str.inspect(e)}"
@@ -154,7 +202,7 @@ WebSocketRoutes :: [].{
 				Ok(ws) => {
 					_ = ws.send!(Text("m"))
 					first = ws.receive().timeout(5_000).run!()
-					ws.close!(1000, "done")
+					_ = ws.close!(1000, "done")
 					"first=${Str.inspect(first)}"
 				}
 				Err(e) => "Err ${Str.inspect(e)}"
@@ -170,7 +218,7 @@ WebSocketRoutes :: [].{
 					first = ws.receive!()
 					_ = ws.send!(Text("after"))
 					second = ws.receive!()
-					ws.close!(1000, "done")
+					_ = ws.close!(1000, "done")
 					"bad=${Str.inspect(bad)} good=${Str.inspect(good)} first=${Str.inspect(first)} second=${Str.inspect(second)}"
 				}
 				Err(e) => "Err ${Str.inspect(e)}"
@@ -187,7 +235,7 @@ WebSocketRoutes :: [].{
 					Time.sleep!(300)
 					second = Io.race!([Io.sync([Get(Root("signal"), "aborted")], |_| Ok(Now)), ws.receive().map(|m| Got(m))])
 					next = Io.race!([ws.receive().map(|m| Got(m)), Time.sleep(1_000).map(|_| TimedOut)])
-					ws.close!(1000, "done")
+					_ = ws.close!(1000, "done")
 					"first=${first.index.to_str()} second=${second.index.to_str()} next=${Str.inspect(next.result)}"
 				}
 				Err(e) => "Err ${Str.inspect(e)}"
@@ -201,7 +249,7 @@ WebSocketRoutes :: [].{
 				Ok(ws) => {
 					_ = ws.send!(Text("delay 2000 s"))
 					reply = ws.receive!()
-					ws.close!(1000, "done")
+					_ = ws.close!(1000, "done")
 					Str.inspect(reply)
 				}
 				Err(e) => "Err ${Str.inspect(e)}"
@@ -213,41 +261,62 @@ WebSocketRoutes :: [].{
 }
 
 ## MODULES.md 12.2: `accept!`, its response with `after`: `receive!` until the close. "close" closes the socket from the Worker.
+## `protocols` (comma list) and `max` in the query: `accept_with!` with these subprotocols and `max_queued_bytes`. The log
+## line "echo closed" has the close record and `got`, the count of the messages that `receive!` gave.
 echo! : Request => Response
-echo! = |req| match WebSocket.accept!(req) {
-	Ok({ socket, response }) => {
-		work! = || {
-			closed = serve!(socket)
-			Log.info!("echo closed", closed)
-			Ok({})
+echo! = |req| {
+	accepted =
+		if (Q.text(req, "protocols") == "" and Q.text(req, "max") == "") {
+			WebSocket.accept!(req)
+		} else {
+			protocols = Q.text(req, "protocols").split_on(",").keep_if(|p| !p.is_empty())
+			max = if (Q.text(req, "max") == "") WebSocket.default_max_queued_bytes else Q.num(req, "max")
+			WebSocket.accept_with!(req, { protocols, max_queued_bytes: max })
 		}
-		response.after(work!)
+	match accepted {
+		Ok({ socket, response }) => {
+			work! = || {
+				(closed, got) = serve!(socket, 0)
+				Log.info!("echo closed", { code: closed.code, reason: closed.reason, clean: closed.clean, by: Str.inspect(closed.by), got })
+				Ok({})
+			}
+			response.after(work!)
+		}
+		Err(NotUpgrade) => Response.from_status(426)
 	}
-	Err(NotUpgrade) => Response.from_status(426)
 }
 
-## One message, one answer, until the close. "close": the Worker closes the socket.
-serve! : WebSocket => WebSocket.Closed
-serve! = |socket| match socket.receive!() {
+## One message, one answer, until the close. "close": the Worker closes the socket. "protocol": the subprotocol of the
+## socket. "hold <ms>": no `receive!` for that time (the queue fills), then the answers to the messages.
+serve! : WebSocket, U64 => (WebSocket.Closed, U64)
+serve! = |socket, got| match socket.receive!() {
 	Ok(Text("close")) => {
-		socket.close!(1000, "bye")
-		serve!(socket)
+		_ = socket.close!(1000, "bye")
+		serve!(socket, got + 1)
+	}
+	Ok(Text("protocol")) => {
+		_ = socket.send!(Text("protocol=${socket.protocol()}"))
+		serve!(socket, got + 1)
+	}
+	Ok(Text(t)) if t.starts_with("hold ") => {
+		Time.sleep!(U64.from_str(t.drop_prefix("hold ")) ?? 0)
+		serve!(socket, got + 1)
 	}
 	# "sleep <ms>": a wait that is not on the socket, then "slept" (the deadline of the task after `respond!`).
 	Ok(Text(t)) if t.starts_with("sleep ") => {
 		Time.sleep!(U64.from_str(t.drop_prefix("sleep ")) ?? 0)
 		_ = socket.send!(Text("slept"))
-		serve!(socket)
+		serve!(socket, got + 1)
 	}
 	Ok(Text(t)) => {
 		_ = socket.send!(Text("echo ${t}"))
-		serve!(socket)
+		serve!(socket, got + 1)
 	}
 	Ok(Bytes(b)) => {
 		_ = socket.send!(Bytes(b))
-		serve!(socket)
+		serve!(socket, got + 1)
 	}
-	Err(Closed(c)) => c
+	Err(Closed(c)) => (c, got)
 }
 
 room_init! : Object.Self => Try({}, [Infra([StorageErr(Io.Thrown)])])
@@ -265,7 +334,8 @@ room_fetch! = |self, req| match Q.text(req, "op") {
 	"tags" => answer(Str.inspect(self.accept_with!(req, { tags: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"] }).map_ok(|_| {})))
 	_ => {
 		user = Q.text(req, "user")
-		match self.accept_with!(req, { tags: ["room", user] }) {
+		protocols = Q.text(req, "protocols").split_on(",").keep_if(|p| !p.is_empty())
+		match self.accept_with!(req, { tags: ["room", user], protocols }) {
 			Ok({ socket, response }) => {
 				attached = if (Q.text(req, "noattach") == "1") Ok({}) else user_slot.set!(socket, { name: user })
 				if (attached.is_ok()) Ok(response) else answer("attach! gave ${Str.inspect(attached)}")
@@ -307,7 +377,7 @@ room_message! = |self, socket, msg| {
 		# client answers the close, and its `send!` is `Err(Closed)`, so it is not in the count.
 		Text("bcast_closed") => {
 			for victim in self.sockets_with!({ tag: "victim" }) {
-				victim.close!(1000, "victim")
+				_ = victim.close!(1000, "victim")
 			}
 			sent = self.broadcast_with!({}, Text("closed from ${name}"))
 			_ = socket.send!(Text("sent=${sent.to_str()}"))
@@ -364,6 +434,20 @@ room_message! = |self, socket, msg| {
 			_ = socket.send_json!({ user: name, n })
 			{}
 		}
+		# `close!` with a code that the app cannot send and with a reason of 124 bytes: the socket stays open.
+		Text("close_errs") => {
+			bad_code = socket.close!(1006, "")
+			long = socket.close!(1000, Str.repeat("r", 124))
+			_ = socket.send!(Text("bad_code=${Str.inspect(bad_code)} long=${Str.inspect(long)}"))
+			{}
+		}
+		# A close of the object, then a `send!` to the closed socket.
+		Text("close_send") => {
+			closed = socket.close!(4003, "object")
+			after = socket.send!(Text("after"))
+			Log.info!("room close_send", { closed: Str.inspect(closed), after: Str.inspect(after) })
+			{}
+		}
 		Text("json_nan") => {
 			bad = socket.send_json!({ r: 0.0.F64 / 0.0.F64 })
 			_ = socket.send!(Text("bad=${Str.inspect(bad)}"))
@@ -386,8 +470,8 @@ room_message! = |self, socket, msg| {
 
 room_close! : Object.Self, Object.Socket, WebSocket.Closed => Try({}, [Infra([StorageErr(Io.Thrown)])])
 room_close! = |_self, socket, closed| {
-	Log.info!("room close", closed)
-	socket.close!(closed.code, closed.reason)
+	echo = socket.close!(closed.code, closed.reason)
+	Log.info!("room close", { code: closed.code, reason: closed.reason, clean: closed.clean, by: Str.inspect(closed.by), echo: Str.inspect(echo) })
 	Ok({})
 }
 

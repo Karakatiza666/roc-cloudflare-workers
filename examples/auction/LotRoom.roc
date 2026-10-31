@@ -147,7 +147,8 @@ reject! = |socket, message| {
 on_close! : Object.Self, Object.Socket, WebSocket.Closed => Try({}, _)
 on_close! = |self, socket, closed| {
 	Log.info!("socket closed", { lot: self.id(), code: closed.code, clean: closed.clean })
-	socket.close!(closed.code, closed.reason)
+	# The reply to the close of the peer. A code of 1005 or 1006 (no code, no close frame) cannot be sent: `BadCode`.
+	_ = socket.close!(closed.code, closed.reason)
 	Ok({})
 }
 
@@ -173,7 +174,7 @@ alarm! = |self, _info| match state_cell.find!(self)? {
 			out = close_now!(self, st)?
 			self.broadcast_json!({ event: "closed", winner: out.winner, amount_cents: out.amount_cents })?
 			for s in self.sockets!() {
-				s.close!(1000, "lot closed")
+				_ = s.close!(1000, "lot closed")
 			}
 			Ok({})
 		}

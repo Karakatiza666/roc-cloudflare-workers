@@ -1021,7 +1021,7 @@ Inside: a class is a record of handlers, all optional, as for `Worker`.
 		list_with! : Object.Self, { prefix ?: Str, start ?: Str, start_after ?: Str, end ?: Str, limit ?: U32, reverse ?: Bool } => Try(List(Str), [Infra([TooLarge, StorageErr(Thrown)])])
 		delete_all! : Object.Self => Try({}, [Infra([StorageErr(Thrown)])])                     # deleteAlarm and deleteAll: one wait
 		accept! : Object.Self, Request => Try({ socket : Object.Socket, response : Response }, [NotUpgrade])
-		accept_with! : Object.Self, Request, { tags ?: List(Str) } => Try({ socket : Object.Socket, response : Response }, [NotUpgrade, TooLarge])
+		accept_with! : Object.Self, Request, { tags ?: List(Str), protocols ?: List(Str) } => Try({ socket : Object.Socket, response : Response }, [NotUpgrade, TooLarge])
 		sockets! : Object.Self => List(Object.Socket)                                  # getWebSockets()
 		sockets_with! : Object.Self, { tag : Str } => List(Object.Socket)              # getWebSockets(tag)
 		broadcast! : Object.Self, WebSocket.Message => {}                              # send! to each socket
@@ -1040,9 +1040,9 @@ Inside: a class is a record of handlers, all optional, as for `Worker`.
 
 	## A WebSocket that the object accepted with the hibernation API (12).
 	Socket := { ... }.{
-		send! : Object.Socket, WebSocket.Message => Try({}, [Closed])
-		send_json! : Object.Socket, a => Try({}, [Closed, Infra([BadData(Str)])]) where [a.JsonEncodable]
-		close! : Object.Socket, U16, Str => {}
+		send! : Object.Socket, WebSocket.Message => Try({}, [Closed, Infra([SocketErr(Thrown)])])
+		send_json! : Object.Socket, a => Try({}, [Closed, Infra([BadData(Str), SocketErr(Thrown)])]) where [a.JsonEncodable]
+		close! : Object.Socket, U16, Str => Try({}, [BadCode, TooLarge])
 		tags! : Object.Socket => List(Str)                                          # getTags
 		# Object.attachment : Str -> Object.Attachment(a) where [a.Encodable, a.Parseable]   (a constant, like Object.cell)
 		Attachment.set! : Object.Attachment(a), Object.Socket, a => Try({}, [TooLarge])   # serializeAttachment: CBOR bytes
@@ -1486,7 +1486,7 @@ room = Object.class("Room", {
 		Ok({})
 	},
 	web_socket_close!: |_self, socket, closed| {
-		socket.close!(closed.code, closed.reason)
+		_ = socket.close!(closed.code, closed.reason)          # BadCode for 1005 and 1006: nothing to answer
 		Ok({})
 	},
 })
@@ -1500,6 +1500,8 @@ A record with one field is a block: `{ name }` is the value of `name`, not `{ na
 | The Worker | Gives the request to the object with `fetch!` and the 101 response back with no change: `Response.web_socket` carries the client end (4, `web_socket()`). It checks `WebSocket.is_upgrade(req)` first and answers 426, as in the Cloudflare example. An RPC call cannot carry the socket: use `fetch!`. |
 | `accept!` | `new WebSocketPair()`, `ctx.acceptWebSocket(server, tags)` and a 101 response with the client end, in one `call!`. `NotUpgrade` when the request has no `Upgrade: websocket`. |
 | Tags | `accept_with!(req, { tags })`: 10 tags or less, 256 characters or less each, else `TooLarge`. `sockets_with!(self, { tag })` finds the sockets of a tag, for example of one user. |
+| Subprotocol | `accept_with!(req, { protocols })`: the subprotocols of the object, in its order. The 101 response has the first that the client asks for (`WebSocket.pick_protocol(req, protocols)` gives the same value) in `Sec-WebSocket-Protocol`. With no common protocol the response has no header, and a client that asked for one fails the connection (RFC 6455 4.1). A socket of the hibernation API does not keep the protocol across events: keep it in the attachment if a later event needs it. |
+| Who closed | `web_socket_close!` gets `closed.by`: `Transport` for 1006, `Us` when the object closed first (the socket is CLOSED at the event: the event is the reply of the peer, with its code and an empty reason locally), else `Peer` (the socket is CLOSING until the object answers with `close!`). The state is in workerd, so `by` holds after a hibernation too. |
 | Broadcast | `self.broadcast!(message)` sends the message to each open socket and gives `{}`. `self.broadcast_json!(value)` sends the JSON text of a value, like `Object.Socket.send_json!`; a value that JSON cannot show (a `NaN`) is `Err(Infra(BadData(text)))`, and nothing is sent. `self.broadcast_with!({}, message)` gives the number of sockets that got it (`U64`); `self.broadcast_with!({ tag }, message)` does the same for the sockets with the tag. `broadcast_json_with!` is `broadcast_with!` for a value: `Try(U64, [Infra([BadData(Str)])])`. A socket that is closed (its `send!` is `Err(Closed)`) is skipped and not counted. The message is a `WebSocket.Message`: `Text(...)` or `Bytes(...)`. |
 | Find the sender | The ref table gives one id to one JS object in a task (`API.md` RS1), so `peer == socket` is true for the socket of the message. |
 | Ping without a wake | `set_auto_response!(self, { request: "ping", response: "pong" })`: Workers answers with no event, and the object can stay asleep. 2,048 characters or less each. `socket.auto_response_ms!()` gives the time of the last one. |
@@ -1513,16 +1515,21 @@ WebSocket :: { ... }.{
 	is_upgrade : Request -> Bool                                 # Upgrade: websocket
 	accept! : Request => Try({ socket : WebSocket, response : Response }, [NotUpgrade])
 	connect! : Str => Try(WebSocket, [NotUpgrade, Infra([SocketErr(Thrown)])])
-	connect_with! : Str, { headers ?: List(Header), protocols ?: List(Str) } => Try(WebSocket, [NotUpgrade, Infra([SocketErr(Thrown)])])
-	send! : WebSocket, WebSocket.Message => Try({}, [Closed])
-	send_json! : WebSocket, a => Try({}, [Closed, Infra([BadData(Str)])]) where [a.JsonEncodable]
+	accept_with! : Request, { protocols ?: List(Str), max_queued_bytes ?: U64 } => Try({ socket : WebSocket, response : Response }, [NotUpgrade])
+	connect_with! : Str, { headers ?: List(Header), protocols ?: List(Str), max_queued_bytes ?: U64 } => Try(WebSocket, [NotUpgrade, Infra([SocketErr(Thrown)])])
+	protocol : WebSocket -> Str                                  # the subprotocol of the socket, or ""
+	protocols : Request -> List(Str)                             # the subprotocols that the client asks for
+	pick_protocol : Request, List(Str) -> Try(Str, [NotFound])   # the first of the list of the server that the client asks for
+	send! : WebSocket, WebSocket.Message => Try({}, [Closed, Infra([SocketErr(Thrown)])])
+	send_json! : WebSocket, a => Try({}, [Closed, Infra([BadData(Str), SocketErr(Thrown)])]) where [a.JsonEncodable]
 	receive! : WebSocket => Try(WebSocket.Message, [Closed(WebSocket.Closed)])
-	close! : WebSocket, U16, Str => {}
+	close! : WebSocket, U16, Str => Try({}, [BadCode, TooLarge])
+	default_max_queued_bytes : U64                               # 4 MiB
 
 	Message := [Text(Str), Bytes(List(U8))].{
 		json : WebSocket.Message -> Try(a, [BadData(Str)]) where [a.JsonParseable]
 	}
-	Closed : { code : U16, reason : Str, clean : Bool }
+	Closed : { code : U16, reason : Str, clean : Bool, by : [Peer, Us, Transport] }
 }
 ```
 
@@ -1549,6 +1556,11 @@ fetch! = |req| {
 | A Worker | `accept!`, then `Ok(response.after(serve!))`: the 101 response now, then a loop of `receive!` in the work. Each `receive!` is one wait: JS keeps the messages that come before it in a queue. A 101 response keeps the task until the socket closes: the 30 s limit of `API.md` 10.2 does not apply. The docs do not say if the CPU limit of the request counts over the whole connection, and a runtime update gives a connection 20 minutes to finish (Cloudflare docs, limits). So a socket that lives long goes in a Durable Object (12.1). |
 | A client | `connect!(url)`: a `fetch` with `Upgrade: websocket`, then `accept()` of the `webSocket` of the response: one wait for the `fetch`, then one `call!` with no wait for `accept()` (`API.md` OP7). `NotUpgrade` when the server does not answer 101. It counts as an outbound connection (6 at the same time). In an object, a client socket keeps the object in memory: it has no hibernation. |
 | One API | `Object.Socket` and `WebSocket` have the same `send!`, `send_json!` and `close!`, so a function with a `where` clause on `send!` takes both. Only `WebSocket` has `receive!`: an object gets messages as events. |
+| Subprotocol | A client: `connect_with!(url, { protocols })` asks for them, and `ws.protocol()` gives the one that the server picked (the `Sec-WebSocket-Protocol` header of the 101; the `protocol` of a client socket of workerd is always "", `research/ws-gaps-probe/out.txt`). A server: `accept_with!(req, { protocols })` picks the first of its list that the client asks for (`pick_protocol`), puts it in the 101 response, and `socket.protocol()` gives it. With no common protocol: no header and `protocol()` "", and a client that asked for one fails the connection. `WebSocket.protocols(req)` gives the list of the client. |
+| The receive queue | Workers has no backpressure on a WebSocket and no `bufferedAmount` (the property does not exist, local probe): a peer can send faster than the app calls `receive!`. The queue of a socket holds at most `max_queued_bytes` (bytes of a bytes frame, UTF-8 bytes of a text; default 4 MiB, `default_max_queued_bytes`). A message that comes while the queue holds that many bytes or more closes the socket with 1008 "receive queue full": it and the later messages are dropped. The messages in the queue stay: `receive!` gives them, then `Closed` with `by: Us`. A message that comes while a `receive!` waits never counts. So one message larger than the limit still passes when the queue is empty. |
+| `send!` | `Closed` when this side or the peer closed the socket (`readyState` 2 or 3, also after a `close!` of the same task). Another throw of `send` is `Infra(SocketErr(t))`: none is known locally (a send of 64 MiB works). There is no buffered amount to read. |
+| `close!` | `ws.close(code, reason)`. `BadCode` when Workers refuses the code (`InvalidAccessError`: only 1000 to 4999, not 1004 to 1006 or 1015; so 1005 and 1006 of a close record cannot be sent back). `TooLarge` when the reason has more than 123 UTF-8 bytes (`SyntaxError`). A second `close!` is `Ok`. |
+| Who closed | `Closed.by`: `Transport` for the code 1006 (the connection dropped with no close frame; also the `error` event), `Us` when this side called `close!` first (or the full queue closed it), else `Peer`. With `Us`, the code and the reason are the ones of the reply of the peer. |
 | Text or bytes | `Message` is the frame. `msg.json()` parses a text frame as JSON, the format of most WebSocket clients. |
 | Timeout, proxy | `ws.receive().timeout(ms).run!()` gives `Err(Infra(TimedOut))` after `ms` (`Io.timeout`, `API.md` 6.5). `Io.race!` with `Time.sleep(ms)` (11) does the same with more code, and the `receive` of two sockets is a proxy. A branch that lost takes no message (`API.md` OP8). |
 
@@ -1599,8 +1611,8 @@ The code follows 12.1 to 12.3 with these differences and additions, each with it
 | `connect!` | A wait for `fetch`, then `accept()` in a second program (`API.md` OP7) | One program, one wait: `fetch`, `Get` of `webSocket`, then `pf.wsAccept`, which gives `undefined` for a `null` socket (`NotUpgrade`) | One program can be an `Io`, so the function has its twin |
 | A `ws://` or `wss://` URL | not given | Sent as `http://` or `https://` | The `fetch` of Workers refuses them: "Fetch API cannot load: ws://..." |
 | Bytes frames | not given | `pf.wsPair` and `wsAccept` set `binaryType` to `arraybuffer` | With the compatibility date 2026-10-01 the bytes of a socket of a Worker came as a `Blob` (the conformance check found it). A socket of the hibernation API gives an `ArrayBuffer`. |
-| `send!`, `send_json!` | `Try({}, [Closed])`, and `send_json!` also `Infra([BadData(Str)])` | Each throw of `send` is `Closed`. A value that JSON cannot show (`NaN` in an `F64`) is `Infra(BadData)`, and nothing is sent | `send!` has one tag. Local text: "Can't call WebSocket send() after close()." |
-| `close!` | `{}` | A throw is dropped (a code that the app cannot send, as 1005) | The type has no error |
+| `send!`, `send_json!` | `Try({}, [Closed])`, and `send_json!` also `Infra([BadData(Str)])` | `pf.wsSend`: `Closed` for a socket that is closing or closed (`readyState` 2 or 3), checked before `send`; each throw of `send` is `Infra(SocketErr(t))`. A value that JSON cannot show (`NaN` in an `F64`) is `Infra(BadData)`, and nothing is sent | Until 0.0.2 each throw was `Closed`. Local text after a close: "Can't call WebSocket send() after close()." The check of `readyState` gives `Closed` with no text match |
+| `close!` | `{}` | `pf.wsClose`. `Try({}, [BadCode, TooLarge])` by the `name` of the throw (`InvalidAccessError`, `SyntaxError`). Another throw is a crash: none is known (a close before `accept()` cannot happen, the platform accepts each socket) | Until 0.0.2 a throw was dropped, so a bad code was not seen |
 | `receive!` | One wait | One wait with no deadline (`API.md` 10.2): the helper marks the wait as a socket wait. After the close each call gives `Closed`. | |
 | A 101 response of `WebSocket.accept!` with `Response.after` (8h wave B; built with `Ctx.respond!`) | The task stays until the socket closes, then the task ends | The response is open while the socket is open (no deadline), and complete at the close (30 s more, `afterRespondMs`). No cancel at the close: the task ends when the handler returns (decided 2026-10-17). | A close that cut the handler short would lose its cleanup work, and a cancel would win against the `Closed` of the `receive!` that waits (`API.md` 10.2) |
 | `Message` | `[Text(Str), Bytes(List(U8))]` with `json` | Also `is_eq`. `json` of a bytes frame is `BadData` | "`msg.json()` parses a text frame" |

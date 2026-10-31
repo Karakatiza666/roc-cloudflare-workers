@@ -10,7 +10,8 @@ export const options = { durableObjects: { ROOMS: { className: 'Room', useSQLite
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let echo = null;
 // The echo server: a text "info" gives the protocol and the header `x-test` of the upgrade, "give json" gives
-// `{"n":5}`, "delay <ms> <text>" gives "echo <text>" after <ms>, each other text "echo <text>", bytes come back.
+// `{"n":5}`, "delay <ms> <text>" gives "echo <text>" after <ms>, "close me" closes with 4005 "peer bye", each other text
+// "echo <text>", bytes come back. It picks the first subprotocol that the client asks for (the default of `ws`).
 function echoServer(t) {
   if (echo) return echo;
   const { WebSocketServer } = createRequire(import.meta.url)(join(dirname(t.mfDir), 'ws'));
@@ -21,6 +22,7 @@ function echoServer(t) {
     const d = /^delay (\d+) (.*)$/.exec(text);
     if (text === 'info') ws.send(`proto=${ws.protocol} x-test=${req.headers['x-test']}`);
     else if (text === 'give json') ws.send('{"n":5}');
+    else if (text === 'close me') ws.close(4005, 'peer bye');
     else if (d) setTimeout(() => ws.send(`echo ${d[2]}`), Number(d[1]));
     else ws.send(`echo ${text}`);
   }));
@@ -29,9 +31,9 @@ function echoServer(t) {
 }
 
 // A client of Node: `next()` gives the next message (text, or the bytes as an array), or throws after `ms`.
-export function client(url) {
+export function client(url, protocols) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(url, protocols);
     ws.binaryType = 'arraybuffer';
     const got = [];
     const waiters = [];
@@ -62,7 +64,16 @@ export function client(url) {
   });
 }
 const wsUrl = (base, path) => base.replace(/^http/, 'ws') + path;
-const room = (t, name, user) => client(wsUrl(t.url, `/websocket/room/${name}?user=${user}`));
+const room = (t, name, user, protocols) => client(wsUrl(t.url, `/websocket/room/${name}?user=${user}${protocols ? '&protocols=v2' : ''}`), protocols);
+// The `ws` package of Miniflare (its client has `terminate`: a drop with no close frame).
+const wsPackage = (t) => createRequire(import.meta.url)(join(dirname(t.mfDir), 'ws'));
+// The log line "echo closed" of the Worker echo with the code `code`, after at most 2.5 s.
+async function echoClosed(t, code) {
+  for (let i = 0; i < 50 && !logOf(t, 'echo closed').some((l) => l.code === code); i++) await sleep(50);
+  const l = logOf(t, 'echo closed').find((x) => x.code === code);
+  ok(l, `no "echo closed" line with code ${code}: ${JSON.stringify(logOf(t, 'echo closed'))}`);
+  return l;
+}
 const logOf = (t, msg) => t.logs.filter((l) => String(l.message).includes(`"msg":"${msg}"`)).map((l) => JSON.parse(String(l.message).slice(String(l.message).indexOf('{'))));
 
 export const checks = [
@@ -219,7 +230,7 @@ export const checks = [
   ['websocket web_socket_close!: the code and the reason of the close of the client', async (t) => {
     for (let i = 0; i < 50 && !logOf(t, 'room close').some((l) => l.code === 4001); i++) await sleep(50);
     const l = logOf(t, 'room close').find((x) => x.code === 4001);
-    ok(l && l.reason === 'b leaves' && l.clean === true, `the log: ${JSON.stringify(logOf(t, 'room close'))}`);
+    ok(l && l.reason === 'b leaves' && l.clean === true && l.by === 'Peer' && l.echo === 'Ok({})', `the log: ${JSON.stringify(logOf(t, 'room close'))}`);
     return JSON.stringify(l);
   }],
   ['websocket hibernation: the object leaves memory, and the next message reads the attachment of its socket', async (t) => {
@@ -255,10 +266,91 @@ export const checks = [
     const closed = await c.closed;
     eq(`${closed.code} ${closed.reason}`, '1000 bye', 'the close of the Worker');
     for (let i = 0; i < 50 && !logOf(t, 'echo closed').length; i++) await sleep(50);
-    const l = logOf(t, 'echo closed')[0];
-    ok(l && l.code === 1000, `receive! after the close: ${JSON.stringify(l)}`);
+    const l = await echoClosed(t, 1000);
+    ok(l.by === 'Us', `receive! after the close: ${JSON.stringify(l)}`);
     return JSON.stringify(l);
   }],
+  // roc-websocket DESIGN.md 6.3, "who closed": `by` of the close record of a socket of `accept!`.
+  ['websocket by: a close of the client is Peer, a drop with no close frame (1006) is Transport', async (t) => {
+    const c = await client(wsUrl(t.url, '/websocket/echo'));
+    c.send('a');
+    eq(await c.next(), 'echo a', 'text');
+    await c.close(4007, 'client leaves');
+    const peer = await echoClosed(t, 4007);
+    eq(`${peer.by} ${peer.reason} ${peer.got}`, 'Peer client leaves 1', 'a close of the client');
+    const { WebSocket: Ws } = wsPackage(t);
+    const d = new Ws(wsUrl(t.url, '/websocket/echo'));
+    await new Promise((r, j) => (d.once('open', r), d.once('error', j)));
+    d.terminate();
+    const drop = await echoClosed(t, 1006);
+    eq(`${drop.by} ${drop.clean}`, 'Transport false', 'a drop of the client');
+    return JSON.stringify([peer, drop]);
+  }],
+  // The bounded receive queue: `max_queued_bytes` 10. While the Worker holds (no `receive!` for 500 ms), 4 messages of 8
+  // bytes come: 2 go in the queue (8, then 16 bytes), the third closes the socket with 1008. `receive!` gives the 2, then
+  // `Closed` with `by: Us`.
+  ['websocket max_queued_bytes: a message that comes while the queue is full closes the socket with 1008, the queue is read first', async (t) => {
+    const c = await client(wsUrl(t.url, '/websocket/echo?max=10'));
+    c.send('hold 500');
+    for (let i = 0; i < 4; i++) c.send('aaaaaaaa');
+    const closed = await Promise.race([c.closed, sleep(3000).then(() => ({ code: 'none', reason: 'in 3 s' }))]);
+    eq(`${closed.code} ${closed.reason}`, '1008 receive queue full', 'the close that the client gets');
+    const l = await echoClosed(t, 1008);
+    eq(`${l.by} ${l.got}`, 'Us 3', 'the hold and the 2 queued messages, then Closed');
+    eq(JSON.stringify(c.pending()), '[]', 'no echo: the socket was closing');
+    return JSON.stringify(l);
+  }],
+  ['websocket max_queued_bytes: a queue that receive! empties takes more (two rounds of 32 bytes under a limit of 40)', async (t) => {
+    const c = await client(wsUrl(t.url, '/websocket/echo?max=40'));
+    for (const round of [1, 2]) {
+      c.send('hold 300');
+      for (let i = 0; i < 4; i++) c.send(`m${round}${i}xxxxx`);
+      for (let i = 0; i < 4; i++) eq(await c.next(), `echo m${round}${i}xxxxx`, `round ${round}, message ${i}`);
+    }
+    await c.close(1000, 'done');
+  }],
+  // The subprotocol of a server (roc-websocket DESIGN.md 6.3): `accept_with!` picks the first of its list that the client
+  // asks for, and the 101 response has it.
+  ['websocket accept_with! protocols: the Worker picks the first of its list that the client asks for', async (t) => {
+    const c = await client(wsUrl(t.url, '/websocket/echo?protocols=v2,chat'), ['chat', 'v2']);
+    eq(c.ws.protocol, 'v2', 'the protocol that the client sees');
+    c.send('protocol');
+    eq(await c.next(), 'protocol=v2', 'socket.protocol()');
+    await c.close(1000, 'done');
+    const none = await client(wsUrl(t.url, '/websocket/echo?protocols=v3'), ['chat']).then(() => 'opened', (e) => String(e.message));
+    ok(none.includes('failed'), `no common protocol: the client fails the connection (RFC 6455 4.1): ${none}`);
+    const plain = await client(wsUrl(t.url, '/websocket/echo?protocols=v2'));
+    plain.send('protocol');
+    eq(await plain.next(), 'protocol=', 'a client that asks for none: ""');
+    await plain.close(1000, 'done');
+  }],
+  ['websocket Object.Self.accept_with! protocols: the 101 of the object has the protocol', async (t) => {
+    const a = await room(t, 'rp', 'a', ['chat', 'v2']);
+    eq(a.ws.protocol, 'v2', 'the protocol that the client sees');
+    await a.close(1000, 'done');
+  }],
+  // send! and close! errors (roc-websocket DESIGN.md 6.3): `BadCode`, `TooLarge`, `Closed` after the close, a second
+  // close is Ok.
+  ['websocket close!: BadCode, TooLarge, then send! after the close is Closed and a second close! is Ok', async (t) =>
+    answer(await t.get(`/websocket/client_close?url=${encodeURIComponent(await echoServer(t))}`), 'bad_code=Err(BadCode) long=Err(TooLarge) sent=Ok({}) reply=Ok(Text("echo before")) closed=Ok({}) after=Err(Closed) again=Ok({})')],
+  ['websocket Object.Socket close!: BadCode and TooLarge; a close of the object is by Us, and send! after it is Closed', async (t) => {
+    const a = await room(t, 'rc', 'a');
+    a.send('close_errs');
+    eq(await a.next(), 'bad_code=Err(BadCode) long=Err(TooLarge)', 'the socket stays open');
+    a.send('close_send');
+    const closed = await a.closed;
+    eq(`${closed.code} ${closed.reason}`, '4003 object', 'the close of the object');
+    for (let i = 0; i < 50 && !logOf(t, 'room close').some((l) => l.code === 4003); i++) await sleep(50);
+    const l = logOf(t, 'room close').find((x) => x.code === 4003);
+    ok(l && l.by === 'Us', `the close event of the object: ${JSON.stringify(logOf(t, 'room close'))}`);
+    const s = logOf(t, 'room close_send')[0];
+    eq(`${s?.closed} ${s?.after}`, 'Ok({}) Err(Closed)', 'close! and the send! after it');
+    return JSON.stringify(l);
+  }],
+  ['websocket connect!: by Peer when the server closes, by Us when the client closes', async (t) =>
+    answer(await t.get(`/websocket/client_closed_by?url=${encodeURIComponent(await echoServer(t))}`), 'peer=Err(Closed({ by: Peer, clean: True, code: 4005, reason: "peer bye" })) us=Err(Closed({ by: Us, clean: True, code: 4006, reason: "us" }))')],
+  ['websocket connect! with no protocols: protocol() is ""', async (t) =>
+    answer(await t.get(`/websocket/client_proto?url=${encodeURIComponent(await echoServer(t))}`), 'protocol=""')],
   ['websocket connect! to a WebSocket echo server sends and receives one message', async (t) => {
     const url = await echoServer(t);
     answer(await t.get(`/websocket/client?url=${encodeURIComponent(url)}`), 'sent=Ok({}) got=Ok(Text("echo hi"))');
@@ -267,7 +359,7 @@ export const checks = [
   ['websocket connect (Io twin), receive (Io twin)', async (t) =>
     answer(await t.get(`/websocket/client_io?url=${encodeURIComponent(await echoServer(t))}`), 'got=Ok(Text("echo twin"))')],
   ['websocket connect_with!: protocols and headers, send_json!, Message.json, a bytes frame', async (t) =>
-    answer(await t.get(`/websocket/client_with?url=${encodeURIComponent(await echoServer(t))}`), 'info=Ok(Text("proto=chat x-test=yes")) json=Ok(Text("echo {\\"n\\":5}")) parsed=Ok({ n: 5 }) bytes=Ok(Bytes([0, 1, 255]))')],
+    answer(await t.get(`/websocket/client_with?url=${encodeURIComponent(await echoServer(t))}`), 'info=Ok(Text("proto=chat x-test=yes")) json=Ok(Text("echo {\\"n\\":5}")) parsed=Ok({ n: 5 }) bytes=Ok(Bytes([0, 1, 255])) protocol=chat')],
   ['websocket connect! to a server that answers 200 gives NotUpgrade (OP7)', async (t) =>
     answer(await t.get(`/websocket/client?url=${encodeURIComponent(`${t.server}/hello`)}`), 'Err NotUpgrade')],
   ['websocket Io.timeout: receive().timeout(50) is TimedOut, the next one gets the message at 100 ms', async (t) =>

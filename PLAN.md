@@ -3614,6 +3614,32 @@ Also: `conformance/reverts.mjs` with a filter runs the clean-tree tests of the s
 
 Tests (2026-10-26): `node bench/cli-test.mjs bench/out`, `node bench/sync-cross-test.mjs`, `node bench/iface-test.mjs bench/out`: all passed. `tln run examples`: exit 0, no `sync:` warning, `git diff examples/` the same as before.
 
+## Status of the WebSocket gaps (2026-11-01)
+
+Input: the talon section of roc-websocket `DESIGN.md` (6.3, commit 022ac7a), which lists the gaps that a thin adapter package (`roc-cloudflare-workers-websocket`) needs closed. The platform API stays shaped for a Workers app; the adapter maps it to the shared shape. Facts of local workerd: `research/ws-gaps-probe/probe.mjs`, `out.txt`. The signatures are in `MODULES.md` 12.1, 12.2.
+
+| Gap | Checked | Fix |
+| --- | --- | --- |
+| The subprotocol of a client is not exposed | Yes (`js/helpers.js` `wsAccept` gave only `ws`). The `protocol` of a client socket of workerd is "" also after `accept()`: the fix of DESIGN.md (`ws.protocol`) does not work | `wsAccept(ws, res, max)` gives `[ws, protocol]` from the `Sec-WebSocket-Protocol` header of the 101 response. `WebSocket :: { ref, protocol }`, `ws.protocol()` |
+| A server cannot pick a subprotocol | Yes (`accept!` had no options) | `WebSocket.accept_with!(req, { protocols, max_queued_bytes })`, `Object.Self.accept_with!(.., { tags, protocols })`: the first of the list of the server that the client asks for (`WebSocket.pick_protocol`, `protocols`) in the 101. Local: Node takes it; with no common protocol (no header) Node fails the connection |
+| `send!` gives `Closed` for each throw | Yes (`Remote.socket_send!`) | `pf.wsSend`: `Closed` for `readyState` 2 or 3, each throw `Infra(SocketErr(t))` |
+| `close!` drops each throw | Yes (`Remote.socket_close!`) | `pf.wsClose`: `Try({}, [BadCode, TooLarge])` by the name of the throw (`InvalidAccessError`, `SyntaxError`); a second close does not throw |
+| The receive queue has no limit | Yes (`st.queue.push(v)`) | `max_queued_bytes` (default 4 MiB): a message that comes while the queue holds that many bytes or more closes with 1008 "receive queue full" and is dropped (MODULES.md 12.2, "The receive queue") |
+| The close record does not say who closed | Yes (`closed_of`) | `Closed.by : [Peer, Us, Transport]`. A socket of `accept!`/`connect!`: the mark of `pf.wsClose`. A socket of an object: `readyState` 3 at `webSocketClose` (local: 3 after a close of the object, also after an eviction; 2 after a close of the client) |
+| No buffered amount | Yes: `bufferedAmount` is not a property of a workerd WebSocket (probe) | Not possible. No change |
+
+Tests (2026-11-01, nightly 2026-10-26, Node 26, Miniflare of Wrangler 4):
+
+| Test | Result |
+| --- | --- |
+| `node conformance/run.mjs bench/out/conformance.wasm websocket` | 35 passed (10 new, 5 changed) |
+| `roc test platform/main.roc` | 200 passed (7 new `expect`s in `WebSocket.roc`) |
+| `bench/test-all.sh` (`ZIG` 0.17, `WORKERD` of Wrangler 4) | ALL PASS (with the whole conformance run, must-not-compile) |
+| `roc check` of `examples/auction/web.roc`, `ledger.roc`, `examples/hello/main.roc` | 0 errors, 0 warnings |
+| `node conformance/reverts.mjs "ws-gaps\|8f3 pf.wsAccept\|8f3 SO3 pf.wsReceive"` | 14 of 14 caught (12 new `ws-gaps` reverts, 2 old ones with new texts) |
+
+Not done: `tln run examples` (no `tln` on this machine) and the edge (`PLAN.md` 11c): the subprotocol, the `readyState` rule of `by` and the absence of a `send` throw for a large frame are local facts of workerd. The `Closed` of `send!` has no close record (the adapter maps it to its own `Closed`).
+
 ## Done when
 
 - All tests above pass, and each fails when its change is reverted (the exceptions are in "Order of work").
