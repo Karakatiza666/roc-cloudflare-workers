@@ -416,7 +416,7 @@ The full surface. Each module is pure Roc over `Js` (6) or `Native` (8). `MODULE
 
 | Module | Workers API | Main functions (`MODULES.md`) | Waits | Platform phase |
 | --- | --- | --- | --- | --- |
-| `Request`, `Response` | `Request`, `Response`, `Headers` | One type for each, in both directions, with a `Body`. `segments` for routing, `header`, `query`, `json!`. `from_text`, `from_json`, `from_body`. `Method` and `Header` from `roc-lang/http` (AQ2). (4) | Reads of a stream body | A |
+| `Request`, `Response` | `Request`, `Response`, `Headers` | One type for each, in both directions, with a `Body`. `segments` for routing, `header`, `query`, `query_all` and `query_pairs` (repeated names, URLSearchParams parsing), `json!`. `from_text`, `from_json`, `from_body`. `Method` and `Header` from `roc-lang/http` (AQ2). (4) | Reads of a stream body | A |
 | `Http` | `fetch` | `send!` (the body read in the same crossing, to 1 MiB), `open!` (the body stays a stream), `get!` (4). On the edge a DNS failure and a blocked address are an HTTP status (530 `error code: 1016`, 403 `error code: 1003`), so `send!` gives `Ok`, not `Network`: `cloudflare_error` recognizes them (`MODULES.md` 4) | Yes | A |
 | `Body` | `ReadableStream`, `crypto.DigestStream` | `text!`, `json!`, `bytes!` (one wait: the helper `pf.readUpTo`), `chunk!`, `tee!`, `sha256!` (no copy into wasm), `writer!` (a stream that the task writes, 10.2), `compress!`, `decompress!` (gzip, deflate) (4) | Yes | A |
 | `Env`, `Secret` | `env` vars, secrets | `var!`, `json!`, `secret!`. A `Secret` does not show in `Str.inspect` and has no codec. `Secret.from_str` makes one (8c). (10) | No | A |

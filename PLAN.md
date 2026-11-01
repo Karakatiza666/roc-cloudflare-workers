@@ -3789,6 +3789,33 @@ Tests: `bench/cli-test.mjs` section 8 (8a to 8u): `nightlyDate` (tag, month-name
 | --- | --- |
 | `bench/test-all.sh` (nightly 2026-10-31, Zig 0.17.0, workerd of Wrangler 4) | ALL PASS (55 steps) |
 
+## Status of repeated query parameters (2026-11-02)
+
+Input: the Talon registry (slice 107). `Request.query` gave only the first value of a name, so a route with `?short=a&short=b` (up to 50 values) parsed the URL itself.
+
+| Item | State | Where |
+| --- | --- | --- |
+| `query_all : Request, Str -> List(Str)` | Built: each value of the name, in URL order | `platform/Request.roc` |
+| `query_pairs : Request -> List((Str, Str))` | Built: each pair, in URL order | `platform/Request.roc` |
+| `query` | Now `query_all(name).first()`. Changes: an empty part is skipped, invalid UTF-8 is U+FFFD (it was the raw text), the query ends at the first `#` (a `?` after `#` started it), a tab, LF or CR is removed | `MODULES.md` 4, "Query parameters" |
+| Parse | application/x-www-form-urlencoded of the WHATWG URL standard, in Roc (no crossing) | `query_bytes`, `form_pairs`, `form_decode`, `utf8_lossy` |
+| Unit tests | 23 `expect`s, each answer from `new URL(u).searchParams` of Node | `platform/Request.roc` |
+| Conformance | 5 checks, 47 inputs, each compared with `URLSearchParams` of Node: `GET /query/parse` and `POST /query/of` | `conformance/QueryRoutes.roc`, `conformance/checks/query.mjs` |
+
+| Revert (`node conformance/reverts.mjs "query params: "`) | Result |
+| --- | --- |
+| An empty part between two `&` is a pair | FAIL (2 checks) |
+| The name ends at the last `=` | FAIL (2 checks) |
+| The byte that ends a bad UTF-8 part is not read again | FAIL |
+| A `?` after the `#` starts the query | FAIL |
+| `query` gives the last value | FAIL (2 checks) |
+
+Result of the 5 reverts: all caught, `PASS`.
+
+| Test | Result |
+| --- | --- |
+| `bench/test-all.sh` (nightly 2026-10-31, Zig 0.17.0, workerd of Wrangler 4) | ALL PASS (55 steps, with the whole conformance run and the new query checks) |
+
 ## Done when
 
 - All tests above pass, and each fails when its change is reverted (the exceptions are in "Order of work").

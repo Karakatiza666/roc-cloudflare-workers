@@ -458,7 +458,9 @@ Request :: {
 	cf : Request -> Try(Request.Cf, [Missing])        # Missing: a request that the app made
 
 	segments : Request -> List(Str)       # "https://x/v1/packages/a/b/releases?q=1" gives ["v1", "packages", "a", "b", "releases"]
-	query : Request, Str -> Try(Str, [NotFound])
+	query : Request, Str -> Try(Str, [NotFound])     # query_all(name).first()
+	query_all : Request, Str -> List(Str)           # each value of the name, in URL order
+	query_pairs : Request -> List((Str, Str))       # each (name, value) pair, in URL order
 	header : Request, Str -> Try(Str, [NotFound])   # caseless
 	cookie : Request, Str -> Try(Str, [NotFound])
 
@@ -554,10 +556,29 @@ As built in `PLAN.md` 8b (first half and second half) (`platform/Request.roc`, `
 | An open writer at the end of the task | Closed when the task returned, aborted after a trap or a cancel | The client sees the end of the body. The table above does not say. |
 | `compress!`, `decompress!` | `pf.transform(body, kind, format)`. The output of a writer stream counts as a stream of that writer, so a response with it is complete at `close!`. | API.md 10.2 |
 | Limits | `text!`, `json!`, `bytes!` apply `default_max` to `Text` and `Bytes` too: `TooLarge` over it | MC11, one rule for each body |
-| `query` | Percent-decoded, `+` is a space | Query strings of forms |
+| `query`, `query_all`, `query_pairs` | application/x-www-form-urlencoded of the WHATWG URL standard, the same as `new URL(url).searchParams`: the table "Query parameters" below | Query strings of forms. A route that takes a name more than one time (`?short=a&short=b`) uses `query_all` |
 | `cookie` | The value of a pair of the `Cookie` header | |
 | `from_http`, `to_http!` | Not built | No package of the platform uses `http` types yet |
 | `cf` | Crosses in the event as a `Js` tree in the tag form (`{ "Ok": v }`, `{ "Err": "Missing" }`), not as `Packed` | Built before the platform had `Cbor` (`PLAN.md` 8b). The shim format stays the same for `Packed`. |
+
+Query parameters (`query`, `query_all`, `query_pairs`, after 0.0.2). The parse is in Roc (`platform/Request.roc`), with no crossing. `conformance/checks/query.mjs` compares it with `URLSearchParams` of Node.
+
+| Step | Rule |
+| --- | --- |
+| The query | The URL with no tab, LF or CR, and no C0 control or space at the end (the URL parser does this). Then the text after the first `?` that is before the first `#`. No `?`: no pairs. A `?` after the `#` is in the fragment. |
+| Parts | Split on `&`. An empty part (`&&`, an `&` at the start or end) is skipped. `;` is not a separator. |
+| Name and value | Before and after the first `=`. A part with no `=` is the name, and the value is `""`. `?=x` is the name `""`. |
+| `+` | A space. `%2B` is `+` (`+` changes before percent-decoding). |
+| Percent-decoding | `%` and two hex digits (either case) is one byte. A `%` with no two hex digits after it stays as text (`%`, `%zz`, `%4`). |
+| UTF-8 | The bytes are UTF-8 decoded without BOM (WHATWG Encoding): each maximal bad part is one U+FFFD (`%FF`, `%E2%82`, a surrogate `%ED%A0%80` is 3), and the byte that ends a bad part is read again (`%E2%82A` is U+FFFD then `A`). A BOM stays. |
+| Order | `query_pairs` and `query_all` keep the URL order. `query` is the first item of `query_all`, `NotFound` when it is empty. |
+
+| `query` in 0.0.2 | After 0.0.2 |
+| --- | --- |
+| An empty part (`?a&&b`) was the pair `("", "")`, so `query("")` found it | Skipped: `NotFound` |
+| A value with invalid UTF-8 (`%FF`) gave the raw text (`"%FF"`) | U+FFFD |
+| `?` after `#` (`https://x/p#f?a=1`) started the query | In the fragment: no pairs |
+| A tab, LF or CR in the query of a URL that the app made was kept | Removed |
 
 As built in `PLAN.md` 8c, wave 1 (`platform/Http.roc`):
 

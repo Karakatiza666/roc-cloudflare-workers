@@ -103,27 +103,21 @@ Request :: {
 	segments : Request -> List(Str)
 	segments = |r| path_of(r.url).split_on("/").keep_if(|s| s != "")
 
-	## The first value of a query parameter, percent-decoded ("+" is a space).
+	## The first value of a query parameter: `query_all(r, name).first()`, with `NotFound` for an empty list.
 	query : Request, Str -> Try(Str, [NotFound])
-	query = |r, name| {
-		q = match r.url.split_first("?") {
-			Ok({ after, .. }) => match after.split_first("#") {
-				Ok(p) => p.before
-				Err(_) => after
-			}
-			Err(_) => return Err(NotFound)
-		}
-		for pair in q.split_on("&") {
-			(k, v) = match pair.split_first("=") {
-				Ok({ before, after }) => (before, after)
-				Err(_) => (pair, "")
-			}
-			if decode(k) == name {
-				return Ok(decode(v))
-			}
-		}
-		Err(NotFound)
+	query = |r, name| match r.query_all(name) {
+		[v, ..] => Ok(v)
+		[] => Err(NotFound)
 	}
+
+	## Each value of a query parameter, in URL order (`URLSearchParams.getAll`). `?short=a&short=b` gives ["a", "b"].
+	query_all : Request, Str -> List(Str)
+	query_all = |r, name| r.query_pairs().keep_oks(|(k, v)| if k == name Ok(v) else Err(Other))
+
+	## Each (name, value) pair of the query, in URL order. The parse is application/x-www-form-urlencoded of the WHATWG
+	## URL standard, the same as `new URL(url).searchParams` (MODULES.md 4, "Query parameters").
+	query_pairs : Request -> List((Str, Str))
+	query_pairs = |r| form_pairs(query_bytes(r.url))
 
 	## The value of a header. The name is caseless, as in Workers `Headers.get`.
 	header : Request, Str -> Try(Str, [NotFound])
@@ -185,10 +179,47 @@ path_of = |url| {
 	}
 }
 
-## Percent-decoding of a query part, and "+" as a space. A bad escape stays as it is.
-decode : Str -> Str
-decode = |s| {
-	bytes = s.to_utf8()
+## The query of a URL as bytes, as the WHATWG URL parser finds it: no tab, LF or CR, no C0 control or space at the end,
+## after the first `?` that is before the first `#`. No `?` gives no bytes.
+query_bytes : Str -> List(U8)
+query_bytes = |url| {
+	clean = url.to_utf8().drop_if(|b| b == 0x09 or b == 0x0A or b == 0x0D)
+	var $end = clean.len()
+	while $end > 0 and (clean.get($end - 1) ?? 0) <= 0x20 {
+		$end = $end - 1
+	}
+	no_frag = match clean.take_first($end).split_first('#') {
+		Ok(p) => p.before
+		Err(_) => clean.take_first($end)
+	}
+	match no_frag.split_first('?') {
+		Ok(p) => p.after
+		Err(_) => []
+	}
+}
+
+## application/x-www-form-urlencoded parsing (WHATWG URL standard 5.1): split on `&`, skip an empty part, the name is
+## before the first `=` (no `=`: all of it, and the value is empty), then `form_decode` each.
+form_pairs : List(U8) -> List((Str, Str))
+form_pairs = |bytes| {
+	var $out = []
+	for part in bytes.split_on('&') {
+		if !part.is_empty() {
+			$out = $out.append(
+				match part.split_first('=') {
+					Ok({ before, after }) => (form_decode(before), form_decode(after))
+					Err(_) => (form_decode(part), "")
+				},
+			)
+		}
+	}
+	$out
+}
+
+## "+" is a space, then percent-decoding: "%" and two hex digits is one byte, another "%" stays as it is. Then UTF-8
+## decoding with replacement (`utf8_lossy`).
+form_decode : List(U8) -> Str
+form_decode = |bytes| {
 	var $out = List.with_capacity(bytes.len())
 	var $i = 0
 	while $i < bytes.len() {
@@ -212,7 +243,77 @@ decode = |s| {
 			$i = $i + 1
 		}
 	}
-	Str.from_utf8($out) ?? s
+	utf8_lossy($out)
+}
+
+## UTF-8 decode without BOM (WHATWG Encoding standard): each maximal bad part is one U+FFFD, and the byte that ends it
+## is read again. A BOM stays.
+utf8_lossy : List(U8) -> Str
+utf8_lossy = |bytes| match Str.from_utf8(bytes) {
+	Ok(s) => s
+	Err(_) => {
+		n = bytes.len()
+		var $out = List.with_capacity(n + 8)
+		var $i = 0
+		while $i < n {
+			b = bytes.get($i) ?? 0
+			match utf8_lead(b) {
+				Ascii => {
+					$out = $out.append(b)
+					$i = $i + 1
+				}
+				Bad => {
+					$out = $out.concat([0xEF, 0xBF, 0xBD])
+					$i = $i + 1
+				}
+				Lead(need, lo, hi) => {
+					var $k = 1
+					var $good = Bool.True
+					while $good and $k <= need {
+						c = bytes.get($i + $k) ?? 0
+						(l, h) = if $k == 1 (lo, hi) else (0x80, 0xBF)
+						if c >= l and c <= h {
+							$k = $k + 1
+						} else {
+							$good = Bool.False
+						}
+					}
+					if $good {
+						$out = $out.concat(bytes.sublist({ start: $i, len: need + 1 }))
+						$i = $i + need + 1
+					} else {
+						$out = $out.concat([0xEF, 0xBF, 0xBD])
+						$i = $i + $k
+					}
+				}
+			}
+		}
+		Str.from_utf8($out) ?? ""
+	}
+}
+
+## The kind of a first byte of UTF-8: the count of bytes after it, and the range of the second byte.
+utf8_lead : U8 -> [Ascii, Lead(U64, U8, U8), Bad]
+utf8_lead = |b| {
+	if b <= 0x7F {
+		Ascii
+	} else if b >= 0xC2 and b <= 0xDF {
+		Lead(1, 0x80, 0xBF)
+	} else if b == 0xE0 {
+		Lead(2, 0xA0, 0xBF)
+	} else if b == 0xED {
+		Lead(2, 0x80, 0x9F)
+	} else if b >= 0xE1 and b <= 0xEF {
+		Lead(2, 0x80, 0xBF)
+	} else if b == 0xF0 {
+		Lead(3, 0x90, 0xBF)
+	} else if b >= 0xF1 and b <= 0xF3 {
+		Lead(3, 0x80, 0xBF)
+	} else if b == 0xF4 {
+		Lead(3, 0x80, 0x8F)
+	} else {
+		Bad
+	}
 }
 
 hex : U8 -> Try(U8, [NotHex])
@@ -232,5 +333,30 @@ expect Request.get("https://x.dev/v1/packages/a/b/releases?q=1").segments() == [
 expect Request.get("https://x.dev").segments() == []
 expect Request.get("https://x.dev/a?x=1&name=r%C3%B6c+lang&y").query("name") == Ok("röc lang")
 expect Request.get("https://x.dev/a?x=1#name=2").query("name") == Err(NotFound)
+# Query parameters: application/x-www-form-urlencoded (WHATWG URL 5.1). Each answer is `[...new URL(u).searchParams]` of Node.
+qp = |u| Request.get(u).query_pairs()
+expect qp("https://x.dev/p?a=1&a=2") == [("a", "1"), ("a", "2")]
+expect qp("https://x.dev/p?=x&y") == [("", "x"), ("y", "")]
+expect qp("https://x.dev/p?&&a&") == [("a", "")]
+expect qp("https://x.dev/p?a=b=c") == [("a", "b=c")]
+expect qp("https://x.dev/p?a+b=c+d") == [("a b", "c d")]
+expect qp("https://x.dev/p?a=%2B&b=%2b") == [("a", "+"), ("b", "+")]
+expect qp("https://x.dev/p?a=%&b=%zz&c=%4") == [("a", "%"), ("b", "%zz"), ("c", "%4")]
+expect qp("https://x.dev/p?e=%C3%A9") == [("e", "é")]
+expect qp("https://x.dev/p?f=%FF&g=%E2%82&h=%E2%82A") == [("f", "\u(FFFD)"), ("g", "\u(FFFD)"), ("h", "\u(FFFD)A")]
+expect qp("https://x.dev/p?h=%ED%A0%80&i=%F0%90%80&j=%C0%AF") == [("h", "\u(FFFD)\u(FFFD)\u(FFFD)"), ("i", "\u(FFFD)"), ("j", "\u(FFFD)\u(FFFD)")]
+expect qp("https://x.dev/p?k=%F4%90%80%80&l=%f0%9f%98%80") == [("k", "\u(FFFD)\u(FFFD)\u(FFFD)\u(FFFD)"), ("l", "\u(1F600)")]
+expect qp("https://x.dev/p?%EF%BB%BFk=v") == [("\u(FEFF)k", "v")]
+expect qp("https://x.dev/p?j=a;b=c") == [("j", "a;b=c")]
+expect qp("https://x.dev/p#x?a=1") == []
+expect qp("https://x.dev/p?a=1#b=2") == [("a", "1")]
+expect qp("https://x.dev/p?a=1\tb=2\n") == [("a", "1b=2")]
+expect qp("https://x.dev/p?a=1  ") == [("a", "1")]
+expect qp("https://x.dev/p") == []
+expect Request.get("https://x.dev/p?short=a&x=1&short=b").query_all("short") == ["a", "b"]
+expect Request.get("https://x.dev/p?short=a&x=1&short=b").query_all("y") == []
+expect Request.get("https://x.dev/p?short=a&x=1&short=b").query("short") == Ok("a")
+expect Request.get("https://x.dev/p?=e").query("") == Ok("e")
+expect Request.get("https://x.dev/p?a&&b").query("") == Err(NotFound)
 expect Request.get("https://x.dev/").with_header("Cookie", "a=1; sid=xyz").cookie("sid") == Ok("xyz")
 expect Request.get("https://x.dev/").with_header("X-Id", "7").header("x-id") == Ok("7")

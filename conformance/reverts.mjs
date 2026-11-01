@@ -1015,6 +1015,17 @@ const reverts = [
     ['js/helpers.js', 'Number(deadlineMs) - clock()', 'Number(deadlineMs) - Date.now()']),
   R('clock: set_alarm_in! adds the delay to Date.now()', 'conformance', ['clock Object set_alarm_in!: the alarm time is the clock of the shim plus the delay'],
     ['js/helpers.js', 'storage.setAlarm(clock() + delayMs)', 'storage.setAlarm(Date.now() + delayMs)']),
+  // Query parameters (checks/query.mjs): each revert breaks one rule of application/x-www-form-urlencoded (WHATWG URL 5.1).
+  R('query params: an empty part between two & is a pair', 'conformance', ['query separators: &, the first =, an empty name, an empty value, no =, ;, empty parts'],
+    [BP + 'Request.roc', 'if !part.is_empty() {', 'if Bool.True {']),
+  R('query params: the name ends at the last =, not the first', 'conformance', ['query separators: &, the first =, an empty name, an empty value, no =, ;, empty parts'],
+    [BP + 'Request.roc', 'match part.split_first(\'=\') {', 'match part.split_last(\'=\') {']),
+  R('query params: the byte that ends a bad UTF-8 part is not read again', 'conformance', ['query decoding: invalid UTF-8 is U+FFFD as URLSearchParams gives it'],
+    [BP + 'Request.roc', '$i = $i + $k\n', '$i = $i + $k + 1\n']),
+  R('query params: a ? after the # starts the query', 'conformance', ['query of a URL that HTTP does not send: a fragment, # before ?, a tab, end spaces, no ?'],
+    [BP + 'Request.roc', 'split_first(\'#\')', 'split_first(0)']),
+  R('query params: query gives the last value, not the first of query_all', 'conformance', ['query repeated: 50 values in order, a long value; query is the first of query_all'],
+    [BP + 'Request.roc', '[v, ..] => Ok(v)', '[.., v] => Ok(v)']),
 ];
 
 // The filter: texts of names, joined by `|` (a revert runs when its name has one of them).
