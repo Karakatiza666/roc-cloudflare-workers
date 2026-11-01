@@ -193,6 +193,8 @@ event! = |e| worker.event!(e)
 roc build --target=wasm32 --no-cache --output=app.wasm main.roc
 ```
 
+Use the default build mode (`--opt=speed`) or `--opt=size`. Do not use `--opt=dev`: on nightly 2026-10-31 its wasm32 code reads a `U8`, `U16`, `I8` or `I16`, and a BLOB into `List(U8)` or `Cbor.Bytes`, as `BadData` (a compiler bug of the `I128` conversions, `research/blob-002/README.md`). The platform is tested with `speed` only.
+
 A `roc build` with type errors still writes the `.wasm` file. It prints "N errors and 0 warnings found ... while successfully building" and exits with 1 (checked 2026-10-20 with one bad line). A build is good only when the exit code is 0 and the text is "0 errors and 0 warnings". A script must check the exit code. In the repo, run the command from the root (a build inside `examples/auction/` gives `PathOutsideWorkspace`).
 
 3. The shim. It is `js/` of the platform bundle, copied to `.roc-cfw/` (see above). The entry of the Worker is the file that `sync` writes. The import is the relative path from the entry file to the directory of `cli.mjs` (`./.roc-cfw/index.js` in a project, `../../js/index.js` in `examples/hello/worker.js`):

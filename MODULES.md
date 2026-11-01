@@ -200,6 +200,7 @@ event! = |e| worker.event!(e)
 | Build | Rule |
 | --- | --- |
 | Command | `roc build --target=wasm32 --no-cache --output=app.wasm main.roc`, from the root of the repository: a build inside a subdirectory can give `PathOutsideWorkspace` when the platform line is a relative path (`examples/auction/README.md`). |
+| Mode | The default `--opt=speed`, or `--opt=size`. Do not use `--opt=dev`: on nightly 2026-10-31 (f7bef6b) the dev backend for wasm32 gives a wrong `to_u8_try`, `to_u16_try`, `to_i8_try` and `to_i16_try` of an `I128` (`Err(OutOfRange)` for 3). roc-cbor reads each integer through an `I128`, so a typed read of a `U8`, `U16`, `I8` or `I16`, and of a BLOB into `List(U8)` or `Cbor.Bytes` (D1 gives a BLOB as an array of numbers), is `BadData`. The conformance run and the release use `speed` (`research/blob-002/README.md`). |
 | Result | A build with type errors still writes the `.wasm`, prints "N errors and 0 warnings found ... while successfully building", and exits with 1 (checked 2026-10-20). A build is good only when the exit code is 0 and the text is "0 errors and 0 warnings". A script checks the exit code, not the file. |
 
 ## 3. Entry: `Worker`
