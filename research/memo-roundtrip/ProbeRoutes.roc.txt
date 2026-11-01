@@ -1,0 +1,130 @@
+## `Memo` (MODULES.md 9, PLAN.md 8c). `load!` makes a new id each time (`random_uuid!`), so the same id in two requests
+## shows that the second one ran no `load!`. The value has a `U64` of 2^60: it must come back exact (CBOR, MC5).
+import pf.Request
+import pf.Response
+import pf.Memo
+import pf.WebCrypto
+import pf.Time
+import pf.Cbor
+import Q
+
+Keys : { kid : Str, big : U64, made : Str }
+
+## MODULES.md 15: `load!` has an annotation.
+load_keys! : () => Try(Keys, [LoadErr])
+load_keys! = || Ok({ kid: "k1", big: 1_152_921_504_606_846_976, made: WebCrypto.random_uuid!() })
+
+keys : Memo(Keys)
+keys = Memo.new("conformance-keys", { max_age_ms: 600_000 })
+
+## The clock check (checks/clock.mjs): an age of 60 s on the clock of the shim (option `now`), not on real time.
+clock : Memo(Keys)
+clock = Memo.new("conformance-clock", { max_age_ms: 60_000 })
+
+## A short age: a `get!` after 100 ms loads again.
+short : Memo(Keys)
+short = Memo.new("conformance-short", { max_age_ms: 50 })
+
+## The shape of `List(Jwk.Key)` of roc-jwt 0.0.1 (a local copy: no dependency on roc-jwt). Talon slice 108b, P1.
+Curve : [P256, P384, P521]
+Material : [
+	Rsa({ n : List(U8), e : List(U8) }),
+	Ec({ crv : Curve, x : List(U8), y : List(U8) }),
+	Okp({ crv : [Ed25519, Ed448], x : List(U8) }),
+]
+Jwk : {
+	kid : Try(Str, [Missing]),
+	alg : Try(Str, [Missing]),
+	use : Try(Str, [Missing]),
+	key_ops : Try(List(Str), [Missing]),
+	material : Material,
+}
+Jwks : { made : Str, keys : List(Jwk) }
+
+load_jwks! : () => Try(Jwks, [LoadErr])
+load_jwks! = || Ok({ made: WebCrypto.random_uuid!(), keys: jwk_list })
+
+jwk_list : List(Jwk)
+jwk_list = [
+	{ kid: Ok("a"), alg: Ok("RS256"), use: Ok("sig"), key_ops: Err(Missing), material: Rsa({ n: List.repeat(0xc5, 256), e: [1, 0, 1] }) },
+	{ kid: Err(Missing), alg: Err(Missing), use: Err(Missing), key_ops: Ok(["verify"]), material: Ec({ crv: P256, x: List.repeat(1, 32), y: List.repeat(2, 32) }) },
+	{ kid: Ok("c"), alg: Err(Missing), use: Err(Missing), key_ops: Err(Missing), material: Okp({ crv: Ed25519, x: List.repeat(3, 32) }) },
+]
+
+jwks : Memo(Jwks)
+jwks = Memo.new("conformance-jwks", { max_age_ms: 600_000 })
+
+
+hex : List(U8) -> Str
+hex = |bs| bs.fold("", |acc, b| {
+	d = "0123456789abcdef".to_utf8()
+	hi = d.get((b // 16).to_u64()) ?? 0
+	lo = d.get((b % 16).to_u64()) ?? 0
+	Str.concat(acc, Str.from_utf8([hi, lo]) ?? "")
+})
+
+rt : a -> Str where [a.Cbor.Writable, a.Cbor.Readable(errs), a.is_eq : a, a -> Bool]
+rt = |v| {
+	bytes = Cbor.encode(v)
+	back : Try(a, _)
+	back = Cbor.parse(bytes)
+	r = match back {
+		Ok(b) => "same=${Str.inspect(b == v)}"
+		Err(e) => "Err ${Str.inspect(e)}"
+	}
+	"${r} ${hex(bytes)}"
+}
+
+MemoRoutes :: [].{
+	route! : Request, List(Str) => Response
+	route! = |req, path| match path {
+		["get"] => show(keys.get!(load_keys!))
+		["clear"] => {
+			keys.clear!()
+			Response.from_text(200, "cleared")
+		}
+		["clock"] => show(clock.get!(load_keys!))
+		# Two `get!` of `short`, 100 ms apart: two ids.
+		["short"] => {
+			a = short.get!(load_keys!)
+			Time.sleep!(100)
+			b = short.get!(load_keys!)
+			Response.from_text(200, "same=${Str.inspect(a == b)}")
+		}
+		["jwks"] => match jwks.get!(load_jwks!) {
+			Ok(v) => Response.from_text(200, "Ok keys=${v.keys.len().to_str()} made=${v.made}")
+			Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+		}
+		# Encode then parse in wasm, with no pin table.
+		["roundtrip"] => {
+			v = { made: WebCrypto.random_uuid!(), keys: jwk_list }
+			back : Try(Jwks, _)
+			back = Cbor.parse(Cbor.encode(v))
+			match back {
+				Ok(b) => Response.from_text(200, "same=${Str.inspect(b == v)}")
+				Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+			}
+		}
+		["probe"] => {
+			n128 = Q.num(req, "n").to_i128()
+			n64 = Q.num(req, "n")
+			i64 = n128.to_i64_wrap()
+			lines = [
+				"i128 try u8=${Str.inspect(n128.to_u8_try())} u16=${Str.inspect(n128.to_u16_try())} u32=${Str.inspect(n128.to_u32_try())} u64=${Str.inspect(n128.to_u64_try())} i8=${Str.inspect(n128.to_i8_try())} i16=${Str.inspect(n128.to_i16_try())} i32=${Str.inspect(n128.to_i32_try())} i64=${Str.inspect(n128.to_i64_try())}",
+				"i128 wrap u8=${Str.inspect(n128.to_u8_wrap())} u16=${Str.inspect(n128.to_u16_wrap())} i8=${Str.inspect(n128.to_i8_wrap())}",
+				"i64 try u8=${Str.inspect(i64.to_u8_try())} u16=${Str.inspect(i64.to_u16_try())} i8=${Str.inspect(i64.to_i8_try())} i16=${Str.inspect(i64.to_i16_try())} u32=${Str.inspect(i64.to_u32_try())}",
+				"u64 try u8=${Str.inspect(n64.to_u8_try())} u16=${Str.inspect(n64.to_u16_try())} i8=${Str.inspect(n64.to_i8_try())}",
+				"list u8 runtime ${rt([n64.to_u8_wrap(), 2])}",
+				"rsa runtime ${rt(Rsa({ n: [n64.to_u8_wrap()], e: [1] }))}",
+						]
+			Response.from_text(200, Str.join_with(lines, "\n"))
+		}
+		_ => Response.from_text(404, "no route")
+	}
+}
+
+show : Try(Keys, [LoadErr]) -> Response
+show = |r| match r {
+	Ok(k) => Response.from_text(200, "Ok kid=${k.kid} big=${k.big.to_str()} made=${k.made}")
+	Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+}

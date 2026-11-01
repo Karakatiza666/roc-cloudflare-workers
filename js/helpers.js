@@ -262,9 +262,11 @@ function untilAbort(p, signal) {
 
 // The pin table of an isolate (API.md RS2): values for later tasks, by name. `limit`: the shim option `pinLimit`.
 // `now`: the clock of the shim (option `now`), for the expiry of `maxAgeMs`. Each pin and unpin is counted (M11).
+// `unreadable`: the names of the `Memo` values that did not parse back from their CBOR form (MODULES.md 9), one log line each.
 export function makePins(limit = 1000, now = () => Date.now()) {
   const table = new Map();
-  const stats = { pins: 0, unpins: 0, expired: 0 };
+  const unreadable = new Set();
+  const stats = { pins: 0, unpins: 0, expired: 0, unreadable: 0 };
   return {
     stats,
     get size() { return table.size; },
@@ -287,9 +289,17 @@ export function makePins(limit = 1000, now = () => Date.now()) {
     unpin(name) {
       if (table.delete(name)) stats.unpins++;
     },
-    // The test helper (`app.reset()`, TH15): drop each pin. Not counted as unpins.
+    // `Memo.get!`: the value of `name` does not parse back. True the first time for the name in this isolate.
+    unreadable(name) {
+      stats.unreadable++;
+      if (unreadable.has(name)) return false;
+      unreadable.add(name);
+      return true;
+    },
+    // The test helper (`app.reset()`, TH15): drop each pin and the names of `unreadable`. Not counted as unpins.
     clear() {
       table.clear();
+      unreadable.clear();
     },
   };
 }
@@ -609,6 +619,12 @@ export function makeHelpers(t, c, shim, tasks) {
     },
     unpin(name) {
       shim.pins.unpin(name);
+    },
+    // `Memo.get!` (MODULES.md 9): the bytes of a value that `load!` gave do not parse back as the type of the `Memo`.
+    // The value is not pinned. One log line for each name in the isolate.
+    memoUnreadable(name, error) {
+      if (!shim.pins.unreadable(name)) return;
+      shim.log?.(`Memo "${name}": the value of load! does not parse back from its CBOR form (${error}). It is not pinned, so each get! runs load! again. Use a type that round-trips (MODULES.md 9).`);
     },
     // Reads a stream to `max` bytes, from where `chunk` stopped. Past `max`: a TooLarge (the module turns it into
     // `TooLarge`), and the stream is cancelled, before any copy into wasm (MC11). Gives the bytes. A stream that was

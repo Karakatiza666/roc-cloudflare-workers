@@ -286,6 +286,11 @@ const reverts = [
   R('Memo.get!: the pinned value is not read', 'conformance', ['memo get!: a second request gets the value with no load!'], [BP + 'Memo.roc', 'Ok(Bytes(bytes)) => read(bytes)', 'Ok(Bytes(_)) => Err("not pinned")']),
   R('Memo.get!: the pin has no age', 'conformance', ['memo max_age_ms: a get! after the age loads again'], [BP + 'Memo.roc', 'Lit(Bytes(write(v))), Lit(Int(age))', 'Lit(Bytes(write(v))), Lit(Undefined)']),
   R('Memo.clear!: pf.unpin is called "unpinx"', 'conformance', ['memo clear!: the next get! loads again'], [BP + 'Memo.roc', '"unpin"', '"unpinx"']),
+  // MODULES.md 9, a value that does not parse back (Talon slice 108b P1).
+  R('Memo.get!: no check of the written bytes (each value is pinned)', 'conformance', ['memo get!: a value that does not parse back gives one log line and is not pinned'], [BP + 'Memo.roc', 'match read(bytes) {', 'match Ok(v) {']),
+  R('Memo.get!: pf.memoUnreadable is called "memoUnreadablex"', 'conformance', ['memo get!: a value that does not parse back gives one log line and is not pinned'], [BP + 'Memo.roc', '"memoUnreadable"', '"memoUnreadablex"']),
+  R('pf.memoUnreadable: a log line at each call, not once for each name', 'conformance', ['memo get!: a value that does not parse back gives one log line and is not pinned'], ['js/helpers.js', 'if (!shim.pins.unreadable(name)) return;', 'shim.pins.unreadable(name);']),
+  R('Memo.get!: a pinned value that does not parse is an error, not a load (older type after a deploy)', 'conformance', ['memo get!: an older type of the same name loads again with no log line'], [BP + 'Memo.roc', '\t\tmatch pinned {\n\t\t\tOk(v) => Ok(v)\n\t\t\tErr(_) => {', '\t\tmatch pinned {\n\t\t\tOk(v) => Ok(v)\n\t\t\tErr(e) if e != "not pinned" => crash "older type: ${e}"\n\t\t\tErr(_) => {']),
   // The pin table (API.md RS2): Io.pin!, pinned!, unpin! (Js.pin! and its pair in API.md).
   R('Js.pin!: pf.pin is called "pinx"', 'conformance', ['pin pin!, pinned!, unpin!: one call! each, no wait', 'webcrypto a pinned CryptoKey used by a later request'],
     [BP + 'Js.roc', 'Call(Root("pf"), "pin", [Lit(Text(name)), Lit(value), Lit(Int(age))])', 'Call(Root("pf"), "pinx", [Lit(Text(name)), Lit(value), Lit(Int(age))])']),

@@ -3928,6 +3928,30 @@ Open questions:
 | Z2 | The decoder is a young third-party port (1 author, made 2026-07). | Vendored and pinned. The differential fuzz against libzstd is in `research/zstd-speed/`. libzstd in C (+12 KB) is the fallback. |
 | Z3 | In workerd the cost of a push with a 4 KB chunk is now more than its decode. | The app can join chunks to 64 KB before a push. Not measured in the registry. |
 
+## Status of the Memo write check (2026-11-02)
+
+Input: Talon slice 108b, section 9 P1. A `Memo(List(Jwk.Key))` (roc-jwt 0.0.1) loaded again at each `get!`, with no error and no log line. The research: `research/memo-roundtrip/README.md`.
+
+| Item | Result |
+| --- | --- |
+| Cause | The compiler bug of `research/blob-002/` (draft upstream issue there): the wasm32 dev backend gives `Err(OutOfRange)` for `I128.to_u8_try`, `to_u16_try`, `to_i8_try`, `to_i16_try`. roc-cbor 0.2.2 reads integers as `I128`, so a `List(U8)` (an array) does not read back. The Talon W2 harness builds with `--opt=dev`. With `--opt=speed` the Talon `oidc` cases pass with `List(Jwk.Key)` in the `Memo` (8 of 8). The `Try` fields and the tag union are not a cause. |
+| Minimal type | `List(U8)` with a value that is not a constant: `Err(InvalidCbor(1))` in a dev build |
+| roc-cbor | 0.4.1 (`main`, `9489d62`) and 0.2.3 (branch `release-0.2.x` from 0.2.2, `2b9437f`): `narrow` reads through an `I64`. Local commits, not released. |
+| `Memo.get!` | The write check: at a miss, parse the written bytes before the pin. No pin when the parse fails, and one log line for each name in the isolate (`pf.memoUnreadable`, `MODULES.md` 9). The older type after a deploy still loads again with no log line. No harder failure in dev: the value is a cache. |
+| Compile time | Not possible: the `where` of `Memo.new` checks that a codec exists, not that it round-trips (`MODULES.md` 9). |
+
+Tests:
+
+| Test | Result |
+| --- | --- |
+| `conformance/checks/memo.mjs`: the roc-jwt shape (a local copy of the types) round-trips in wasm; small integer types from the request; the roc-jwt shape loads once; a type that does not round-trip (`Err(Null)` in a `Try(a, [Null])` field) gives one log line, no pin; an older type of the same name loads again with no log line | PASS (speed build) |
+| The same checks in a `--opt=dev` build (`research/memo-roundtrip/dev-check.sh`) | roc-cbor 0.2.2: 3 FAIL (the round trip, the small integers, the jwks loads once, with the log line). With `ROC_CBOR` = 0.2.3 or 0.4.1: PASS. Not in `test-all.sh`: it fails until the platform header has roc-cbor 0.2.3. |
+| `bench/program-test.mjs`: `pf.memoUnreadable` logs once for each name, `reset` clears the names, `stats.unreadable` | PASS |
+| `conformance/reverts.mjs "no check of the written\|memoUnreadable\|older type after a deploy"` (4 reverts) | Clean tree PASS, each of the 4 reverts is caught (no write check; the helper name; a log line at each call; an error for an older type) |
+| `bench/test-all.sh` | ALL PASS (nightly 2026-10-31, Zig 0.17.0, workerd of Wrangler) |
+
+Next steps (not done here): release roc-cbor 0.2.3 (or 0.4.1), put its URL in the `cbor:` line of `platform/main.roc` and `bench/platform/main.roc` (and `examples/hello/with_cbor.roc`, the `CBOR` cache path of `conformance/reverts.mjs`), add `dev-check.sh` to `bench/build.sh` and `test-all.sh`, and remove the "Do not use `--opt=dev`" rows of `README.md` and `MODULES.md` 2. Then post the upstream issue of `research/blob-002/UPSTREAM-ISSUE.md`.
+
 ## Done when
 
 - All tests above pass, and each fails when its change is reverted (the exceptions are in "Order of work").

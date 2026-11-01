@@ -232,7 +232,24 @@ await test('pf: the pin table (pinLimit, max age, counts)', async () => {
   assert.equal(pins.pinned('b'), undefined);
   pins.unpin('a');
   assert.equal(pins.pinned('a'), undefined);
-  assert.deepEqual(pins.stats, { pins: 3, unpins: 1, expired: 1 });
+  assert.deepEqual(pins.stats, { pins: 3, unpins: 1, expired: 1, unreadable: 0 });
+});
+// MODULES.md 9: a Memo value that does not parse back. One log line for each name in the isolate, with the name and the error.
+await test('pf: memoUnreadable logs once for each name; reset clears the names', async () => {
+  const lines = [];
+  const pins = makePins(2);
+  const pf = makeHelpers(undefined, ctxOf(), { pins, log: (t) => lines.push(t) }, null);
+  pf.memoUnreadable('jwks', 'InvalidCbor(13) at keys[0].material.Rsa.n[0]');
+  pf.memoUnreadable('jwks', 'InvalidCbor(13) at keys[0].material.Rsa.n[0]');
+  pf.memoUnreadable('other', 'MissingRequiredField("note")');
+  assert.equal(lines.length, 2);
+  assert.match(lines[0], /^Memo "jwks": the value of load! does not parse back from its CBOR form \(InvalidCbor\(13\) at keys\[0\]\.material\.Rsa\.n\[0\]\)\. It is not pinned/);
+  assert.match(lines[1], /^Memo "other": .*MissingRequiredField\("note"\)/);
+  assert.equal(pins.stats.unreadable, 3);
+  assert.equal(pins.size, 0);
+  pins.clear();
+  pf.memoUnreadable('jwks', 'x');
+  assert.equal(lines.length, 3);
 });
 await test('pf: readUpTo reads to the limit; past it a TooLarge; spawn logs a throw and gives a promise that does not reject', async () => {
   const c = ctxOf();
