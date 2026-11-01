@@ -248,5 +248,12 @@ const problem = (r, status, t) => r.status === status && r.headers['content-type
   const shed = await read(await new H(ctx, env).fetch(new Request('http://x/ok')));
   check('6d no on_trap, shed: 503, the trap text, retry-after 1 (O2)', shed.status === 503 && shed.body.startsWith('trap shed:') && shed.headers['retry-after'] === '1', JSON.stringify(shed));
 }
+
+// ---- 7 (TR7): graceMs 0 still gives retry-after 1, not 0 ----
+{
+  const H = makeHandler(wasm('app_trap_none.wasm'), { ops, log: () => {}, heapCheckWhenIdle: false, isolateBytes: 16 * MB, jsReserveBytes: 0, graceMs: 0 });
+  const big = await read(await new H(ctx, env).fetch(new Request('http://x/big/20')));
+  check('7a graceMs 0, oom: retry-after is at least 1', big.status === 503 && big.headers['retry-after'] === '1', JSON.stringify(big));
+}
 console.log(failed ? 'FAILED' : 'all passed');
 process.exit(failed ? 1 : 0);

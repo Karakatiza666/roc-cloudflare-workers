@@ -88,8 +88,8 @@ export function makeHandler(module, opts = {}) {
   // checks it again with `set_sum` at the first instance.
   if (runnerOpts.resumeCheck === 'off' && !isBenchHost(module)) throw new Error('resumeCheck "off" needs the bench host: the production host refuses it');
   let runner = null;
-  // TR7: the `retry-after` of a shed and of OOM, in seconds (the time of the memory pressure, `graceMs`).
-  const retryAfter = String(Math.ceil((runnerOpts.graceMs ?? BUDGET_OPTS.graceMs) / 1000));
+  // TR7: the `retry-after` of a shed and of OOM, in seconds (the time of the memory pressure, `graceMs`), at least 1.
+  const retryAfter = String(Math.max(1, Math.ceil((runnerOpts.graceMs ?? BUDGET_OPTS.graceMs) / 1000)));
   // MODULES.md 3: the dev-mode check of `bindings`. Set after the manifest is read (below); the runner calls it at each
   // `Get(Root("env"), name)`.
   let envRead = null;
