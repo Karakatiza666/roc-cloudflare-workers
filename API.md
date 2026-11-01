@@ -478,12 +478,12 @@ Wrappers:
 
 ## 8. Native
 
-Some work has no Workers API and is slow or missing in Roc. The host does it with Zig `std` through `native!(op, bytes)`. Each op is a pure function with a size limit. State that crosses calls (a hash state, a decoder window) is a host block owned by the task, so `freeOwner` frees it after a trap. The typed Roc side is `platform/Native.roc` (`Native.zstd_decode!`, `Native.ZstdStream`, `Native.Blake3`, `Native.Sha256`). The Zig side is `hostlib/native/` (`native.zig`, `zstd.zig`). It was built in `research/native/` and wired in `PLAN.md` 8e.
+Some work has no Workers API and is slow or missing in Roc. The host does it in Zig through `native!(op, bytes)`. Each op is a pure function with a size limit. State that crosses calls (a hash state, a decoder window) is a host block owned by the task, so `freeOwner` frees it after a trap. The typed Roc side is `platform/Native.roc` (`Native.zstd_decode!`, `Native.ZstdStream`, `Native.Blake3`, `Native.Sha256`). The Zig side is `hostlib/native/` (`native.zig`, `zstd.zig`). It was built in `research/native/` and wired in `PLAN.md` 8e.
 
 | Op | Zig `std` | Why not in Workers or Roc |
 | --- | --- | --- |
-| `zstd_decode(bytes, max_out)` | `std.compress.zstd` | `DecompressionStream` has gzip and deflate only (`research/api-probe/`). No Roc library. Design 6.2 already puts it in the host. |
-| `zstd_stream_*` (open, push a chunk, close) | same | For archives larger than the memory budget (RF5) |
+| `zstd_decode(bytes, max_out)` | `hostlib/zstd/`: a pure Zig port of the libzstd 1.5.7 decoder (vendored, ReleaseSafe; `std.compress.zstd` until 0.0.2) | `DecompressionStream` has gzip and deflate only (`research/api-probe/`). No Roc library. Design 6.2 already puts it in the host. |
+| `zstd_stream_*` (open, push or feed a chunk, close) | same | For archives larger than the memory budget (RF5) |
 | `blake3_*`, `sha256_*` (new, update, final) | `std.crypto.hash` | Roc `Crypto` has no state that takes one chunk at a time (RF5). WebCrypto has no BLAKE3. |
 
 The op number is the `U32` argument of `native!`. All integers in the bytes are little-endian.
@@ -498,6 +498,7 @@ The op number is the `U32` argument of `native!`. All integers in the bytes are 
 | 6 | `blake3_update` | u32 handle, then a chunk | Nothing |
 | 7 | `blake3_final` | u32 handle | 32 bytes. The handle is freed. |
 | 8, 9, 10 | `sha256_new`, `sha256_update`, `sha256_final` | as 5, 6, 7 | as 5, 6, 7 (32 bytes) |
+| 11 | `zstd_stream_feed` | u32 handle, u32 `max` (0: 16 MiB), then a chunk (can be empty) | At most `max` bytes of output, then one byte: 1 when the stream has more output for the input so far (call again with an empty chunk), 0 when it needs input. The stream keeps the input and the output that wait. `push_limit` does not apply. |
 
 A handle is `gen << 8 | (slot + 1)`. It is never 0. Roc treats it as an opaque `U32`. A handle belongs to the task that made it. A closed handle, a handle of another task, a handle of an old task and a wrong number give status 1. `zstd_decode` also decodes many frames and skippable frames. It refuses a frame with a dictionary.
 
@@ -505,10 +506,10 @@ Statuses. On status 1 the bytes are a short ASCII code. Roc sees status 0 and 1.
 
 | Status | Code | Cause | Tag in `Native` |
 | --- | --- | --- | --- |
-| 1 | `output_limit` | The output is more than `max_out` (op 1), or more than `push_limit` in one push (op 3) | `OutputLimit` |
+| 1 | `output_limit` | The output is more than `max_out` (op 1), or more than `push_limit` in one push (op 3). Op 11 never gives it. | `OutputLimit` |
 | 1 | `window_too_large` | The frame header needs a window over the limit (stream only) | `WindowTooLarge` |
-| 1 | `bad_frame` | Not a zstd frame, or a damaged frame, or bytes after the last frame | `BadFrame` |
-| 1 | `truncated` | The input is empty or stops inside a frame | `Truncated` |
+| 1 | `bad_frame` | Not a zstd frame, or a damaged frame, or a wrong frame checksum, or bytes after the last frame | `BadFrame` |
+| 1 | `truncated` | The input is empty or stops inside a frame, or (op 4) op 11 still had output or input that waits | `Truncated` |
 | 1 | `unsupported` | A frame with a dictionary | `Unsupported` |
 | 1 | `bad_handle` | Closed handle, wrong number, or a handle that an old task made | `BadHandle` |
 | 1 | `wrong_task` | The handle belongs to another task | `WrongTask` |
@@ -527,12 +528,12 @@ Limits:
 | Output of `zstd_decode` | `max_out`, a u32 of the caller (`Native.zstd_decode!` takes a `U64` and clamps it). The decode stops after the block that passes it (at most 128 KB over). A content size in the header over the limit stops before the first block. The result is an error with no bytes. |
 | Window of `zstd_decode` | None. The buffer is the whole output, so the window costs no memory. |
 | Window of a stream | 8 MiB by default, and 8 MiB is the hard limit (the size that the zstd standard tells all decoders to take: `roc bundle` makes 2 MiB, `zstd -19` from a pipe makes 8 MiB). A frame over the limit is `window_too_large`. An open with a larger `window_limit` is `bad_argument`. |
-| `push_limit` | The most output of one push. 16 MiB by default. One block (128 KB) can pass it. After `output_limit` the stream is dead: each push gives the same error, and `close` frees it. |
+| `push_limit` | The most output of one push. 16 MiB by default. One block (128 KB) can pass it. After `output_limit` the stream is dead: each push gives the same error, and `close` frees it. A chunk with a high ratio (a long run of zeros: 64 MiB of zeros is 2 KB packed) can pass any limit, whatever its size: use op 11 (`feed!`), which gives the output in parts. |
 | Handles | 64 in the instance, 16 for a task, 4 zstd streams for a task |
-| Stack | zstd needs about 274 KB of stack while a block decodes (std keeps two 128 KB arrays on the stack). Before `zstd_decode` and `zstd_stream_push` the host reserves 300 KB (`canary.reserve`): when the task has less stack left, the task gets a clean trap (the stack canary is not touched). The other ops need 16 KB. |
-| Frame checksum | Not checked (std panics on `verify_checksum`). The registry checks the BLAKE3 of the asset (`../DESIGN-REGISTRY.md`). |
+| Stack | zstd needs about 6 KB of stack (the decoder state is on the heap). Before `zstd_decode`, `zstd_stream_push` and `zstd_stream_feed` the host reserves 32 KB (`canary.reserve`): when the task has less stack left, the task gets a clean trap (the stack canary is not touched). The other ops need 16 KB. |
+| Frame checksum | Checked when the frame has one (xxh64): a wrong checksum is `bad_frame`. The registry also checks the BLAKE3 of the asset (`../DESIGN-REGISTRY.md`). |
 
-The memory of an op: `zstd_decode` holds the output and the input at once, and the result is a copy into a Roc list, so a one-shot decode of a large archive needs about twice its output plus the input (161 MB for a 70 MB output and a 21 MB archive). The stream holds the window (at most 8 MiB, plus a slack of at most 2 MB) and one push. Use the stream for an archive over a few MB of output (RF5).
+The memory of an op: `zstd_decode` holds the output and the input at once, and the result is a copy into a Roc list, so a one-shot decode of a large archive needs about twice its output plus the input (161 MB for a 70 MB output and a 21 MB archive). The stream holds the window (at most 8 MiB) and two blocks (256 KB), the decoder state (about 160 KB, from the first frame), one pending block (at most 128 KB) and one push (with op 11: one part, and the input that waits). Use the stream for an archive over a few MB of output (RF5).
 
 Cleanup. `alloc.taskEnd` calls `native.endTask(allocator, owner, .forget)` first, so a return, a trap and a cancel drop the handles of the task. The blocks are blocks of the task, so the allocator frees them in the same call.
 

@@ -67,7 +67,30 @@ Native :: [].{
 			}
 		}
 
-		## End the input and free the stream, with an error or not. `Truncated`: the input stopped inside a frame.
+		## The output of the chunk in parts of at most `max_bytes` (0: 16 MiB). `more` is `Bool.True` when the stream
+		## has more output for the input so far: call `feed!` again with an empty chunk until it is `Bool.False`,
+		## then give the next chunk. The stream keeps the input and the output that wait, so a chunk with a high
+		## ratio (a long run of zeros) never needs more than `max_bytes` at once. `push_limit_bytes` does not apply.
+		feed! : Native.ZstdStream, List(U8), U64 => Try({ out : List(U8), more : Bool }, [WindowTooLarge, BadFrame, Truncated, Unsupported, BadHandle, WrongTask])
+		feed! = |stream, chunk, max_bytes| {
+			Native.ZstdStream.{ handle } = stream
+			match call!(11, u32_le(handle).concat(u32_le(clamp(max_bytes))).concat(chunk)) {
+				Ok(out) => {
+					more = out.last() == Ok(1)
+					Ok({ out: out.drop_last(1), more })
+				}
+				Err("window_too_large") => Err(WindowTooLarge)
+				Err("bad_frame") => Err(BadFrame)
+				Err("truncated") => Err(Truncated)
+				Err("unsupported") => Err(Unsupported)
+				Err("bad_handle") => Err(BadHandle)
+				Err("wrong_task") => Err(WrongTask)
+				Err(code) => crash "Native.ZstdStream.feed!: unexpected code ${code}"
+			}
+		}
+
+		## End the input and free the stream, with an error or not. `Truncated`: the input stopped inside a frame,
+		## or `feed!` still had output (`more` was `Bool.True`).
 		close! : Native.ZstdStream => Try({}, [OutputLimit, WindowTooLarge, BadFrame, Truncated, Unsupported, BadHandle, WrongTask])
 		close! = |stream| {
 			Native.ZstdStream.{ handle } = stream

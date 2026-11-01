@@ -1,0 +1,12 @@
+-cflags
+-std=c99 -O3 -DZSTD_DISABLE_ASM -DZSTD_LEGACY_SUPPORT=0 -DZSTD_NO_TRACE -DXXH_NO_STDLIB -DZSTD_STATIC_LINKING_ONLY -DDEBUGLEVEL=0 -I$S/inc -I$D/.cache/src/zstd/lib -I$D/.cache/src/zstd/lib/common
+--
+$D/.cache/src/zstd/lib/common/entropy_common.c
+$D/.cache/src/zstd/lib/common/error_private.c
+$D/.cache/src/zstd/lib/common/fse_decompress.c
+$D/.cache/src/zstd/lib/common/xxhash.c
+$D/.cache/src/zstd/lib/common/zstd_common.c
+$D/.cache/src/zstd/lib/decompress/huf_decompress.c
+$D/.cache/src/zstd/lib/decompress/zstd_ddict.c
+$D/.cache/src/zstd/lib/decompress/zstd_decompress.c
+$D/.cache/src/zstd/lib/decompress/zstd_decompress_block.c

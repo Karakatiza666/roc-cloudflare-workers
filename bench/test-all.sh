@@ -75,7 +75,7 @@ step "entry-workerd.mjs (8b in workerd: the scheduled path of Miniflare, a queue
 step "stream-test.mjs (8b, 9c, 10a, 10b: stream bodies, respond!, pass_through!, writer!, compress!, wait_until!; Node)" node bench/stream-test.mjs bench/out/app_stream.wasm
 step "stream-workerd.mjs (8b, 9c, 10a, 10b in workerd: 50 MB bodies, BodyErr after respond!, waitUntil, the client goes away)" node bench/stream-workerd.mjs
 # Native (PLAN.md 8e)
-step "native_test.zig (8e: zstd, BLAKE3, SHA-256, the handle table; native)" "$ZIG" test hostlib/native/native_test.zig --cache-dir .cache/native-test
+step "native_test.zig (8e: zstd, BLAKE3, SHA-256, the handle table; native)" "$ZIG" test --dep zstd_dec -Mroot=hostlib/native/native_test.zig -Mzstd_dec=hostlib/zstd/decompress.zig --cache-dir .cache/native-test
 step "native-test.mjs (8e: Native in app_native.wasm: decode, limit, hashes, stream, handles, other task, end of task, OOM, deep stack)" node bench/native-test.mjs bench/out/app_native.wasm
 # Phase A modules (PLAN.md 8c, 8d): the conformance app in Miniflare, and the must-not-compile checks of `Secret`
 step "conformance/run.mjs (8c, 8d: a route for each function and Io twin in Miniflare)" node conformance/run.mjs bench/out/conformance.wasm

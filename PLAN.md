@@ -3889,6 +3889,43 @@ Result of the 7 reverts: all caught.
 
 Open: O1 (a `{ray}` placeholder in the body) and O4 (no wasm text in the default body) are for a later release (note section 7).
 
+## Status of the zstd speed and `feed!` (2026-11-02)
+
+Input: the Talon registry streams package archives (up to 256 MiB unpacked) through `Native.ZstdStream` inside a 30 s CPU limit, and Workers bills CPU. `std.compress.zstd` gave about 40 MB/s. Second input (Talon slice 111, section 8): one push can pass the 16 MiB push limit when its chunk has a high ratio. The research, all numbers and the candidates: `research/zstd-speed/README.md`.
+
+| Item | Before | Now |
+| --- | --- | --- |
+| Decoder | `std.compress.zstd` (ReleaseSmall) | `hostlib/zstd/`: the pure Zig port of the libzstd 1.5.7 decoder from zaxified/zig-libs `ccde063`, vendored with no changes (MIT, and the BSD text of libzstd in `NOTICE`), module `zstd_dec` built with ReleaseSafe. `hostlib/zstd/README.md` says how to update it. |
+| Use of the decoder | std stream API | The piece by piece API (`decompressContinue`) in `hostlib/native/zstd.zig`. The stream buffer is a ring of window + 2 blocks that grows from 256 KB. `newDec` sets the decoder state field by field (the library's `init` copies a 170 KB default constant into the data section). |
+| Speed, basic-cli 0.26.0 (83 MB out), probe | Node 44 MB/s, workerd 35 to 38 MB/s | Node 800 to 1,000 MB/s, workerd 465 to 520 MB/s (libzstd in C: 830 to 980 and 690 to 830) |
+| Speed, roc-tar bench (`research/zstd-speed/e2e`), mode `zstd` | Node 1,436 ms CPU, workerd 4,619 ms wall (4 KB chunks) | Node 150 ms, workerd 840 ms (the rest in workerd is the 5,894 pushes and the body: mode `read` is about 155 ms) |
+| Size | app_deep.wasm 400,656 B | 400,617 B. Host object +7.9 KB. |
+| Stack of a zstd op | 274 KB (reserve 300 KB) | 6 KB (reserve 32 KB, `stackNeed`) |
+| Frame checksum | not checked | checked: `bad_frame` |
+| Output in parts | none | op 11 `zstd_stream_feed`, `Native.ZstdStream.feed!(stream, chunk, max_bytes)`: `{ out, more }` (API.md 8) |
+| Native API, window limit, error tags, handles, OOM | | no change (`push!` is the same) |
+
+Build: every build of `hostlib` gives the module `zstd_dec`: `build.zig`, `bench/8g/host-build/build.zig`, `bench/alloc-test.sh`, the `zig test` step of `bench/test-all.sh`. No dependency is fetched: the release workflow builds from the checkout.
+
+Tests:
+
+| Test | Result |
+| --- | --- |
+| `hostlib/native/native_test.zig`: the 25 tests of 8e with the new decoder, and R-Z15 (3 new: 64 MiB of zeros in one chunk is `output_limit` with a push and comes in parts of 1 MiB with `feed`, peak at most 12 MiB; small parts and chunks; close while output waits) | 28 PASS |
+| `bench/native-test.mjs` (the new test `feed` in the app) | PASS |
+| `bench/native-reverts.mjs "push_limit"` (the line of the check moved) | the revert is caught |
+| `research/zstd-speed/difffuzz`: 500,000 damaged frames, the Zig decoder (ReleaseSafe) against libzstd | 0 differences, 0 traps |
+| `research/zstd-speed/tagfuzz`: 30,000 damaged frames through the old and the new ops, and 8,000 with `feed` against the stream (ReleaseSafe, leak check) | 0 traps, 0 leaks. The tags that differ are in the README (most: the checksum is now checked, and libzstd takes frames that std refused) |
+| `bench/test-all.sh` (nightly 2026-10-31, Zig 0.17.0, workerd of Wrangler) | ALL PASS |
+
+Open questions:
+
+| # | Question | Now |
+| --- | --- | --- |
+| Z1 | ReleaseSafe or ReleaseFast for `zstd_dec`? Fast is 10 to 35 percent faster (workerd 698 against 465 to 520 MB/s) and has no bounds checks. | ReleaseSafe (input from the network). One line in `build.zig`. |
+| Z2 | The decoder is a young third-party port (1 author, made 2026-07). | Vendored and pinned. The differential fuzz against libzstd is in `research/zstd-speed/`. libzstd in C (+12 KB) is the fallback. |
+| Z3 | In workerd the cost of a push with a 4 KB chunk is now more than its decode. | The app can join chunks to 64 KB before a push. Not measured in the registry. |
+
 ## Done when
 
 - All tests above pass, and each fails when its change is reverted (the exceptions are in "Order of work").

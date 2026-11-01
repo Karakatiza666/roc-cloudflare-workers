@@ -1,0 +1,1 @@
+End-to-end measure with roc-tar (https://github.com/Karakatiza666/roc-tar, `bench/`): `app.roc` and `worker.js` are copies of roc-tar `bench/` (only the app header differs: this platform, and the roc-tar package by path), `run-workerd.mjs` is its runner with the paths of this directory. The Node runner is roc-tar `bench/run-node.mjs` with `CFW` set to this repository.

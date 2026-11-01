@@ -127,6 +127,39 @@ handle! = |req| match req.split_on(" ") {
 			}
 		}
 	}
+	# `feed!` (R-Z15): the chunks of `name`, at most `max` bytes for each call. The SHA-256 of the output is in the
+	# host (`Native.Sha256`), so the app holds one part at a time. "ok <bytes> <calls> <largest part> <sha>".
+	["feed", name, chunk, max] => {
+		bytes = data!(name)
+		s = Native.ZstdStream.open!() ?? crash "feed open"
+		h = Native.Sha256.new!() ?? crash "feed sha"
+		var $total = 0.U64
+		var $calls = 0.U64
+		var $largest = 0.U64
+		var $failed = ""
+		for c in bytes.chunks_of(num(chunk)) {
+			var $next = c
+			var $more = Bool.True
+			while $more and $failed == "" {
+				match Native.ZstdStream.feed!(s, $next, num(max)) {
+					Ok(r) => {
+						Native.Sha256.update!(h, r.out) ?? crash "feed update"
+						$total = $total + r.out.len()
+						$calls = $calls + 1
+						$largest = if r.out.len() > $largest r.out.len() else $largest
+						$more = r.more
+						$next = []
+					}
+					Err(e) => {
+						$failed = Str.inspect(e)
+					}
+				}
+			}
+		}
+		closed = Native.ZstdStream.close!(s)
+		d = hex(Native.Sha256.final!(h) ?? crash "feed final")
+		if $failed != "" "err ${$failed}" else "ok ${$total.to_str()} ${$calls.to_str()} ${$largest.to_str()} ${Str.inspect(closed)} ${d}"
+	}
 	# A handle used after its `final!` is `BadHandle`, and a closed stream too.
 	["twice"] => {
 		h = Native.Blake3.new!() ?? crash "twice"

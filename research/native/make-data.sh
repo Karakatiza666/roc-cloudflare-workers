@@ -21,6 +21,9 @@ if [ "${SMALL:-1}" = 1 ]; then
   zstd -q -f -19 zeros.bin -o zeros.zst                    # content size declared
   zstd -q -f -19 < zeros.bin > zeros-pipe.zst              # no content size
   rm zeros.bin
+  # 64 MiB of zeros from a pipe (2 KB packed, window 8 MiB): one chunk is more than the push limit (feed, R-Z15).
+  head -c 67108864 /dev/zero | zstd -q -19 > zeros-64m.zst
+  head -c 67108864 /dev/zero | sha256sum | cut -d' ' -f1 > zeros-64m.sha256
   # Two frames with a skippable frame between them.
   { cat pkg.tar.zst; printf '\x50\x2a\x4d\x18\x04\x00\x00\x00abcd'; cat pkg-pipe.tar.zst; } > multi.zst
   cat pkg.tar pkg.tar > multi.tar

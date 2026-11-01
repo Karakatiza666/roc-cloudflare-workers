@@ -1,4 +1,4 @@
-//! Tests of the Native ops (PLAN.md 8e). Run from the repo root: `zig test hostlib/native/native_test.zig`.
+//! Tests of the Native ops (PLAN.md 8e). Run from the repo root: `zig test --dep zstd_dec -Mroot=hostlib/native/native_test.zig -Mzstd_dec=hostlib/zstd/decompress.zig`.
 //! The data is in research/native/data (make it with research/native/make-data.sh). The expected bytes
 //! come from the `zstd` CLI, and the hash digests from `sha256sum` and the Python `blake3` package.
 
@@ -391,6 +391,100 @@ test "zstd stream: damaged input does not trap" {
         if (streamAll(gpa, 1, bad, 1 + rnd.uintLessThan(usize, 5000), "")) |o| gpa.free(o) else |_| {}
         native.endTask(gpa, 1, .free);
     }
+}
+
+/// `zstd_stream_feed` (op 11): feed `data` in `chunk` pieces, at most `max` bytes for each call, and call again with no
+/// chunk while the last byte says "more". Checks that no part is over `max`. The output of all calls, or with `sha`
+/// only its SHA-256 (the output is not kept, so the memory is the stream and one part).
+fn feedAll(a: std.mem.Allocator, owner: usize, data: []const u8, chunk: usize, max: u32, sha: ?*std.crypto.hash.sha2.Sha256) ![]u8 {
+    const op = try callOwned(a, owner, .zstd_stream_open, "");
+    defer a.free(op.bytes);
+    const h = handleOf(op);
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(a);
+    var pos: usize = 0;
+    var more = false;
+    while (pos < data.len or more) {
+        const n = if (more) 0 else @min(chunk, data.len - pos);
+        const in = try std.mem.concat(a, u8, &.{ &le32(h), &le32(max), data[pos..][0..n] });
+        defer a.free(in);
+        pos += n;
+        const r = try callOwned(a, owner, .zstd_stream_feed, in);
+        defer a.free(r.bytes);
+        if (r.status != 0) {
+            const cl = try callOwned(a, owner, .zstd_stream_close, &le32(h));
+            a.free(cl.bytes);
+            return error.StreamFailed;
+        }
+        try std.testing.expect(r.bytes.len >= 1 and r.bytes.len - 1 <= max);
+        more = r.bytes[r.bytes.len - 1] == 1;
+        if (sha) |hs| hs.update(r.bytes[0 .. r.bytes.len - 1]) else try out.appendSlice(a, r.bytes[0 .. r.bytes.len - 1]);
+    }
+    const c = try callOwned(a, owner, .zstd_stream_close, &le32(h));
+    defer a.free(c.bytes);
+    if (c.status != 0) return error.StreamFailed;
+    return out.toOwnedSlice(a);
+}
+
+// R-Z15: a high ratio chunk (64 MiB of zeros in 2 KB, one chunk). A push gives `output_limit` (16 MiB by default).
+// `feed` gives the output in parts of at most `max` bytes, and the memory stays near the window (8 MiB).
+test "zstd stream: feed gives a high ratio chunk in parts" {
+    const z = try readData(gpa, "zeros-64m.zst");
+    defer gpa.free(z);
+    const sum = try readData(gpa, "zeros-64m.sha256");
+    defer gpa.free(sum);
+    try expectError(error.StreamFailed, streamAll(gpa, 1, z, z.len, ""));
+    var c: Counting = .{ .child = gpa };
+    const a = c.allocator();
+    var hs = std.crypto.hash.sha2.Sha256.init(.{});
+    const none = try feedAll(a, 1, z, z.len, 1 << 20, &hs);
+    try expectEqual(@as(usize, 0), none.len);
+    var d: [32]u8 = undefined;
+    hs.final(&d);
+    try expectEqualSlices(u8, std.mem.trim(u8, sum, "\n"), &std.fmt.bytesToHex(d, .lower));
+    // The stream (window 8 MiB, two blocks, the decoder state, the input) and one part of 1 MiB with its copy.
+    try std.testing.expect(c.peak <= 12 << 20);
+    try expectEqual(@as(usize, 0), c.live);
+}
+
+// R-Z15: `feed` with small parts and chunks gives the bytes of `zstd -d` (the input and the output wait in the stream).
+test "zstd stream: feed with small parts and chunks" {
+    const want = try readData(gpa, "pkg.tar");
+    defer gpa.free(want);
+    const mt = try readData(gpa, "multi.tar");
+    defer gpa.free(mt);
+    for ([_][]const u8{ "pkg.tar.zst", "pkg-pipe.tar.zst", "multi.zst" }) |name| {
+        const z = try readData(gpa, name);
+        defer gpa.free(z);
+        for ([_]usize{ 1, 7, 4096, 65536 }) |chunk| {
+            for ([_]u32{ 7, 1000, 1 << 20 }) |max| {
+                const got = try feedAll(gpa, 1, z, chunk, max, null);
+                defer gpa.free(got);
+                try expectEqualSlices(u8, if (std.mem.eql(u8, name, "multi.zst")) mt else want, got);
+            }
+        }
+    }
+}
+
+// R-Z15: close while output waits is `truncated`, and frees the stream.
+test "zstd stream: close with output that waits" {
+    const z = try readData(gpa, "zeros-64m.zst");
+    defer gpa.free(z);
+    var c: Counting = .{ .child = gpa };
+    const a = c.allocator();
+    const op = try callOwned(a, 1, .zstd_stream_open, "");
+    defer a.free(op.bytes);
+    const h = handleOf(op);
+    const in = try std.mem.concat(a, u8, &.{ &le32(h), &le32(1 << 20), z });
+    defer a.free(in);
+    const r = try callOwned(a, 1, .zstd_stream_feed, in);
+    defer a.free(r.bytes);
+    try expectEqual(@as(u8, 0), r.status);
+    try expectEqual(@as(u8, 1), r.bytes[r.bytes.len - 1]);
+    const cl = try callOwned(a, 1, .zstd_stream_close, &le32(h));
+    defer a.free(cl.bytes);
+    try expectEqualSlices(u8, "truncated", cl.bytes);
+    try expectEqual(@as(usize, 0), native.inUse(1));
 }
 
 // ---------------------------------------------------------------- hashes

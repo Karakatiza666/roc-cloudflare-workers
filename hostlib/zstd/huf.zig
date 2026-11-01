@@ -1,0 +1,821 @@
+// SPDX-License-Identifier: BSD-3-Clause AND MIT (port of libzstd 1.5.7 -- see ../NOTICE)
+//! Huffman literal encoder (port of libzstd lib/compress/huf_compress.c, v1.5.7).
+//!
+//! `readCTable` is `HUF_readCTable`, for a dictionary's table. The
+//! "optimal depth" table-log search libzstd enables from `btultra` up is
+//! `optimalTableLog`. The
+//! symbol sort keeps libzstd's bucket sort *and* its unstable quicksort, because
+//! the order of equal counts decides which symbol gets which code, and so
+//! reaches the output bytes.
+
+const std = @import("std");
+const fill = @import("fill.zig");
+const bitstream = @import("bitstream.zig");
+const fse = @import("fse.zig");
+const hist = @import("hist.zig");
+
+pub const Error = error{ DstSizeTooSmall, Generic };
+
+pub const table_log_max = 12;
+pub const table_log_default = 11;
+pub const symbol_value_max = 255;
+pub const block_size_max = 128 * 1024;
+
+/// `HUF_repeat`: whether the previous table may be reused -- `check`
+/// after validating it against the literals, `valid` without (a
+/// dictionary's table giving every byte a code).
+pub const Repeat = enum { none, check, valid };
+
+pub const CElt = struct {
+    nb_bits: u8 = 0,
+    value: u16 = 0,
+};
+
+pub const CTable = struct {
+    table_log: u32 = 0,
+    max_symbol: u32 = 0,
+    elt: [symbol_value_max + 1]CElt = @as([symbol_value_max + 1]CElt, @splat(.{})),
+
+    /// `ct.* = .{}` without the memset call (`fill.zig`).
+    pub fn clear(ct: *CTable) void {
+        ct.table_log = 0;
+        ct.max_symbol = 0;
+        fill.zero(CElt, &ct.elt);
+    }
+};
+
+pub const Flags = struct {
+    prefer_repeat: bool = false,
+    suspect_uncompressible: bool = false,
+    /// `HUF_flags_optimalDepth`: search the table log by trial encoding.
+    optimal_depth: bool = false,
+};
+
+// ── tree construction ───────────────────────────────────────────────────────
+
+const Node = struct {
+    count: u32 = 0,
+    parent: u16 = 0,
+    byte: u8 = 0,
+    nb_bits: u8 = 0,
+};
+
+const start_node = symbol_value_max + 1;
+/// `huffNodeTable`, plus the sentinel slot libzstd keeps at `huffNode[-1]`.
+const node_table_len = 2 * (symbol_value_max + 1);
+
+const rank_position_table_size = 192;
+const rank_position_max_count_log = 32;
+const rank_position_log_buckets_begin = (rank_position_table_size - 1) - rank_position_max_count_log - 1;
+const rank_position_distinct_count_cutoff = rank_position_log_buckets_begin + 7; // + highbit32(158)
+
+const RankPos = struct { base: u16 = 0, curr: u16 = 0 };
+
+fn getIndex(c: u32) u32 {
+    return if (c < rank_position_distinct_count_cutoff) c else fse.highbit32(c) + rank_position_log_buckets_begin;
+}
+
+fn insertionSort(nodes: []Node, low: i32, high: i32) void {
+    const size = high - low + 1;
+    const arr = nodes[@intCast(low)..];
+    var i: i32 = 1;
+    while (i < size) : (i += 1) {
+        const key = arr[@intCast(i)];
+        var j = i - 1;
+        while (j >= 0 and arr[@intCast(j)].count < key.count) {
+            arr[@intCast(j + 1)] = arr[@intCast(j)];
+            j -= 1;
+        }
+        arr[@intCast(j + 1)] = key;
+    }
+}
+
+fn quickSortPartition(arr: []Node, low: i32, high: i32) i32 {
+    const pivot = arr[@intCast(high)].count;
+    var i = low - 1;
+    var j = low;
+    while (j < high) : (j += 1) {
+        if (arr[@intCast(j)].count > pivot) {
+            i += 1;
+            std.mem.swap(Node, &arr[@intCast(i)], &arr[@intCast(j)]);
+        }
+    }
+    std.mem.swap(Node, &arr[@intCast(i + 1)], &arr[@intCast(high)]);
+    return i + 1;
+}
+
+fn simpleQuickSort(arr: []Node, low_in: i32, high_in: i32) void {
+    const insertion_sort_threshold = 8;
+    var low = low_in;
+    var high = high_in;
+    if (high - low < insertion_sort_threshold) {
+        insertionSort(arr, low, high);
+        return;
+    }
+    while (low < high) {
+        const idx = quickSortPartition(arr, low, high);
+        if (idx - low < high - idx) {
+            simpleQuickSort(arr, low, idx - 1);
+            low = idx + 1;
+        } else {
+            simpleQuickSort(arr, idx + 1, high);
+            high = idx - 1;
+        }
+    }
+}
+
+/// `HUF_sort`: descending by count; exact counts below the cutoff are bucketed
+/// stably (by symbol), larger counts share log buckets and are quicksorted.
+fn sort(huff_node: []Node, counts: []const u32, max_symbol: u32) void {
+    var rank_position: [rank_position_table_size]RankPos = undefined;
+    fill.zero(RankPos, &rank_position);
+    const max_sv1 = max_symbol + 1;
+    var n: u32 = 0;
+    while (n < max_sv1) : (n += 1) {
+        rank_position[getIndex(counts[n])].base += 1;
+    }
+    n = rank_position_table_size - 1;
+    while (n > 0) : (n -= 1) {
+        rank_position[n - 1].base += rank_position[n].base;
+        rank_position[n - 1].curr = rank_position[n - 1].base;
+    }
+    n = 0;
+    while (n < max_sv1) : (n += 1) {
+        const c = counts[n];
+        const r = getIndex(c) + 1;
+        const pos = rank_position[r].curr;
+        rank_position[r].curr += 1;
+        huff_node[pos].count = c;
+        huff_node[pos].byte = @intCast(n);
+    }
+    n = rank_position_distinct_count_cutoff;
+    while (n < rank_position_table_size - 1) : (n += 1) {
+        const bucket_size: i32 = @as(i32, rank_position[n].curr) - @as(i32, rank_position[n].base);
+        const bucket_start = rank_position[n].base;
+        if (bucket_size > 1) simpleQuickSort(huff_node[bucket_start..], 0, bucket_size - 1);
+    }
+}
+
+/// `HUF_buildTree`. `node0[0]` is the sentinel, `node0[1..]` is `huffNode`.
+fn buildTree(node0: []Node, max_symbol: u32) i32 {
+    const hn = node0[1..];
+    var non_null_rank: i32 = @intCast(max_symbol);
+    while (hn[@intCast(non_null_rank)].count == 0) non_null_rank -= 1;
+    var low_s: i32 = non_null_rank;
+    var node_nb: i32 = start_node;
+    const node_root: i32 = node_nb + low_s - 1;
+    var low_n: i32 = node_nb;
+    hn[@intCast(node_nb)].count = hn[@intCast(low_s)].count + hn[@intCast(low_s - 1)].count;
+    hn[@intCast(low_s)].parent = @intCast(node_nb);
+    hn[@intCast(low_s - 1)].parent = @intCast(node_nb);
+    node_nb += 1;
+    low_s -= 2;
+    var n = node_nb;
+    while (n <= node_root) : (n += 1) hn[@intCast(n)].count = 1 << 30;
+    node0[0].count = 1 << 31; // fake entry, strong barrier
+
+    // create parents
+    while (node_nb <= node_root) {
+        const n1 = if (count(node0, low_s) < count(node0, low_n)) blk: {
+            low_s -= 1;
+            break :blk low_s + 1;
+        } else blk: {
+            low_n += 1;
+            break :blk low_n - 1;
+        };
+        const n2 = if (count(node0, low_s) < count(node0, low_n)) blk: {
+            low_s -= 1;
+            break :blk low_s + 1;
+        } else blk: {
+            low_n += 1;
+            break :blk low_n - 1;
+        };
+        hn[@intCast(node_nb)].count = hn[@intCast(n1)].count + hn[@intCast(n2)].count;
+        hn[@intCast(n1)].parent = @intCast(node_nb);
+        hn[@intCast(n2)].parent = @intCast(node_nb);
+        node_nb += 1;
+    }
+
+    // distribute weights (unlimited tree height)
+    hn[@intCast(node_root)].nb_bits = 0;
+    n = node_root - 1;
+    while (n >= start_node) : (n -= 1) hn[@intCast(n)].nb_bits = hn[hn[@intCast(n)].parent].nb_bits + 1;
+    n = 0;
+    while (n <= non_null_rank) : (n += 1) hn[@intCast(n)].nb_bits = hn[hn[@intCast(n)].parent].nb_bits + 1;
+    return non_null_rank;
+}
+
+/// `huffNode[i].count` with libzstd's `huffNode[-1]` sentinel reachable at i == -1.
+inline fn count(node0: []const Node, i: i32) u32 {
+    return node0[@intCast(i + 1)].count;
+}
+
+/// `HUF_setMaxHeight`: cap the tree at `target_nb_bits`, repaying the Kraft debt.
+fn setMaxHeight(hn: []Node, last_non_null: u32, target_nb_bits: u32) u32 {
+    const largest_bits: u32 = hn[last_non_null].nb_bits;
+    if (largest_bits <= target_nb_bits) return largest_bits;
+
+    var total_cost: i32 = 0;
+    const base_cost: i32 = @as(i32, 1) << @intCast(largest_bits - target_nb_bits);
+    var n: i32 = @intCast(last_non_null);
+
+    while (hn[@intCast(n)].nb_bits > target_nb_bits) {
+        total_cost += base_cost - (@as(i32, 1) << @intCast(largest_bits - hn[@intCast(n)].nb_bits));
+        hn[@intCast(n)].nb_bits = @intCast(target_nb_bits);
+        n -= 1;
+    }
+    while (hn[@intCast(n)].nb_bits == target_nb_bits) n -= 1;
+
+    total_cost >>= @intCast(largest_bits - target_nb_bits);
+
+    const no_symbol: u32 = 0xF0F0F0F0;
+    var rank_last = @as([table_log_max + 2]u32, @splat(no_symbol));
+    {
+        var current_nb_bits = target_nb_bits;
+        var pos = n;
+        while (pos >= 0) : (pos -= 1) {
+            if (hn[@intCast(pos)].nb_bits >= current_nb_bits) continue;
+            current_nb_bits = hn[@intCast(pos)].nb_bits;
+            rank_last[target_nb_bits - current_nb_bits] = @intCast(pos);
+        }
+    }
+
+    while (total_cost > 0) {
+        var nb_bits_to_decrease: u32 = fse.highbit32(@intCast(total_cost)) + 1;
+        while (nb_bits_to_decrease > 1) : (nb_bits_to_decrease -= 1) {
+            const high_pos = rank_last[nb_bits_to_decrease];
+            const low_pos = rank_last[nb_bits_to_decrease - 1];
+            if (high_pos == no_symbol) continue;
+            if (low_pos == no_symbol) break;
+            const high_total = hn[high_pos].count;
+            const low_total = 2 * hn[low_pos].count;
+            if (high_total <= low_total) break;
+        }
+        while (nb_bits_to_decrease <= table_log_max and rank_last[nb_bits_to_decrease] == no_symbol)
+            nb_bits_to_decrease += 1;
+        total_cost -= @as(i32, 1) << @intCast(nb_bits_to_decrease - 1);
+        hn[rank_last[nb_bits_to_decrease]].nb_bits += 1;
+        if (rank_last[nb_bits_to_decrease - 1] == no_symbol)
+            rank_last[nb_bits_to_decrease - 1] = rank_last[nb_bits_to_decrease];
+        if (rank_last[nb_bits_to_decrease] == 0) {
+            rank_last[nb_bits_to_decrease] = no_symbol;
+        } else {
+            rank_last[nb_bits_to_decrease] -= 1;
+            if (hn[rank_last[nb_bits_to_decrease]].nb_bits != target_nb_bits - nb_bits_to_decrease)
+                rank_last[nb_bits_to_decrease] = no_symbol;
+        }
+    }
+
+    while (total_cost < 0) {
+        if (rank_last[1] == no_symbol) {
+            while (hn[@intCast(n)].nb_bits == target_nb_bits) n -= 1;
+            hn[@intCast(n + 1)].nb_bits -= 1;
+            rank_last[1] = @intCast(n + 1);
+            total_cost += 1;
+            continue;
+        }
+        hn[rank_last[1] + 1].nb_bits -= 1;
+        rank_last[1] += 1;
+        total_cost += 1;
+    }
+    return target_nb_bits;
+}
+
+fn buildCTableFromTree(ct: *CTable, hn: []const Node, non_null_rank: i32, max_symbol: u32, max_nb_bits: u32) void {
+    var nb_per_rank = @as([table_log_max + 1]u16, @splat(0));
+    var val_per_rank = @as([table_log_max + 1]u16, @splat(0));
+    const alphabet_size = max_symbol + 1;
+    var n: i32 = 0;
+    while (n <= non_null_rank) : (n += 1) nb_per_rank[hn[@intCast(n)].nb_bits] += 1;
+    {
+        var min: u16 = 0;
+        var r: u32 = max_nb_bits;
+        while (r > 0) : (r -= 1) {
+            val_per_rank[r] = min;
+            min += nb_per_rank[r];
+            min >>= 1;
+        }
+    }
+    var s: u32 = 0;
+    while (s < alphabet_size) : (s += 1) ct.elt[hn[s].byte] = .{ .nb_bits = hn[s].nb_bits };
+    s = 0;
+    while (s < alphabet_size) : (s += 1) {
+        const nb = ct.elt[s].nb_bits;
+        if (nb > 0) ct.elt[s].value = val_per_rank[nb];
+        val_per_rank[nb] +%= 1;
+    }
+    // Entries above the alphabet are never read (every reader stops at
+    // `max_symbol`); clear them rather than carry stale codes.
+    fill.zero(CElt, ct.elt[s..]);
+    ct.table_log = max_nb_bits;
+    ct.max_symbol = max_symbol;
+}
+
+/// `HUF_buildCTable_wksp`. Returns the table log actually used.
+pub fn buildCTable(ct: *CTable, counts: []const u32, max_symbol: u32, max_nb_bits_in: u32) Error!u32 {
+    var max_nb_bits = max_nb_bits_in;
+    if (max_nb_bits == 0) max_nb_bits = table_log_default;
+    if (max_symbol > symbol_value_max) return error.Generic;
+    var node0: [node_table_len]Node = undefined;
+    fill.zero(Node, &node0);
+    const hn = node0[1..];
+    sort(hn, counts, max_symbol);
+    const non_null_rank = buildTree(&node0, max_symbol);
+    max_nb_bits = setMaxHeight(hn, @intCast(non_null_rank), max_nb_bits);
+    if (max_nb_bits > table_log_max) return error.Generic;
+    buildCTableFromTree(ct, hn, non_null_rank, max_symbol, max_nb_bits);
+    return max_nb_bits;
+}
+
+pub fn estimateCompressedSize(ct: *const CTable, counts: []const u32, max_symbol: u32) usize {
+    var nb_bits: usize = 0;
+    var s: u32 = 0;
+    while (s <= max_symbol) : (s += 1) nb_bits += @as(usize, ct.elt[s].nb_bits) * counts[s];
+    return nb_bits >> 3;
+}
+
+pub fn validateCTable(ct: *const CTable, counts: []const u32, max_symbol: u32) bool {
+    if (ct.max_symbol < max_symbol) return false;
+    var s: u32 = 0;
+    while (s <= max_symbol) : (s += 1) {
+        if (counts[s] != 0 and ct.elt[s].nb_bits == 0) return false;
+    }
+    return true;
+}
+
+/// `HUF_optimalTableLog`. Without `optimal_depth` the cheap FSE-based guess;
+/// with it, every log from the smallest that fits the alphabet up is tried
+/// and the one with the smallest table + payload estimate wins.
+pub fn optimalTableLog(max_table_log: u32, src_len: usize, max_symbol: u32, counts: []const u32, optimal_depth: bool) u32 {
+    if (!optimal_depth) return fse.optimalTableLogInternal(max_table_log, src_len, max_symbol, 1);
+    var cardinality: u32 = 0;
+    for (counts[0 .. max_symbol + 1]) |c| cardinality += @intFromBool(c != 0);
+    const min_table_log = fse.highbit32(cardinality) + 1; // HUF_minTableLog
+    var opt_size: usize = std.math.maxInt(usize) - 1;
+    var opt_log = max_table_log;
+    var guess = min_table_log;
+    // Search until size increases
+    while (guess <= max_table_log) : (guess += 1) {
+        var ct: CTable = undefined;
+        ct.clear();
+        const max_bits = buildCTable(&ct, counts, max_symbol, guess) catch continue;
+        if (max_bits < guess and guess > min_table_log) break;
+        var header: [1024]u8 = undefined;
+        const h_size = writeCTable(&header, &ct, max_symbol, max_bits) catch continue;
+        const new_size = estimateCompressedSize(&ct, counts, max_symbol) + h_size;
+        if (new_size > opt_size + 1) break;
+        if (new_size < opt_size) {
+            opt_size = new_size;
+            opt_log = guess;
+        }
+    }
+    return opt_log;
+}
+
+/// `HUF_readCTable`: the table a header written by `writeCTable` (a
+/// dictionary's) describes, into `ct`. Returns the header's size, and
+/// whether some symbol up to the last has no code (`hasZeroWeights`).
+pub fn readCTable(ct: *CTable, src: []const u8, has_zero_weights: *bool) Error!usize {
+    const huf_dec = @import("huf_dec.zig");
+    var huff_weight: [symbol_value_max + 1]u8 = undefined;
+    var rank_val: [huf_dec.tablelog_max + 1]u32 = undefined;
+    var table_log: u32 = 0;
+    var nb_symbols: u32 = 0;
+    // get symbol weights
+    const read_size = huf_dec.readStats(&huff_weight, &rank_val, &nb_symbols, &table_log, src) catch return error.Generic;
+    has_zero_weights.* = rank_val[0] > 0;
+    // check result
+    if (table_log > table_log_max) return error.Generic;
+    if (nb_symbols > symbol_value_max + 1) return error.Generic;
+    ct.table_log = table_log;
+    ct.max_symbol = nb_symbols - 1;
+    // fill nbBits
+    for (huff_weight[0..nb_symbols], ct.elt[0..nb_symbols]) |w, *e|
+        e.nb_bits = if (w != 0) @intCast(table_log + 1 - w) else 0;
+    // fill val
+    var nb_per_rank = @as([table_log_max + 2]u16, @splat(0)); // support w=0=>n=tableLog+1
+    var val_per_rank = @as([table_log_max + 2]u16, @splat(0));
+    for (ct.elt[0..nb_symbols]) |e| nb_per_rank[e.nb_bits] += 1;
+    // determine starting value per rank
+    val_per_rank[table_log + 1] = 0; // for w==0
+    {
+        var min: u16 = 0;
+        var n: u32 = table_log;
+        while (n > 0) : (n -= 1) { // start at n=tablelog <-> w=1
+            val_per_rank[n] = min; // get starting value within each rank
+            min += nb_per_rank[n];
+            min >>= 1;
+        }
+    }
+    // assign value within rank, symbol order
+    for (ct.elt[0..nb_symbols]) |*e| {
+        e.value = val_per_rank[e.nb_bits];
+        val_per_rank[e.nb_bits] +%= 1;
+    }
+    return read_size;
+}
+
+// ── table header ────────────────────────────────────────────────────────────
+
+const max_fse_table_log_for_huff_header = 6;
+
+/// `HUF_compressWeights`: FSE-code the weight table. 0 = not compressible,
+/// 1 = a single repeated weight.
+fn compressWeights(dst: []u8, weights: []const u8) Error!usize {
+    var max_symbol: u32 = table_log_max;
+    var counts: [table_log_max + 1]u32 = undefined;
+    var norm: [table_log_max + 1]i16 = undefined;
+    if (weights.len <= 1) return 0;
+    const max_count = hist.count(&counts, &max_symbol, weights);
+    if (max_count == weights.len) return 1;
+    if (max_count == 1) return 0;
+
+    const table_log = fse.optimalTableLog(max_fse_table_log_for_huff_header, weights.len, max_symbol);
+    _ = try fse.normalizeCount(&norm, table_log, &counts, weights.len, max_symbol, false);
+    var op = try fse.writeNCount(dst, &norm, max_symbol, table_log);
+    // `undefined`, not `.{}`: `build` sets every field it reads back, and
+    // Zig 0.16 lowers `.{}` of the table (its `undefined` defaults
+    // included) to a byte-wise `memset` of all 1.4 KB, for every Huffman
+    // table written (Z32)
+    var ct: fse.CTable = undefined;
+    try ct.build(&norm, max_symbol, table_log);
+    const c_size = fse.compressUsingCTable(dst[op..], weights, &ct);
+    if (c_size == 0) return 0;
+    op += c_size;
+    return op;
+}
+
+/// `HUF_writeCTable_wksp`: serialise the code lengths as weights.
+pub fn writeCTable(dst: []u8, ct: *const CTable, max_symbol: u32, huff_log: u32) Error!usize {
+    var bits_to_weight: [table_log_max + 1]u8 = undefined;
+    var huff_weight: [symbol_value_max + 1]u8 = undefined;
+    if (max_symbol > symbol_value_max) return error.Generic;
+
+    bits_to_weight[0] = 0;
+    var n: u32 = 1;
+    while (n < huff_log + 1) : (n += 1) bits_to_weight[n] = @intCast(huff_log + 1 - n);
+    n = 0;
+    while (n < max_symbol) : (n += 1) huff_weight[n] = bits_to_weight[ct.elt[n].nb_bits];
+
+    if (dst.len < 1) return error.DstSizeTooSmall;
+    const h_size = try compressWeights(dst[1..], huff_weight[0..max_symbol]);
+    if (h_size > 1 and h_size < max_symbol / 2) { // FSE compressed
+        dst[0] = @intCast(h_size);
+        return h_size + 1;
+    }
+
+    // raw values, 4 bits each
+    if (max_symbol > (256 - 128)) return error.Generic;
+    if (((max_symbol + 1) / 2) + 1 > dst.len) return error.DstSizeTooSmall;
+    dst[0] = @intCast(128 + (max_symbol - 1));
+    huff_weight[max_symbol] = 0;
+    n = 0;
+    while (n < max_symbol) : (n += 2) dst[(n / 2) + 1] = (huff_weight[n] << 4) + huff_weight[n + 1];
+    return ((max_symbol + 1) / 2) + 1;
+}
+
+// ── bit streams ─────────────────────────────────────────────────────────────
+
+/// `HUF_compress1X_usingCTable_internal`: symbols are written last-to-first.
+/// Returns 0 when the stream does not fit.
+pub fn compress1X(dst: []u8, src: []const u8, ct: *const CTable) usize {
+    if (dst.len < 8) return 0;
+    var bits = bitstream.CStream.init(dst) catch return 0;
+    var n = src.len;
+    // Flush every 4 symbols: 4 * 12 bits + 7 pending never fill the container.
+    var since_flush: u32 = 0;
+    while (n > 0) {
+        n -= 1;
+        const e = ct.elt[src[n]];
+        bits.addBits(e.value, e.nb_bits);
+        since_flush += 1;
+        if (since_flush == 4) {
+            bits.flush();
+            since_flush = 0;
+        }
+    }
+    bits.flush();
+    return bits.close();
+}
+
+/// `HUF_compress4X_usingCTable_internal`: jump table + four 1X streams.
+pub fn compress4X(dst: []u8, src: []const u8, ct: *const CTable) usize {
+    return compress4XWith(dst, src, ct, compress1X);
+}
+
+fn compress4XWith(dst: []u8, src: []const u8, ct: anytype, comptime one: anytype) usize {
+    const segment_size = (src.len + 3) / 4;
+    if (dst.len < 6 + 1 + 1 + 1 + 8) return 0; // minimum space to compress successfully
+    if (src.len < 12) return 0; // no saving possible: input too small
+    var op: usize = 6; // jump table
+    var ip: usize = 0;
+    for (0..3) |k| {
+        const c_size = one(dst[op..], src[ip .. ip + segment_size], ct);
+        if (c_size == 0 or c_size > 65535) return 0;
+        std.mem.writeInt(u16, dst[2 * k ..][0..2], @intCast(c_size), .little);
+        op += c_size;
+        ip += segment_size;
+    }
+    const c_size = one(dst[op..], src[ip..], ct);
+    if (c_size == 0 or c_size > 65535) return 0;
+    op += c_size;
+    return op;
+}
+
+// ── the unrolled encoder (HUF_CStream_t) ────────────────────────────────────
+//
+// libzstd's `HUF_compress1X_usingCTable_internal_body`: the same bits as
+// `compress1X`, written faster. Each code is a `PackedTable` entry (`HUF_CElt`):
+// the code length in bits 0..3 and the code in the top `nb_bits` bits, so a
+// code is added with one shift, one or, one add. The container fills from the
+// top; a flush stores its top bits. A second container takes every other run
+// of `unroll` codes with no dependency on the first, and is merged into it.
+//
+// The table is packed per call (`packTable`, 256 entries), so this path is
+// taken for literal sections where that is noise (`packed_min_len`).
+
+/// `HUF_CElt` for every byte, built from a `CTable` by `packTable`.
+const PackedTable = struct {
+    table_log: u32,
+    elt: [symbol_value_max + 1]u64,
+};
+
+/// Below this many literals the plain loop is kept: packing costs 256 entries.
+const packed_min_len = 1024;
+
+fn packTable(p: *PackedTable, ct: *const CTable) void {
+    p.table_log = ct.table_log;
+    for (&p.elt, ct.elt) |*o, e| {
+        // nb_bits == 0: a byte without a code, as `HUF_setValue` leaves it.
+        const v: u64 = if (e.nb_bits == 0) 0 else @as(u64, e.value) << @intCast(64 - @as(u32, e.nb_bits));
+        o.* = v | e.nb_bits;
+    }
+}
+
+const end_mark: u64 = (1 << 63) | 1; // `HUF_endMark`: the 1-bit code 1
+
+const HufStream = struct {
+    c: [2]u64 = .{ 0, 0 },
+    /// Only the low 8 bits count: the fast path adds whole entries.
+    pos: [2]u64 = .{ 0, 0 },
+    buf: []u8,
+    ptr: usize = 0,
+    end: usize,
+
+    /// `HUF_addBits`. `fast`: at least 4 bits stay free after this code, so
+    /// its length bits may stay in the container's (still unused) low bits.
+    inline fn add(s: *HufStream, elt: u64, comptime idx: usize, comptime fast: bool) void {
+        s.c[idx] >>= @as(u6, @truncate(elt)); // bits 4..5 of an entry are 0
+        s.c[idx] |= if (fast) elt else elt & ~@as(u64, 0xF);
+        s.pos[idx] +%= if (fast) elt else elt & 0xF;
+        std.debug.assert(s.pos[idx] & 0xFF <= 64);
+    }
+
+    /// `HUF_mergeIndex1`.
+    inline fn merge(s: *HufStream) void {
+        const n1 = s.pos[1] & 0xFF;
+        std.debug.assert(n1 < 64);
+        s.c[0] >>= @intCast(n1);
+        s.c[0] |= s.c[1];
+        s.pos[0] +%= s.pos[1];
+        std.debug.assert(s.pos[0] & 0xFF <= 64);
+    }
+
+    /// `HUF_flushBits`. `fast`: the caller knows the output cannot overrun.
+    inline fn flush(s: *HufStream, comptime fast: bool) void {
+        const nb_bits = s.pos[0] & 0xFF;
+        std.debug.assert(nb_bits > 0 and nb_bits <= 64);
+        const bits = s.c[0] >> @intCast(64 - nb_bits);
+        s.pos[0] &= 7;
+        std.debug.assert(s.ptr <= s.end);
+        std.mem.writeInt(u64, s.buf[s.ptr..][0..8], bits, .little);
+        s.ptr += @intCast(nb_bits >> 3);
+        std.debug.assert(!fast or s.ptr <= s.end);
+        if (!fast and s.ptr > s.end) s.ptr = s.end;
+    }
+
+    /// `HUF_closeCStream`: 0 when the stream did not fit.
+    fn close(s: *HufStream) usize {
+        s.add(end_mark, 0, false);
+        s.flush(false);
+        if (s.ptr >= s.end) return 0;
+        return s.ptr + @intFromBool(s.pos[0] & 0xFF > 0);
+    }
+};
+
+/// `HUF_compress1X_usingCTable_internal_body_loop`.
+inline fn encodeLoop(s: *HufStream, src: []const u8, t: *const [symbol_value_max + 1]u64, comptime unroll: usize, comptime fast_flush: bool, comptime last_fast: bool) void {
+    var n = src.len;
+    // Join to `unroll`.
+    var rem = n % unroll;
+    if (rem > 0) {
+        while (rem > 0) : (rem -= 1) {
+            n -= 1;
+            s.add(t[src[n]], 0, false);
+        }
+        s.flush(fast_flush);
+    }
+    // Join to `2 * unroll`.
+    if (n % (2 * unroll) != 0) {
+        inline for (1..unroll) |u| s.add(t[src[n - u]], 0, true);
+        s.add(t[src[n - unroll]], 0, last_fast);
+        s.flush(fast_flush);
+        n -= unroll;
+    }
+    while (n > 0) : (n -= 2 * unroll) {
+        inline for (1..unroll) |u| s.add(t[src[n - u]], 0, true);
+        s.add(t[src[n - unroll]], 0, last_fast);
+        s.flush(fast_flush);
+        // The second run fills container 1 with no dependency on container 0.
+        s.c[1] = 0;
+        s.pos[1] = 0;
+        inline for (1..unroll) |u| s.add(t[src[n - unroll - u]], 1, true);
+        s.add(t[src[n - 2 * unroll]], 1, last_fast);
+        s.merge();
+        s.flush(fast_flush);
+    }
+}
+
+/// `HUF_compress1X_usingCTable_internal_body` over a packed table: the same
+/// bytes as `compress1X`.
+fn compress1XPacked(dst: []u8, src: []const u8, p: *const PackedTable) usize {
+    if (dst.len <= 8) return 0;
+    var s: HufStream = .{ .buf = dst, .end = dst.len - 8 };
+    const t = &p.elt;
+    // `HUF_tightCompressBound`: with this much room no flush can overrun.
+    if (dst.len < ((src.len * p.table_log) >> 3) + 8 or p.table_log > 11) {
+        encodeLoop(&s, src, t, 4, false, false);
+    } else switch (p.table_log) {
+        11 => encodeLoop(&s, src, t, 5, true, false),
+        10 => encodeLoop(&s, src, t, 5, true, true),
+        9 => encodeLoop(&s, src, t, 6, true, false),
+        8 => encodeLoop(&s, src, t, 7, true, false),
+        7 => encodeLoop(&s, src, t, 8, true, false),
+        else => encodeLoop(&s, src, t, 9, true, true),
+    }
+    return s.close();
+}
+
+pub const Streams = enum { single, four };
+
+/// `HUF_compressCTable_internal`. `table_size` is what already sits at
+/// `dst[0..table_size]` (the serialised table, or 0 when reusing).
+fn compressWithTable(dst: []u8, table_size: usize, src: []const u8, streams: Streams, ct: *const CTable) usize {
+    const out = dst[table_size..];
+    const c_size = if (src.len < packed_min_len) switch (streams) {
+        .single => compress1X(out, src, ct),
+        .four => compress4X(out, src, ct),
+    } else blk: {
+        var p: PackedTable = undefined;
+        packTable(&p, ct);
+        break :blk switch (streams) {
+            .single => compress1XPacked(out, src, &p),
+            .four => compress4XWith(out, src, &p, compress1XPacked),
+        };
+    };
+    if (c_size == 0) return 0;
+    const total = table_size + c_size;
+    // check compressibility
+    if (total >= src.len - 1) return 0;
+    return total;
+}
+
+const suspect_incompressible_sample_size = 4096;
+const suspect_incompressible_sample_ratio = 10;
+
+/// `HUF_compress_internal` for `HUF_compress{1,4}X_repeat`.
+///
+/// `old` is the previous block's table and receives the new one when a new one
+/// is built; `repeat` says whether `old` may be reused. Returns the literal
+/// payload size, 0 for "not compressible", 1 for "single symbol" (`dst[0]`
+/// holds it).
+pub fn compress(dst: []u8, src: []const u8, huff_log_in: u32, streams: Streams, old: *CTable, repeat: *Repeat, flags: Flags) Error!usize {
+    if (src.len == 0) return 0;
+    if (dst.len == 0) return 0;
+    if (src.len > block_size_max) return error.Generic;
+    var huff_log = huff_log_in;
+    if (huff_log == 0) huff_log = table_log_default;
+    var max_symbol: u32 = symbol_value_max;
+    var counts: [symbol_value_max + 1]u32 = undefined;
+
+    // Heuristic : If old table is valid, use it for small inputs
+    if (flags.prefer_repeat and repeat.* == .valid) return compressWithTable(dst, 0, src, streams, old);
+
+    // If uncompressible data is suspected, do a smaller sampling first.
+    if (flags.suspect_uncompressible and src.len >= suspect_incompressible_sample_size * suspect_incompressible_sample_ratio) {
+        var largest_total: usize = 0;
+        var m1: u32 = max_symbol;
+        largest_total += hist.count(&counts, &m1, src[0..suspect_incompressible_sample_size]);
+        var m2: u32 = max_symbol;
+        largest_total += hist.count(&counts, &m2, src[src.len - suspect_incompressible_sample_size ..]);
+        if (largest_total <= ((2 * suspect_incompressible_sample_size) >> 7) + 4) return 0;
+    }
+
+    const largest = hist.count(&counts, &max_symbol, src);
+    if (largest == src.len) {
+        dst[0] = src[0];
+        return 1;
+    }
+    if (largest <= (src.len >> 7) + 4) return 0; // heuristic: probably not compressible enough
+
+    if (repeat.* == .check and !validateCTable(old, &counts, max_symbol)) repeat.* = .none;
+    if (flags.prefer_repeat and repeat.* != .none) return compressWithTable(dst, 0, src, streams, old);
+
+    huff_log = optimalTableLog(huff_log, src.len, max_symbol, &counts, flags.optimal_depth);
+    var ct: CTable = undefined;
+    ct.clear();
+    huff_log = try buildCTable(&ct, &counts, max_symbol, huff_log);
+
+    const h_size = try writeCTable(dst, &ct, max_symbol, huff_log);
+    if (repeat.* != .none) {
+        const old_size = estimateCompressedSize(old, &counts, max_symbol);
+        const new_size = estimateCompressedSize(&ct, &counts, max_symbol);
+        if (old_size <= h_size + new_size or h_size + 12 >= src.len) {
+            return compressWithTable(dst, 0, src, streams, old);
+        }
+    }
+    if (h_size + 12 >= src.len) return 0;
+    repeat.* = .none;
+    old.* = ct;
+    return compressWithTable(dst, h_size, src, streams, old);
+}
+
+test "the unrolled encoder writes compress1X's bytes at every table log and room" {
+    var prng = std.Random.DefaultPrng.init(0x4e7f_c0de);
+    const r = prng.random();
+    var src: [5000]u8 = undefined;
+    var want: [8000]u8 = undefined;
+    var got: [8000]u8 = undefined;
+    // Alphabet sizes and skews that land on every table log 1..12 (the max
+    // table log is a parameter; skew makes the long codes), lengths around
+    // every unroll (4..9, and twice that), and output room from the exact size
+    // (the guarded flushes, `ptr` clamped at the end) up to plenty (the fast
+    // flushes of the tight bound).
+    const lens = [_]usize{ 1, 2, 3, 7, 17, 18, 35, 36, 1023, 1024, 1025, 4999 };
+    var logs_seen: u16 = 0;
+    for (2..table_log_max + 1) |max_log| for (lens, 0..) |len, round| {
+        const alpha: u32 = if (round % 3 == 0) 255 else r.intRangeAtMost(u32, 1, 255);
+        var counts: [256]u32 = @splat(0);
+        for (src[0..len]) |*b| {
+            // Geometric skew: the deep trees that reach the larger table logs.
+            const s = @min(alpha, @as(u32, @ctz(r.int(u32) | (@as(u32, 1) << 31))) * (alpha / 16 + 1) + r.uintAtMost(u32, alpha / 16));
+            b.* = @intCast(s);
+            counts[s] += 1;
+        }
+        var m: u32 = 255;
+        while (counts[m] == 0) m -= 1;
+        if (std.mem.max(u32, &counts) == len) continue; // one symbol: never Huffman-coded
+        var ct: CTable = .{};
+        const log = buildCTable(&ct, &counts, m, @max(@as(u32, @intCast(max_log)), fse.highbit32(m) + 1)) catch continue;
+        logs_seen |= @as(u16, 1) << @intCast(log);
+        var p: PackedTable = undefined;
+        packTable(&p, &ct);
+        const plenty = compress1X(&want, src[0..len], &ct);
+        try std.testing.expect(plenty != 0);
+        for ([_]usize{ want.len, plenty + 8, plenty + 1, plenty, plenty -| 1, ((len * log) >> 3) + 8, ((len * log) >> 3) + 7 }) |room| {
+            const a = compress1X(want[0..@min(room, want.len)], src[0..len], &ct);
+            const b = compress1XPacked(got[0..@min(room, got.len)], src[0..len], &p);
+            try std.testing.expectEqual(a, b);
+            try std.testing.expectEqualSlices(u8, want[0..a], got[0..b]);
+            const a4 = compress4X(want[0..@min(room, want.len)], src[0..len], &ct);
+            const b4 = compress4XWith(got[0..@min(room, got.len)], src[0..len], &p, compress1XPacked);
+            try std.testing.expectEqual(a4, b4);
+            try std.testing.expectEqualSlices(u8, want[0..a4], got[0..b4]);
+        }
+    };
+    // Every table log from 2 up was exercised (1 needs a two-symbol alphabet).
+    try std.testing.expect(logs_seen & 0b1_1111_1111_1100 == 0b1_1111_1111_1100);
+}
+
+test "two-symbol alphabet codes each symbol in one bit" {
+    var counts = @as([256]u32, @splat(0));
+    counts['a'] = 10;
+    counts['b'] = 5;
+    var ct: CTable = .{};
+    const log = try buildCTable(&ct, &counts, 'b', 11);
+    try std.testing.expectEqual(@as(u32, 1), log);
+    try std.testing.expectEqual(@as(u8, 1), ct.elt['a'].nb_bits);
+    try std.testing.expectEqual(@as(u8, 1), ct.elt['b'].nb_bits);
+}
+
+test "setMaxHeight keeps the Kraft sum at one" {
+    // Fibonacci counts force a deep tree that must be flattened to 11 bits.
+    var counts = @as([256]u32, @splat(0));
+    var a: u32 = 1;
+    var b: u32 = 1;
+    for (0..20) |i| {
+        counts[i] = a;
+        const t = a + b;
+        a = b;
+        b = t;
+    }
+    var ct: CTable = .{};
+    const log = try buildCTable(&ct, &counts, 19, 11);
+    try std.testing.expectEqual(@as(u32, 11), log);
+    var kraft: u64 = 0;
+    for (ct.elt[0..20]) |e| {
+        try std.testing.expect(e.nb_bits >= 1 and e.nb_bits <= 11);
+        kraft += @as(u64, 1) << @intCast(11 - e.nb_bits);
+    }
+    try std.testing.expectEqual(@as(u64, 1 << 11), kraft);
+}

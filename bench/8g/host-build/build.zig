@@ -18,6 +18,8 @@ pub fn build(b: *std.Build) void {
     });
     const hostlib = b.createModule(.{ .root_source_file = b.path("hostlib/root.zig"), .target = wasm, .optimize = opt, .pic = true });
     hostlib.addImport("build_options", options.createModule());
+    // As `../../../build.zig`: the zstd decoder is a module with its own optimize mode.
+    hostlib.addImport("zstd_dec", b.createModule(.{ .root_source_file = b.path("hostlib/zstd/decompress.zig"), .target = wasm, .optimize = .ReleaseSafe, .pic = true }));
     const host_mod = b.createModule(.{ .root_source_file = b.path("host/host.zig"), .target = wasm, .optimize = opt, .pic = true });
     host_mod.addImport("hostlib", hostlib);
     const host = b.addObject(.{ .name = "host", .root_module = host_mod });

@@ -18,6 +18,10 @@ pub fn build(b: *std.Build) void {
     });
     const hostlib = b.createModule(.{ .root_source_file = b.path("hostlib/root.zig"), .target = wasm, .optimize = .ReleaseSmall, .pic = true });
     hostlib.addImport("build_options", options.createModule());
+    // The zstd decoder (hostlib/zstd/README.md) is a module of its own, so it has its own optimize mode: ReleaseSafe
+    // keeps every bounds check (a bad frame that finds a bug traps, it does not write out of its buffers) and
+    // decodes 15 to 20 times faster than `std.compress.zstd` in ReleaseSmall.
+    hostlib.addImport("zstd_dec", b.createModule(.{ .root_source_file = b.path("hostlib/zstd/decompress.zig"), .target = wasm, .optimize = .ReleaseSafe, .pic = true }));
     const host_mod = b.createModule(.{ .root_source_file = b.path("host/host.zig"), .target = wasm, .optimize = .ReleaseSmall, .pic = true });
     host_mod.addImport("hostlib", hostlib);
     const host = b.addObject(.{ .name = "host", .root_module = host_mod });

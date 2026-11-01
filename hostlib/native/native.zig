@@ -23,6 +23,7 @@ pub const Op = enum(u32) {
     sha256_new = 8,
     sha256_update = 9,
     sha256_final = 10,
+    zstd_stream_feed = 11,
     _,
 };
 
@@ -232,6 +233,19 @@ fn run(a: Allocator, owner: usize, op: u32, in: []const u8) Err!Result {
             try st.push(in[4..], &out);
             return bytes(try out.toOwnedSlice(a));
         },
+        .zstd_stream_feed => {
+            // u32 handle, u32 max (0: the default push limit), the chunk. Out: the output, then one byte: 1 when the
+            // stream has more output for the input so far (call again with no chunk), 0 when it needs input.
+            const s = try lookup(try u32At(in, 0), owner, .zstd);
+            const st: *zstd.Stream = @ptrFromInt(s.ptr);
+            var max: usize = try u32At(in, 4);
+            if (max == 0) max = zstd.PUSH_DEFAULT;
+            var out: std.ArrayList(u8) = .empty;
+            errdefer out.deinit(a);
+            const more = try st.feed(in[8..], &out, max);
+            try out.append(a, @intFromBool(more));
+            return bytes(try out.toOwnedSlice(a));
+        },
         .zstd_stream_close => {
             const s = try lookup(try u32At(in, 0), owner, .zstd);
             const st: *zstd.Stream = @ptrFromInt(s.ptr);
@@ -251,12 +265,12 @@ fn run(a: Allocator, owner: usize, op: u32, in: []const u8) Err!Result {
     }
 }
 
-/// The stack that an op can use below its caller, in bytes. zstd: about 274 KB while a block decodes (std keeps two
-/// 128 KB arrays on the stack, research/native/README.md 7), so 300 KB. BLAKE3 14 KB and SHA-256 9 KB: 16 KB.
+/// The stack that an op can use below its caller, in bytes. zstd: about 6 KB (measured in wasm32,
+/// research/zstd-speed/README.md: the decoder state is on the heap), so 32 KB. BLAKE3 14 KB and SHA-256 9 KB: 16 KB.
 /// The bridge reserves it before the call (`canary.reserve`): a frame that would pass the canary is a clean trap.
 pub fn stackNeed(op: u32) usize {
     return switch (@as(Op, @fromBackingInt(op))) {
-        .zstd_decode, .zstd_stream_push => 300 * 1024,
+        .zstd_decode, .zstd_stream_push, .zstd_stream_feed => 32 * 1024,
         else => 16 * 1024,
     };
 }

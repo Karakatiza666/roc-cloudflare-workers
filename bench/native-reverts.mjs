@@ -21,12 +21,12 @@ const reverts = [
   R('BLAKE3 state is reset at each update', ['hash'], [N, '@as(*T, @ptrFromInt(s.ptr)).update(in[4..]);', '@as(*T, @ptrFromInt(s.ptr)).* = if (T == Blake3) Blake3.init(.{}) else Sha256.init(.{});\n    @as(*T, @ptrFromInt(s.ptr)).update(in[4..]);']),
   R('no owner check in lookup (another task)', ['wrongtask'], [N, 'if (s.owner != owner) return error.WrongTask;', 'if (s.owner != owner and false) return error.WrongTask;']),
   R('no endTask hook in taskEnd (the slots stay)', ['endtask'], [A, '@import("native/native.zig").endTask(allocator, owner, .forget);', '']),
-  R('no push_limit check in the stream', ['stream'], [Z, 'if (out.items.len > s.push_limit) return s.fail(error.OutputLimit);', '']),
+  R('no push_limit check in the stream', ['stream'], [Z, 'if (out.items.len > s.push_limit) return error.OutputLimit;', '']),
   R('a handle that was closed is still a handle (no check of used and gen)', ['twice'], [N, 'if (!s.used or s.gen != handle >> 8) return error.BadHandle;', 'if (false) return error.BadHandle;']),
   R('no cap of handles for a task', ['many'], [N, 'if (mine >= MAX_PER_TASK or free == null) return error.TooManyHandles;', 'if (free == null) return error.TooManyHandles;']),
   R('no window limit check in open', ['limits'], [N, 'if (w > zstd.WINDOW_MAX) return error.BadArgument;', '']),
   R('the result copy drops its last byte', ['decode', 'hash'], [H, 'return .{ .bytes = Bytes.fromSlice(r.bytes, ROC_HOST), .status = r.status };', 'return .{ .bytes = Bytes.fromSlice(r.bytes[0 .. r.bytes.len -| 1], ROC_HOST), .status = r.status };']),
-  R('no stack reserve before the op (the 274 KB frame can reach the canary)', ['deep'], [H, 'lib.canary.reserve(lib.native.stackNeed(op));', '']),
+  R('no stack reserve before the op (the zstd frame can reach the canary)', ['deep'], [H, 'lib.canary.reserve(lib.native.stackNeed(op));', '']),
   R('status 4 is not a trap (an out of memory gives an empty result)', ['oom'], [H, 'if (r.status == 4) lib.cpu.oom();', '']),
 ];
 

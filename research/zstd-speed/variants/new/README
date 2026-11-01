@@ -1,0 +1,1 @@
+The new decoder of hostlib: build.sh copies hostlib/native/zstd.zig here (the file is not kept in this directory).

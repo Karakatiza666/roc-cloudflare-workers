@@ -128,6 +128,21 @@ test('stream', async () => {
   return `chunks 1, 7, 4096, 65536 equal; push limit: ${show(limited)}`;
 });
 
+test('feed', async () => {
+  // R-Z15: 64 MiB of zeros in one chunk of 2 KB. A push is over the push limit (16 MiB). `feed!` gives it in parts of
+  // 1 MiB, and the app memory stays small.
+  const sum = readFileSync(new URL('zeros-64m.sha256', DATA), 'utf8').trim();
+  const pushed = await r.run('stream zeros-64m.zst 100000 0');
+  expectBody('feed: push of the high ratio chunk', pushed, /^err OutputLimit close /);
+  const fed = await r.run('feed zeros-64m.zst 100000 1048576');
+  // 64 parts of 1 MiB, and one more call when the last part ends before the checksum of the frame.
+  expectBody('feed: zeros in parts', fed, new RegExp(`^ok 67108864 6[45] 1048576 Ok\\(\\{\\}\\) ${sum}$`));
+  const small = await r.run('feed pkg-pipe.tar.zst 1000 4096');
+  expectBody('feed: small parts', small, new RegExp(`^ok 122880 \\d+ 4096 Ok\\(\\{\\}\\) ${hashes['pkg.tar'].sha}$`));
+  idle('feed');
+  return `push ${show(pushed)}; feed ${show(fed)}`;
+});
+
 test('handles', async () => {
   // Typed errors: a closed handle is `BadHandle`, the 17th handle of a task is `TooManyHandles`, a window limit over
   // 8 MiB is `BadArgument`.

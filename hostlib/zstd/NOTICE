@@ -1,0 +1,167 @@
+zstd — third-party attribution
+
+This file carries a CONDITION. The encoder and the decoder in `src/` are a translation of C
+source from libzstd (github.com/facebook/zstd, tag v1.5.7, commit
+f8745da6ff1ad1e7bab384bd1f9d742439278e99) into Zig. The BSD licence that source
+is offered under requires its copyright notice, conditions and disclaimer to
+travel with redistributions of the source and to be reproduced with binary
+redistributions. They are reproduced in full below. The obligation lives here,
+beside the code that owes it; the root NOTICE does not list modules.
+
+**Copyleft:** NONE-SHIPPED — libzstd is dual-licensed "BSD-style OR GPLv2" at
+the recipient's option. This port is taken under the BSD licence only; no text
+of this module is offered under, or relies on, the GPLv2.
+
+WHAT WAS TAKEN
+
+Translated (source, restructured into Zig but decision-for-decision the same):
+
+  lib/compress/zstd_fast.c            no-dictionary and extDict `fast`
+                                      match finders                         -> src/match.zig
+  lib/compress/zstd_double_fast.c     no-dictionary and extDict `dfast`
+                                      match finders                         -> src/match.zig
+  lib/compress/zstd_lazy.c            no-dictionary and extDict hash-chain,
+                                      row and binary-tree (DUBT) match
+                                      finders, greedy/lazy/lazy2/btlazy2
+                                      parsers                               -> src/lazy.zig
+  lib/compress/zstd_opt.c             no-dictionary binary-tree match
+                                      finder, price model and optimal
+                                      parser (btopt/btultra/btultra2), with
+                                      its long-distance candidates, and
+                                      their extDict variants                -> src/opt.zig
+  lib/compress/zstd_ldm.c,            long-distance matching: gear rolling
+  lib/compress/zstd_ldm_geartab.h     hash and its table, bucketed match
+                                      table, sequence generation (prefix
+                                      and extDict)                          -> src/ldm.zig
+  lib/compress/zstd_compress_internal.h  window helpers, hashes, ZSTD_count,
+                                      seqStore, repcode handling            -> src/match.zig, src/sequences.zig
+  lib/compress/zstd_compress.c        frame/block driver (compressContinue,
+                                      compressEnd), frame header, parameter
+                                      adjustment, entropy glue for a block  -> src/frame.zig, src/params.zig
+                                      dictionary loading (insertDictionary,
+                                      loadCEntropy, loadDictionaryContent)
+                                      and the CDict                         -> src/cdict.zig
+                                      a CDict into a context (copy, reload,
+                                      attach), prefixes, usingDict/CDict    -> src/frame.zig
+                                      streaming (compressStream2 over
+                                      buffered input and output)            -> src/stream.zig
+                                      post-block splitter and its block
+                                      size estimates                        -> src/blocksplit.zig
+                                      external sequences into a block
+                                      (ZSTD_referenceExternalSequences'
+                                      path of ZSTD_buildSeqStore)           -> src/frame.zig
+                                      the sequence-level API
+                                      (compressSequences[AndLiterals],
+                                      generateSequences, sequence copiers,
+                                      validation, the sequence producer)    -> src/seqapi.zig, src/frame.zig
+  lib/compress/zstdmt_compress.c      multithreaded compression: job and
+                                      overlap sizing, round buffer, jobs,
+                                      serial state (checksum, LDM across
+                                      jobs), flushing; not rsyncable        -> src/zstdmt.zig
+  lib/compress/zstd_compress_superblock.c  superblocks (targetCBlockSize)   -> src/superblock.zig
+  lib/compress/clevels.h              level tables                          -> src/params.zig
+  lib/compress/zstd_preSplit.c        block pre-splitter                    -> src/presplit.zig
+  lib/compress/zstd_compress_literals.c  literals section                  -> src/literals.zig
+  lib/compress/zstd_compress_sequences.c encoding-type choice, table build,
+                                      sequence bitstream                    -> src/sequences.zig
+  lib/compress/huf_compress.c         Huffman tree, table header (writing
+                                      and, for dictionaries, reading),
+                                      streams                               -> src/huf.zig
+  lib/compress/fse_compress.c, lib/common/fse.h
+                                      FSE normalisation, header, coding     -> src/fse.zig
+  lib/common/bitstream.h              bit writer                            -> src/bitstream.zig
+  lib/compress/hist.c                 byte histograms                       -> src/hist.zig
+  lib/common/zstd_internal.h          code tables, default distributions    -> src/sequences.zig
+  lib/decompress/zstd_decompress.c    frame decoder (one-shot and
+                                      piecewise), frame header, size
+                                      queries, skippable frames,
+                                      loadDEntropy, getDictID_from*         -> src/decompress.zig, src/ddict.zig
+                                      streaming (decompressStream)          -> src/dstream.zig
+  lib/decompress/zstd_ddict.c         DDict: load, copy/ref, dictID        -> src/ddict.zig
+  lib/decompress/zstd_decompress_block.c, lib/decompress/zstd_decompress_internal.h
+                                      literals and sequences sections,
+                                      sequence tables, sequence execution   -> src/dblock.zig
+  lib/decompress/huf_decompress.c     Huffman decoding tables and streams,
+                                      incl. the fast four-stream loop       -> src/huf_dec.zig
+  lib/decompress/huf_decompress_amd64.S  the four-stream loops' bodies,
+                                      x86-64 BMI2 assembly                  -> src/huf_asm.zig
+  lib/common/entropy_common.c         FSE_readNCount, HUF_readStats         -> src/dbits.zig, src/huf_dec.zig
+  lib/common/fse_decompress.c, lib/common/bitstream.h
+                                      FSE decoding, bit reader              -> src/dbits.zig
+  lib/dictBuilder/cover.c, lib/dictBuilder/cover.h, lib/dictBuilder/fastcover.c
+                                      dictionary training: cover and
+                                      fastCover contexts, segment selection,
+                                      epochs, parameter checks, the
+                                      optimizers, candidate scoring
+                                      (COVER_selectDict,
+                                      COVER_checkTotalCompressedSize), the
+                                      trainers' entry points                -> src/dict_builder.zig
+  lib/dictBuilder/zdict.c             dictionary finalization
+                                      (ZDICT_finalizeDictionary,
+                                      ZDICT_analyzeEntropy,
+                                      ZDICT_addEntropyTablesFromBuffer),
+                                      ZDICT_getDictID / getDictHeaderSize;
+                                      not the legacy trainer                -> src/zdict.zig
+  contrib/seekable_format/zstdseek_compress.c, zstdseek_decompress.c,
+  zstd_seekable.h                     the seekable format: frame log, seek
+                                      table writer, CStream, table loader,
+                                      offset-to-frame search, ranged
+                                      decompression                         -> src/seekable.zig
+
+Each of those files says so in its first line
+(`SPDX-License-Identifier: BSD-3-Clause AND MIT`). `src/root.zig`, the tests
+and `src/testdata/` are this collection's own work (MIT).
+
+Not taken: `zdict.c`'s legacy (divsufsort) trainer, the prefetching
+sequence decoder, the x86-64 assembly Huffman loop (its C twin is ported),
+libzstd's thread pool and threading shims (`pool.c`, `threading.c`: the
+port has its own small pool over `std.Thread`), `rsyncable`, and the
+dictionary trainers' multithreaded optimizers.
+
+Run, not copied: `tools/` builds the same libzstd tag and runs it to produce
+`src/testdata/goldens.zig` and `src/testdata/stream_goldens.zig` (lengths and
+SHA-256 digests of its output). `tools/zref.c`, `tools/zstream.c` and
+`tools/zdec.c` (the decoder's differential oracle) and `tools/zdtrain.c`
+are this collection's own programs (MIT) calling libzstd's public API;
+`tools/ztrain.c` (MIT) `#include`s libzstd's `cover.c` / `fastcover.c` at
+build time to call their internal steps, and writes
+`src/testdata/dict_goldens.zig` through `tools/gen-dict-goldens.sh`;
+`tools/zfinal.c` (MIT) links libzstd and calls its public dictBuilder API
+and `COVER_selectDict` for `src/testdata/dict_final_goldens.zig`. No
+libzstd source bytes are stored in this repository; the two trained
+dictionaries `src/testdata/*.zdict` are libzstd's output (its trainer,
+`ZDICT_trainFromBuffer`, run on this collection's generated samples), as
+the golden digests are.
+
+LICENSE TEXT (libzstd `LICENSE`, verbatim)
+
+BSD License
+
+For Zstandard software
+
+Copyright (c) Meta Platforms, Inc. and affiliates. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+ * Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+ * Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+ * Neither the name Facebook, nor Meta, nor the names of its contributors may
+   be used to endorse or promote products derived from this software without
+   specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
