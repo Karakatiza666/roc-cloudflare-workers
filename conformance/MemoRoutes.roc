@@ -15,6 +15,10 @@ load_keys! = || Ok({ kid: "k1", big: 1_152_921_504_606_846_976, made: WebCrypto.
 keys : Memo(Keys)
 keys = Memo.new("conformance-keys", { max_age_ms: 600_000 })
 
+## The clock check (checks/clock.mjs): an age of 60 s on the clock of the shim (option `now`), not on real time.
+clock : Memo(Keys)
+clock = Memo.new("conformance-clock", { max_age_ms: 60_000 })
+
 ## A short age: a `get!` after 100 ms loads again.
 short : Memo(Keys)
 short = Memo.new("conformance-short", { max_age_ms: 50 })
@@ -27,6 +31,7 @@ MemoRoutes :: [].{
 			keys.clear!()
 			Response.from_text(200, "cleared")
 		}
+		["clock"] => show(clock.get!(load_keys!))
 		# Two `get!` of `short`, 100 ms apart: two ids.
 		["short"] => {
 			a = short.get!(load_keys!)

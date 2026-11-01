@@ -4,12 +4,13 @@ import Js
 
 Time :: [].{
 
-	## `Date.now()`: one `call!`, no wait. On the edge it is coarse: it moves only at I/O.
+	## The clock of the shim (`pf.now`: the `makeHandler` option `now`, default `Date.now()`): one `call!`, no wait. It
+	## is also the clock of `Memo` expiry and of the task deadlines. On the edge it is coarse: it moves only at I/O.
 	now_ms! : () => U64
-	now_ms! = || match Js.call!([Get(Root("global"), "Date"), Call(Slot(0), "now", [])]) {
-		Ok(Int(i)) => i.to_u64_try() ?? crash "Time.now_ms!: Date.now() is negative"
-		Ok(Num(f)) => f.to_u64_try() ?? crash "Time.now_ms!: Date.now() is not a time"
-		Ok(other) => crash "Time.now_ms!: Date.now() gave ${Str.inspect(other)}"
+	now_ms! = || match Js.call!([Call(Root("pf"), "now", [])]) {
+		Ok(Int(i)) => i.to_u64_try() ?? crash "Time.now_ms!: the clock is negative"
+		Ok(Num(f)) => f.to_u64_try() ?? crash "Time.now_ms!: the clock is not a time"
+		Ok(other) => crash "Time.now_ms!: the clock gave ${Str.inspect(other)}"
 		Err(t) => crash "Time.now_ms!: ${t.name}: ${t.message}"
 	}
 

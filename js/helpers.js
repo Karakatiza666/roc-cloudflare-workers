@@ -236,7 +236,7 @@ function untilAbort(p, signal) {
 }
 
 // The pin table of an isolate (API.md RS2): values for later tasks, by name. `limit`: the shim option `pinLimit`.
-// `now`: a clock. Each pin and unpin is counted (M11).
+// `now`: the clock of the shim (option `now`), for the expiry of `maxAgeMs`. Each pin and unpin is counted (M11).
 export function makePins(limit = 1000, now = () => Date.now()) {
   const table = new Map();
   const stats = { pins: 0, unpins: 0, expired: 0 };
@@ -320,8 +320,10 @@ export function sqlParams(params) {
   });
 }
 
-// t: the task (or undefined), c: its program context, shim: { pins, log }, tasks: the task table.
+// t: the task (or undefined), c: its program context, shim: { pins, log, now }, tasks: the task table.
 export function makeHelpers(t, c, shim, tasks) {
+  // The clock of the shim (option `now`). A shim of a test with no `now` reads `Date.now`.
+  const clock = shim.now ?? (() => Date.now());
   return {
     // One value as `Packed` (API.md 5.2): JS writes tag 24 and the CBOR of the value into the result block.
     // `maxBytes`: the limit of its CBOR (a TooLarge above it). No limit when it is not given: the modules give it (8c).
@@ -359,9 +361,13 @@ export function makeHelpers(t, c, shim, tasks) {
       for (const [k] of entries) out.push(k);
       return new Limited(out, maxBytes ?? Infinity);
     },
-    // `Object.Self.set_alarm_in!`: `storage.setAlarm(Date.now() + delayMs)`, so the delay needs no clock crossing.
+    // `Time.now_ms!`: the clock of the shim (option `now`, default `Date.now`), in whole ms.
+    now() {
+      return Math.floor(clock());
+    },
+    // `Object.Self.set_alarm_in!`: `storage.setAlarm(now + delayMs)` on the clock of the shim, so the delay needs no clock crossing.
     alarmIn(storage, delayMs) {
-      return storage.setAlarm(Date.now() + delayMs);
+      return storage.setAlarm(clock() + delayMs);
     },
     // The item whose `id` is `id`, else undefined (OP7). `Queue.Message.ack!` finds its message with it.
     findById(array, id) {
@@ -561,9 +567,9 @@ export function makeHelpers(t, c, shim, tasks) {
       const { EmailMessage } = await import('cloudflare:email');
       return new EmailMessage(from, to, raw);
     },
-    // `Io.timeout_at` (MODULES.md 11): `scheduler.wait` until `deadlineMs` of `Date.now()`; 0 ms when it has passed.
+    // `Io.timeout_at` (MODULES.md 11): `scheduler.wait` (a real timer) until `deadlineMs` of the clock of the shim; 0 ms when it has passed.
     waitUntil(deadlineMs, signal) {
-      return globalThis.scheduler.wait(Math.max(0, Number(deadlineMs) - Date.now()), { signal });
+      return globalThis.scheduler.wait(Math.max(0, Number(deadlineMs) - clock()), { signal });
     },
     // The pin table (RS2): `Js.pin!`, `pinned!`, `unpin!` (8c).
     pin(name, value, maxAgeMs) {

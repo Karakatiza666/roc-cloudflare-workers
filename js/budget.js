@@ -17,7 +17,7 @@ export const BUDGET_OPTS = {
 const size = (m) => m.buffer.byteLength;
 const mb = (n) => (n / MB).toFixed(1);
 
-// opts: the BUDGET_OPTS keys, `now` (a clock for tests), `log(text)`: one line for each denied grow (M11).
+// opts: the BUDGET_OPTS keys, `now` (the clock of the shim: option `now`, for `graceMs`), `log(text)`: one line for each denied grow (M11).
 export function makeBudget(opts = {}) {
   const o = { ...BUDGET_OPTS };
   for (const k of Object.keys(BUDGET_OPTS)) if (opts[k] !== undefined) o[k] = opts[k];

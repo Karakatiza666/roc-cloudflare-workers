@@ -45,9 +45,13 @@ const ops = {
     },
   },
 };
+// The one clock of the shim (option `now`): `Date.now()` plus `clockSkew`. `GET /__clock?skew=<ms>` sets the skew (no Roc task,
+// so no sweep). checks/clock.mjs moves it: `Time.now_ms!`, `Memo` expiry, the deadlines, `Io.timeout_at` and `set_alarm_in!` follow it.
+let clockSkew = 0;
+const now = () => Date.now() + clockSkew;
 // `tailMaxBytes`: 100 kB, so a trace with the logs of 2 MiB (cut by workerd to 200 kB) is above the limit (checks/tail.mjs).
 // `initMs`: the `Init` deadline of API.md 10.2, smaller for the test (class `Slow`).
-const Handler = makeHandler(app, { ops, heapCheckWhenIdle: false, tailMaxBytes: 100_000, initMs: 1000 });
+const Handler = makeHandler(app, { ops, now, heapCheckWhenIdle: false, tailMaxBytes: 100_000, initMs: 1000 });
 
 // The messages that the JS consumer of the queue `v8` got (PLAN.md 8f): a `Queue.v8` message with a `Cbor.Bytes` field is
 // a `Uint8Array` here, and a `U64` of 2^60 is a `BigInt`. `GET /__queue_seen` gives them.
@@ -98,6 +102,10 @@ export default class extends Handler {
       } catch (e) {
         return new Response(`${e.name}: ${e.message}`);
       }
+    }
+    if (path === '/__clock') {
+      clockSkew = Number(new URL(request.url).searchParams.get('skew'));
+      return new Response(String(clockSkew));
     }
     if (path === '/__mem') return new Response(String(r.x.memory.buffer.byteLength));
     // FO6 (PLAN.md 8f): a JS call with no argument of the RPC method `hello` (argument type `{}`): the default export

@@ -484,6 +484,7 @@ Done or not needed:
 | `heapCheckWhenIdle` | `true` | 12e. Run the shared-memory check when the instance becomes idle |
 | `taskDeadlineMs` | 120,000 | 3b. A wait of a `Fetch` task before `Ctx.respond!` (and of a kind with no Workers limit) that is longer is cancelled. `Scheduled`, `Queue` and `Alarm` tasks, the time after `respond!` and socket waits have other deadlines (API.md 10.2). |
 | `pinLimit` | 1,000 | API.md RS2: the number of entries in the pin table |
+| `now` | `Date.now` | The one clock of the shim (after 0.0.2): `Time.now_ms!`, `Memo` and pin expiry, the task deadlines, `graceMs`, `Io.timeout_at`, `set_alarm_in!`. Timers stay real (`MODULES.md` 11, "The clock"). |
 | `ops` | none | API.md 6.4: JS functions of the app, the root `ops` |
 | `other` | none | API.md 10.1: Workers handler names that give the event `Other` |
 
@@ -3707,6 +3708,43 @@ Tests (2026-11-01, nightly 2026-10-31, Zig 0.17.0, workerd of Wrangler 4):
 | `tln install --frozen`, `zig build`, `tln run examples` (isolated XDG dirs, nightly 2026-10-31 as the default) | Exit 0, 0 errors and 0 warnings, `git diff --exit-code examples/` is empty |
 
 Open question: should the runner use the 3 exports to tell a stack overflow from another trap (the way of the compiler), in place of `isStackError` and the canary of `hostlib/canary.zig`? Not done: the current way passes `overflow-test.mjs`, and this is a release of a nightly move only.
+
+## Status of the one clock (2026-11-02)
+
+Input: the Talon registry (slices 101 and 108). The `makeHandler` option `now` drove only the task deadlines, `graceMs` and the pin expiry (`Memo`, `Js.pin!`). `Time.now_ms!` read `Date.now()`, so a test of the app had to set `Date.now` too, and the app clock could not test a `Memo` age. Decision of the user: `now` drives `Time.now_ms!`, `Memo` expiry and the deadlines, so a test sets one clock.
+
+| Clock read | Before | Now |
+| --- | --- | --- |
+| `Time.now_ms!` | `Date.now()` in the ops of Roc | The helper `pf.now` (`js/helpers.js`): `Math.floor(now())`. One `call!`, as before |
+| Pin expiry (`Memo`, `Js.pin!` `max_age_ms`) | `opts.now` | The same `now` (`js/runner.js` makes it once: `opts.now ?? Date.now`) |
+| Task deadlines (`js/tasks.js`) | `opts.now` (by `...opts`) | The same `now`, given by name |
+| `graceMs` (`js/budget.js`) | `opts.now` (by `...opts`) | The same `now`, given by name |
+| `Io.timeout_at` (`pf.waitUntil`) | `Date.now()` | `now()`. The wait is a real `scheduler.wait` of `deadline - now()` |
+| `Object.Self.set_alarm_in!` (`pf.alarmIn`) | `Date.now()` | `now() + delay` |
+| `Time.sleep`, `Io.timeout`, the deadline timer (`watch`) | Real timers | No change: timers stay real |
+| `Worker.Scheduled` `time_ms` | The event | No change |
+| `performance.now()` of the heap check stats (`js/runner.js`) | Real | No change: it measures shim work, not app time |
+| WebSocket, `Response.after` | No clock read of their own: the deadlines of the task table | Follow the task table |
+
+Docs: `js/options.js` (text of `now`), `MODULES.md` 11 (the table "The clock", `now_ms!`, `Io.timeout_at`), `MODULES.md` 7 and 9 (`set_alarm_in!`, `Memo`), `API.md` (RN15, the helpers `now`, `waitUntil`, `alarmIn`, the `Time` row, "Clock of the deadlines" in 10.2), this plan (the option row `now` in 4), `README.md` ("Changes after 0.0.2"), `conformance/README.md`.
+
+Tests: `conformance/checks/clock.mjs`, in its own Miniflare (`taskDeadlineMs` 3 s). `conformance/worker.js` gives `now = Date.now() + clockSkew`, and `GET /__clock?skew=<ms>` sets the skew (a JS route, so no sweep).
+
+| Check | Result | Revert (`node conformance/reverts.mjs "clock: "`) | Result of the revert |
+| --- | --- | --- | --- |
+| `Time.now_ms!` with a skew of 1e9 ms gives the skewed time | PASS | `Time.roc` reads `Date.now()` | FAIL (2 checks: also the `set_alarm_in!` t0) |
+| `Memo` of age 60 s: the same value at +59 s on the clock, a new load at +61 s | PASS | `makePins` with no `now` | FAIL: "it did not expire" |
+| `Io.timeout_at(now + 100)` with a skew of 1e9: `TimedOut` after about 100 ms | PASS (106 ms) | `waitUntil` reads `Date.now()` | FAIL: `Ok({})` after the 3 s sleep |
+| A wait of 5 s, deadline 3 s, the clock moves +10 s at 300 ms, a second request sweeps: cancelled at once | PASS (503 after 308 ms) | The task table reads `Date.now()` | FAIL: ended after 3056 ms |
+| `set_alarm_in!(600 s)` with a skew of 600 s: `get_alarm!` is the clock plus the delay | PASS | `alarmIn` reads `Date.now()` | FAIL |
+
+Result of the 5 reverts: all caught, `PASS`.
+
+| Test | Result |
+| --- | --- |
+| `bench/test-all.sh` (nightly 2026-10-31, Zig 0.17.0, workerd of Wrangler 4) | ALL PASS (55 steps, with the whole conformance run and the new clock checks) |
+
+The registry can remove its override of `Date.now` (`talon/worker/tests/clock.js`) and give its test clock as the option `now` only. The workaround of slice 108 for a `Memo` age is not necessary: the app clock is the `Memo` clock.
 
 ## Done when
 

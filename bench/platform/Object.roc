@@ -244,8 +244,8 @@ Object(iface) :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id
 		set_alarm_at! : Object.Self, U64 => Try({}, [Infra([StorageErr(Io.Thrown)])])
 		set_alarm_at! = |self, epoch_ms| Io.run!(set_alarm_at(self, epoch_ms))
 
-		## `storage.setAlarm(Date.now() + delay_ms)`: the alarm fires `delay_ms` after the call. `pf.alarmIn` reads the
-		## clock in the same program.
+		## `storage.setAlarm(now + delay_ms)`: the alarm fires `delay_ms` after the call. `pf.alarmIn` reads the clock of
+		## `Time.now_ms!` (the shim option `now`) in the same program.
 		set_alarm_in : Object.Self, U64 -> Io({}, [Infra([StorageErr(Io.Thrown)])])
 		set_alarm_in = |_self, delay_ms| Io.new(
 			[Get(Root("ctx"), "storage"), Call(Root("pf"), "alarmIn", [Slot(0), Lit(Int(delay_ms.to_i64_try() ?? I64.highest))])],

@@ -1004,6 +1004,17 @@ const reverts = [
     [CBOR, '\t\t\t\t\tOk({ value: 0, rest }) => Ok({ value: Bool.False, rest })\n\t\t\t\t\tOk({ value: 1, rest }) => Ok({ value: Bool.True, rest })\n', '']),
   R('cbor 0.2.2: Err(Null) in a record field is written as null', 'conformance', ['cbor null: Err(Null) in a record writes no key and reads back as MissingRequiredField, an absent ?: field or Err(Missing); a Bool reads 0 and 1'],
     [CBOR, 'if written.len() == value_start + 1 and written.last() == Ok(0xf6) {', 'if Bool.False {']),
+  // The one clock of the shim (the option `now`, checks/clock.mjs): each part that reads the clock goes back to `Date.now()`.
+  R('clock: Time.now_ms! reads Date.now()', 'conformance', ['clock Time.now_ms!: the time of the shim option now, not Date.now()'],
+    [BP + 'Time.roc', 'Js.call!([Call(Root("pf"), "now", [])])', 'Js.call!([Get(Root("global"), "Date"), Call(Slot(0), "now", [])])']),
+  R('clock: the pin table (Memo expiry) reads Date.now()', 'conformance', ['clock Memo max_age_ms: the value stays until the clock of the shim moves past the age, then load! runs again'],
+    ['js/runner.js', 'pins: makePins(opts.pinLimit ?? 1000, now)', 'pins: makePins(opts.pinLimit ?? 1000)']),
+  R('clock: the task table (deadlines) reads Date.now()', 'conformance', ['clock deadline: the sweep reads the clock of the shim (a wait past the deadline on the clock is cancelled at once)'],
+    ['js/runner.js', 'makeTaskTable({ ...opts, log, now, onCancel', 'makeTaskTable({ ...opts, log, now: () => Date.now(), onCancel']),
+  R('clock: Io.timeout_at waits until a time of Date.now()', 'conformance', ['clock Io.timeout_at: the deadline is on the clock of the shim'],
+    ['js/helpers.js', 'Number(deadlineMs) - clock()', 'Number(deadlineMs) - Date.now()']),
+  R('clock: set_alarm_in! adds the delay to Date.now()', 'conformance', ['clock Object set_alarm_in!: the alarm time is the clock of the shim plus the delay'],
+    ['js/helpers.js', 'storage.setAlarm(clock() + delayMs)', 'storage.setAlarm(Date.now() + delayMs)']),
 ];
 
 // The filter: texts of names, joined by `|` (a revert runs when its name has one of them).

@@ -22,6 +22,12 @@ Each release (tag `X.Y.Z`) has 1 file. The platform and the shim have the same v
 
 There is no npm package and no `package.json` in a project. The release notes have the URL.
 
+## Changes after 0.0.2 (not released)
+
+| Change | In 0.0.2 | After 0.0.2 | What the app author does |
+| --- | --- | --- | --- |
+| One clock: the `makeHandler` option `now` | `now` drove only the task deadlines, `graceMs` and the pin expiry (`Memo`, `Js.pin!`). `Time.now_ms!`, `Io.timeout_at` and `set_alarm_in!` read `Date.now()`. A test had to set `Date.now` and `now` both. | `now` (default `Date.now`) drives `Time.now_ms!`, `Memo` and pin expiry, the task deadlines, `graceMs`, `Io.timeout_at` and `Object.Self.set_alarm_in!`. Timers stay real: `Time.sleep`, `Io.timeout` and the deadline timer wait real ms. A cron `time_ms` comes from the event (`MODULES.md` 11, "The clock"). | Nothing in production (`now` unset is `Date.now`). A test sets only `now`, and can remove an override of `Date.now`. |
+
 ## Changes in 0.0.2
 
 0.0.2 has 5 changes that can break an app of 0.0.1 (the first 4 rows and the WebSocket row), one change that only removes an error (row 5), and a note about the Roc nightly 2026-10-26 (the last row). The rest of the changes since 0.0.1 are in CI and in test scripts (`ci.yml`, `scripts/test_bundle.sh`). They do not change the platform.

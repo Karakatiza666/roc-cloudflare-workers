@@ -37,6 +37,10 @@ const RULES = {
   // Hooks of the runner that tests use.
   log: fn,
   onLog: fn,
+  // The one clock of the shim, `() => ms since the epoch` (default `Date.now`). It drives `Time.now_ms!`, the `max_age_ms`
+  // of `Memo` and `Js.pin!`, the task deadlines (`taskDeadlineMs`, `wallMs`, `initMs`, `afterRespondMs`), `graceMs`,
+  // `Io.timeout_at` and `Object.Self.set_alarm_in!`. A test sets one clock. Timers stay real: `Time.sleep`,
+  // `Io.timeout` and the deadline timer use `setTimeout` or `scheduler.wait`. A cron `time_ms` comes from the event.
   now: fn,
 };
 

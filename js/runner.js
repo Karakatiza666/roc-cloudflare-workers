@@ -28,7 +28,7 @@ function importsOf(cell, tasks, budget, shim = SHIM0) {
   };
 }
 // The shim of an instance that no runner made (tests).
-const SHIM0 = { ops: {}, pins: makePins(), log: (text) => console.warn(text), crossings: { await: 0, call: 0 } };
+const SHIM0 = { ops: {}, pins: makePins(), log: (text) => console.warn(text), crossings: { await: 0, call: 0 }, now: () => Date.now() };
 
 // A new instance counts in the budget at once, and its grow step is the shim option.
 function register(x, budget) {
@@ -81,8 +81,12 @@ export function makeRunner(module, opts = {}) {
   const every = opts.heapCheckEvery ?? HEAP_CHECK_EVERY;
   const whenIdle = opts.heapCheckWhenIdle ?? true;
   const log = opts.log ?? ((text) => console.warn(text));
+  // The one clock of the isolate (shim option `now`, default `Date.now`): `Time.now_ms!` (`pf.now`), the expiry of a pin
+  // (`Memo`), the task deadlines, the budget grace, `Io.timeout_at` (`pf.waitUntil`) and `set_alarm_in!` (`pf.alarmIn`).
+  // Timers (`setTimeout`, `scheduler.wait`) stay real.
+  const now = opts.now ?? (() => Date.now());
   // M3: the budget of the isolate. JS asks it at each grow (`js_grow`) and counts dropped instances (M10).
-  const budget = makeBudget({ ...opts, log });
+  const budget = makeBudget({ ...opts, log, now });
   stats.budget = budget.stats;
   // A waiting task is freed in the host at its cancel, so the memory is free at once.
   // M11: a cancel writes one line (`tasks.js`). A trap in `task_cancel` is an alarm (12c, `cancelTrap`).
@@ -95,10 +99,10 @@ export function makeRunner(module, opts = {}) {
       log(`alarm cancel: task ${t.id}: ${String(e).slice(0, 80)}`);
     }
   };
-  const tasks = makeTaskTable({ ...opts, log, onCancel: (t) => hostCancel(t.inst.x, t, cancelTrap) });
+  const tasks = makeTaskTable({ ...opts, log, now, onCancel: (t) => hostCancel(t.inst.x, t, cancelTrap) });
   // API.md 6.4: the JS functions of the app (root `ops`), the pin table of the isolate (RS2, `pinLimit`).
   // `crossings`: the calls of `js_await` and `js_call` of all instances (PLAN.md 8c: "one crossing" tests).
-  const shim = { ops: opts.ops ?? {}, pins: makePins(opts.pinLimit ?? 1000, opts.now), log, crossings: { await: 0, call: 0 }, envRead: opts.envRead };
+  const shim = { ops: opts.ops ?? {}, pins: makePins(opts.pinLimit ?? 1000, now), log, crossings: { await: 0, call: 0 }, envRead: opts.envRead, now };
   stats.pins = shim.pins.stats;
   stats.crossings = shim.crossings;
   const seen = (x) => {

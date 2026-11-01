@@ -62,7 +62,7 @@ export function lingerUntil(t, d = DEADLINES) {
   return (t.response === 'complete' ? Math.min(t.completeAt, t.endedAt) : t.endedAt) + d.afterRespondMs;
 }
 
-// opts: the DEADLINES keys, `now` (a clock for tests), `onCancel(t)`: called at the cancel
+// opts: the DEADLINES keys, `now` (the clock of the shim: option `now`, for the deadlines), `onCancel(t)`: called at the cancel
 // of a task that waits (the runner frees it in the host there, PLAN.md 3c), `log(text)`: one line
 // for each cancel (M11).
 export function makeTaskTable(opts = {}) {

@@ -248,7 +248,7 @@ export const checks = [
     eq(got.join(', '), '0 false, 1 true, 2 true', 'the runs');
     return got.join(', ');
   }],
-  // `set_alarm_in!` (MODULES.md 7): the alarm is `delay` after the call (`pf.alarmIn` adds `Date.now()`), not at once. `alarm!` logs "counter alarm".
+  // `set_alarm_in!` (MODULES.md 7): the alarm is `delay` after the call (`pf.alarmIn` adds the clock of the shim, option `now`), not at once. `alarm!` logs "counter alarm".
   ['objects set_alarm_in! and its Io twin: get_alarm! is about now + delay, and the alarm fires after the delay, not at once', async (t) => {
     const alarmLogs = (id) => t.logs.filter((l) => String(l.message).includes('"msg":"counter alarm"')).map((l) => JSON.parse(String(l.message).slice(String(l.message).indexOf('{')))).filter((l) => l.id === id);
     for (const [twin, name] of [['0', 'ain1'], ['1', 'ain2']]) {

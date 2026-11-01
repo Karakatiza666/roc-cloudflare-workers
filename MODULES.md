@@ -1015,7 +1015,7 @@ Inside: a class is a record of handlers, all optional, as for `Worker`.
 		sql_rows! : Object.Self, Str, params => Try(Sql.Rows, [Constraint(Sql.Constraint), Infra([SqlErr(Thrown), TooLarge])]) where [params.Encodable([])]
 		sql_rows_with! : Object.Self, Str, params, { max_bytes : U64 } => Try(Sql.Rows, [Constraint(Sql.Constraint), Infra([SqlErr(Thrown), TooLarge])]) where [params.Encodable([])]
 		set_alarm_at! : Object.Self, U64 => Try({}, [Infra([StorageErr(Thrown)])])              # setAlarm(epoch_ms): a time of the clock, one wait
-		set_alarm_in! : Object.Self, U64 => Try({}, [Infra([StorageErr(Thrown)])])              # setAlarm(Date.now() + delay_ms), one wait
+		set_alarm_in! : Object.Self, U64 => Try({}, [Infra([StorageErr(Thrown)])])              # setAlarm(now + delay_ms), now of Time.now_ms!, one wait
 		get_alarm! : Object.Self => Try(U64, [NotFound, Infra([StorageErr(Thrown)])])           # getAlarm: a promise, one wait
 		delete_alarm! : Object.Self => Try({}, [Infra([StorageErr(Thrown)])])                   # deleteAlarm: a promise, one wait
 		list! : Object.Self => Try(List(Str), [Infra([TooLarge, StorageErr(Thrown)])])          # kv.list(): the keys, sync
@@ -1235,7 +1235,7 @@ Three declarations of a typed value with the same shape: a name and a type at th
 
 | Wrapper | Where the value is | Readers | Consistency | Cost of `get!` | Lost when |
 | --- | --- | --- | --- | --- | --- |
-| `Memo` | The pin table of the isolate (RS2), as CBOR bytes | The same isolate | None: a cache | One `call!`, no wait, plus `Cbor.parse` | Workers evicts the isolate, or `max_age_ms` passes |
+| `Memo` | The pin table of the isolate (RS2), as CBOR bytes | The same isolate | None: a cache | One `call!`, no wait, plus `Cbor.parse` | Workers evicts the isolate, or `max_age_ms` passes on the clock of `Time.now_ms!` (the shim option `now`, 11) |
 | `Kv.Cell` | KV | All Workers, all places | Eventual (60 s) | One wait | `ttl_ms` passes |
 | `Object.Cell` | The sync KV storage (`ctx.storage.kv`) of one SQLite-backed Durable Object (7), as CBOR bytes | That object | Strong | One `call!`, no wait | `cell.delete!`, or `self.delete_all!()` (7) |
 
@@ -1378,7 +1378,7 @@ Ctx :: [].{
 }
 
 Time :: [].{
-	now_ms! : () => U64                               # coarse on the edge: it moves at I/O
+	now_ms! : () => U64                               # the shim option now (default Date.now()); coarse on the edge: it moves at I/O
 	sleep! : U64 => {}                                # scheduler.wait(ms): one wait
 	sleep : U64 -> Io({}, e)                          # the twin, for Io.race! (API.md 6.5). For a timeout use Io.timeout or Io.timeout_at
 	seconds_up : U64 -> U64                           # MC10: ms to whole seconds, rounded up (1,001 ms gives 2 s)
@@ -1397,7 +1397,7 @@ Log :: [].{
 | `wait_until!` | `Io.start!` and `ctx.waitUntil` in one `call!`, with no wait. The Roc reader of the `Io` does not run, so a Roc-level `Err` (`PreconditionFailed`, `BadData`) is not seen. Only a JS throw goes to the log. The context of the task (refs and roots) stays until the operation settles, or until the 30 s limit of `waitUntil` (`API.md` 6.5, RS1). Only an `Io({}, e)` fits: the result is dropped, so an operation with a result is a type error (`wait_until!(cache.put(url, res))` would drop the response to send, 5.4; use `cache.put_after!`). Work whose result matters (a write that can fail, a check) runs in the work of `Response.after`. |
 | `pass_through!` | `ctx.passThroughOnException()`. Only in the `Fetch` of a Worker. Elsewhere the shim gives status 1, and the function gives `InvalidState`. After it, an `Err` of `fetch!` makes the shim throw, and Workers sends the request to the origin (`API.md` 10.1). Workers cannot send a request body that the handler already read (Cloudflare docs, Context API). |
 | `Io.timeout` | `io.timeout(ms)` gives `Io(a, [Infra([TimedOut]), ..e])`: the operation, or `Err(Infra(TimedOut))` when `ms` pass first. It is a `Race` of the operation and the sleep of `Time.sleep` in one program, so the loser is aborted as in `Io.race!`. `ws.receive().timeout(5_000).run!()` replaces `Io.race!([ws.receive().map(\|r\| Got(r)), Time.sleep(5_000).map(\|_\| TimedOut)])` and its `match`. No `receive_within!`: the call above has the same length and works for each `Io` (a `Tcp` read, a fetch). |
-| `Io.timeout_at` | `io.timeout_at(deadline_ms)`: the same as `timeout`, with a point in time on the clock of `Time.now_ms!` (`Date.now()`) in place of a length. A loop with one limit for many reads writes `deadline = Time.now_ms!() + limit_ms` once, then `ws.receive().timeout_at(deadline).run!()` in each turn: no `deadline - now`, no second clock read. The wait is `max(0, deadline_ms - Date.now())` at the time the program runs (the helper `pf.waitUntil`). A deadline in the past waits 0 ms: the answer is `Err(Infra(TimedOut))` at once, unless the operation has its result already. |
+| `Io.timeout_at` | `io.timeout_at(deadline_ms)`: the same as `timeout`, with a point in time on the clock of `Time.now_ms!` (the shim option `now`, default `Date.now()`) in place of a length. A loop with one limit for many reads writes `deadline = Time.now_ms!() + limit_ms` once, then `ws.receive().timeout_at(deadline).run!()` in each turn: no `deadline - now`, no second clock read. The wait is `max(0, deadline_ms - now)` at the time the program runs (the helper `pf.waitUntil`). A deadline in the past waits 0 ms: the answer is `Err(Infra(TimedOut))` at once, unless the operation has its result already. |
 | `sleep!`, `sleep` | `scheduler.wait(ms)`. On the edge, a timer does not move during CPU work, only at I/O (Cloudflare docs, scheduler). A sleep is a wait, so the deadlines of `API.md` 10.2 apply. A timeout is `Io.timeout` (`op.timeout(ms)`, `API.md` 6.5). |
 
 As built in `PLAN.md` 8b (second half) and 9c (`platform/Ctx.roc`, `js/helpers.js`, `js/index.js`). `Time` and `Log` are 8c (the table after this one).
@@ -1415,11 +1415,28 @@ As built in `PLAN.md` 8c, wave 1 (`platform/Time.roc`, `platform/Log.roc`):
 
 | Item | Built as | Why |
 | --- | --- | --- |
-| `now_ms!` | `Date.now()`, one `call!` | No wait |
+| `now_ms!` | The helper `pf.now`: the shim option `now` (default `Date.now()`), one `call!`. Since the change after 0.0.2 (README); before it, `Date.now()`. | No wait. One clock for the app and the shim (the table below). |
 | `sleep!`, `sleep` | `scheduler.wait(ms, { signal })` with the root `signal`: a lost branch of `Io.race!` stops the timer (OP8). `sleep!` gives `{}`, also when the wait is aborted. | OP8 |
 | `Io.timeout_at` | `Io.timeout` with the sleep `Call(Root("pf"), "waitUntil", [Lit(Int(deadline_ms)), Slot(0)])` (`js/helpers.js`, the signal is `Keep(Root("signal"))`). A deadline above `I64.highest` is `I64.highest`. | The time left is computed in JS when the program runs: the ops have no arithmetic |
 | `seconds_up` | Public in `Time`. `roc test` checks 1 ms, 1,000 ms, 1,001 ms, 0 and `U64.highest`. | MC10: `Kv`, `Queue` and `Ai` (phase B) use it, and an app can use it for a `max-age` |
 | `Log` | `console.info`, `console.warn` or `console.error` with the line `{"level":..,"msg":..,<fields>}`. The fields are in the order of the derived JSON encoder. A value that is not a record goes in the field `fields`. A throw of `console` is a crash. | Workers Logs takes the level from the console method |
+
+The clock (after 0.0.2). The shim has one clock: the `makeHandler` option `now`, a function that gives ms since the epoch (default `Date.now`). A test sets that one option, and each part below reads the same time. Timers stay real: a sleep or a deadline timer waits real ms.
+
+| Part | Reads the clock of `now` | Waits real time |
+| --- | --- | --- |
+| `Time.now_ms!` | Yes (`pf.now`, rounded down to whole ms) | No |
+| `Time.sleep!`, `Time.sleep`, `Io.timeout` | No: a length, not a point in time | Yes (`scheduler.wait`) |
+| `Io.timeout_at` | Yes: the time left is `deadline_ms - now` (`pf.waitUntil`) | Yes, for the time left |
+| `Memo` `max_age_ms`, `Js.pin!` `max_age_ms` | Yes: the pin expires when `now` is at the pin time plus the age, or later | No |
+| `Object.Self.set_alarm_in!` | Yes: `setAlarm(now + delay_ms)` (`pf.alarmIn`) | Workers fires the alarm at that time on its real clock |
+| `Object.Self.set_alarm_at!`, `get_alarm!` | No: the app gives or gets an absolute time | Workers fires it on its real clock |
+| The task deadlines (`taskDeadlineMs`, `wallMs`, `initMs`, `afterRespondMs`, `API.md` 10.2) | Yes: the start of a task and of a wait, the time the response is complete, and the sweep | The deadline timer (`setTimeout`) waits real ms, then reads the clock again |
+| `graceMs` of the memory budget | Yes | No |
+| `Worker.Scheduled` `time_ms` (cron) | No: it comes from the event | No |
+| The duration of a heap check (`stats.heapCheckMs`) | No: `performance.now()`. It measures shim work, not app time | No |
+
+A clock that jumps forward makes a pin expire, and makes a waiting task late at the next sweep. A clock that jumps back makes the pins and the waits younger. In production, leave `now` unset.
 
 `Log.info!("published", { pkg: name, ms: 12 })`. The fields are a record, so Workers Logs can filter on them. A record with a `Secret` in it does not compile here (10).
 

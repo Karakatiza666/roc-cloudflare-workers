@@ -114,8 +114,8 @@ Io(a, e) := { ops : List(Js.Op), waits : Bool, read : Try(Js, Io.Thrown) -> Try(
 		}
 	}
 
-	## The same as `timeout`, with a point in time: `deadline_ms` is on the clock of `Time.now_ms!` (`Date.now()`).
-	## One deadline for many reads needs no sum of the time left. The wait is `max(0, deadline_ms - Date.now())` at
+	## The same as `timeout`, with a point in time: `deadline_ms` is on the clock of `Time.now_ms!` (the shim option `now`).
+	## One deadline for many reads needs no sum of the time left. The wait is `max(0, deadline_ms - now)` at
 	## the time the program runs (`pf.waitUntil`), not when the `Io` is made. A deadline in the past waits 0 ms:
 	## the operation wins only when it has a result already, else the answer is `Err(Infra(TimedOut))` at once.
 	timeout_at : Io(a, e), U64 -> Io(a, [Infra([TimedOut]), ..e])
