@@ -3774,6 +3774,8 @@ With `min_nightly` 2026-10-19, the proof only says "new enough" (a wasm of 10-28
 
 The oldest nightly (`research/min-nightly/README.md`): 10-19, 10-21 and 10-27 pass the conformance run (489 checks), `node-test.mjs` and `handler-test.mjs` with the hosts of 10-31. `exports-test.mjs` fails on them only for the 3 compiler exports. 10-18 and 10-14: the compiler crashes (SIGSEGV, `monotype`) on the conformance app.
 
+CI checks the claim: the job `min-nightly` of `.github/workflows/ci.yml` runs `research/min-nightly/ci.sh` on each push (build with `min_nightly`, `node-test`, `handler-test`, the conformance run; `exports-test` may fail only for the 3 compiler exports).
+
 `bench/exports-test.mjs` check 6 ("no file of `js/` names a compiler export") now skips `js/cli.mjs`: it runs in Node only and reads the names of the exports, not their values.
 
 Tests: `bench/cli-test.mjs` section 8 (8a to 8u): `nightlyDate` (tag, month-name tag, date), `rocPinOf` (header, comment, one line, outside the header), `checkNightly` (each branch), and `sync` on a copy of `js/` with its own `cfw.json`: `app_b3.wasm`, and the same wasm with the two exports removed from its export section. `scripts/test_bundle_js.sh` checks `api` 1 and a `min_nightly` tag in the bundle.
