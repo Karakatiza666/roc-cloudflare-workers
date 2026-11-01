@@ -66,6 +66,12 @@ const KD = 'kv Cell declare: the binding of the manifest is the kind kv and the 
 const BA = 'websocket broadcast!, broadcast_json!: all sockets get the message (the JSON text for the second), the result is {} and Ok({})';
 const BT = 'websocket broadcast_json_with!: the count, and only the sockets with the tag get the JSON text';
 const BN = 'websocket broadcast_json!, broadcast_json_with!: a NaN is Err(BadData) and no socket gets anything';
+// The checks of the Body.chunk! fill reverts (the names of conformance/checks/body.mjs).
+const HL = 'js/helpers.js';
+const CF = 'body chunk!: a fast stream fills each chunk to 64 KiB, with one wait for each chunk';
+const CS = 'body chunk!: a slow stream gives each part when it comes, the call does not wait for fill_bytes';
+const CM = 'body chunk! then bytes!: the read that a fill left is the start of the rest';
+const CX = 'body chunk_with! max_bytes: no chunk is larger, the rest comes next, fill_bytes over max_bytes stops at max_bytes';
 // The checks of the N5 G1a reverts (the names of conformance/checks/rpcerr.mjs).
 const IS = 'rpcerr infra: a Durable Object callee that ?s a SQL error: the caller gets Remote(Infra(SqlErr)) with name and message';
 const IT = 'rpcerr infra: a Durable Object callee that ?s a storage error: Remote(Infra(StorageErr)) with name and message';
@@ -1026,6 +1032,12 @@ const reverts = [
     [BP + 'Request.roc', 'split_first(\'#\')', 'split_first(0)']),
   R('query params: query gives the last value, not the first of query_all', 'conformance', ['query repeated: 50 values in order, a long value; query is the first of query_all'],
     [BP + 'Request.roc', '[v, ..] => Ok(v)', '[.., v] => Ok(v)']),
+  // Body.chunk! fill (research/chunk-fill): the names of conformance/checks/body.mjs.
+  R('body chunk: the fill is not done (one part for each call)', 'conformance', [CF], [HL, 'fill = Math.max(1, num(fill));', 'fill = 1;']),
+  R('body chunk: the fill waits for each part (no ready check)', 'conformance', [CS], [HL, 'const got = n === 0 ? await nextRead(r) : await readyRead(r);', 'const got = await nextRead(r);']),
+  R('body chunk: a read that is not ready is dropped', 'conformance', [CS, CM], [HL, '      r.pending = p;\n      resolve(NOT_READY);', '      resolve(NOT_READY);']),
+  R('body chunk: readUpTo does not take the read that a fill left', 'conformance', [CM], [HL, 'const { done, value } = await nextRead(r);', 'const { done, value } = await r.reader.read();']),
+  R('body chunk_with!: max_bytes is not used', 'conformance', [CX], [BP + 'Body.roc', 'max = limit(opts.?max_bytes ?? default_max)', 'max = limit(default_max)']),
 ];
 
 // The filter: texts of names, joined by `|` (a revert runs when its name has one of them).

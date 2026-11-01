@@ -212,6 +212,32 @@ event! = |e| worker.event!(e)
 | Mode | The default `--opt=speed`, or `--opt=size`. Do not use `--opt=dev`: on nightly 2026-10-31 (f7bef6b) the dev backend for wasm32 gives a wrong `to_u8_try`, `to_u16_try`, `to_i8_try` and `to_i16_try` of an `I128` (`Err(OutOfRange)` for 3). roc-cbor reads each integer through an `I128`, so a typed read of a `U8`, `U16`, `I8` or `I16`, and of a BLOB into `List(U8)` or `Cbor.Bytes` (D1 gives a BLOB as an array of numbers), is `BadData`. The conformance run and the release use `speed` (`research/blob-002/README.md`). |
 | Result | A build with type errors still writes the `.wasm`, prints "N errors and 0 warnings found ... while successfully building", and exits with 1 (checked 2026-10-20). A build is good only when the exit code is 0 and the text is "0 errors and 0 warnings". A script checks the exit code, not the file. |
 
+One handler: write `Worker.new({ fetch!: fetch! })`, not `Worker.new({ fetch! })`. In Roc, `{ name }` with one name and no comma is a block that gives the value of `name`, not a record (a language rule, not a platform type: design issue X3). With two or more fields (`{ fetch!, queue! }`) or a comma (`{ fetch!, }`) it is a record. `roc fmt` writes `{ fetch!, }` on three lines, and keeps it a record. The error of `{ fetch! }` names the type of the handler, not a record (nightly 2026-10-31, `research/chunk-fill/shorthand.roc`):
+
+```text
+── ✗ type mismatch ───────────────────── main.roc:11:21
+
+The first argument being passed to this function has the wrong type.
+
+worker = Worker.new({ fetch! })
+                    ^^^^^^^^^^
+
+This argument has the type:
+
+    Request => Try(Response, _a)
+
+But the function needs the first argument to be:
+
+    { bindings ?: List(Worker.Binding), crons ?: List(Worker.Cron), email! ?:
+    Email.Mail => Try({}, e4), entrypoints ?: List(Rpc.Entrypoint), fetch! ?:
+    Request => Try(Response, e1), ... }
+```
+
+| You see | Cause | Fix |
+| --- | --- | --- |
+| "This argument has the type: `Request => Try(...)`" at `Worker.new`, and the whole option record | `{ fetch! }` is a block: the argument is the function | `Worker.new({ fetch!: fetch! })` |
+| The same at a call that takes a record with one field (`cell.set!({ name })`, an option record, an Rpc argument) | The same rule | `{ name: name }` (12.1, 15) |
+
 ## 3. Entry: `Worker`
 
 ```roc
@@ -412,7 +438,7 @@ As built in `PLAN.md` 8f, part 1 (`platform/Worker.roc`, `js/index.js`, `js/runn
 | Event names | `Rpc` of the default export has the entry point `"default"`. A class named `default` is a throw at load. | `default` is the name of the default export |
 | Method names | The manifest refuses a method twice in a class, a name that is not a JS name, and the names of handlers: `fetch`, `scheduled`, `queue`, `email`, `tail`, `alarm`, `constructor`, `webSocketMessage`, `webSocketClose`, `webSocketError`, `then` (a stub with `then` is a thenable). A default method with the name of an `other` handler is a throw too. | The JS method of a handler and of an RPC method is the same property |
 | `rpc` methods | A method on the prototype of the class (default export, object, entry point): `Reply` gives the value, a `Reply` of `Rpc.roc` (`{ Ok: value }` or `{ Err: tag }`), also for an `Err` of the handler; `Failed(text)` (an argument that does not parse) is a log line `<class>.<method>: failed: <text>` and `throw new Error(text)`, so the caller gets `RpcErr({ name: "Error", message: text })`; `Unhandled` and a trap are a log line and a throw | MODULES.md 8, "Errors" |
-| `Worker.new`, not `Worker.{ ... }` | A function that takes the record of handlers. The literal `Worker.{ ... }` must match the backing type, so the backing type would need a type variable for each error. The function turns each error into text first, and the backing type has no variables. One field needs `Worker.new({ fetch!: fetch! })`: `{ fetch! }` with one field is a block, not a record (`research/e1-errors/one_field.roc`). | Step 8h |
+| `Worker.new`, not `Worker.{ ... }` | A function that takes the record of handlers. The literal `Worker.{ ... }` must match the backing type, so the backing type would need a type variable for each error. The function turns each error into text first, and the backing type has no variables. One field needs `Worker.new({ fetch!: fetch! })`: `{ fetch! }` with one field is a block, not a record (`research/e1-errors/one_field.roc`; the error text is in 2). | Step 8h |
 | `bindings`, `crons` | `Worker.Binding` and `Worker.Cron` are structural records, so each module gives its `declare` with no import of `Worker` (`Queue`, `Email` and `Object` are imported by `Worker`). `own!` finds the cron handler by `s.cron` first, then `scheduled!`. The manifest has `bindings` and `crons`; `js/manifest.js` checks them, `js/bindings.js` has the kinds. | Step 8h wave B |
 | `sync` (`node js/cli.mjs sync` in the repo, `node .roc-cfw/cli.mjs sync` in a project) | `js/cli.mjs`, run by `node`. There is no npm package and no `bin`. Decision (2026-10-27, design issue 5): the shim is not published to npm and will not be. It ships as `js/` in the platform bundle, and the helper `roc-cfw` copies it into the project (`.roc-cfw/`), so a project has no dependency on the npm registry. `sync`: loads `app.wasm` in Node (`manifestOf`, no workerd), writes `worker.js`, reads `wrangler.json`, `wrangler.jsonc` or `wrangler.toml` (this order, as Wrangler) and checks `main`, the date, the flags, the migrations (`new_sqlite_classes`, not `new_classes`), `durable_objects.bindings` (`class_name`, `script_name`), each declared binding, `triggers.crons`. Exit 1 with the config parts to add. A config part of a binding that the app does not declare is a note. It also checks the link to the other Workers of the repo (the next row). `--check`: write nothing (the test of `scripts/test_example.sh`). `init` moved to the helper `roc-cfw init` (`research/talon-fit/TRANSITION.md` step 2; its files are `js/template/`). The entry file imports the shim by the relative path from the entry file to the directory of `cli.mjs` (`./.roc-cfw/index.js` in a project, `../../js/index.js` in `examples/hello`). `.mjs`, so the module lists of the tests (`*.js`) do not take it. Only the top-level tables of the config: not the `[env.<name>]` parts. | Step 8h wave B |
 | `sync`, links | For each `[[services]]` entry with `service` (and `entrypoint`) and each `durable_objects.bindings` entry with `script_name`, `sync` finds the target Worker: the Wrangler configs (`wrangler.toml`, `.json`, `.jsonc`, and `wrangler-<x>.toml`) below the repo root (the nearest directory with `.git` at or above the config), without `node_modules`, `.git`, `.cache`, `.claude`, `.wrangler`, `.zig-cache`, `zig-out`, with `name` equal to the target. Its wasm is the file that the `main` entry imports (`import app from './ledger.wasm'`), else `app.wasm` next to `main`, else next to the config. `sync` loads it with `manifestOf` and compares: the entry point (the default one, or `entrypoint`) or the class (`class_name`) must be in the manifest, and its interface name must be the one of the binding of the caller (`Service.binding` or `Object.namespace_remote`). A side with no interface name (a class with no `rpc`) has nothing to compare. A mismatch or a missing entry point or class: `wrong`, exit 1, with both names and the paths of both configs and both wasm files. No config with that name, no wasm file, or a wasm file older than its `.roc` sources (the `<name>.roc` of the wasm and the modules that it imports from its directory): `note`, not a failure, with the `roc build` command. Several configs with the same name: a note that lists them, and the check runs when they have one wasm file. `--check` does the same, and nothing turns it off. | Interface names across Workers (PLAN.md 8h) |
@@ -500,7 +526,9 @@ Response :: { status : U16, headers : List(Header) ?? [], body : Body ?? Empty, 
 Body := [Empty, Text(Str), Bytes(List(U8)), Stream(Js.Ref)].{
 	default_max : U64                                  # 1 MiB (MC11)
 	text!, json!, bytes!, bytes_with!                  # one wait for a stream, none for the others
-	chunk! : Body => Try([Chunk(List(U8)), End], [BodyErr(Thrown)])
+	default_fill : U64                                 # 64 KiB: the fill target of chunk!
+	chunk! : Body => Try([Chunk(List(U8)), End], [BodyErr(Thrown)])   # chunk_with! with the defaults
+	chunk_with! : Body, { fill_bytes ?: U64, max_bytes ?: U64 } => Try([Chunk(List(U8)), End], [BodyErr(Thrown)])
 	tee! : Body => Try((Body, Body), [BodyErr(Thrown)])
 	sha256! : Body => Try(List(U8), [BodyErr(Thrown)]) # crypto.DigestStream: no copy into wasm
 	writer! : () => Try({ body : Body, writer : Body.Writer }, [BodyErr(Thrown)])   # pf.writer: a TransformStream, sync
@@ -549,7 +577,7 @@ As built in `PLAN.md` 8b (first half and second half) (`platform/Request.roc`, `
 | --- | --- | --- |
 | `Method`, `Header` | From the `roc-lang/http` 2.0.0 release URL, a package of the platform (`packages` of both headers) | AQ2 |
 | Bodies | The request body arrives as `Stream` (a ref of the task), with no copy (second half of 8b, `PLAN.md` 10a). Each function of the table above is built. A read of a `Stream` (`text!`, `json!`, `bytes!`, `bytes_with!`) is one wait: `pf.readUpTo` stops at the limit before a copy into wasm. | RS3 |
-| `chunk!` | The next chunk as JS gives it, cut to `default_max` (the rest comes at the next call). `Empty` is `End`, and `Text` and `Bytes` are one `Chunk` with no crossing. `chunk!` and a later `bytes!` of the same stream share one reader: `bytes!` gives the rest. | MC11: each read into wasm has a limit. The table above gives no limit for `chunk!`, and a JS chunk can be large (a stream made from one big array). |
+| `chunk!` | `chunk_with!(body, {})`: a fill to `default_fill` (64 KiB), cut to `default_max`. The next table ("Chunks") has the rules. `Empty` is `End`, and `Text` and `Bytes` are one `Chunk` with no crossing. `chunk!` and a later `bytes!` of the same stream share one reader: `bytes!` gives the rest. | MC11: each read into wasm has a limit. The table above gives no limit for `chunk!`, and a JS chunk can be large (a stream made from one big array). |
 | A second read | A stream that a read took to its end, or that `tee!` or another reader holds, gives `BodyErr` (`TypeError`) | RS3 |
 | `sha256!` | A stream: `crypto.DigestStream` (one wait, no byte in wasm). Where it is missing (Node tests), the chunks in JS and `crypto.subtle.digest`. `Empty`, `Text`, `Bytes`: the builtin `Crypto.SHA256` in wasm, no crossing. | No crossing for bytes that are in wasm already |
 | `writer!` | `pf.writer()` gives the readable side and the writer (`getWriter()`) of a `TransformStream`. `Body.Writer :: { writer : Js.Ref }`. `write!` waits on `writer.write(chunk)`: it settles when the reader takes the chunk, so a `write!` in the handler waits to the task deadline: the client reads only after the handler gives its result. Write in the work of `after`, or queue the writes with `Io.start!` (below). `write_text!` sends UTF-8 bytes. `close!` is `pf.close` (no wait). The twins `write` and `write_text` give an `Io` (MC3, `PLAN.md` 8c RO1). A `write` is queued in JS at once and settles when the reader takes the chunk, so `Io.start!` of writes, then `close!`, then a read in the same task (`R2.put_with!` with `length_bytes`) feeds a stream with the public API. A branch of `Io.both!` or `Io.race!` with a `write` cannot also `close!`: a branch has no sequence of two `Io` values. | A response stream of Workers takes bytes only |
@@ -560,6 +588,19 @@ As built in `PLAN.md` 8b (first half and second half) (`platform/Request.roc`, `
 | `cookie` | The value of a pair of the `Cookie` header | |
 | `from_http`, `to_http!` | Not built | No package of the platform uses `http` types yet |
 | `cf` | Crosses in the event as a `Js` tree in the tag form (`{ "Ok": v }`, `{ "Err": "Missing" }`), not as `Packed` | Built before the platform had `Cbor` (`PLAN.md` 8b). The shim format stays the same for `Packed`. |
+
+Chunks (`Body.chunk!`, `chunk_with!`, `pf.chunk` in `js/helpers.js`; `research/chunk-fill/README.md`):
+
+| Item | Rule |
+| --- | --- |
+| A part and a chunk | A part is one `read()` of the JS stream. A chunk is what one call gives to Roc: one or more parts. workerd gives a body stream (the request body, a `fetch` body) in parts of about 4 KiB. A chunk of one part made one crossing for each 4 KiB (28,766 for 110 MB). |
+| Fill (`fill_bytes`, default 64 KiB) | The first part of a chunk is the one wait of the call. Then, while the chunk has fewer than `fill_bytes` bytes, JS reads the next part and adds it when it is ready. |
+| Ready | The read completes before a timer of 0 ms (`setTimeout(0)`, one turn of the event loop). A part that is in memory or in the socket buffer is ready. When the read is not ready, the call gives what it has, and that read stays for the next call (no part is lost, and `bytes!` after a chunk starts with it). So a call never waits for `fill_bytes`: a slow stream gives each part when it comes, at most one timer turn later (0 ms in workerd, about 1 ms in Node). |
+| `fill_bytes: 1` | Each part as JS gives it, with no timer: the behavior of `chunk!` in 0.0.2. For an app that passes each part on at once, as it comes. `fill_bytes: 0` is 1. |
+| `max_bytes` (default `default_max`) | No chunk is larger: a larger chunk is cut, and the rest comes at the next call (MC11). The fill stops at `max_bytes`. `max_bytes: 0` is 1. |
+| Memory | At most one chunk is in JS memory at a time: `fill_bytes` plus one part, cut to `max_bytes`. No whole-body buffer. |
+| Not changed | `pass_through!`, `Response.from_body` of a stream, `Body.writer!`, `tee!`, `compress!`, `decompress!` and `sha256!` do not use `chunk!`: their bytes stay in JS, with no fill and no timer. WebSocket messages are not a body stream. `Tcp.read!` is not changed. |
+| Measured (110 MB, `research/chunk-fill`) | One part for each call, then the fill of 64 KiB: Miniflare `fetch` body (`Http.open!`): 28,161 crossings and 1,472 ms, then 1,760 and 392 ms. workerd request body: 29,068 and 569 ms, then 1,743 and 318 ms. Node, parts of 4 KiB: 28,160 and 232 ms, then 1,760 and 74 ms. A fill of 256 KiB gives 356 ms in Miniflare and no gain for the workerd request body, so the default stays at 64 KiB (smaller chunks for each step of the app). An app can set a larger `fill_bytes`. |
 
 Query parameters (`query`, `query_all`, `query_pairs`, after 0.0.2). The parse is in Roc (`platform/Request.roc`), with no crossing. `conformance/checks/query.mjs` compares it with `URLSearchParams` of Node.
 

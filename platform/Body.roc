@@ -56,19 +56,37 @@ Body := [Empty, Text(Str), Bytes(List(U8)), Stream(Js.Ref)].{
 		if (bytes.len() > max_bytes) Err(TooLarge) else Ok(bytes)
 	}
 
-	## The next chunk of a stream, as JS gives it, cut to `default_max` (MC11). One wait.
-	## `Empty`, `Text` and `Bytes` are one chunk (none for `Empty`), with no crossing: a value is not a stream, so
-	## each call on the same value gives the same chunk.
+	## The fill target of `chunk!`: 64 KiB. JS adds the parts of the stream that are ready to the chunk, to this size.
+	## A workerd body stream gives parts of about 4 KiB, so this makes about 16 times fewer crossings (MODULES.md 4).
+	default_fill : U64
+	default_fill = 65_536
+
+	## The next chunk of a stream: `chunk_with!` with the defaults (`fill_bytes` 64 KiB, `max_bytes` `default_max`).
+	## One wait at most. The call does not wait for 64 KiB: when the next part of the stream is not ready, it gives
+	## what it has. `Empty`, `Text` and `Bytes` are one chunk (none for `Empty`), with no crossing: a value is not a
+	## stream, so each call on the same value gives the same chunk.
 	chunk! : Body => Try([Chunk(List(U8)), End], [BodyErr(Io.Thrown)])
-	chunk! = |body| match body {
+	chunk! = |body| chunk_with!(body, {})
+
+	## The next chunk of a stream, with a fill target and a limit (`pf.chunk`). One wait at most: for the first part.
+	## `fill_bytes` (default 64 KiB): JS adds each next part that is ready (it completes before a timer of 0 ms) while
+	## the chunk has fewer bytes. `fill_bytes: 1` gives each part as JS gives it, with no timer: for a proxy that
+	## passes each part on at once. `max_bytes` (default `default_max`, 0 is 1): a larger chunk is cut, and the rest
+	## comes at the next call (MC11). `Empty`, `Text` and `Bytes`: as `chunk!`, with no cut.
+	chunk_with! : Body, { fill_bytes ?: U64, max_bytes ?: U64 } => Try([Chunk(List(U8)), End], [BodyErr(Io.Thrown)])
+	chunk_with! = |body, opts| match body {
 		Empty => Ok(End)
 		Text(s) => Ok(Chunk(s.to_utf8()))
 		Bytes(b) => Ok(Chunk(b))
-		Stream(r) => match Js.await!([Call(Root("pf"), "chunk", [Lit(Ref(r)), Lit(Int(limit(default_max)))])]) {
-			Ok(Bytes(b)) => Ok(Chunk(b))
-			Ok(Undefined) => Ok(End)
-			Ok(other) => crash "Body.chunk!: pf.chunk gave ${Str.inspect(other)}"
-			Err(t) => Err(BodyErr(t))
+		Stream(r) => {
+			max = limit(opts.?max_bytes ?? default_max)
+			fill = limit(opts.?fill_bytes ?? default_fill)
+			match Js.await!([Call(Root("pf"), "chunk", [Lit(Ref(r)), Lit(Int(max)), Lit(Int(fill))])]) {
+				Ok(Bytes(b)) => Ok(Chunk(b))
+				Ok(Undefined) => Ok(End)
+				Ok(other) => crash "Body.chunk_with!: pf.chunk gave ${Str.inspect(other)}"
+				Err(t) => Err(BodyErr(t))
+			}
 		}
 	}
 

@@ -3818,6 +3818,36 @@ Result of the 5 reverts: all caught, `PASS`.
 | --- | --- |
 | `bench/test-all.sh` (nightly 2026-10-31, Zig 0.17.0, workerd of Wrangler 4) | ALL PASS (55 steps, with the whole conformance run and the new query checks) |
 
+## Status of the chunk fill and the one-field record note (2026-11-02)
+
+Input: the Talon registry (slice 111, section 8, P1 and P4). P1: `Body.chunk!` gave each part of the JS stream, about 4 KiB in workerd, so 28,766 crossings for 110 MB. P4: `Worker.new({ fetch! })` gives a type error that shows the whole option record. Facts and measures: `research/chunk-fill/README.md`.
+
+| Item | State | Where |
+| --- | --- | --- |
+| Fill | `pf.chunk(stream, max, fill)`: the first part is the one wait; then, while the chunk has fewer than `fill` bytes, each next part that completes before a timer of 0 ms is added. A read that is not ready stays in the read state (`pending`) for the next `chunk` or `readUpTo`. `fill` 1: one part, no timer (the 0.0.2 behavior) | `js/helpers.js` (`nextRead`, `readyRead`, `chunk`, `readUpTo`) |
+| `Body.chunk!` | `chunk_with!(body, {})`: `default_fill` 64 KiB, `default_max` 1 MiB | `platform/Body.roc`, `bench/platform/Body.roc` |
+| `Body.chunk_with!` | `{ fill_bytes ?: U64, max_bytes ?: U64 }`. 0 is 1 for both | the same |
+| Latency rule | A call never waits for `fill_bytes`. A slow stream gives each part when it comes, at most one timer turn later. `fill_bytes: 1` gives each part with no timer. `pass_through!`, `writer!`, `tee!`, `compress!`, `sha256!` and WebSocket do not use `chunk` | `MODULES.md` 4, "Chunks" |
+| Gain (110 MB) | Miniflare `fetch` body: 28,161 crossings and 1,472 ms, now 1,760 and 392 ms. workerd request body: 29,068 and 569 ms, now 1,743 and 318 ms. Node (parts of 4 KiB): 28,160 and 232 ms, now 1,760 and 74 ms | `research/chunk-fill/measure.mjs`, `measure-check.mjs` |
+| P4 | A language rule (`{ name }` with one name is a block), not a platform type. `MODULES.md` 2 has the error text and the fix `{ fetch!: fetch! }` | `research/chunk-fill/shorthand.roc` |
+| Conformance | 6 checks: a fast stream (mean chunk 32 KiB or more), `fill_bytes: 1`, `max_bytes` (and 0), a slow stream (5 parts of 100 B, 400 ms apart: 5 chunks), `bytes!` after a chunk (the pending read), the request body and an empty body. Server routes `/big`, `/drip` | `conformance/BodyRoutes.roc`, `conformance/checks/body.mjs`, `conformance/run.mjs` |
+| `bench/stream-reverts.mjs` | The 10b revert (copy all) edits the new `chunk` | |
+
+| Revert (`node conformance/reverts.mjs "body chunk"`, `node bench/stream-reverts.mjs "10b: chunk"`) | Result |
+| --- | --- |
+| The fill is not done (`fill = 1`) | FAIL (4 checks: fast stream mean 4,084 B) |
+| The fill waits for each part (no ready check) | FAIL (2 checks: the slow stream is one chunk of 500 B) |
+| A read that is not ready is dropped (no `pending`) | FAIL (2 checks: workerd "This ReadableStream only supports a single pending read request at a time.") |
+| `readUpTo` does not take the read that a fill left | FAIL (`bytes!` after a chunk: the same TypeError) |
+| `chunk_with!` does not use `max_bytes` (Roc) | FAIL (chunks of 1,003,392 B) |
+| 10b: `chunk` reads the whole stream (copy all) | FAIL (Node and workerd 10b) |
+
+Result of the 6 reverts: all caught, `PASS`. A workerd stream takes one pending read at a time, so the read that a fill leaves must be the next read.
+
+| Test | Result |
+| --- | --- |
+| `bench/test-all.sh` (nightly 2026-10-31, Zig 0.17.0, workerd of Wrangler 4) | ALL PASS (55 steps, with the whole conformance run and the 6 body checks) |
+
 ## Done when
 
 - All tests above pass, and each fails when its change is reverted (the exceptions are in "Order of work").

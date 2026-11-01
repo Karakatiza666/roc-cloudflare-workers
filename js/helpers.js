@@ -5,16 +5,41 @@ import { runAwait, errorOf, onLoss } from './program.js';
 import { responseOf, closedBy } from './events.js';
 
 // The read state of each stream that `readUpTo`, `chunk` or `sha256` read (a stream is a ref of one task, RS1): its
-// reader, the rest of a chunk that `chunk` cut, the end, and `consumed` (read to its end by `readUpTo`).
+// reader, the rest of a chunk that `chunk` cut, a read that was not ready when `chunk` stopped its fill (`pending`),
+// the end, and `consumed` (read to its end by `readUpTo`).
 const readers = new WeakMap();
 function readerOf(stream, what) {
   let r = readers.get(stream);
   if (r) return r;
   if (typeof stream?.getReader !== 'function') throw new TypeError(`${what}: the first argument must be a ReadableStream`);
-  r = { reader: stream.getReader(), rest: null, done: false, consumed: false };
+  r = { reader: stream.getReader(), rest: null, pending: null, done: false, consumed: false };
   readers.set(stream, r);
   return r;
 }
+// The next read of a stream: the pending read of an earlier fill first.
+function nextRead(r) {
+  const p = r.pending ?? r.reader.read();
+  r.pending = null;
+  return p;
+}
+// The next read, or NOT_READY when it does not complete before a timer of 0 ms (one turn of the event loop). Then the
+// read stays in `r.pending`, and the next call gets its part (no part is lost). The fill rule of `chunk`.
+const NOT_READY = Symbol('not ready');
+function readyRead(r) {
+  const p = nextRead(r);
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => {
+      r.pending = p;
+      resolve(NOT_READY);
+    }, 0);
+    p.then(
+      (v) => (clearTimeout(t), resolve(v)),
+      (e) => (clearTimeout(t), reject(e)),
+    );
+  });
+}
+// An Int of a program as a Number (an Int of 2^53 or more comes as a BigInt).
+const num = (x) => (typeof x === 'bigint' ? Number(x) : x);
 const bytesOf = (v) => (v instanceof Uint8Array ? v : ArrayBuffer.isView(v) ? new Uint8Array(v.buffer, v.byteOffset, v.byteLength) : new Uint8Array(v));
 // At most `max` bytes of `v`: the rest waits in `st.rest` for the next read.
 function join(a, b) {
@@ -603,30 +628,40 @@ export function makeHelpers(t, c, shim, tasks) {
       if (r.rest) add(r.rest);
       r.rest = null;
       while (!r.done) {
-        const { done, value } = await r.reader.read();
+        const { done, value } = await nextRead(r);
         if (done) r.done = true;
         else add(bytesOf(value));
       }
       return concat(chunks, n);
     },
     // The next chunk of a stream, at most `max` bytes (MC11: a larger chunk is cut, the rest comes next), or
-    // undefined at the end (`Body.chunk!`).
-    async chunk(stream, max) {
+    // undefined at the end (`Body.chunk!`, `chunk_with!`). The fill: while the chunk has fewer than `fill` bytes, the
+    // next part of the stream is added when it is ready (`readyRead`). Only the first part of a chunk is a wait. So a
+    // call never waits for `fill` bytes: a slow stream gives each part when it comes. `fill` 1 (the default): one
+    // part, as JS gives it.
+    async chunk(stream, max, fill = 1) {
       const r = readerOf(stream, 'chunk');
       if (r.consumed) throw new TypeError('chunk: the body was read already');
-      let value = r.rest;
-      r.rest = null;
-      while (!value && !r.done) {
-        const got = await r.reader.read();
+      max = Math.max(1, num(max));
+      fill = Math.max(1, num(fill));
+      const parts = [];
+      let n = 0;
+      if (r.rest) {
+        parts.push(r.rest);
+        n = r.rest.byteLength;
+        r.rest = null;
+      }
+      while (n < fill && n < max && !r.done) {
+        const got = n === 0 ? await nextRead(r) : await readyRead(r);
+        if (got === NOT_READY) break;
         if (got.done) r.done = true;
-        else if (got.value.byteLength) value = bytesOf(got.value);
+        else if (got.value.byteLength) {
+          parts.push(bytesOf(got.value));
+          n += got.value.byteLength;
+        }
       }
-      if (!value) return undefined;
-      if (value.byteLength > max) {
-        r.rest = value.subarray(max);
-        value = value.subarray(0, max);
-      }
-      return value;
+      if (!n) return undefined;
+      return cut(r, concat(parts, n), max);
     },
     // The SHA-256 of a stream (`Body.sha256!`): `crypto.DigestStream` of Workers, so no byte goes to wasm. Where it is
     // missing (Node), or after `chunk`: the chunks in JS, then `crypto.subtle.digest`.

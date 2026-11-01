@@ -47,6 +47,7 @@ import WebSocketRoutes
 import TcpRoutes
 import AfterRoutes
 import QueryRoutes
+import BodyRoutes
 
 fetch! : Request => Try(Response, _)
 fetch! = |req| {
@@ -62,6 +63,7 @@ fetch! = |req| {
 		["ratelimit", .. as rest] => RateLimitRoutes.route!(req, rest)
 		["cf", .. as rest] => CfRoutes.route!(req, rest)
 		["query", .. as rest] => QueryRoutes.route!(req, rest)
+		["body", .. as rest] => BodyRoutes.route!(req, rest)
 		["shim", .. as rest] => ShimRoutes.route!(req, rest)
 		["webcrypto", .. as rest] => WebCryptoRoutes.route!(req, rest)
 		["r2", .. as rest] => R2Routes.route!(req, rest)

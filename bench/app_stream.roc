@@ -16,7 +16,7 @@ import pf.Js
 ## | Request | Answer |
 ## | --- | --- |
 ## | POST /pipe | the request body as the response body: a stream, no copy into wasm (10a) |
-## | POST /chunk?n= | `chunk!` until `n` bytes or the end: "chunks=<c> bytes=<b>" (10b) |
+## | POST /chunk?n=&fill=&max= | `chunk!` until `n` bytes or the end: "chunks=<c> bytes=<b>" (10b). With `fill` or `max`: `chunk_with!` (`research/chunk-fill`) |
 ## | POST /limit?max= | `bytes_with!`: "ok <length>", or "TooLarge" (10b) |
 ## | POST /tee | `tee!`, both read: "a=<len> b=<len> same=<bool> again=<the read of the first body again>" |
 ## | POST /sha | `sha256!` of the stream, in hex. With `?bytes=1`: of the bytes in wasm |
@@ -41,7 +41,8 @@ fetch! = |req| match (req.method(), req.segments()) {
 		var $bytes = 0.U64
 		var $more = Bool.True
 		while $more and $bytes < want {
-			match req.body().chunk!()? {
+			got = if (given(req, "fill") or given(req, "max")) req.body().chunk_with!({ fill_bytes: num(req, "fill"), max_bytes: if (given(req, "max")) num(req, "max") else Body.default_max }) else req.body().chunk!()
+			match got? {
 				Chunk(b) => {
 					$chunks = $chunks + 1
 					$bytes = $bytes + b.len()
@@ -216,6 +217,9 @@ num = |req, name| match req.query(name) {
 	Ok(s) => U64.from_str(s) ?? 0
 	Err(_) => 0
 }
+
+given : Request, Str -> Bool
+given = |req, name| req.query(name).is_ok()
 
 format : Request -> Body.Format
 format = |req| if (req.query("f") == Ok("deflate")) Deflate else Gzip

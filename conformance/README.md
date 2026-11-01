@@ -17,6 +17,7 @@ flowchart LR
 | `<Module>Routes.roc` | The routes of one module: `route! : Request, List(Str) => Response`. Each route gives a text that the check compares. |
 | `Q.roc` | Query parameters: `Q.text(req, name)`, `Q.num(req, name)` |
 | `QueryRoutes.roc`, `checks/query.mjs` | `Request.query`, `query_all`, `query_pairs` against `new URL(url).searchParams` of Node: `GET /query/parse?<query>` (the URL as Miniflare gives it) and `POST /query/of` (the body is a URL: a fragment, a tab). |
+| `BodyRoutes.roc`, `checks/body.mjs` | `Body.chunk!` and `chunk_with!`: the fill to 64 KiB of a fast stream, `fill_bytes` and `max_bytes`, a slow stream (each part when it comes), the end, and `bytes!` after a chunk (the read that a fill left) |
 | `worker.js` | `makeHandler` of the app, the option `ops`, and the headers `x-waits` (waits of the task), `x-awaits` and `x-calls` (the crossings: calls of `js_await` and `js_call`, from `stats.crossings` of the runner) and `x-ms` on each response. `GET /__stats`: the task table. The shim option `now` is `Date.now()` plus a skew: `GET /__clock?skew=<ms>` sets it (`checks/clock.mjs`). |
 | `run.mjs` | Starts a local HTTP server and Miniflare, runs each check of `checks/*.mjs` (in name order), then the check `end` (no task, ref, context, alarm or live byte). One line for each check: `PASS <name>` or `FAIL <name>: <why>`. Exit 1 on a failure. Its TMPDIR is `.cache/tmp/run-<pid>` (the temp dirs of Miniflare), removed at the end, also after `FAIL start`, a throw and SIGTERM. |
 | `checks/<module>.mjs` | `options`: the Miniflare options of the module (its bindings). `checks`: a list of `[name, async (t) => detail]`. |
@@ -46,7 +47,7 @@ What a check gets (`t`):
 | Field | What |
 | --- | --- |
 | `t.get(path, init)` | `{ status, body, waits, awaits, calls, ms }` of `dispatchFetch`. `awaits` and `calls` count the crossings of the request ("one crossing" tests). |
-| `t.server` | The URL of the local server: `/hello`, `/ten`, `/slow` (2 s), `/echo` (method, header `x-test`, body), `/status/<n>` |
+| `t.server` | The URL of the local server: `/hello`, `/ten`, `/slow` (2 s), `/echo` (method, header `x-test`, body), `/status/<n>`, `/big?n=` and `/drip?parts=&size=&gap=` (byte i is i % 251, `checks/body.mjs`) |
 | `t.edge` | `undefined` here, `true` in `edge/run-edge.mjs`. A check with a local form and an edge form of an answer reads it (assets media type, workflow id, rate limit, jurisdiction, queue batch text, `Http` errors of 8d, R2 multipart `Meta`: `PLAN.md` 11c, EP7). The local form stays strict. |
 | `t.logs` | The structured log lines of workerd (`{ level, message }`) since the start |
 | `t.mf` | The Miniflare instance (`getD1Database`, `getR2Bucket`, ... to set up or read data) |

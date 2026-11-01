@@ -50,8 +50,9 @@ const cf = {
   httpProtocol: 'HTTP/1.1', requestPriority: 'weight=192;exclusive=0', tlsCipher: 'AEAD-AES128-GCM-SHA256', tlsVersion: 'TLSv1.3',
 };
 
-// A local HTTP server for the `Http` checks: `/hello` (text), `/ten` (10 bytes), `/slow` (answers after 2 s), `/broken` (6 MiB, then a broken connection), `/echo` (the
+// A local HTTP server for the `Http` checks: `/hello` (text), `/ten` (10 bytes), `/slow` (answers after 2 s), `/broken` (6 MiB, then a broken connection), `/big`, `/drip` (`Body.chunk!`), `/echo` (the
 // method, the header `x-test` and the body), `/status/<n>` (that status, no body).
+const PAT = Uint8Array.from({ length: 65536 + 251 }, (_, i) => i % 251);
 const server = createServer((req, res) => {
   const chunks = [];
   req.on('data', (c) => chunks.push(c));
@@ -64,6 +65,35 @@ const server = createServer((req, res) => {
     if (path === '/broken') {
       // The break comes after the write is flushed: a fixed delay from the write cut the data that a loaded client had not read yet.
       return res.write(Buffer.alloc(6 * 1024 * 1024, 66), () => setTimeout(() => res.destroy(), 100));
+    }
+    // `Body.chunk!` (checks/body.mjs): byte i of each body is i % 251. `/big?n=`: n bytes in writes of 64 KiB, with a
+    // content-length. `/drip?parts=&size=&gap=`: `parts` writes of `size` bytes, `gap` ms between them, no content-length.
+    if (path === '/big' || path === '/drip') {
+      const q = new URL(req.url, 'http://x').searchParams;
+      const at = (from, n) => (n <= 65536 ? PAT.subarray(from % 251, (from % 251) + n) : Uint8Array.from({ length: n }, (_, i) => (from + i) % 251));
+      if (path === '/big') {
+        const n = Number(q.get('n'));
+        res.writeHead(200, { 'content-length': n });
+        let sent = 0;
+        const pump = () => {
+          while (sent < n) {
+            const k = Math.min(65536, n - sent);
+            const ok = res.write(at(sent, k));
+            sent += k;
+            if (!ok) return res.once('drain', pump);
+          }
+          res.end();
+        };
+        return pump();
+      }
+      const parts = Number(q.get('parts')), size = Number(q.get('size')), gap = Number(q.get('gap'));
+      let i = 0;
+      const next = () => {
+        res.write(at(i * size, size));
+        if (++i < parts) setTimeout(next, gap);
+        else res.end();
+      };
+      return next();
     }
     if (path === '/echo_json') return res.end(`${req.method} ${req.headers['content-type'] ?? '-'} ${Buffer.concat(chunks).toString()}`);
     if (path === '/echo') return res.end(`${req.method} ${req.headers['x-test'] ?? '-'} ${Buffer.concat(chunks).toString()}`);
