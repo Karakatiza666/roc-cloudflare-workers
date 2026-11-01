@@ -35,8 +35,15 @@ globalThis.setTimeout = (fn, ms, ...a) => {
 globalThis.clearTimeout = (id) => (liveTimers.delete(id), clearT(id));
 
 // The root `ops` (API.md 6.4). `lib` is an object of functions, not a function (the option check, PLAN.md 8a O4).
+// `spin(ms)`: a busy step of the isolate (the route `/websocket/client_clean_close`).
 const ops = {
-  lib: { twice: (n) => n * 2 },
+  lib: {
+    twice: (n) => n * 2,
+    spin: (ms) => {
+      const t0 = Date.now();
+      while (Date.now() - t0 < ms);
+    },
+  },
 };
 // `tailMaxBytes`: 100 kB, so a trace with the logs of 2 MiB (cut by workerd to 200 kB) is above the limit (checks/tail.mjs).
 // `initMs`: the `Init` deadline of API.md 10.2, smaller for the test (class `Slow`).

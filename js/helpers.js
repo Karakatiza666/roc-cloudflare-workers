@@ -186,7 +186,16 @@ export function acceptSocket(ws, max) {
     st.queued += sizeOf(v);
   });
   ws.addEventListener('close', (e) => close(e.code, e.reason ?? '', Boolean(e.wasClean)));
-  ws.addEventListener('error', (e) => close(1006, String(e?.message ?? e?.error?.message ?? 'error'), false));
+  // An `error` event of workerd ends the socket only when the read loop failed: it then gives no close event (a
+  // protocol error of the peer). The read loop gives its own disconnect as a close event (1006). An error with
+  // `retryable` (workerd sets it on each DISCONNECTED exception: "Network connection lost.") is of the outgoing pump:
+  // when the pump ends after the peer dropped the connection (after the close handshake of `close()`), workerd reports
+  // an error, and its read loop goes on to give the close frame of the peer as a clean close event. So that error is
+  // not the close: the close event comes (research/ws-close-probe/out.txt).
+  ws.addEventListener('error', (e) => {
+    if (e?.error?.retryable === true) return;
+    close(1006, String(e?.message ?? e?.error?.message ?? 'error'), false);
+  });
   return st;
 }
 // A message out of the queue, and back to its front (OP8).
@@ -410,13 +419,14 @@ export function makeHelpers(t, c, shim, tasks) {
       return [client, server];
     },
     // `WebSocket.connect!`: `accept()` of the `webSocket` of the response `res`, with its message queue of at most `max`
-    // bytes. Gives `[ws, protocol]`: the subprotocol is the `Sec-WebSocket-Protocol` header of the 101 response (a
-    // client socket of workerd has `protocol` "", research/ws-gaps-probe/out.txt). No socket (the server did not answer
-    // 101): undefined (`NotUpgrade`).
+    // bytes. Gives `[ws, protocol, extensions]`: the `Sec-WebSocket-Protocol` and `Sec-WebSocket-Extensions` headers of
+    // the 101 response ("" when there is none: a client socket of workerd has `protocol` and `extensions` "",
+    // research/ws-gaps-probe/out.txt, research/ws-close-probe/out.txt). No socket (the server did not answer 101):
+    // undefined (`NotUpgrade`).
     wsAccept(ws, res, max) {
       if (ws === null || ws === undefined) return undefined;
       acceptSocket(ws, max);
-      return [ws, res.headers.get('sec-websocket-protocol') ?? ''];
+      return [ws, res.headers.get('sec-websocket-protocol') ?? '', res.headers.get('sec-websocket-extensions') ?? ''];
     },
     // `send!` of `WebSocket` and `Object.Socket`: "closed" when the socket is closing or closed (`readyState` 2 or 3:
     // the app or the peer closed it), else `ws.send(data)`. A throw goes to Roc (`SocketErr`).
@@ -463,6 +473,13 @@ export function makeHelpers(t, c, shim, tasks) {
         signal?.addEventListener('abort', onAbort, { once: true });
         st.waiters.push(w);
       });
+    },
+    // `WebSocket.closed!`: the close record `{ code, reason, clean, by }` once the close event came (the one that
+    // `wsReceive` gives at the end), else undefined. No message is taken.
+    wsClosed(ws) {
+      const st = sockets.get(ws);
+      if (!st) throw new TypeError('wsClosed: not a socket of WebSocket.accept! or connect!');
+      return st.closed ?? undefined;
     },
     // `Tcp.connect!` (MODULES.md 12.3): `connect({ hostname, port }, { secureTransport })` of `cloudflare:sockets` (a
     // dynamic import, so a Node test of the shim loads with no stand-in), then a wait for `opened`. Gives the socket.

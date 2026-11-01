@@ -580,7 +580,7 @@ const reverts = [
     ['js/helpers.js', '      if (st.closed) return st.closed;\n      c.socketWait = true;\n', '      if (st.closed) return st.closed;\n']),
   // The WebSocket gaps of 0.0.2 (roc-websocket DESIGN.md 6.3): subprotocols, send! and close! errors, who closed, the bounded queue.
   R('ws-gaps pf.wsAccept: the protocol of the 101 response is not read', 'conformance', ['websocket connect_with!: protocols and headers, send_json!, Message.json, a bytes frame'],
-    ['js/helpers.js', "return [ws, res.headers.get('sec-websocket-protocol') ?? ''];", "return [ws, ''];"]),
+    ['js/helpers.js', "return [ws, res.headers.get('sec-websocket-protocol') ?? '',", "return [ws, '',"]),
   R('ws-gaps WebSocket.accept_with!: the 101 has no Sec-WebSocket-Protocol', 'conformance', ['websocket accept_with! protocols: the Worker picks the first of its list that the client asks for'],
     [BP + 'WebSocket.roc', 'response: response.with_header("Sec-WebSocket-Protocol", p)', 'response']),
   R('ws-gaps WebSocket.pick_protocol: the order of the client, not of the server', 'conformance', ['websocket accept_with! protocols: the Worker picks the first of its list that the client asks for'],
@@ -603,6 +603,15 @@ const reverts = [
     ['js/helpers.js', '  st.queued -= sizeOf(m);\n', '']),
   R('ws-gaps WebSocket.accept_with!: max_queued_bytes is not sent (the default)', 'conformance', ['websocket max_queued_bytes: a message that comes while the queue is full closes the socket with 1008, the queue is read first'],
     [BP + 'WebSocket.roc', '[Lit(Int(max.to_i64_try() ?? I64.highest))]', '[Lit(Int(default_max_queued_bytes.to_i64_try() ?? I64.highest))]']),
+  // The close record and the extensions (PLAN.md "Status of the WebSocket close record and extensions").
+  R('ws-close an error event with retryable is the close (the 1006 of a clean close)', 'conformance', ['websocket close! then receive! after a busy step: Closed by Us, clean, 1000 in each of 30 rounds (an error of the outgoing pump is not the close)'],
+    ['js/helpers.js', '    if (e?.error?.retryable === true) return;\n', '']),
+  R('ws-close pf.wsClosed: no record (always NotClosed)', 'conformance', ['websocket closed!: NotClosed while open and while closing, then the close record with the queue kept, the same record as the Closed of receive!'],
+    ['js/helpers.js', 'return st.closed ?? undefined;', 'return undefined;']),
+  R('ws-close pf.wsAccept: the extensions of the 101 response are not read', 'conformance', ['websocket extensions: a client gets the Sec-WebSocket-Extensions of the 101 ([] with no offer)'],
+    ['js/helpers.js', "res.headers.get('sec-websocket-extensions') ?? ''", "''"]),
+  R('ws-close WebSocket.accept_with!: a server socket claims no extensions', 'conformance', ['websocket extensions: a socket of accept! is NotReported, also when the client got permessage-deflate'],
+    [BP + 'WebSocket.roc', 'Ok({ socket: WebSocket.{ ref: server, protocol: "", extensions: Err(NotReported) }, response })', 'Ok({ socket: WebSocket.{ ref: server, protocol: "", extensions: Ok([]) }, response })']),
   // PLAN.md 11c, E47, EP6: the plain steps of a StartTls socket, and the error of start_tls! on a socket of tls Off.
   R('8f3 Tcp.connect_with: StartTls is sent as "on"', 'conformance', ['tcp connect_with! tls StartTls: write! and read! twice before start_tls!'],
     [BP + 'Tcp.roc', 'Ok(StartTls) => "starttls"', 'Ok(StartTls) => "on"']),

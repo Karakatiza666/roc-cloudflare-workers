@@ -7,6 +7,7 @@ import pf.Response
 import pf.Object
 import pf.WebSocket
 import pf.Io
+import pf.Js
 import pf.Time
 import pf.Log
 import RpcMethods
@@ -242,6 +243,69 @@ WebSocketRoutes :: [].{
 			}
 			Response.from_text(200, got)
 		}
+		# The clean close of `close!`: `n` rounds of `connect!`, one message each way, `close!`, a busy step of 20 ms (the
+		# op `lib.spin` of `worker.js`), then `receive!`. workerd reports the end of its outgoing pump after the peer
+		# dropped the connection as an error, then the close frame of the peer as a clean close event (PLAN.md "Status of
+		# the WebSocket close record and extensions"). Gives the count of `Closed` by `Us`, clean, 1000, and the first other.
+		["client_clean_close"] => Response.from_text(200, clean_closes!(Q.text(req, "url"), Q.num(req, "n"), 0, ""))
+		# `closed!`: `NotClosed` while open, the record after the close of the peer with the queued message kept, the same
+		# record as the `Closed` of `receive!`. A second socket: `NotClosed` while closing (after `close!`), then by `Us`.
+		["client_closed_record"] => {
+			got = match WebSocket.connect!(Q.text(req, "url")) {
+				Ok(ws) => {
+					before = ws.closed!()
+					_ = ws.send!(Text("m1"))
+					_ = ws.send!(Text("close me"))
+					Time.sleep!(300)
+					sent = ws.send!(Text("late"))
+					record = ws.closed!()
+					first = ws.receive!()
+					last = ws.receive!()
+					same = match record {
+						Ok(c) => last == Err(Closed(c))
+						Err(NotClosed) => Bool.False
+					}
+					match WebSocket.connect!(Q.text(req, "url")) {
+						Ok(ws2) => {
+							_ = ws2.close!(4006, "us")
+							closing = ws2.closed!()
+							us = ws2.receive!()
+							after = ws2.closed!()
+							us_same = match after {
+								Ok(c) => us == Err(Closed(c))
+								Err(NotClosed) => Bool.False
+							}
+							"before=${Str.inspect(before)} sent=${Str.inspect(sent)} record=${Str.inspect(record)} first=${Str.inspect(first)} same=${Str.inspect(same)} closing=${Str.inspect(closing)} after=${Str.inspect(after)} us_same=${Str.inspect(us_same)}"
+						}
+						Err(e) => "Err ${Str.inspect(e)}"
+					}
+				}
+				Err(e) => "Err ${Str.inspect(e)}"
+			}
+			Response.from_text(200, got)
+		}
+		# `extensions`: with no offer, and with an offer of `permessage-deflate` (the header `Sec-WebSocket-Extensions`
+		# of `connect_with!`), which the echo server takes. A message goes both ways over the deflated socket.
+		["client_ext"] => {
+			url = Q.text(req, "url")
+			none = match WebSocket.connect!(url) {
+				Ok(ws) => {
+					_ = ws.close!(1000, "done")
+					Str.inspect(ws.extensions())
+				}
+				Err(e) => "Err ${Str.inspect(e)}"
+			}
+			offered = match WebSocket.connect_with!(url, { headers: [{ name: "Sec-WebSocket-Extensions", value: "permessage-deflate" }] }) {
+				Ok(ws) => {
+					_ = ws.send!(Text(Str.repeat("z", 200)))
+					reply = ws.receive!()
+					_ = ws.close!(1000, "done")
+					"${Str.inspect(ws.extensions())} reply=${Str.inspect(reply.map_ok(|m| m == Text("echo ${Str.repeat("z", 200)}")))}"
+				}
+				Err(e) => "Err ${Str.inspect(e)}"
+			}
+			Response.from_text(200, "none=${none} offered=${offered}")
+		}
 		# A wait on a socket has no deadline (API.md 10.2): the answer comes after 2 s, the deadline of a wait is 1 s in the
 		# Miniflare of the check (`taskDeadlineMs`).
 		["slow"] => {
@@ -286,8 +350,31 @@ echo! = |req| {
 	}
 }
 
+## Rounds of the route "client_clean_close": the count of `Closed` by `Us`, clean, 1000, and the first other result.
+clean_closes! : Str, U64, U64, Str => Str
+clean_closes! = |url, n, clean, other|
+	if n == 0 {
+		"clean=${clean.to_str()} other=${other}"
+	} else {
+		got = match WebSocket.connect!(url) {
+			Ok(ws) => {
+				_ = ws.send!(Text("still"))
+				_ = ws.receive!()
+				_ = ws.close!(1000, "")
+				_ = Js.call!([Get(Root("ops"), "lib"), Call(Slot(0), "spin", [Lit(Int(20))])])
+				Str.inspect(ws.receive!())
+			}
+			Err(e) => "Err ${Str.inspect(e)}"
+		}
+		if got == "Err(Closed({ by: Us, clean: True, code: 1000, reason: \"\" }))" {
+			clean_closes!(url, n - 1, clean + 1, other)
+		} else {
+			clean_closes!(url, n - 1, clean, if (other == "") got else other)
+		}
+	}
+
 ## One message, one answer, until the close. "close": the Worker closes the socket. "protocol": the subprotocol of the
-## socket. "hold <ms>": no `receive!` for that time (the queue fills), then the answers to the messages.
+## socket. "extensions": the extensions of the socket (`NotReported` for a socket of `accept!`). "hold <ms>": no `receive!` for that time (the queue fills), then the answers to the messages.
 serve! : WebSocket, U64 => (WebSocket.Closed, U64)
 serve! = |socket, got| match socket.receive!() {
 	Ok(Text("close")) => {
@@ -296,6 +383,10 @@ serve! = |socket, got| match socket.receive!() {
 	}
 	Ok(Text("protocol")) => {
 		_ = socket.send!(Text("protocol=${socket.protocol()}"))
+		serve!(socket, got + 1)
+	}
+	Ok(Text("extensions")) => {
+		_ = socket.send!(Text("extensions=${Str.inspect(socket.extensions())}"))
 		serve!(socket, got + 1)
 	}
 	Ok(Text(t)) if t.starts_with("hold ") => {

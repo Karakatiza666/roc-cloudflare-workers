@@ -11,11 +11,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let echo = null;
 // The echo server: a text "info" gives the protocol and the header `x-test` of the upgrade, "give json" gives
 // `{"n":5}`, "delay <ms> <text>" gives "echo <text>" after <ms>, "close me" closes with 4005 "peer bye", each other text
-// "echo <text>", bytes come back. It picks the first subprotocol that the client asks for (the default of `ws`).
+// "echo <text>", bytes come back. It picks the first subprotocol that the client asks for (the default of `ws`), and
+// takes `permessage-deflate` when the client offers it (a client of workerd offers no extension of its own).
 function echoServer(t) {
   if (echo) return echo;
   const { WebSocketServer } = createRequire(import.meta.url)(join(dirname(t.mfDir), 'ws'));
-  const wss = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+  const wss = new WebSocketServer({ port: 0, host: '127.0.0.1', perMessageDeflate: true });
   wss.on('connection', (ws, req) => ws.on('message', (m, binary) => {
     if (binary) return ws.send(m);
     const text = m.toString();
@@ -349,6 +350,28 @@ export const checks = [
   }],
   ['websocket connect!: by Peer when the server closes, by Us when the client closes', async (t) =>
     answer(await t.get(`/websocket/client_closed_by?url=${encodeURIComponent(await echoServer(t))}`), 'peer=Err(Closed({ by: Peer, clean: True, code: 4005, reason: "peer bye" })) us=Err(Closed({ by: Us, clean: True, code: 4006, reason: "us" }))')],
+  // The 1006 of a clean close: workerd reports the end of its outgoing pump after the peer dropped the connection as
+  // an `error` event ("Network connection lost.", `retryable`), then the close frame of the peer as a clean close
+  // event. A busy step between `close!` and `receive!` gives that order each time (research/ws-close-probe/out.txt).
+  ['websocket close! then receive! after a busy step: Closed by Us, clean, 1000 in each of 30 rounds (an error of the outgoing pump is not the close)', async (t) =>
+    answer(await t.get(`/websocket/client_clean_close?n=30&url=${encodeURIComponent(await echoServer(t))}`), 'clean=30 other=')],
+  ['websocket closed!: NotClosed while open and while closing, then the close record with the queue kept, the same record as the Closed of receive!', async (t) =>
+    answer(await t.get(`/websocket/client_closed_record?url=${encodeURIComponent(await echoServer(t))}`), 'before=Err(NotClosed) sent=Err(Closed) record=Ok({ by: Peer, clean: True, code: 4005, reason: "peer bye" }) first=Ok(Text("echo m1")) same=True closing=Err(NotClosed) after=Ok({ by: Us, clean: True, code: 4006, reason: "us" }) us_same=True')],
+  ['websocket extensions: a client gets the Sec-WebSocket-Extensions of the 101 ([] with no offer)', async (t) =>
+    answer(await t.get(`/websocket/client_ext?url=${encodeURIComponent(await echoServer(t))}`), 'none=Ok([]) offered=Ok(["permessage-deflate"]) reply=Ok(True)')],
+  // workerd agrees on the extensions with a client and does not tell the Worker: the client of `ws` offers
+  // `permessage-deflate` and gets it, and the server end has `extensions` "" (research/ws-close-probe/out.txt).
+  ['websocket extensions: a socket of accept! is NotReported, also when the client got permessage-deflate', async (t) => {
+    const { WebSocket: Ws } = wsPackage(t);
+    const c = new Ws(wsUrl(t.url, '/websocket/echo'), { perMessageDeflate: true });
+    await new Promise((r, j) => (c.once('open', r), c.once('error', j)));
+    const got = new Promise((r) => c.once('message', (m) => r(String(m))));
+    c.send('extensions');
+    eq(await got, 'extensions=Err(NotReported)', 'socket.extensions()');
+    eq(c.extensions, 'permessage-deflate', 'the extensions that the client got');
+    c.close(1000, 'done');
+    return c.extensions;
+  }],
   ['websocket connect! with no protocols: protocol() is ""', async (t) =>
     answer(await t.get(`/websocket/client_proto?url=${encodeURIComponent(await echoServer(t))}`), 'protocol=""')],
   ['websocket connect! to a WebSocket echo server sends and receives one message', async (t) => {

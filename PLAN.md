@@ -3640,6 +3640,33 @@ Tests (2026-11-01, nightly 2026-10-26, Node 26, Miniflare of Wrangler 4):
 
 Not done: `tln run examples` (no `tln` on this machine) and the edge (`PLAN.md` 11c): the subprotocol, the `readyState` rule of `by` and the absence of a `send` throw for a large frame are local facts of workerd. The `Closed` of `send!` has no close record (the adapter maps it to its own `Closed`).
 
+## Status of the WebSocket close record and extensions (2026-11-01)
+
+Input: three items after the WebSocket gaps: a clean close that came back as 1006 (a repro of the adapter `roc-cloudflare-workers-websocket`: about 1 in 24 runs, up to 1 in 2), a read of the close record that takes no message, and the extensions of a client. Facts of local workerd: `research/ws-close-probe/probe.mjs`, `out.txt` (plain JS, no platform), and the source of workerd (`src/workerd/api/web-socket.c++`, `jsg/util.c++`). The signatures are in `MODULES.md` 12.2.
+
+| Item | Cause, checked | Fix |
+| --- | --- | --- |
+| A clean close is `Closed({ by: Transport, clean: False, code: 1006, reason: "Uncaught Error: Network connection lost." })` | The shim. `acceptSocket` made each `error` event the close record, and the close event after it was dropped (`if (st.closed) return`). A log of the events in the repro: `wsClose 1000`, the server got the close, then `error "Network connection lost."`, then `close 1000 clean=true`. The same order in plain JS with no platform: 11 of 150 closes, and 40 of 40 with a busy step of 20 ms after `close()` (the Roc app has such a step: the rest of its turn after `close!`). workerd: the outgoing pump ends in a JS continuation; when the peer replied and dropped the connection before it ran (`whenAborted` sets `outgoingAborted` with no lock), the continuation reports "WebSocket peer disconnected" (DISCONNECTED, shown as "Network connection lost." with `retryable: true`) while the read loop goes on and gives the close frame as a clean close event. A failure of the read loop is the other kind of error: its own DISCONNECTED is a close event 1006 (a drop of the server: `close 1006`, no error), any other is an error with no close event (a frame with RSV bits: an error, then no close event in 2 s) | `acceptSocket`: an `error` event whose error is `retryable` (each DISCONNECTED exception of workerd) is not the close: the close event comes. Another `error` is the close record, as before (1006, `by: Transport`). The repro: 150 of 150 clean (it was 137 of 150) |
+| No read of the close record with no `receive!` | `st.closed` had the record, no helper read it | `pf.wsClosed(ws)`: the record or `undefined`. `WebSocket.closed! : WebSocket => Try(WebSocket.Closed, [NotClosed])`: the same record as the `Closed` of `receive!` at the end, the queue stays. `NotClosed` while open and while closing (after `close!`, until the reply of the peer) |
+| `send!` with the record | Decided: no change. `send!` is one function for `WebSocket` and `Object.Socket` (`MODULES.md` 12, "One API"), and an `Object.Socket` has no close record in JS. A `WebSocket` has none either while closing (`send!` is `Closed` for `readyState` 2 before the close event), so `Closed(record)` would need a `Try` in it | `closed!` after a `Closed` of `send!` |
+| The extensions of a client are not exposed | `wsAccept` read only `sec-websocket-protocol`. The `extensions` of a client socket of workerd is "" also when the server took `permessage-deflate` (probe) | `wsAccept` gives `[ws, protocol, extensions]` from the 101. `WebSocket :: { ref, protocol, extensions }`, `ws.extensions() : Try(List(Str), [NotReported])`, the header split at the commas. A client of workerd offers no extension of its own; an offer of the app (`connect_with!` `headers`) of `permessage-deflate` works, an unknown one (`x-foo`) does not reach the server |
+| A server socket and the extensions | workerd agrees on them with the client and does not tell the Worker: a Node client that offers `permessage-deflate` gets it, and the server end of the `WebSocketPair` has `extensions` "" (probe; also the conformance check) | `accept!`, `accept_with!`: `Err(NotReported)`, not `Ok([])` |
+
+Tests (2026-11-01, nightly 2026-10-26, Node 26, Miniflare of Wrangler 4, workerd 2026-10-12):
+
+| Test | Result |
+| --- | --- |
+| `node conformance/run.mjs bench/out/conformance.wasm websocket` | 39 passed (4 new); the whole run: 484 passed |
+| `roc test platform/main.roc` | 202 passed (2 new `expect`s in `WebSocket.roc`) |
+| `roc check` of `examples/auction/web.roc`, `ledger.roc`, `examples/hello/main.roc` | 0 errors, 0 warnings |
+| `bench/test-all.sh` (`ZIG` 0.17, `WORKERD` of Wrangler 4) | ALL PASS (with the whole conformance run, must-not-compile) |
+| `node conformance/reverts.mjs "ws-close\|ws-gaps\|8f3 pf.wsAccept\|8f3 SO3 pf.wsReceive"` | 18 of 18 caught (4 new `ws-close` reverts; `ws-gaps pf.wsAccept` with a new text) |
+| The repro (`app.roc`: `connect!`, one message each way, `close!`, `receive!`), 150 runs | 150 of 150 `Closed({ by: Us, clean: True, code: 1000, reason: "" })` (before: 137 of 150, 13 of 1006) |
+
+The new checks: 30 rounds of `close!`, a busy step of 20 ms (`ops.lib.spin` of `conformance/worker.js`), then `receive!` (each round fails with the old shim); `closed!` before, after the close of the peer with a queued message, and while closing; `extensions` of a client with no offer and with `permessage-deflate`; `NotReported` for a socket of `accept!` with a Node client that got `permessage-deflate`.
+
+Not done: the edge (`PLAN.md` 11c). A limit of workerd that stays: an error of the pump (`retryable`) and then a failure of the read loop that is not a disconnect (a protocol error of the peer) give one `error` event (workerd dispatches only the first) and no close event, so a `receive!` waits with no end (a wait on a socket has no deadline) until the task is cancelled. No such case is known.
+
 ## Done when
 
 - All tests above pass, and each fails when its change is reverted (the exceptions are in "Order of work").

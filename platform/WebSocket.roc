@@ -10,7 +10,7 @@ import Response
 import Remote
 import http.Header
 
-WebSocket :: { ref : Js.Ref, protocol : Str }.{
+WebSocket :: { ref : Js.Ref, protocol : Str, extensions : Try(List(Str), [NotReported]) }.{
 
 	## Two values are the same socket when they hold the same ref (API.md RS1).
 	is_eq : _
@@ -19,6 +19,13 @@ WebSocket :: { ref : Js.Ref, protocol : Str }.{
 	## of `accept_with!`, the one that it picked. "" when there is none.
 	protocol : WebSocket -> Str
 	protocol = |ws| ws.protocol
+
+	## The extensions of a client socket: the `Sec-WebSocket-Extensions` header of the 101 response, split at the commas
+	## (each with its parameters, as `permessage-deflate; client_max_window_bits=15`). `[]` when the server agreed to none.
+	## A socket of `accept!` is `NotReported`: workerd agrees on the extensions with the client and does not tell the
+	## Worker (the server end has `extensions` "" also when the client got `permessage-deflate`, research/ws-close-probe).
+	extensions : WebSocket -> Try(List(Str), [NotReported])
+	extensions = |ws| ws.extensions
 
 	## One frame. `json` parses a text frame as JSON, the format of most WebSocket clients.
 	Message := [Text(Str), Bytes(List(U8))].{
@@ -86,8 +93,8 @@ WebSocket :: { ref : Js.Ref, protocol : Str }.{
 				Ok(Arr([Ref(client), Ref(server)])) => {
 					response = Response.from_status(101).with_web_socket(client)
 					match pick_protocol(req, opts.?protocols ?? []) {
-						Ok(p) => Ok({ socket: WebSocket.{ ref: server, protocol: p }, response: response.with_header("Sec-WebSocket-Protocol", p) })
-						Err(NotFound) => Ok({ socket: WebSocket.{ ref: server, protocol: "" }, response })
+						Ok(p) => Ok({ socket: WebSocket.{ ref: server, protocol: p, extensions: Err(NotReported) }, response: response.with_header("Sec-WebSocket-Protocol", p) })
+						Err(NotFound) => Ok({ socket: WebSocket.{ ref: server, protocol: "", extensions: Err(NotReported) }, response })
 					}
 				}
 				Ok(other) => crash "WebSocket.accept_with!: pf.wsPair gave ${Str.inspect(other)}"
@@ -104,8 +111,9 @@ WebSocket :: { ref : Js.Ref, protocol : Str }.{
 	connect! : Str => Try(WebSocket, [NotUpgrade, Infra([SocketErr(Io.Thrown)])])
 	connect! = |url| Io.run!(connect(url))
 
-	## `headers`: more request headers. `protocols`: the header `Sec-WebSocket-Protocol` (`ws.protocol()` gives the one
-	## that the server picked). `max_queued_bytes`: the limit of the receive queue, as for `accept_with!`.
+	## `headers`: more request headers (an offer of extensions is the header `Sec-WebSocket-Extensions`: `ws.extensions()`
+	## gives the ones that the server agreed to). `protocols`: the header `Sec-WebSocket-Protocol` (`ws.protocol()` gives
+	## the one that the server picked). `max_queued_bytes`: the limit of the receive queue, as for `accept_with!`.
 	connect_with : Str, { headers ?: List(Header), protocols ?: List(Str), max_queued_bytes ?: U64 } -> Io(WebSocket, [NotUpgrade, Infra([SocketErr(Io.Thrown)])])
 	connect_with = |url, opts| {
 		extra = (opts.?headers ?? []).map(|h| Arr([Text(h.name), Text(h.value)]))
@@ -121,7 +129,7 @@ WebSocket :: { ref : Js.Ref, protocol : Str }.{
 				Call(Root("pf"), "wsAccept", [Slot(1), Slot(0), Lit(Int((opts.?max_queued_bytes ?? default_max_queued_bytes).to_i64_try() ?? I64.highest))]),
 			],
 			|r| match r {
-				Ok(Arr([Ref(ws), Text(picked)])) => Ok(WebSocket.{ ref: ws, protocol: picked })
+				Ok(Arr([Ref(ws), Text(picked), Text(ext)])) => Ok(WebSocket.{ ref: ws, protocol: picked, extensions: Ok(extensions_of(ext)) })
 				Ok(_) => Err(NotUpgrade)
 				Err(t) => Err(Infra(SocketErr(t)))
 			},
@@ -131,8 +139,9 @@ WebSocket :: { ref : Js.Ref, protocol : Str }.{
 	connect_with! : Str, { headers ?: List(Header), protocols ?: List(Str), max_queued_bytes ?: U64 } => Try(WebSocket, [NotUpgrade, Infra([SocketErr(Io.Thrown)])])
 	connect_with! = |url, opts| Io.run!(connect_with(url, opts))
 
-	## `ws.send(data)`, one `call!`. `Closed` when this side or the peer closed the socket (`readyState` 2 or 3). Another
-	## throw of `send` is `SocketErr` (none is known locally: a send of 64 MiB works).
+	## `ws.send(data)`, one `call!`. `Closed` when this side or the peer closed the socket (`readyState` 2 or 3): `closed!`
+	## gives the close record once the close event came. Another throw of `send` is `SocketErr` (none is known locally: a
+	## send of 64 MiB works).
 	send! : WebSocket, WebSocket.Message => Try({}, [Closed, Infra([SocketErr(Io.Thrown)])])
 	send! = |ws, msg| Remote.socket_send!(ws.ref, frame(msg))
 
@@ -165,6 +174,17 @@ WebSocket :: { ref : Js.Ref, protocol : Str }.{
 	receive! : WebSocket => Try(WebSocket.Message, [Closed(WebSocket.Closed)])
 	receive! = |ws| Io.run!(receive(ws))
 
+	## The close record once the close event came, with no wait and no message taken: the messages in the queue stay for
+	## `receive!`, whose `Closed` at the end is this record. `NotClosed` before the close event, also while the socket is
+	## closing (after `close!`, until the reply of the peer: `send!` is `Closed` then). One `call!` of `pf.wsClosed`.
+	closed! : WebSocket => Try(WebSocket.Closed, [NotClosed])
+	closed! = |ws| match Js.call!([Call(Root("pf"), "wsClosed", [Lit(Ref(ws.ref))])]) {
+		Ok(Obj(fields)) => Ok(closed_of(fields))
+		Ok(Undefined) => Err(NotClosed)
+		Ok(other) => crash "WebSocket.closed!: pf.wsClosed gave ${Str.inspect(other)}"
+		Err(t) => crash "WebSocket.closed!: ${t.name}: ${t.message}"
+	}
+
 	## `ws.close(code, reason)`, one `call!`. `BadCode`: a code that the app cannot send (1000 to 4999 only, not 1004
 	## to 1006 or 1015: Workers checks it). `TooLarge`: a reason of more than 123 bytes (UTF-8). A close of a socket that
 	## is closed already is `Ok`.
@@ -191,7 +211,11 @@ http_url = |url|
 		url
 	}
 
-## The close record of `pf.wsReceive` and of the event `socketClose`: `{ code, reason, clean, by }`.
+## The `Sec-WebSocket-Extensions` header as a list: split at the commas, each one trimmed, no empty ones.
+extensions_of : Str -> List(Str)
+extensions_of = |header| header.split_on(",").map(|e| e.trim()).keep_if(|e| !e.is_empty())
+
+## The close record of `pf.wsReceive`, of `pf.wsClosed` and of the event `socketClose`: `{ code, reason, clean, by }`.
 closed_of : List((Str, Js)) -> WebSocket.Closed
 closed_of = |fields| {
 	get = |name| match fields.find_first(|(k, _)| k == name) {
@@ -216,6 +240,8 @@ closed_of = |fields| {
 }
 
 expect http_url("ws://a.dev/x") == "http://a.dev/x"
+expect extensions_of("permessage-deflate; client_max_window_bits=15, x-foo") == ["permessage-deflate; client_max_window_bits=15", "x-foo"]
+expect extensions_of("") == []
 expect http_url("wss://a.dev/x") == "https://a.dev/x"
 expect http_url("https://a.dev/x") == "https://a.dev/x"
 expect closed_of([("code", Int(1000)), ("reason", Text("bye")), ("clean", Bool(Bool.True)), ("by", Text("peer"))]) == { code: 1000, reason: "bye", clean: Bool.True, by: Peer }

@@ -1,0 +1,20 @@
+1. close(1000) then wait, 150 rounds: {
+  'message | close 1000 clean=true': 139,
+  'message | error "Uncaught Error: Network connection lost." {"message":"Network connection lost.","retryable":true} readyState=3 | close 1000 clean=true': 11
+}
+1. close(1000), a busy step of 20 ms, then wait, 40 rounds: {
+  'message | error "Uncaught Error: Network connection lost." {"message":"Network connection lost.","retryable":true} readyState=3 | close 1000 clean=true': 40
+}
+2. the server drops the connection (terminate): { 'close 1006 clean=false': 3 }
+2. the server sends a frame with RSV bits: {
+  'error "Uncaught Error: WebSocket protocol error; protocolError.statusCode = 1002; protocolError.description = Received frame had RSV bits 2 or 3 set" {"message":"WebSocket protocol error; protocolError.statusCode = 1002; protocolError.description = Received frame had RSV bits 2 or 3 set"} readyState=3 | no close event in 2 s, readyState=3': 3
+}
+3. server permessage-deflate on, offer "": 101 header=null ws.extensions="" | server: echo x offer=- ext=
+3. server permessage-deflate on, offer "permessage-deflate": 101 header="permessage-deflate" ws.extensions="" | server: echo x offer=permessage-deflate ext=permessage-deflate
+3. server permessage-deflate on, offer "permessage-deflate; client_max_window_bits": 101 header="permessage-deflate; client_max_window_bits=15" ws.extensions="" | server: echo x offer=permessage-deflate; client_max_window_bits=15 ext=permessage-deflate
+3. server permessage-deflate on, offer "x-foo": 101 header=null ws.extensions="" | server: echo x offer=- ext=
+3. server permessage-deflate off, offer "": 101 header=null ws.extensions="" | server: echo x offer=- ext=
+3. server permessage-deflate off, offer "permessage-deflate": 101 header=null ws.extensions="" | server: echo x offer=permessage-deflate ext=
+3. server permessage-deflate off, offer "permessage-deflate; client_max_window_bits": 101 header=null ws.extensions="" | server: echo x offer=permessage-deflate; client_max_window_bits=15 ext=
+3. server permessage-deflate off, offer "x-foo": 101 header=null ws.extensions="" | server: echo x offer=- ext=
+3. a Node client that offers permessage-deflate to a WebSocketPair: the client got "permessage-deflate"; server end: extensions="" offer of the request="permessage-deflate; client_max_window_bits"
