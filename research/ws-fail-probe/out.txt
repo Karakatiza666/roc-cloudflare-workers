@@ -1,0 +1,25 @@
+# node research/ws-fail-probe/probe.mjs, for each Node and workerd (MINIFLARE). "TCP connections open": 1 is the pool of dispatchFetch; each more one is a connection that the client failed and did not close.
+
+node v26.7.0, workerd 2026-10-12
+WebSocket of Node, round 1: client: close 1006; server end after 1 s: close 1006 clean=false; TCP connections open: 1
+WebSocket of Node, round 2: client: close 1006; server end after 1 s: close 1006 clean=false; TCP connections open: 1
+ws package, round 1: client: error "Server sent an invalid subprotocol"; server end after 1 s: close 1006 clean=false; TCP connections open: 1
+ws package, round 2: client: error "Server sent an invalid subprotocol"; server end after 1 s: close 1006 clean=false; TCP connections open: 1
+
+node v26.7.0, workerd 2026-10-23
+WebSocket of Node, round 1: client: close 1006; server end after 1 s: (no event); TCP connections open: 2
+WebSocket of Node, round 2: client: close 1006; server end after 1 s: (no event); TCP connections open: 3
+ws package, round 1: client: error "Server sent an invalid subprotocol"; server end after 1 s: close 1006 clean=false; TCP connections open: 3
+ws package, round 2: client: error "Server sent an invalid subprotocol"; server end after 1 s: close 1006 clean=false; TCP connections open: 3
+
+node v26.13.0, workerd 2026-10-12
+WebSocket of Node, round 1: client: close 1006; server end after 1 s: close 1006 clean=false; TCP connections open: 1
+WebSocket of Node, round 2: client: close 1006; server end after 1 s: close 1006 clean=false; TCP connections open: 1
+ws package, round 1: client: error "Server sent an invalid subprotocol"; server end after 1 s: close 1006 clean=false; TCP connections open: 1
+ws package, round 2: client: error "Server sent an invalid subprotocol"; server end after 1 s: close 1006 clean=false; TCP connections open: 1
+
+node v26.13.0, workerd 2026-10-23
+WebSocket of Node, round 1: client: close 1006; server end after 1 s: (no event); TCP connections open: 2
+WebSocket of Node, round 2: client: close 1006; server end after 1 s: (no event); TCP connections open: 3
+ws package, round 1: client: error "Server sent an invalid subprotocol"; server end after 1 s: close 1006 clean=false; TCP connections open: 3
+ws package, round 2: client: error "Server sent an invalid subprotocol"; server end after 1 s: close 1006 clean=false; TCP connections open: 3

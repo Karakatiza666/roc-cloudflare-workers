@@ -3667,6 +3667,25 @@ The new checks: 30 rounds of `close!`, a busy step of 20 ms (`ops.lib.spin` of `
 
 Not done: the edge (`PLAN.md` 11c). A limit of workerd that stays: an error of the pump (`retryable`) and then a failure of the read loop that is not a disconnect (a protocol error of the peer) give one `error` event (workerd dispatches only the first) and no close event, so a `receive!` waits with no end (a wait on a socket has no deadline) until the task is cancelled. No such case is known.
 
+## Status of the conformance run on Node 26.13 (2026-11-01)
+
+Input: the release run of 0.0.2 (workflow `release`, job `tests`, run 41300213508: Node 26.13.0, Wrangler 4.156.0, workerd 2026-10-23) failed one check of `conformance/run.mjs`: `FAIL end: {"live":9360,"tasks":1,"refsLive":2,"contextsLive":1,"alarms":0,"timers":1}`. Locally (Node 26.7.0, workerd 2026-10-12) the run passed. Facts: `research/ws-fail-probe/probe.mjs`, `out.txt` (plain JS, no platform).
+
+| Item | Result |
+| --- | --- |
+| The variable | Node, not workerd: Node 26.13.0 gives the failure with workerd 2026-10-12 and 2026-10-23. Node 26.7.0 passes with both |
+| The check | `websocket accept_with! protocols`, the step "no common protocol": the `WebSocket` client of Node asks for `chat`, the Worker offers `v3`, the 101 has no protocol, and the client fails the connection (RFC 6455 4.1). The task of `/websocket/echo` stays until the end of the run |
+| The cause | A test bug. The `WebSocket` client of Node (undici) fails the connection but can keep its TCP connection open (`ss`: one more connection). The socket of the Worker gets no event and stays open, so its task waits on `receive!` with no deadline (correct: a wait on a socket has no deadline, API.md 10.2). The probe: the connection stays with workerd 2026-10-23 on both Node versions; the conformance run: with Node 26.13 on both workerd versions. The client of the `ws` package drops the connection each time, and the server end gets close 1006 |
+| The fix | `conformance/checks/websocket.mjs`: the "no common protocol" step uses the client of the `ws` package ("Server sent no subprotocol"), and waits for the "echo closed" line with 1006, `by: Transport`, `got: 0` (the task ends). No change to the platform, so no revert entry |
+
+Tests (2026-11-01):
+
+| Test | Result |
+| --- | --- |
+| `node conformance/run.mjs bench/out/conformance.wasm "accept_with! protocols"`, Node 26.7.0 and 26.13.0, workerd 2026-10-12 and 2026-10-23 | 4 of 4 pairs: 2 passed, `PASS end` (before the fix: `FAIL end` with Node 26.13.0) |
+| `bench/test-all.sh`, Node 26.13.0, Wrangler 4.156.0, workerd 2026-10-23 (as the release run) | ALL PASS (55 steps, with the whole conformance run) |
+| `bench/test-all.sh`, Node 26.7.0, Wrangler 4.151.0, workerd 2026-10-12 | ALL PASS (55 steps) |
+
 ## Done when
 
 - All tests above pass, and each fails when its change is reverted (the exceptions are in "Order of work").

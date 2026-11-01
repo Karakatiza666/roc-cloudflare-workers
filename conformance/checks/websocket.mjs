@@ -318,8 +318,19 @@ export const checks = [
     c.send('protocol');
     eq(await c.next(), 'protocol=v2', 'socket.protocol()');
     await c.close(1000, 'done');
-    const none = await client(wsUrl(t.url, '/websocket/echo?protocols=v3'), ['chat']).then(() => 'opened', (e) => String(e.message));
-    ok(none.includes('failed'), `no common protocol: the client fails the connection (RFC 6455 4.1): ${none}`);
+    // No common protocol: the client fails the connection (RFC 6455 4.1). The client of `ws`: it drops its TCP
+    // connection, so the socket of the Worker gets 1006 and its task ends. The `WebSocket` of Node (undici) can keep
+    // the connection open (Node 26.13, or workerd 2026-10-23): the socket of the Worker then stays open and its task
+    // waits with no deadline (research/ws-fail-probe/out.txt).
+    const drops = () => logOf(t, 'echo closed').filter((l) => l.code === 1006).length;
+    const drops0 = drops();
+    const { WebSocket: Ws } = wsPackage(t);
+    const n = new Ws(wsUrl(t.url, '/websocket/echo?protocols=v3'), ['chat']);
+    const none = await new Promise((r) => (n.once('open', () => r('opened')), n.once('error', (e) => r(String(e.message)))));
+    eq(none, 'Server sent no subprotocol', 'no common protocol: the 101 has no protocol, and the client fails the connection (RFC 6455 4.1)');
+    for (let i = 0; i < 50 && drops() === drops0; i++) await sleep(50);
+    const drop = logOf(t, 'echo closed').filter((l) => l.code === 1006)[drops0];
+    eq(`${drop?.by} ${drop?.got}`, 'Transport 0', 'the socket of the Worker after the client failed the connection');
     const plain = await client(wsUrl(t.url, '/websocket/echo?protocols=v2'));
     plain.send('protocol');
     eq(await plain.next(), 'protocol=', 'a client that asks for none: ""');
