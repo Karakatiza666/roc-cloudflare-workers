@@ -1,5 +1,8 @@
 # The [scripts] table that `roc-cfw init` adds to the talon.toml of a new project (the [tools] table stays as it is).
 [scripts]
+# `roc build` exits with 2 when it finds warnings and no errors, and it still writes app.wasm. Talon 0.0.1 then stops
+# the script. With Talon after 0.0.1, a step can accept exit 2 (Talon R-RUN18), for example:
+#   build = [{ run = "roc build --target=wasm32 --no-cache --output=app.wasm main.roc", ok-exit = [2] }, "roc-cfw sync"]
 build = ["roc build --target=wasm32 --no-cache --output=app.wasm main.roc", "roc-cfw sync"]
 check = ["roc build --target=wasm32 --no-cache --output=app.wasm main.roc", "roc-cfw sync --check"]
 dev = ["@build", "wrangler dev --local"]

@@ -661,6 +661,12 @@ The event and the outcome cross as `Js` trees (5) with these shapes (`platform/E
 | `cf` | absent, or an object with each field of `Request.Cf` as `{ Ok: v }` or `{ Err: "Missing" }` (never `null`), and `is_eu_country` as a boolean |
 | Outcome | `{ outcome: "respond", status, headers, body, webSocket? }`, `{ outcome: "reply", value }`, `{ outcome: "done" }`, `{ outcome: "failed", message }`, `{ outcome: "unhandled" }` |
 
+A request that never becomes a `Fetch` event:
+
+| Request | What workerd does | What a test does |
+| --- | --- | --- |
+| A method that workerd does not know (for example `BREW`) | workerd answers `501` with the text body `ERROR: Unrecognized request method.` before the Worker runs. The app and the shim see nothing, so the app cannot give its own answer (for example a `405` in problem form). This is workerd, not the platform (Talon registry slice 101, P4). | Test a method that the app does not serve with a known method (`PUT`, `DELETE`, `PATCH`). |
+
 ### 10.2 Respond now, work after
 
 A `fetch!` handler gives `Ok(response.after(work!))` (`Response.after`, `MODULES.md` 4): the platform gives the response to Workers at once, and then runs `work! : () => Try({}, e)` in the same task. The work is an argument, so the order is in the types: no code runs after the handler gives its result, and the handler has one response. `Response.after` works for the `fetch!` of a Worker, of a named entry point (`EntrypointFetch`) and of a Durable Object, the only handlers that give a `Response`. `Entry.finish!` (`platform/main.roc`) sends the response with `pf.respond` and then runs the work. An `Err(e)` of the work does not reach the client, which has its response already: it is only the log line `fetch: after respond: failed: <Str.inspect(e)>` (`<name>.fetch: after respond: failed: ...` for an object or a named entry point).

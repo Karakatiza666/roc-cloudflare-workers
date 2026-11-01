@@ -29,6 +29,9 @@ const USAGE = `usage:
       It also reads the app source (--file; default: <wasm name>.roc next to the wasm file, else main.roc) and warns of a
       handler that the source defines at the top level (scheduled!, queue!, alarm!, ...) and that Worker.new, Object.class or
       Rpc.entrypoint does not list: it never runs. A warning is exit 0, and exit 1 with --check.
+      It checks the Roc nightly against min_nightly of cfw.json (next to this file): a wasm without the stack exports of
+      nightly 2026-10-28 and later is wrong when min_nightly is 2026-10-28 or later (exit 1). Else the roc: pin of the app
+      header decides: an older pin is a warning (exit 0, and exit 1 with --check).
       An options file next to the entry file (worker.options.js for worker.js) is the second argument of makeHandler: the
       entry file imports its default export. sync never writes the options file.
       It also checks the link to the other Workers of the repo: a service binding (service, entrypoint) and a Durable
@@ -419,6 +422,56 @@ export function unlistedHandlers(m, source) {
   return out.sort((x, y) => x.line - y.line);
 }
 
+// ---- The Roc nightly (README "Supported nightlies") ----
+
+// `min_nightly` of js/cfw.json: the oldest Roc nightly that builds and runs this platform. The wasm file has no field
+// with the compiler version, so `sync` uses two facts:
+//   1. The stack exports. From nightly 2026-10-28 (roc-lang/roc PR 12643) the compiler exports `__stack_low` and
+//      `__stack_high` from each wasm module (bench/exports-test.mjs). A module with them is from 2026-10-28 or later, a
+//      module with none is older. This is a proof, so a module that is older than `min_nightly` by it is `wrong` (exit 1).
+//   2. The `roc:` pin of the app header (Talon writes the nightly of the project there). It is a claim: roc gives only a
+//      warning when it does not match, and the build can use another compiler. So a pin older than `min_nightly` is
+//      `warn`: exit 0, and exit 1 with --check (as an unlisted handler).
+// The stack exports decide when they can. Else the pin decides. With neither, a note.
+export const STACK_EXPORTS_FROM = '2026-10-28';
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+// The date of a nightly tag as `YYYY-MM-DD`: `nightly-2026-10-31-f7bef6b`, the older form with the month name
+// (`nightly-2026-July-31-123c5d7`), or a date alone. roc orders nightlies by date only. `null` for another text.
+export function nightlyDate(tag) {
+  const m = /^(?:nightly-)?(\d{4})-(\d{2}|[A-Z][a-z]+)-(\d{2})(?:-[0-9a-f]+)?$/.exec(String(tag ?? '').trim());
+  if (!m) return null;
+  const month = /^\d+$/.test(m[2]) ? Number(m[2]) : MONTHS.indexOf(m[2]) + 1;
+  if (month < 1 || month > 12) return null;
+  return `${m[1]}-${String(month).padStart(2, '0')}-${m[3]}`;
+}
+
+// The `roc:` entry of the app header (`app [...] { ..., roc: "nightly-..." }`), or `null`. Comments are not code.
+export function rocPinOf(source) {
+  const text = String(source).replace(/#[^\n]*/g, '');
+  const header = /(?:^|\n)\s*app\s*\[[^\]]*\]\s*\{([^}]*)\}/.exec(text);
+  if (!header) return null;
+  const pin = /(?:^|[\s,{])roc\s*:\s*"([^"]*)"/.exec(header[1]);
+  return pin ? pin[1] : null;
+}
+
+// The check of the nightly. `min`: `min_nightly` of js/cfw.json (no check when it is absent). `stackExports`: the wasm
+// exports `__stack_low` and `__stack_high`. `pin`: the `roc:` pin of the source (or null), `file`: its name.
+// Each item: `{ level: 'ok' | 'wrong' | 'warn' | 'note', text }`.
+export function checkNightly({ min, stackExports, pin, file = 'main.roc' }) {
+  if (min == null) return [];
+  const minDate = nightlyDate(min);
+  if (!minDate) return [{ level: 'wrong', text: `js/cfw.json has the min_nightly ${JSON.stringify(min)}, which is not a nightly tag (a platform bug)` }];
+  const use = `Build with ${min} or later`;
+  if (stackExports && minDate <= STACK_EXPORTS_FROM) return [{ level: 'ok', text: `the wasm has the stack exports of nightly ${STACK_EXPORTS_FROM} and later, so its nightly is ${min} or later` }];
+  if (!stackExports && minDate >= STACK_EXPORTS_FROM) return [{ level: 'wrong', text: `the wasm has no __stack_low and __stack_high exports, so a nightly older than ${STACK_EXPORTS_FROM} built it. This platform needs ${min} or later (js/cfw.json min_nightly). ${use}` }];
+  if (pin == null) return [{ level: 'note', text: `the wasm and the app header (no roc: pin in ${file}) do not say which nightly built the app. This platform needs ${min} or later` }];
+  const pinDate = nightlyDate(pin);
+  if (!pinDate) return [{ level: 'note', text: `the roc: pin ${JSON.stringify(pin)} of ${file} is not a nightly tag, so it is not checked. This platform needs ${min} or later` }];
+  if (pinDate < minDate) return [{ level: 'warn', text: `the roc: pin ${pin} of ${file} is older than ${min}, the oldest nightly that this platform supports (js/cfw.json min_nightly). ${use} (tln upgrade roc), then build again` }];
+  return [{ level: 'ok', text: `the roc: pin ${pin} of ${file} is ${min} or later` }];
+}
+
 // The checks of the Wrangler config against the manifest. Each item: `{ level: 'ok' | 'missing' | 'wrong' | 'note',
 // text, add? }`. `add`: a config part (TOML text) to add.
 export function checkConfig(m, cfg, { entry, scheduled }) {
@@ -724,6 +777,26 @@ function sync(argv) {
       console.log(`sync: ${relative(dir, source)}:${u.line}: ${u.text}`);
       if (a.check) fail = true;
     }
+  }
+
+  // The Roc nightly: js/cfw.json min_nightly against the stack exports of the wasm and the roc: pin of the source.
+  let min = null;
+  try {
+    min = JSON.parse(readFileSync(join(here, 'cfw.json'), 'utf8')).min_nightly ?? null;
+  } catch {
+    min = null;
+  }
+  const names = WebAssembly.Module.exports(new WebAssembly.Module(readFileSync(wasm))).map((e) => e.name);
+  const nightly = checkNightly({
+    min,
+    stackExports: names.includes('__stack_low') && names.includes('__stack_high'),
+    pin: source ? rocPinOf(readFileSync(source, 'utf8')) : null,
+    file: source ? relative(dir, source) : 'the app source',
+  });
+  if (nightly.length) console.log(`Roc nightly (${relative(dir, wasm)}):`);
+  for (const it of nightly) {
+    console.log(`  ${it.level.padEnd(7)} ${it.text}`);
+    if (it.level === 'wrong' || (it.level === 'warn' && a.check)) fail = true;
   }
 
   // The Wrangler config.

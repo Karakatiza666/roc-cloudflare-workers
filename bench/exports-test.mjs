@@ -9,7 +9,7 @@
 // 5. With a bench build: its export section is the bench header list, and the runner accepts "off".
 // 6. Both builds also export COMPILER (below): the compiler adds them to each module, they are in no header.
 //    The stack bounds agree with `initial_stack_size`, and after the requests of 4 (with 4 traps) the stack pointer
-//    is at the top of the stack again. No file of js/ names them: the host owns the stack pointer (it reads and
+//    is at the top of the stack again. No file of js/ but cli.mjs names them (sync reads the names only): the host owns the stack pointer (it reads and
 //    sets it in wasm, host/host.zig `getSP`, `setSP`), and JS never reads or writes it.
 // Exit 1 on a failure.
 import { readFileSync, readdirSync } from 'node:fs';
@@ -127,8 +127,9 @@ const high = r.x.__stack_high?.value;
 console.log({ stackSize, __stack_low: low, __stack_high: high, __stack_pointer: sp });
 if (high - low !== stackSize) fail(`__stack_high - __stack_low is ${high - low}, the header says initial_stack_size ${stackSize}`);
 if (sp !== high) fail(`after the requests the stack pointer is ${sp}, not __stack_high ${high}`);
-// JS does not use them: no file of js/ names one.
-const jsFiles = readdirSync(new URL('../js/', import.meta.url), { recursive: true }).filter((f) => /\.m?js$/.test(f));
+// JS does not use them: no file of the shim names one. `cli.mjs` is not the shim: it runs in Node only, and `sync` reads the
+// names of the exports (not their values) to find the nightly of the wasm (README "Supported nightlies").
+const jsFiles = readdirSync(new URL('../js/', import.meta.url), { recursive: true }).filter((f) => /\.m?js$/.test(f) && f !== 'cli.mjs');
 for (const f of jsFiles) {
   const named = COMPILER.filter((n) => read(`js/${f}`).includes(n));
   if (named.length) fail(`js/${f} names the compiler stack exports ${named}: the host owns the stack pointer`);

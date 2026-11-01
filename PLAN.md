@@ -3746,6 +3746,49 @@ Result of the 5 reverts: all caught, `PASS`.
 
 The registry can remove its override of `Date.now` (`talon/worker/tests/clock.js`) and give its test clock as the option `now` only. The workaround of slice 108 for a `Memo` age is not necessary: the app clock is the `Memo` clock.
 
+## Status of the registry UX items (2026-11-02)
+
+Input: the Talon registry session (`talon/docs/registry/PLAN.md` section E, slices 101 and 106). A docs pass and one feature (E4). Not released: the README has the rows in "Changes after 0.0.2".
+
+| Item | Change | Where |
+| --- | --- | --- |
+| E3 | The literal URL of 0.0.2 and its nightly. `dist/` is a local build (gitignored) with another hash: take the release URL | `README.md` "What a release has", step 1 |
+| E4 | `min_nightly` in `js/cfw.json` (`nightly-2026-10-19-601b54c`), checked by `sync` (below) | `js/cfw.json`, `js/cli.mjs` `checkNightly`, `README.md` "Supported nightlies", `MODULES.md` 3 |
+| E5 | tar is not in scope for `Native`: roc-tar 0.0.1 (URL), a streaming ustar, pax and GNU reader that takes the output of `ZstdStream` | `MODULES.md` 1 ("`Native` in short"), `README.md` "Limits and known behavior" |
+| E6 | The window limit of `ZstdStream`: 8 MiB, hard | `MODULES.md` 1, `README.md` limits (it was in `API.md` 8 and `platform/Native.roc` only) |
+| E7 | `Ctx` has no respond-then-work function: `Response.after`, 30 s after the response body is complete (`afterRespondMs`) | `platform/Ctx.roc` and `platform/Response.roc` doc comments (and the copies in `bench/platform/`), `MODULES.md` 11 |
+| E9 | `.wrangler/` next to the Wrangler config, also for `wrangler d1 execute --local` and `getPlatformProxy` from another directory. The template `.gitignore` has `.wrangler/` already | `README.md` limits |
+| P2 | `roc build` exits with 2 for warnings and writes the file: `ok-exit = [2]` on the build step with Talon after 0.0.1 (Talon R-RUN18) | `README.md` step 2, `js/template/talon.toml` (a comment: Talon 0.0.1 has no `ok-exit`) |
+| P4 (slice 101) | workerd answers an unknown method (`BREW`) with 501 before the Worker runs | `API.md` 10.1 |
+| P4 (slice 106) | Local D1 takes any bookmark text: a test cannot check a bookmark | `MODULES.md` 5.1 |
+| P3, P5 | `dispatchFetch` adds `Content-Type: text/plain` to a string body; Node `fetch` adds `no-cache` to a request with `If-None-Match` (use `cache: 'force-cache'`) | `README.md` "Testing an app" |
+
+E4, the design. The wasm file has no field with the compiler version (no custom section). Two facts remain:
+
+| Evidence | Strength | Result in `sync` |
+| --- | --- | --- |
+| The exports `__stack_low` and `__stack_high` (the compiler adds them from nightly 2026-10-28, roc-lang/roc PR 12643) | A proof: with them, the nightly is 2026-10-28 or later; with none, it is older | `ok` when the proof is enough. `wrong` (exit 1, also without `--check`) when the module has none and `min_nightly` is 2026-10-28 or later |
+| The `roc:` pin of the app header (Talon writes it) | A claim: roc gives only a warning when it does not match, and a build can use another compiler | Older than `min_nightly`: `warn`, exit 0, exit 1 with `--check` (the rule of an unlisted handler). Not a tag, or no pin: `note` |
+
+With `min_nightly` 2026-10-19, the proof only says "new enough" (a wasm of 10-28 or later). A wasm of 10-19 to 10-27 has no proof, so the pin decides. When a later release needs a nightly of 2026-10-28 or later, the same code makes an old wasm an error. `cfw.json` with no `min_nightly`: no check. `roc-cfw` 0.0.1 reads only `api`, and its test accepts other keys.
+
+The oldest nightly (`research/min-nightly/README.md`): 10-19, 10-21 and 10-27 pass the conformance run (489 checks), `node-test.mjs` and `handler-test.mjs` with the hosts of 10-31. `exports-test.mjs` fails on them only for the 3 compiler exports. 10-18 and 10-14: the compiler crashes (SIGSEGV, `monotype`) on the conformance app.
+
+`bench/exports-test.mjs` check 6 ("no file of `js/` names a compiler export") now skips `js/cli.mjs`: it runs in Node only and reads the names of the exports, not their values.
+
+Tests: `bench/cli-test.mjs` section 8 (8a to 8u): `nightlyDate` (tag, month-name tag, date), `rocPinOf` (header, comment, one line, outside the header), `checkNightly` (each branch), and `sync` on a copy of `js/` with its own `cfw.json`: `app_b3.wasm`, and the same wasm with the two exports removed from its export section. `scripts/test_bundle_js.sh` checks `api` 1 and a `min_nightly` tag in the bundle.
+
+| Revert (`node bench/cli-reverts.mjs nightly`) | Result |
+| --- | --- |
+| A wasm with no stack exports is not a proof (falls to the pin) | caught (8h, 8n) |
+| The pin is compared the wrong way | caught (8i, 8q) |
+| A `warn` does not fail `--check` | caught (8r) |
+| `sync` reads another key of `cfw.json` | caught (8m, 8n) |
+
+| Test | Result |
+| --- | --- |
+| `bench/test-all.sh` (nightly 2026-10-31, Zig 0.17.0, workerd of Wrangler 4) | ALL PASS (55 steps) |
+
 ## Done when
 
 - All tests above pass, and each fails when its change is reverted (the exceptions are in "Order of work").

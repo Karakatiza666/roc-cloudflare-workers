@@ -20,13 +20,21 @@ Each release (tag `X.Y.Z`) has 1 file. The platform and the shim have the same v
 | --- | --- |
 | `<hash>.tar.zst` | The platform bundle. It goes in the header of the app. It has the Roc modules, `LICENSE`, the production host `targets/wasm32/host.wasm`, and the JS shim in `js/` (`index.js` and the other `*.js` files: `makeHandler`, `objectClass`, `entrypointClass`; `cli.mjs`: the command `sync`; `cfw.json`; `template/`). The packages `http` (roc-lang/http 2.0.0) and `cbor` (roc-cbor 0.2.2) stay URLs in the platform header: Roc downloads them. |
 
-There is no npm package and no `package.json` in a project. The release notes have the URL.
+There is no npm package and no `package.json` in a project. The release notes have the URL. The URL of the latest release:
+
+| Release | URL for the app header | Built with |
+| --- | --- | --- |
+| 0.0.2 | `https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/0.0.2/f352LLRKJCZ4JJVEocp3H9e4e6Sxa6Ym5CxZ1GZCpfd.tar.zst` | `nightly-2026-10-31-f7bef6b` |
+
+Use the release URL. `dist/` of this repository is a local build of `scripts/bundle.sh` (gitignored). Its hash is not the hash of the release, so do not take a URL or a file from `dist/`.
 
 ## Changes after 0.0.2 (not released)
 
 | Change | In 0.0.2 | After 0.0.2 | What the app author does |
 | --- | --- | --- | --- |
 | One clock: the `makeHandler` option `now` | `now` drove only the task deadlines, `graceMs` and the pin expiry (`Memo`, `Js.pin!`). `Time.now_ms!`, `Io.timeout_at` and `set_alarm_in!` read `Date.now()`. A test had to set `Date.now` and `now` both. | `now` (default `Date.now`) drives `Time.now_ms!`, `Memo` and pin expiry, the task deadlines, `graceMs`, `Io.timeout_at` and `Object.Self.set_alarm_in!`. Timers stay real: `Time.sleep`, `Io.timeout` and the deadline timer wait real ms. A cron `time_ms` comes from the event (`MODULES.md` 11, "The clock"). | Nothing in production (`now` unset is `Date.now`). A test sets only `now`, and can remove an override of `Date.now`. |
+| A minimum nightly: `min_nightly` in `js/cfw.json`, checked by `sync` | No supported range. The README named some nightlies that work. | `js/cfw.json` is `{ "api": 1, "min_nightly": "nightly-2026-10-19-601b54c" }`. `sync` prints a block `Roc nightly (app.wasm):`. A wasm with the stack exports of 2026-10-28 and later is `ok`. Else the `roc:` pin of the app header: older than `min_nightly` is `warn` (exit 0, exit 1 with `--check`). No pin: a `note` ("Supported nightlies"). | Build with a nightly from the table "Supported nightlies". A CI step `sync --check` fails for a `roc:` pin older than 2026-10-19: move the pin (`tln upgrade roc`). `roc-cfw` 0.0.1 reads only `api` of `cfw.json`, so it works with the new key. |
+| Docs: the release URL, limits, tests (`README.md` "What a release has", "Limits and known behavior", "Testing an app"; `MODULES.md` 1, 5.1, 11; `API.md` 10.1; `js/template/talon.toml`) | The README had no literal release URL. The window limit of `ZstdStream` (8 MiB), the 30 s after the response, tar, and the facts of workerd, local D1 and Node for tests were not in the docs, or only in a doc comment. | The 0.0.2 URL and the note that `dist/` is a local build with another hash. The limits table. roc-tar 0.0.1 for tar. The `ok-exit = [2]` form of Talon after 0.0.1 for a build with warnings (a comment in the template). | Take the platform URL from the release, never from `dist/`. |
 
 ## Changes in 0.0.2
 
@@ -46,7 +54,20 @@ The platform header has roc-cbor 0.2.2: an app that adds the roc-cbor URL too us
 
 The module names do not change. `MODULES.md` 1, "Modules", now marks the low-level modules (`Cbor`, `Native`, `Io`, `Js`): an app needs only `Cbor`, `Native` and the `Io` functions `run!`, `both!`, `all!`, `race!`, `timeout`. `Io.new` and `Io.sync` (for a binding author) stay in `Io`: they cannot move to `Js` (Roc refuses the import cycle).
 
-Needs: a Roc nightly (the release notes name it, `compat/last-stack-first-nightly` is the one that the release was built with), Node (JSPI: the tests use Node 26) and `wrangler` (the tests use Wrangler 4). Install Wrangler on the machine (see the Cloudflare documentation). It is a program, not a file of a project.
+Needs: a Roc nightly (see "Supported nightlies"), Node (JSPI: the tests use Node 26) and `wrangler` (the tests use Wrangler 4). Install Wrangler on the machine (see the Cloudflare documentation). It is a program, not a file of a project.
+
+### Supported nightlies
+
+Supported nightlies: `nightly-2026-10-19-601b54c` (the `min_nightly` of `js/cfw.json`) to `nightly-2026-10-31-f7bef6b` (the release build, `compat/last-stack-first-nightly`). A later nightly is not checked before a release: the scheduled job `nightly-layout` builds and tests each new one. Checked 2026-11-02 against the platform after 0.0.2 (`research/min-nightly/`): the conformance app (489 checks in Miniflare), `bench/node-test.mjs` and `bench/handler-test.mjs` with the hosts of the release nightly.
+
+| Nightly | Result |
+| --- | --- |
+| 2026-10-31 (f7bef6b) | The release build. All tests pass |
+| 2026-10-27 (de79a0f), 2026-10-21 (5349569), 2026-10-19 (601b54c) | Pass. The wasm has no `__stack_pointer`, `__stack_low` and `__stack_high` exports (the compiler adds them from 2026-10-28). The platform does not use them, so only `bench/exports-test.mjs` sees the difference |
+| 2026-10-18 (1df370f), 2026-10-14 (38a3029) | Not supported: the compiler crashes (SIGSEGV in `monotype`) on the conformance app. A small app can build, but a larger one can crash the compiler |
+| 2026-10-09 and older | Not supported: the module is not stack-first, and the shim refuses it |
+
+`sync` checks the nightly (`MODULES.md` 3, "`sync`, the Roc nightly"). The wasm file does not record the compiler version. A wasm with the stack exports is from 2026-10-28 or later, so it is new enough. For an older wasm, the `roc:` pin of the app header decides: a pin older than `min_nightly` is a warning (exit 0, and exit 1 with `--check`). With no pin, `sync` prints a note.
 
 ## Use it in this repository
 
@@ -162,11 +183,11 @@ The command `sync` of the shim (`roc-cfw sync` runs it):
 
 | Command | What it does |
 | --- | --- |
-| `node .roc-cfw/cli.mjs sync` | Reads the manifest of `app.wasm`, writes `worker.js` (one export line for each class, then `makeHandler`), and checks `wrangler.toml`: `main`, the compatibility date and flags, `durable_objects.bindings`, `migrations` (`new_sqlite_classes`), the bindings of `Worker.new({ bindings })`, `triggers.crons` of `Worker.new({ crons })`. It also checks the link to the other Workers of the same repo: a service binding or a `namespace_remote` goes to a Worker by its name in the Wrangler config, so `sync` finds that Worker (its config and its built wasm) and compares the interface names (`Rpc.iface("Ledger")`). It prints the parts to add and gives exit 1 when one is missing or wrong. `--check`: write nothing (for CI). |
+| `node .roc-cfw/cli.mjs sync` | Reads the manifest of `app.wasm`, writes `worker.js` (one export line for each class, then `makeHandler`), and checks `wrangler.toml`: `main`, the compatibility date and flags, `durable_objects.bindings`, `migrations` (`new_sqlite_classes`), the bindings of `Worker.new({ bindings })`, `triggers.crons` of `Worker.new({ crons })`. It also checks the link to the other Workers of the same repo: a service binding or a `namespace_remote` goes to a Worker by its name in the Wrangler config, so `sync` finds that Worker (its config and its built wasm) and compares the interface names (`Rpc.iface("Ledger")`). It also checks the Roc nightly of the app against `min_nightly` of `cfw.json` ("Supported nightlies"). It prints the parts to add and gives exit 1 when one is missing or wrong. `--check`: write nothing (for CI). |
 
 The steps below say what each file has.
 
-1. The app (`examples/hello/main.roc`). The header has the platform and nothing else. The platform brings `Http`, `Cbor` and the types of `roc-lang/http`: the app has no `http` and no `cbor` entry.
+1. The app (`examples/hello/main.roc`). The header has the platform and nothing else. Put the release URL in place of `X.Y.Z/<hash>` (for 0.0.2, the URL in "What a release has"). The platform brings `Http`, `Cbor` and the types of `roc-lang/http`: the app has no `http` and no `cbor` entry.
 
 ```roc
 app [event!] { pf: platform "https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/X.Y.Z/<hash>.tar.zst" }
@@ -201,6 +222,8 @@ roc build --target=wasm32 --no-cache --output=app.wasm main.roc
 
 Use the default build mode (`--opt=speed`) or `--opt=size`. Do not use `--opt=dev`: on nightly 2026-10-31 its wasm32 code reads a `U8`, `U16`, `I8` or `I16`, and a BLOB into `List(U8)` or `Cbor.Bytes`, as `BadData` (a compiler bug of the `I128` conversions, `research/blob-002/README.md`). The platform is tested with `speed` only.
 
+A `roc build` with warnings and no errors exits with 2, and it still writes the `.wasm` file. In a Talon script (Talon after 0.0.1), accept it on the build step: `{ run = "roc build --target=wasm32 --no-cache --output=app.wasm main.roc", ok-exit = [2] }` (Talon R-RUN18). Talon 0.0.1 has no `ok-exit`: there, the step stops the script (see "Gaps of the released versions").
+
 A `roc build` with type errors still writes the `.wasm` file. It prints "N errors and 0 warnings found ... while successfully building" and exits with 1 (checked 2026-10-20 with one bad line). A build is good only when the exit code is 0 and the text is "0 errors and 0 warnings". A script must check the exit code. In the repo, run the command from the root (a build inside `examples/auction/` gives `PathOutsideWorkspace`).
 
 3. The shim. It is `js/` of the platform bundle, copied to `.roc-cfw/` (see above). The entry of the Worker is the file that `sync` writes. The import is the relative path from the entry file to the directory of `cli.mjs` (`./.roc-cfw/index.js` in a project, `../../js/index.js` in `examples/hello/worker.js`):
@@ -234,6 +257,26 @@ export default makeHandler(app);
 wrangler dev --local
 wrangler deploy
 ```
+
+## Limits and known behavior
+
+| Item | Value or behavior | Where |
+| --- | --- | --- |
+| Work after the response (`Response.after`) | 30 s after the response body is complete (the shim option `afterRespondMs`, the `waitUntil` limit of Workers). `Ctx` has no such function: use `res.after(work!)` | `MODULES.md` 11, `API.md` 10.2 |
+| Window of a `Native.ZstdStream` | 8 MiB, a hard limit. A larger window is `WindowTooLarge`. `zstd_decode!` has no window limit | `MODULES.md` 1 ("`Native` in short"), `API.md` 8 |
+| tar | Not in `Native`. Use roc-tar 0.0.1 (`https://github.com/Karakatiza666/roc-tar/releases/download/0.0.1/FGAUE1Pds7Fvd48GkrAYd9rRUpztew8bgUZjUrKPGyo7.tar.zst`), a streaming ustar, pax and GNU reader in pure Roc that takes the output of `Native.ZstdStream` | `MODULES.md` 1 |
+| An HTTP method that workerd does not know (`BREW`) | `501 ERROR: Unrecognized request method.` from workerd. The Worker does not run | `API.md` 10.1 |
+| A D1 bookmark in local D1 | Local D1 takes any bookmark text in `with_session!(After(b))`. A local test cannot check a bookmark | `MODULES.md` 5.1 |
+| `.wrangler/` directories | `wrangler dev`, `wrangler d1 execute --local` and `getPlatformProxy` write local state in `.wrangler/` next to the Wrangler config, also when you run them from another directory (for example a test harness in `tests/` that names `../wrangler.toml`). A harness in a directory with its own config makes its own `.wrangler/` there. The template `.gitignore` has the line `.wrangler/`, which matches a `.wrangler/` directory at each depth. Delete these directories for a clean test: they hold the local D1, KV and R2 data | |
+
+## Testing an app
+
+There is no test helper in the release yet. A test runs the app in Miniflare (`conformance/run.mjs` shows the options). Two facts of Node and Miniflare change what a request has:
+
+| Fact | What to do |
+| --- | --- |
+| `dispatchFetch` with a string body adds `Content-Type: text/plain;charset=UTF-8` | For a request with no `Content-Type`, send the body as bytes (`Buffer.from(text)`) |
+| Node `fetch` (undici, also under `dispatchFetch`) adds `Cache-Control: no-cache` and `Pragma: no-cache` to a request that has `If-None-Match` (the fetch cache mode `default`) | Give `cache: 'force-cache'` in the request init. Then a header is sent only when the test sets it |
 
 ## Build from source
 

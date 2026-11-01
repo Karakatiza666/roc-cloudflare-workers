@@ -1,6 +1,7 @@
 ## The context of a task (MODULES.md 11, API.md 10.2): work after the task, and the origin on an error. To respond now
-## and work after, a `fetch!` handler gives `res.after(work!)` (`Response.after`). Each function is one `call!` with no
-## wait. The JS side is in `js/helpers.js` (the root `pf`).
+## and work after, a `fetch!` handler gives `res.after(work!)` (`Response.after`): this module has no such function. The
+## work has 30 s after the response body is complete (the shim option `afterRespondMs`), then the shim cancels the task.
+## Each function is one `call!` with no wait. The JS side is in `js/helpers.js` (the root `pf`).
 import Io
 import Js
 

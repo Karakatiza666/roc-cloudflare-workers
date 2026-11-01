@@ -292,5 +292,109 @@ for (const [name, wasmName, src] of [['6n the conformance app (all kinds, classe
   check('7m (R-V21-7) a bad option name in the options file is a load error of makeHandler', lb.status !== 0 && /unknown option "bogus"/.test(lb.stderr), `exit ${lb.status}\n${lb.stderr.slice(0, 400)}`);
 }
 
+// ---- 8. The Roc nightly (E4): min_nightly of js/cfw.json, the stack exports of the wasm, the roc: pin of the app ----
+// The wasm has no compiler version. From nightly 2026-10-28 it exports __stack_low and __stack_high (a proof of 10-28 or
+// later); the roc: pin of the header is a claim. A proof that the nightly is too old: `wrong`, exit 1. A pin that is too
+// old: `warn`, exit 0, and exit 1 with --check. Neither: a note.
+{
+  const { nightlyDate, rocPinOf, checkNightly, STACK_EXPORTS_FROM } = await import(pathToFileURL(cli).href);
+  const cfw = JSON.parse(readFileSync(join(root, 'js/cfw.json'), 'utf8'));
+  check('8a cfw.json has api 1 and a min_nightly that is a nightly tag', cfw.api === 1 && typeof cfw.min_nightly === 'string' && /^nightly-\d{4}-\d{2}-\d{2}-[0-9a-f]+$/.test(cfw.min_nightly), JSON.stringify(cfw));
+  check('8b nightlyDate reads the tag, the month-name tag and a date; other text is null',
+    nightlyDate('nightly-2026-10-31-f7bef6b') === '2026-10-31' && nightlyDate('nightly-2026-July-31-123c5d7') === '2026-07-31' && nightlyDate('2026-10-28') === '2026-10-28' && nightlyDate('latest') === null && nightlyDate('nightly-2026-Foo-01-abc') === null && nightlyDate(null) === null, '');
+  const H = (entries) => `app [event!] {\n\tpf: platform "https://x/0.0.2/h.tar.zst",${entries}\n}\n\nmain = 1\n`;
+  check('8c rocPinOf: the roc: entry of the app header', rocPinOf(H('\n\troc: "nightly-2026-10-14-38a3029",')) === 'nightly-2026-10-14-38a3029', '');
+  check('8d rocPinOf: no pin, a pin in a comment, and roc: outside of the header are null',
+    rocPinOf(H('')) === null && rocPinOf(H('\n\t# roc: "nightly-2026-10-14-38a3029",')) === null && rocPinOf(`${H('')}x = { roc: "nightly-2026-10-14-38a3029" }\n`) === null, '');
+  check('8e rocPinOf: a header on one line, roc: first', rocPinOf('app [main!] { roc: "nightly-2026-10-27-de79a0f", pf: platform "x" }\n') === 'nightly-2026-10-27-de79a0f', '');
+  const lv = (o) => checkNightly(o).map((i) => i.level).join(',');
+  const old = 'nightly-2026-10-14-38a3029', late = 'nightly-2026-10-30-0000000';
+  check('8f checkNightly: no min_nightly, no check', lv({ min: null, stackExports: false, pin: null }) === '', '');
+  check('8g checkNightly: the stack exports prove a min of 10-28 or older (the pin does not matter)', lv({ min: old, stackExports: true, pin: 'nightly-2026-10-01-aaaaaaa' }) === 'ok' && lv({ min: `nightly-${STACK_EXPORTS_FROM}-abc`, stackExports: true, pin: null }) === 'ok', '');
+  check('8h checkNightly: no stack exports and a min of 10-28 or later: wrong (also with a new pin)', lv({ min: `nightly-${STACK_EXPORTS_FROM}-abc`, stackExports: false, pin: late }) === 'wrong' && lv({ min: late, stackExports: false, pin: null }) === 'wrong', '');
+  check('8i checkNightly: else the pin decides: older is warn, the same date or newer is ok', lv({ min: old, stackExports: false, pin: 'nightly-2026-10-12-2664a27' }) === 'warn' && lv({ min: old, stackExports: false, pin: 'nightly-2026-10-14-ffffff0' }) === 'ok' && lv({ min: late, stackExports: true, pin: 'nightly-2026-10-29-abc' }) === 'warn' && lv({ min: late, stackExports: true, pin: 'nightly-2026-10-31-f7bef6b' }) === 'ok', '');
+  check('8j checkNightly: no pin, or a pin that is not a tag: note', lv({ min: old, stackExports: false, pin: null }) === 'note' && lv({ min: old, stackExports: false, pin: 'latest' }) === 'note', '');
+  check('8k checkNightly: a min_nightly that is not a tag is wrong (a platform bug)', lv({ min: 'soon', stackExports: true, pin: null }) === 'wrong', '');
+
+  // The command: a copy of js/ with its own cfw.json (sync reads the cfw.json next to cli.mjs), app_b3.wasm with the
+  // stack exports, and the same wasm with __stack_low and __stack_high removed from its export section.
+  const leb = (n) => { const out = []; do { let b = n & 0x7f; n >>>= 7; if (n) b |= 0x80; out.push(b); } while (n); return out; };
+  const readLeb = (b, at) => { let n = 0, sh = 0, x; do { x = b[at++]; n |= (x & 0x7f) << sh; sh += 7; } while (x & 0x80); return [n >>> 0, at]; };
+  const withoutExports = (bytes, drop) => {
+    const parts = [bytes.subarray(0, 8)];
+    let at = 8;
+    while (at < bytes.length) {
+      const id = bytes[at];
+      const [size, body] = readLeb(bytes, at + 1);
+      let payload = bytes.subarray(body, body + size);
+      if (id === 7) {
+        let [count, p] = readLeb(bytes, body);
+        const kept = [];
+        for (let i = 0; i < count; i++) {
+          const start = p;
+          const [len, q] = readLeb(bytes, p);
+          const name = Buffer.from(bytes.subarray(q, q + len)).toString();
+          p = readLeb(bytes, q + len + 1)[1];
+          if (!drop.includes(name)) kept.push(bytes.subarray(start, p));
+        }
+        payload = Buffer.concat([Buffer.from(leb(count - drop.length)), ...kept]);
+      }
+      parts.push(Buffer.from([id, ...leb(payload.length)]), payload);
+      at = body + size;
+    }
+    return Buffer.concat(parts);
+  };
+  const exportNames = (b) => WebAssembly.Module.exports(new WebAssembly.Module(b)).map((e) => e.name);
+  const full = readFileSync(wasm);
+  const stripped = withoutExports(full, ['__stack_low', '__stack_high']);
+  check('8l the test wasm: app_b3.wasm has the stack exports (build it with the pinned nightly), the copy has none',
+    exportNames(full).includes('__stack_low') && !exportNames(stripped).includes('__stack_low') && !exportNames(stripped).includes('__stack_high') && exportNames(stripped).length === exportNames(full).length - 2, exportNames(stripped).join(' '));
+  let js = 0;
+  const shimWith = (cfwJson) => {
+    const d = join(tmp, `js${js++}`);
+    cpSync(join(root, 'js'), d, { recursive: true });
+    writeFileSync(join(d, 'cfw.json'), cfwJson);
+    return join(d, 'cli.mjs');
+  };
+  // With --check, a run of sync first writes worker.js, so only the nightly item can fail the check.
+  const runWith = (cliFile, dir, ...args) => {
+    if (args.includes('--check')) spawnSync(process.execPath, [cliFile, 'sync'], { cwd: dir, encoding: 'utf8' });
+    const r = spawnSync(process.execPath, [cliFile, ...args], { cwd: dir, encoding: 'utf8' });
+    return { code: r.status, out: r.stdout, all: r.stdout + r.stderr };
+  };
+  const item = (out) => (out.split('Roc nightly (app.wasm):\n')[1] ?? '').split('\n')[0];
+  const pinSrc = (pin) => ({ 'main.roc': H(pin ? `\n\troc: "${pin}",` : '') });
+  const nightlyProject = (bytes, pin) => {
+    const dir = project(complete(), 'toml', pinSrc(pin));
+    writeFileSync(join(dir, 'app.wasm'), bytes);
+    return dir;
+  };
+
+  const real = run(nightlyProject(full, null), 'sync');
+  check('8m the cfw.json of this tree and a wasm of the pinned nightly: ok, exit 0', real.code === 0 && /^ {2}ok +the wasm has the stack exports/.test(item(real.out)), `exit ${real.code}\n${real.all}`);
+
+  const cli28 = shimWith(`{ "api": 1, "min_nightly": "nightly-${STACK_EXPORTS_FROM}-357494c" }\n`);
+  const p28 = nightlyProject(stripped, 'nightly-2026-10-31-f7bef6b');
+  const w = runWith(cli28, p28, 'sync');
+  check('8n min 10-28 and a wasm with no stack exports: wrong, exit 1, the line names the nightly to use (a new pin does not help)', w.code === 1 && /^ {2}wrong +the wasm has no __stack_low and __stack_high exports.*Build with nightly-2026-10-28-357494c or later/.test(item(w.out)), `exit ${w.code}\n${w.all}`);
+  check('8o the same with --check: exit 1', runWith(cli28, p28, 'sync', '--check').code === 1, '');
+  const ok28 = runWith(cli28, nightlyProject(full, null), 'sync', '--check');
+  check('8p min 10-28 and a wasm with the stack exports: ok, --check exit 0', ok28.code === 0 && /^ {2}ok /.test(item(ok28.out)), `exit ${ok28.code}\n${ok28.all}`);
+
+  const cliLate = shimWith(`{ "api": 1, "min_nightly": "${late}" }\n`);
+  const pOld = nightlyProject(full, 'nightly-2026-10-29-abc1234');
+  const wo = runWith(cliLate, pOld, 'sync');
+  check('8q min after 10-28, a pin older than min: warn, sync exit 0', wo.code === 0 && /^ {2}warn +the roc: pin nightly-2026-10-29-abc1234 of main\.roc is older than nightly-2026-10-30-0000000/.test(item(wo.out)), `exit ${wo.code}\n${wo.all}`);
+  const wc = runWith(cliLate, pOld, 'sync', '--check');
+  check('8r the same with --check: exit 1', wc.code === 1 && /^ {2}warn /.test(item(wc.out)), `exit ${wc.code}\n${wc.all}`);
+  const pNew = runWith(cliLate, nightlyProject(full, 'nightly-2026-10-31-f7bef6b'), 'sync', '--check');
+  check('8s min after 10-28, a pin of min or later: ok, --check exit 0', pNew.code === 0 && /^ {2}ok +the roc: pin/.test(item(pNew.out)), `exit ${pNew.code}\n${pNew.all}`);
+  const nn = runWith(cliLate, nightlyProject(full, null), 'sync', '--check');
+  check('8t min after 10-28, no pin: a note, --check exit 0', nn.code === 0 && /^ {2}note +the wasm and the app header/.test(item(nn.out)), `exit ${nn.code}\n${nn.all}`);
+
+  const none = runWith(shimWith('{ "api": 1 }\n'), nightlyProject(stripped, null), 'sync', '--check');
+  check('8u a cfw.json with no min_nightly: no nightly lines, exit 0', none.code === 0 && !none.out.includes('Roc nightly'), `exit ${none.code}\n${none.all}`);
+}
+
 console.log(failed ? 'FAILED' : 'all passed');
 process.exit(failed ? 1 : 0);

@@ -4,7 +4,7 @@
 # Checks (each one fails the script):
 #   1. Each file of js/ is in the unpacked bundle, and the unpacked js/ has no other file.
 #   2. Each file has the content of the file in js/. js/package.json is `{ "type": "module" }` only.
-#   3. js/cfw.json is `{ "api": 1 }`, and js/template/ has main.roc, wrangler.toml, talon.toml, .gitignore.
+#   3. js/cfw.json has `api` 1 and a `min_nightly` tag (README "Supported nightlies"), and js/template/ has main.roc, wrangler.toml, talon.toml, .gitignore.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROC=${ROC:-$(bench/get-roc.sh)}
@@ -23,7 +23,7 @@ for f in $want; do
 	cmp -s "$f" "$dir/$f" || { echo "FAIL: $f differs from the bundle"; exit 1; }
 done
 [ "$(tr -d ' \n' < "$dir/js/package.json")" = '{"type":"module"}' ] || { echo "FAIL: js/package.json of the bundle is not only the type field"; exit 1; }
-[ "$(tr -d ' \n' < "$dir/js/cfw.json")" = '{"api":1}' ] || { echo "FAIL: js/cfw.json is not { \"api\": 1 }"; exit 1; }
+node -e 'const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); process.exit(c.api === 1 && /^nightly-\d{4}-\d{2}-\d{2}-[0-9a-f]+$/.test(c.min_nightly) ? 0 : 1)' "$dir/js/cfw.json" || { echo "FAIL: js/cfw.json has no api 1 or no min_nightly tag"; exit 1; }
 for f in main.roc wrangler.toml talon.toml .gitignore; do
 	test -s "$dir/js/template/$f" || { echo "FAIL: js/template/$f is not in the bundle"; exit 1; }
 done

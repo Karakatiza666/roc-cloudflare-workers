@@ -71,7 +71,8 @@ Response :: { status : U16, headers : List(Header) ?? [], body : Body ?? Empty, 
 	## Respond now, work after (API.md 10.2): when a `fetch!` handler gives this response, the platform sends it, and
 	## then runs `work!` in the same task. The client has its response already, so an `Err(e)` of `work!` cannot reach it:
 	## it is the log line `fetch: after respond: failed: <Str.inspect(e)>` (`<name>.fetch: ...` in an object or a named entry point).
-	## A second `after` runs after the first. Only the response of a `fetch!` handler runs its work.
+	## A second `after` runs after the first. Only the response of a `fetch!` handler runs its work. The work has 30 s
+	## after the response body is complete (the shim option `afterRespondMs`, the `waitUntil` limit of Workers).
 	after : Response, (() => Try({}, e)) -> Response
 	after = |r, work!| {
 		erased! = || work!().map_err(|e| Str.inspect(e))
