@@ -39,7 +39,7 @@ There is no `package.json` and no npm package. The helper `roc-cfw` 0.0.1 writes
 | 5 | `wrangler dev --local`, then `curl http://127.0.0.1:8787/` |
 | 6 | For `wrangler deploy`: `wrangler d1 create <name>` and put its id in `wrangler.toml` |
 
-With platform 0.0.1, step 4 stops with exit 2 after the build (a warning in the platform). Then run `tln x roc-cfw -- sync`. The `README.md` of the repository root has the output of a real run, the gaps and the manual way with no helper.
+With platform 0.0.1, step 4 stops with exit 2 after the build (a warning in the platform). Then run `tln x roc-cfw -- sync`, or use platform 0.0.2, which has no warning. The `README.md` of the repository root has the output of a real run, the gaps and the manual way with no helper.
 
 ## Test in the repo
 

@@ -13,8 +13,8 @@ There is no npm package. With Talon (`tln`):
 tln add --platform Karakatiza666/roc-cloudflare-workers@@TAG@
 ```
 
-The helper `roc-cfw` copies `js/` to `.roc-cfw/` of your project and runs `sync` (planned: it has no release yet).
-Until it has one, copy `js/` of the bundle to `.roc-cfw/` by hand and run `node .roc-cfw/cli.mjs sync`.
+The helper `roc-cfw` (`tln add --tool Karakatiza666/roc-cloudflare-workers-cli --as roc-cfw`) copies `js/` to `.roc-cfw/`
+of your project and runs `sync`. With no helper, copy `js/` of the bundle to `.roc-cfw/` and run `node .roc-cfw/cli.mjs sync`.
 `sync` writes the `worker.js` that imports `./.roc-cfw/index.js`.
 
 Then `roc build --target=wasm32 --no-cache --output=app.wasm main.roc`.
