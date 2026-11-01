@@ -733,6 +733,41 @@ As built in `PLAN.md` 8b (second half). Measured in local workerd (`research/str
 
 The early response works in the `Fetch` of a Worker, in the `EntrypointFetch` of a named entry point and in the `Fetch` of an object (built in `PLAN.md` 8f, part 1, as `Ctx.respond!`; since `PLAN.md` 8h wave B as `Response.after`). In the two new kinds `pass_through!` is `InvalidState`: `passThroughOnException` is for the `fetch` of a Worker only. The `Init` deadline is a timer of the constructor (`MODULES.md` 7, "As built"), because no other event of the object can come while `blockConcurrencyWhile` runs.
 
+### 10.3 The response of a trap (`on_trap`, rules TR)
+
+The `fetch` of the default export, of an object class and of a named entry point answers a trap and an outcome that is not `Respond` with a response that the shim makes. The app can give its own fixed responses at load: `Worker.new({ on_trap })` (`MODULES.md` 3). Design: `research/design-notes/trap-response.md` (accepted by the Talon registry, 2026-11-02).
+
+| Cause (TR2) | Runner result (`js/runner.js`) | With no `on_trap`: status, body | `retry-after` |
+| --- | --- | --- | --- |
+| `crash` | a clean trap: a Roc `crash`, `unreachable`, a clean stack overflow, another `RuntimeError` | 500, `trap <error>` | no |
+| `alarm` | an unclean trap, a failed sum, a bad block, a trap in an export after the task (`PLAN.md` 12) | 503, `trap <error>` or `trap alarm: <cause>` | no |
+| `cpu` | `cause: 'cpu'` (`PLAN.md` 5b) | 503, `trap cpu limit` | no |
+| `oom` | `cause: 'oom'` (M6): a denied grow, or no request block | 503, `trap out of memory` | yes |
+| `shed` | `shed: true`: all task slots in use, memory pressure (M7) | 503, `trap shed: <reason>` | yes |
+| `deadline` | `cancelled: 'deadline'` (10.2) | 503, `trap cancelled: deadline` | no |
+| `cancelled` | another `cancelled`: `replace`, `heap`, `terminated`, `signal` | 503, `trap cancelled: <reason>` | no |
+| `event` | `cause: 'event'`: the request cannot cross (J1, J3) | 500, `trap the event cannot cross: ...` | no |
+| `failed` | no trap: the outcome `Failed` (an `Err` of `fetch!`), `Unhandled`, or another outcome | 500, no body | no |
+
+With no `on_trap` the body is `text/plain;charset=UTF-8` (the default of `new Response(text)`).
+
+| Id | Rule |
+| --- | --- |
+| TR1 | `on_trap` is optional. With no `on_trap` the responses are the ones of 0.0.2 (the table above), byte for byte, with one change: a 503 of `shed` and `oom` has `retry-after` (TR7, decided O2). |
+| TR2 | The cause of a runner result is the first row of the table above that matches. An absent field uses `default`. The Roc field of the cause `crash` is `crashed` (`crash` is a keyword of Roc). |
+| TR3 | Scope: `fetch` of the default export, of an object class and of a named entry point. One table for the Worker. Not: after `Response.after`, after `Ctx.pass_through!` (a throw, as before), and the kinds with no HTTP response (`scheduled`, `queue`, `email`, `tail`, RPC, an object alarm). |
+| TR4 | At trap time the shim calls no export of the instance, reads no wasm memory, runs no `ops` function and no app JS. It makes `new Response(copy of the body, { status, headers })` from the table: a new body each time. |
+| TR5 | `checkManifest` (`js/manifest.js`, `checkTraps`) checks the table at load. A bad value is a throw that names the field (`Worker.new on_trap.<cause>.<field>`): `status` 400 to 599; at most 16 headers; a name is an HTTP token; a value has no CR, LF or NUL and has at most 1,024 bytes; the body has at most 4,096 bytes. Any content type is good. |
+| TR6 | Refused header names: `content-length`, `transfer-encoding`, `connection`, `upgrade`, `keep-alive`, `set-cookie` (case is not significant). |
+| TR7 | On `shed` and `oom` the shim adds `retry-after: <ceil(graceMs / 1000)>` (1 with the default `graceMs`) when the entry has none. The value of the app stays. The app cannot remove the header. |
+| TR8 | The log line (`fetch: trap: <crash text>`), the counters (`stats.traps`, `oom`, `shed`, ...) and the instance rules do not change. The crash text never goes to a response of the table. |
+| TR9 | The table is read once, at load, from the event `Manifest` (`manifestOf`). It is the same for each instance of the isolate, also after a replace (M1). |
+| TR10 | An app with a raw `event!` (no `Worker` wrapper) answers `Unhandled` to `Manifest`, so it has no table (TR1). |
+| TR11 | `sync` prints the table: the status, the content type and the body size of each cause, and the causes that use `default`. |
+| TR12 | A new cause is a new optional field of `Worker.OnTrap`: a minor release (10.1). |
+
+Not in the hands of the shim: workerd stops the isolate (CPU limit, `PLAN.md` 5c) before the shim runs, a missing binding at the first event (a throw of `checkEnv`), and a method that workerd does not know (10.1).
+
 ## 11. Tests and the contract
 
 | Part | Test | Where |

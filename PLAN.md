@@ -3848,6 +3848,47 @@ Result of the 6 reverts: all caught, `PASS`. A workerd stream takes one pending 
 | --- | --- |
 | `bench/test-all.sh` (nightly 2026-10-31, Zig 0.17.0, workerd of Wrangler 4) | ALL PASS (55 steps, with the whole conformance run and the 6 body checks) |
 
+## Status of the trap response, `on_trap` (2026-11-02)
+
+Input: the Talon registry (slice 101 P3, R-AP21, R-AP48). Design: `research/design-notes/trap-response.md` (accepted by talon-04, plan S1 to S5). Rules: `API.md` 10.3 (TR1 to TR12). Branch `on-trap`. Not released.
+
+| Step | Item | State | Where |
+| --- | --- | --- | --- |
+| S1 | `Worker.Fixed`, `Worker.OnTrap`, `on_trap ?:` of `Worker.new`, the `traps` object of the manifest (`default` first, the body as `Bytes`; no key with no `on_trap`) | Built. The field of the cause `crash` is `crashed`: `crash` is a keyword of Roc, so the field name of the design does not parse. Its manifest name stays `crash`. The record of `on_trap` must be a literal in the call: a record value in a name with absent optional fields is a type mismatch (nightly 2026-10-31) | `platform/Worker.roc` (and `bench/platform/`), 3 `expect`s, one is the registry example of the note |
+| S2 | `checkTraps` (TR5, TR6) in `checkManifest`: the checked table as `traps`, or `null` | Built | `js/manifest.js` |
+| S3 | `causeOf` (TR2), `trapResponse` (TR1, TR4, TR7), in `Handler.fetch` and `fetchLike`. The runner result of a request that cannot cross has `cause: 'event'` | Built | `js/manifest.js`, `js/index.js` (4 lines), `js/runner.js` (1 field) |
+| S4 | No export, no wasm memory, no `handle` between the trap and the response: a counting `Proxy` on the exports of each instance and a counting `WebAssembly.promising` | Built (test only) | `bench/trap-test.mjs` part 5 |
+| S5 | `sync` prints the table (TR11). Docs | Built | `js/cli.mjs` (`trapReport`), `MODULES.md` 3, `API.md` 10.3, `README.md` |
+
+`Object.class` and `Rpc.entrypoint` have no `on_trap` of their own: the one table of `Worker.new` applies to their `fetch` (TR3).
+
+| Test | What | Result |
+| --- | --- | --- |
+| `roc test platform/main.roc` | T1: no `traps` key with no `on_trap`; the registry example; ten causes with ten entries in order | PASS (228) |
+| `node bench/trap-test.mjs bench/out` | T2 (each limit, at the limit and one past it), TR2, TR1 and O2 (unit), T3, T4 (crash, `Err`, a request that cannot cross, OOM, a shed by memory pressure, a deadline, a cancel by `request.signal`), T6, T7, T5, T8 (`app_trap_none.wasm`) | PASS (60 checks) |
+| `node conformance/run.mjs bench/out/conformance.wasm "trap:"` | T3, T7 in Miniflare: crash twice, `Err`, the `fetch` of the class `Box` and of the entry point `Ep`, `Response.after` | PASS (6) |
+| `node bench/cli-test.mjs bench/out` | 9a, 9b: the report of `sync` for `app_trap.wasm` and for an app with no `on_trap` | PASS |
+
+The causes `alarm` and `cpu` are tested only in `causeOf` (unit): the tests make no unclean trap and no CPU signal through the shim.
+
+| Revert (`node bench/trap-reverts.mjs`) | Caught by |
+| --- | --- |
+| S1: the `crashed` entry under the name `default` (`roc test`, by hand) | 2 `expect`s of `platform/Worker.roc` |
+| S2: a body of 4,097 bytes passes | node:1e |
+| S3: the same body object for each response of a cause | node:4d, conformance |
+| S3: `fetchLike` skips the table | node:4h, 4i, 4j, conformance |
+| S3: `oom` is mapped to `crash` | node:2a, 4o |
+| S3: no `retry-after` when the entry has headers | node:4p |
+| S4: a host export (`log_len`, as `drain`) is called to make the response | node:5 |
+
+Result of the 7 reverts: all caught.
+
+| Test | Result |
+| --- | --- |
+| `bench/test-all.sh` (nightly 2026-10-31, Zig 0.17.0, workerd of Wrangler 4) | ALL PASS (56 steps, with the whole conformance run and the new checks `trap:`) |
+
+Open: O1 (a `{ray}` placeholder in the body) and O4 (no wasm text in the default body) are for a later release (note section 7).
+
 ## Done when
 
 - All tests above pass, and each fails when its change is reverted (the exceptions are in "Order of work").

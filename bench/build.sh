@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the two hosts, the glue, and the apps. The bench host (zig build -Dbench=true) and the bench platform
 # (bench/platform/main.roc) give bench/out/app.wasm, app_pad.wasm, app_deep.wasm, app_strloop.wasm, app_wait.wasm, app_bridge.wasm, app_events.wasm, app_stream.wasm,
-# app_stack.wasm, app_native.wasm, app_b3*.wasm (bench/bindings-test.mjs, bench/cli-test.mjs), app_envread*.wasm (bench/envread-test.mjs), app_link_*.wasm (bench/sync-cross-test.mjs), app_iface_*.wasm (bench/iface-test.mjs), conformance.wasm (conformance/app.roc). The production host and platform (platform/main.roc) give bench/out/app_prod.wasm (PLAN.md 7a).
+# app_stack.wasm, app_native.wasm, app_b3*.wasm (bench/bindings-test.mjs, bench/cli-test.mjs), app_envread*.wasm (bench/envread-test.mjs), app_link_*.wasm (bench/sync-cross-test.mjs), app_iface_*.wasm (bench/iface-test.mjs), app_trap*.wasm (bench/trap-test.mjs, conformance/checks/trap.mjs), conformance.wasm (conformance/app.roc). The production host and platform (platform/main.roc) give bench/out/app_prod.wasm (PLAN.md 7a).
 # Env: ZIG (Zig 0.17).
 # Optional: ROC (default: the nightly in compat/last-stack-first-nightly, see bench/get-roc.sh),
 # ZIG_FLAGS (e.g. "-Dtrack_live=false"), OUT (default bench/out).
@@ -25,7 +25,9 @@ OUT=${OUT:-bench/out}
 mkdir -p "$OUT"
 # The second callee of a link across Workers (bench/sync-cross-test.mjs): the same app with other interface names.
 sed 's/Rpc\.iface("\([A-Za-z]*\)")/Rpc.iface("\1B")/' bench/app_link_callee.roc > bench/app_link_callee_b.roc
-for app in app app_pad app_deep app_strloop app_wait app_stack app_bridge app_native app_events app_stream app_b3 app_b3_dup app_b3_class app_envread app_envread_none app_link_caller app_link_callee app_link_callee_b app_iface_two app_iface_ns; do
+# The app of bench/trap-test.mjs with no on_trap (TR1: the responses of the platform).
+sed '/^\ton_trap: {/,/^\t},/d' bench/app_trap.roc > bench/app_trap_none.roc
+for app in app app_pad app_deep app_strloop app_wait app_stack app_bridge app_native app_events app_stream app_b3 app_b3_dup app_b3_class app_envread app_envread_none app_link_caller app_link_callee app_link_callee_b app_iface_two app_iface_ns app_trap app_trap_none; do
   # The stack size and the memory are in the header of bench/platform/main.roc (no flags).
   # Exit 2: warnings only (bench/app.roc has a dbg for bench/log-test.mjs). The file is written.
   "$ROC" build --opt=speed --target=wasm32 --no-cache \

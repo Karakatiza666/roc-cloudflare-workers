@@ -21,7 +21,8 @@ import { WorkerEntrypoint, DurableObject } from 'cloudflare:workers';
 // `cf.env`: the env at global scope (workerd). The Node stand-in has none: the check of the bindings waits for an event.
 import * as cf from 'cloudflare:workers';
 import { bindingProblems } from './bindings.js';
-import { checkManifest, RESERVED } from './manifest.js';
+import { checkManifest, RESERVED, trapResponse } from './manifest.js';
+import { BUDGET_OPTS } from './budget.js';
 import { checkOptions } from './options.js';
 import { makeRunner, manifestOf, NOT_STACK_FIRST } from './runner.js';
 import { fetchEvent, scheduledEvent, queueEvent, emailEvent, tailEvent, otherEvent, responseOf, rpcEvent, entrypointFetchEvent, objectEvent, objectInit, objectFetch, objectAlarm, objectRpc, objectSocketMessage, objectSocketClose, objectSocketError, manifestEvent } from './events.js';
@@ -87,6 +88,8 @@ export function makeHandler(module, opts = {}) {
   // checks it again with `set_sum` at the first instance.
   if (runnerOpts.resumeCheck === 'off' && !isBenchHost(module)) throw new Error('resumeCheck "off" needs the bench host: the production host refuses it');
   let runner = null;
+  // TR7: the `retry-after` of a shed and of OOM, in seconds (the time of the memory pressure, `graceMs`).
+  const retryAfter = String(Math.ceil((runnerOpts.graceMs ?? BUDGET_OPTS.graceMs) / 1000));
   // MODULES.md 3: the dev-mode check of `bindings`. Set after the manifest is read (below); the runner calls it at each
   // `Get(Root("env"), name)`.
   let envRead = null;
@@ -129,7 +132,8 @@ export function makeHandler(module, opts = {}) {
 
   class Handler extends WorkerEntrypoint {
     // `Respond` gives the response. `Failed`, `Unhandled`: a log line and a 500 response with no body.
-    // A trap: a response with `trap ...` and the status of the runner (500, or 503 for a shed, a cancel, OOM).
+    // A trap: a response with `trap ...` and the status of the runner (500, or 503 for a shed, a cancel, OOM), with
+    // `retry-after` on a shed and OOM. With `on_trap` (MODULES.md 3): the fixed response of the cause (`trapResponse`).
     // `Response.after` (API.md 10.2): the response goes to Workers at once, and the work after it runs in
     // `ctx.waitUntil`. After `Ctx.pass_through!`, a `Failed` and a trap are a throw: Workers sends the request to the
     // origin (API.md 10.1).
@@ -144,12 +148,12 @@ export function makeHandler(module, opts = {}) {
       }
       if (r.trap) {
         if (hooks.passThrough && !r.shed && !r.cancelled) throw new Error(`fetch: trap ${r.trap}`);
-        return new Response(`trap ${r.trap}`, { status: r.status ?? 500 });
+        return trapResponse(manifest.traps, r, retryAfter);
       }
       if (r.outcome.outcome === 'respond') return responseOf(r.outcome);
       log(`fetch: ${reason(r.outcome)}`);
       if (hooks.passThrough && r.outcome.outcome === 'failed') throw new Error(`fetch: ${reason(r.outcome)}`);
-      return new Response(null, { status: 500 });
+      return trapResponse(manifest.traps, r, retryAfter);
     }
 
     // `Done`: a good run. Each other outcome and a trap: a log line and a throw, so the run fails (Past Events).
@@ -280,10 +284,10 @@ export function makeHandler(module, opts = {}) {
       if (keep) self.ctx?.waitUntil?.(rest);
       return hooks.response;
     }
-    if (r.trap) return new Response(`trap ${r.trap}`, { status: r.status ?? 500 });
+    if (r.trap) return trapResponse(manifest.traps, r, retryAfter);
     if (r.outcome.outcome === 'respond') return responseOf(r.outcome);
     log(`${tag}: ${reason(r.outcome)}`);
-    return new Response(null, { status: 500 });
+    return trapResponse(manifest.traps, r, retryAfter);
   };
   const hooksOf = (kind, self) => ({ kind, ctx: self.ctx });
   const app = {

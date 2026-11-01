@@ -23,6 +23,7 @@ flowchart LR
 | `checks/<module>.mjs` | `options`: the Miniflare options of the module (its bindings). `checks`: a list of `[name, async (t) => detail]`. |
 | `bindings.js` | The JS stubs for the bindings that Miniflare has no local form of (Workers AI, Vectorize) or whose data a test must see (Analytics Engine, version metadata, a workflow binding): plain objects that record each call. `withStubs(env)` puts them in the env of each request (`worker.js`). `GET /__stub_calls`: the record. `POST /__stub_reset`: clear it. It also has the two workflow classes (`Flow`, `Waiter`) of the local Workflows binding. |
 | `checks/clock.mjs` | The one clock of the shim (option `now`) in its own Miniflare (`taskDeadlineMs` 3 s): `Time.now_ms!`, `Memo` `max_age_ms`, `Io.timeout_at`, a deadline sweep and `set_alarm_in!` follow a skew of the clock. Timers stay real. |
+| `checks/trap.mjs` | `on_trap` (`MODULES.md` 3, `API.md` 10.3) in its own Miniflare with `bench/out/app_trap.wasm` (env `TRAP_WASM`) and its own entry: crash twice (a new body each time), `Err`, the `fetch` of the object class `Box` and of the entry point `Ep`, a crash after `Response.after` |
 | `canon.mjs`, `assets/` | `canon(value)`: JSON text with the keys in order (Roc writes the fields of a record in name order). `assets/`: the files of the local `Assets` binding. |
 | `assert.mjs` | `eq`, `ok`, `answer(r, text)` (a 200 with that body) |
 | `reverts.mjs` | The revert checks: a real edit, a build, a run, a restore (`PLAN.md` 8c, "Status of step 8c, wave 1") |

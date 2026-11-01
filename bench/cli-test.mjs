@@ -6,7 +6,7 @@
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -394,6 +394,18 @@ for (const [name, wasmName, src] of [['6n the conformance app (all kinds, classe
 
   const none = runWith(shimWith('{ "api": 1 }\n'), nightlyProject(stripped, null), 'sync', '--check');
   check('8u a cfw.json with no min_nightly: no nightly lines, exit 0', none.code === 0 && !none.out.includes('Roc nightly'), `exit ${none.code}\n${none.all}`);
+}
+
+// ---- 9. The table of on_trap in the sync report (TR11): app_trap.wasm (bench/app_trap.roc) and app_b3.wasm (no on_trap) ----
+{
+  const dir = project({ name: 'trap', main: 'worker.js', compatibility_date: '2026-10-01', compatibility_flags: ['enable_request_signal'] }, 'toml');
+  copyFileSync(join(dirname(wasm), 'app_trap.wasm'), join(dir, 'app.wasm'));
+  const r = run(dir, 'sync');
+  const want = ['on_trap (the fetch response of a trap or a failure):', '  default   500 application/problem+json, ', '  crash     500 application/problem+json, ', '  oom       503 application/problem+json, ', '  deadline  504 application/problem+json, ', '  failed    502 application/problem+json, ', '  alarm, cpu, event: default'];
+  const miss = want.filter((w) => !r.out.includes(w));
+  check('9a sync prints the status and the content type of each cause, and the causes that use default', miss.length === 0, `missing: ${JSON.stringify(miss)}\n${r.all}`);
+  const b = run(project(complete(), 'toml'), 'sync');
+  check('9b an app with no on_trap: one line', b.out.includes('on_trap: none. A trap gives the text response of the platform (trap <error>)'), b.out);
 }
 
 console.log(failed ? 'FAILED' : 'all passed');

@@ -9,7 +9,7 @@ import { dirname, join, relative, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { manifestOf, NOT_STACK_FIRST } from './runner.js';
 import { manifestEvent } from './events.js';
-import { checkManifest } from './manifest.js';
+import { checkManifest, TRAP_CAUSES } from './manifest.js';
 import { BINDING_KINDS, tomlOf } from './bindings.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -723,6 +723,17 @@ export function crossCheck(m, cfg, { cfgFile, wasmFile, root, workers, manifestF
   return out;
 }
 
+// TR11: the lines of the `sync` report for the table of `on_trap` (MODULES.md 3). `traps`: the checked table, or null.
+export function trapReport(traps) {
+  if (!traps) return ['on_trap: none. A trap gives the text response of the platform (trap <error>)'];
+  const type = (f) => f.headers.find(([n]) => n.toLowerCase() === 'content-type')?.[1] ?? 'no content-type';
+  const out = ['on_trap (the fetch response of a trap or a failure):'];
+  for (const [cause, f] of Object.entries(traps)) out.push(`  ${cause.padEnd(9)} ${f.status} ${type(f)}, ${f.body.length} bytes`);
+  const rest = TRAP_CAUSES.filter((c) => !Object.hasOwn(traps, c));
+  if (rest.length) out.push(`  ${rest.join(', ')}: default`);
+  return out;
+}
+
 function sync(argv) {
   const a = parseArgs(argv, ['--check', '--force'], ['--wasm', '--entry', '--config', '--file']);
   if (a._.length) usage(`sync takes no argument ${a._[0]}`);
@@ -768,6 +779,9 @@ function sync(argv) {
       fail = true;
     }
   }
+
+  // TR11: the table of on_trap (Worker.new), the status and the content type of each cause.
+  if (got !== null) for (const line of trapReport(m.traps)) console.log(line);
 
   // The handlers that the app defines and Worker.new does not list (a raw event! has no Worker.new to compare).
   const source = a.file ? resolve(a.file) : [join(dirname(wasm), `${basename(wasm, '.wasm')}.roc`), resolve('main.roc')].find((f) => existsSync(f));

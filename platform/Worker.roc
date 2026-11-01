@@ -14,9 +14,11 @@ import Service
 import D1
 import Kv
 import cbor.Cbor
+import http.Header
 
 ## `handlers`: the handlers of the default export that the app gives (the manifest). `own!`: runs the events of those
-## handlers (`Fetch`, `Scheduled`, `Queue`, `Email`, `Tail`, `Other`). `bindings` and `crons`: for the manifest only.
+## handlers (`Fetch`, `Scheduled`, `Queue`, `Email`, `Tail`, `Other`). `bindings`, `crons` and `traps`: for the manifest
+## only. `traps`: the fixed responses of `on_trap` (MODULES.md 3), with the name of each cause, `default` first.
 Worker :: {
 	handlers : List(Str),
 	own! : Worker.Event => Worker.Outcome,
@@ -25,9 +27,13 @@ Worker :: {
 	objects : List(Object.AnyClass),
 	bindings : List(Worker.Binding),
 	crons : List(Str),
+	traps : Try(List((Str, Worker.Fixed)), [NoTraps]),
 }.{
 
 	## The handlers of the app. A function, not a record literal: each handler keeps its own error type until here.
+	## `on_trap`: the fixed responses of `fetch` for a trap and other failures (MODULES.md 3). Write the record literal in
+	## the call (`on_trap: { default: internal, crashed: internal }`): the compiler accepts a record with optional fields
+	## that are absent only as a literal there.
 	new : {
 		fetch! ?: Request => Try(Response, e1),
 		scheduled! ?: Worker.Scheduled => Try({}, e2),
@@ -40,6 +46,7 @@ Worker :: {
 		objects ?: List(Object.AnyClass),
 		bindings ?: List(Worker.Binding),
 		crons ?: List(Worker.Cron),
+		on_trap ?: Worker.OnTrap,
 	} -> Worker
 	new = |h| {
 		crons = h.?crons ?? []
@@ -91,7 +98,32 @@ Worker :: {
 			objects: h.?objects ?? [],
 			bindings: h.?bindings ?? [],
 			crons: crons.map(|c| c.cron),
+			traps: match h.?on_trap {
+				Ok(t) => Ok(traps_of(t))
+				Err(_) => Err(NoTraps)
+			},
 		}
+	}
+
+	## A fixed response (MODULES.md 3, `on_trap`): the shim sends a new copy of it with no Roc code. The shim checks it at
+	## load: `status` 400 to 599, at most 16 headers, a header value of at most 1,024 bytes, a body of at most 4,096 bytes.
+	Fixed : { status : U16, headers : List(Header), body : List(U8) }
+
+	## The fixed responses of `fetch` for a trap and other failures (MODULES.md 3). `default`: each cause that has no
+	## field. A new cause later is a new optional field (API.md 10.1).
+	OnTrap : {
+		default : Worker.Fixed,
+
+		## A Roc `crash` or another clean trap. The manifest name of the cause is `crash` (`crash` is a keyword of Roc).
+		crashed ?: Worker.Fixed,
+		alarm ?: Worker.Fixed,
+		cpu ?: Worker.Fixed,
+		oom ?: Worker.Fixed,
+		shed ?: Worker.Fixed,
+		deadline ?: Worker.Fixed,
+		cancelled ?: Worker.Fixed,
+		event ?: Worker.Fixed,
+		failed ?: Worker.Fixed,
 	}
 
 	## A handler for one cron expression (`triggers.crons` of the Wrangler config). A run of another cron goes to
@@ -232,6 +264,13 @@ Worker :: {
 	}
 }
 
+## The causes that the app gives, in a fixed order, `default` first.
+traps_of : Worker.OnTrap -> List((Str, Worker.Fixed))
+traps_of = |t| {
+	given = [("crash", t.?crashed), ("alarm", t.?alarm), ("cpu", t.?cpu), ("oom", t.?oom), ("shed", t.?shed), ("deadline", t.?deadline), ("cancelled", t.?cancelled), ("event", t.?event), ("failed", t.?failed)]
+	[("default", t.default)].concat(given.keep_oks(|(name, f)| f.map_ok(|x| (name, x))))
+}
+
 done : Try({}, e) -> Worker.Outcome
 done = |r| match r {
 	Ok({}) => Done
@@ -269,7 +308,8 @@ expect {
 }
 
 ## The names of classes and methods (API.md AQ10): `{ default: { handlers, methods, ifaces }, objects: { Name: { handlers,
-## methods, ifaces } }, entrypoints: { Name: { handlers, methods, ifaces } }, bindings: [{ name, kind, ... }], crons: [...] }`.
+## methods, ifaces } }, entrypoints: { Name: { handlers, methods, ifaces } }, bindings: [{ name, kind, ... }], crons: [...],
+## traps?: { default: { status, headers, body }, crash: ..., ... } }`. `traps` only for an app with `on_trap` (TR1).
 ## `ifaces`: the distinct interface names of the methods (none: `[]`). `checkManifest` refuses two names. The shim
 ## defines a JS method only for a name in it (MODULES.md 3). The handlers of the default export: the fields that the app
 ## gives (QO5 of PLAN.md 8f, part 2). `other` is in the list when `other!` is given: no JS method belongs to it, and
@@ -279,14 +319,24 @@ manifest = |w| {
 	texts = |names| Arr(names.map(|n| Text(n)))
 	class_of = |handlers, methods, ifaces| Obj([("handlers", texts(handlers)), ("methods", texts(methods)), ("ifaces", texts(ifaces))])
 	binding_of = |b| Obj([("name", Text(b.name)), ("kind", Text(b.kind))].concat(b.props.map(|(k, v)| (k, Text(v)))))
-	Obj([
-		("default", class_of(w.handlers, w.rpc.map(|h| h.name), Rpc.iface_names(w.rpc))),
-		("objects", Obj(w.objects.map(|c| (c.name, class_of(c.handlers, c.methods, c.iface_names))))),
-		("entrypoints", Obj(w.entrypoints.map(|ep| (ep.name, class_of(ep.handlers, ep.rpc.map(|h| h.name), ep.iface_names))))),
-		("bindings", Arr(w.bindings.map(binding_of))),
-		("crons", texts(w.crons)),
-	])
+	traps = match w.traps {
+		Ok(list) => [("traps", Obj(list.map(|(name, f)| (name, fixed_of(f)))))]
+		Err(NoTraps) => []
+	}
+	Obj(
+		[
+			("default", class_of(w.handlers, w.rpc.map(|h| h.name), Rpc.iface_names(w.rpc))),
+			("objects", Obj(w.objects.map(|c| (c.name, class_of(c.handlers, c.methods, c.iface_names))))),
+			("entrypoints", Obj(w.entrypoints.map(|ep| (ep.name, class_of(ep.handlers, ep.rpc.map(|h| h.name), ep.iface_names))))),
+			("bindings", Arr(w.bindings.map(binding_of))),
+			("crons", texts(w.crons)),
+		].concat(traps),
+	)
 }
+
+## A fixed response for the manifest: `{ status, headers: [[name, value], ...], body }`, the body as `Bytes` (API.md J2).
+fixed_of : Worker.Fixed -> Js
+fixed_of = |f| Obj([("status", Int(f.status.to_i64())), ("headers", Arr(f.headers.map(|h| Arr([Text(h.name), Text(h.value)])))), ("body", Bytes(f.body))])
 
 ## `other!` is in the handlers of the default export (for `sync`, which warns of an `other!` that Worker.new does not list).
 expect {
@@ -390,6 +440,50 @@ expect {
 expect {
 	w = Worker.new({ crons: [Worker.cron("* * * * *", |_s| Ok({}))] })
 	w.handlers == []
+}
+
+# TR1: with no `on_trap` the manifest has no `traps` key (the shim gives the responses of today).
+expect {
+	w = Worker.new({ fetch!: |_req| Ok(Response.from_text(200, "ok")) })
+	match manifest(w) {
+		Obj(fields) => fields.find_first(|(k, _)| k == "traps").is_err()
+		_ => Bool.False
+	}
+}
+
+# The registry example (design note trap-response 5.1): problem details for `default` and `crash`, a 503 with
+# `retry-after` for `oom`, `shed`, `cpu` and `deadline`. The table has `default` first, then the given causes in the
+# order of `Worker.OnTrap`. Each entry: the status as `Int`, the headers as pairs, the body as `Bytes`.
+expect {
+	problem : U16, Str, List(Header) -> Worker.Fixed
+	problem = |status, title, extra| {
+		status,
+		headers: [Header.{ name: "content-type", value: "application/problem+json" }, Header.{ name: "cache-control", value: "no-store" }].concat(extra),
+		body: Str.to_utf8("{\"type\":\"/errors/internal\",\"title\":\"${title}\",\"status\":${status.to_str()}}"),
+	}
+	internal = problem(500, "Internal error", [])
+	busy = problem(503, "Service unavailable", [Header.{ name: "retry-after", value: "1" }])
+	w = Worker.new({ fetch!: |_req| Ok(Response.from_text(200, "ok")), on_trap: { default: internal, crashed: internal, oom: busy, shed: busy, cpu: busy, deadline: busy } })
+	pairs = |list| Arr(list.map(|(n, v)| Arr([Text(n), Text(v)])))
+	internal_js = Obj([("status", Int(500)), ("headers", pairs([("content-type", "application/problem+json"), ("cache-control", "no-store")])), ("body", Bytes(Str.to_utf8("{\"type\":\"/errors/internal\",\"title\":\"Internal error\",\"status\":500}")))])
+	busy_js = Obj([("status", Int(503)), ("headers", pairs([("content-type", "application/problem+json"), ("cache-control", "no-store"), ("retry-after", "1")])), ("body", Bytes(Str.to_utf8("{\"type\":\"/errors/internal\",\"title\":\"Service unavailable\",\"status\":503}")))])
+	match manifest(w) {
+		Obj(fields) => fields.find_first(|(k, _)| k == "traps") == Ok(("traps", Obj([("default", internal_js), ("crash", internal_js), ("cpu", busy_js), ("oom", busy_js), ("shed", busy_js), ("deadline", busy_js)])))
+		_ => Bool.False
+	}
+}
+
+# Each cause has its own entry under its own name: a different body for each field, and all ten names in order.
+expect {
+	fixed : U16 -> Worker.Fixed
+	fixed = |n| { status: 500 + n, headers: [], body: [n.to_u8_wrap()] }
+	w = Worker.new({ on_trap: { default: fixed(0), crashed: fixed(1), alarm: fixed(2), cpu: fixed(3), oom: fixed(4), shed: fixed(5), deadline: fixed(6), cancelled: fixed(7), event: fixed(8), failed: fixed(9) } })
+	entry : U16 -> Js
+	entry = |n| Obj([("status", Int((500 + n).to_i64())), ("headers", Arr([])), ("body", Bytes([n.to_u8_wrap()]))])
+	match manifest(w) {
+		Obj(fields) => fields.find_first(|(k, _)| k == "traps") == Ok(("traps", Obj([("default", entry(0)), ("crash", entry(1)), ("alarm", entry(2)), ("cpu", entry(3)), ("oom", entry(4)), ("shed", entry(5)), ("deadline", entry(6)), ("cancelled", entry(7)), ("event", entry(8)), ("failed", entry(9))])))
+		_ => Bool.False
+	}
 }
 
 # The order of a cron run (cron first, else scheduled!, else Unhandled) calls `own!`, an effect, so an expect cannot run it:

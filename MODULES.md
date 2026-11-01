@@ -254,12 +254,27 @@ Worker :: { handlers : List(Str), own! : Worker.Event => Worker.Outcome, rpc : .
 		objects ?: List(Object.AnyClass),     # Durable Object classes, each as `class.erase()`
 		bindings ?: List(Worker.Binding),     # the bindings that the app uses: db.declare(), ... (manifest only)
 		crons ?: List(Worker.Cron),           # a handler for each cron expression
+		on_trap ?: Worker.OnTrap,             # fixed responses of fetch for a trap and other failures (manifest only)
 	} -> Worker
 	event! : Worker, Worker.Event => Worker.Outcome
 
 	cron : Str, (Worker.Scheduled => Try({}, e)) -> Worker.Cron
 	Cron : { cron : Str, run! : Worker.Scheduled => Worker.Outcome }
 	Binding : { name : Str, kind : Str, props : List((Str, Str)) }
+
+	Fixed : { status : U16, headers : List(Header), body : List(U8) }
+	OnTrap : {
+		default : Worker.Fixed,      # each cause below that has no field
+		crashed ?: Worker.Fixed,     # cause crash: a Roc crash, another clean trap (crash is a keyword of Roc)
+		alarm ?: Worker.Fixed,       # an unclean trap, a failed sum check (PLAN.md 12)
+		cpu ?: Worker.Fixed,         # the CPU signal (PLAN.md 5b)
+		oom ?: Worker.Fixed,         # out of memory (M6)
+		shed ?: Worker.Fixed,        # all task slots in use, memory pressure (M7)
+		deadline ?: Worker.Fixed,    # a task deadline (API.md 10.2)
+		cancelled ?: Worker.Fixed,   # replace, heap check, terminated, the client went away (PLAN.md 3c, M1)
+		event ?: Worker.Fixed,       # the request cannot cross (API.md J1, J3)
+		failed ?: Worker.Fixed,      # the outcome Failed (an Err of fetch!) or Unhandled: no trap
+	}
 
 	## The payload of a cron run. The same type is in `Worker.Event` (`API.md` 10.1). Opaque (MC15).
 	Scheduled :: { cron : Str, time_ms : U64 }.{
@@ -298,6 +313,7 @@ Each handler gives the result of its own kind, so a handler cannot give a wrong 
 | `objects` | Durable Object classes (7) | as the field of the class | | `Unhandled` |
 | `crons` | `scheduled`, for a run whose `controller.cron` is the expression of a `Worker.cron` | as `scheduled!` | as `scheduled!` | A run of another cron goes to `scheduled!` |
 | `bindings` | None: the manifest only (bindings below) | | | No check of `env` |
+| `on_trap` | None: the manifest only (`on_trap` below). It changes the response of `fetch` for a trap and for `Err` | | | The text responses of the platform (`on_trap` below) |
 
 A new Workers kind is a new optional field, so it does not break an app (`API.md` 10.1).
 
@@ -349,6 +365,37 @@ worker = Worker.new({
 | Interface names | A class, a named entry point and the default export have `ifaces`: the distinct interface names of the methods that they serve (`[]` for none). `makeHandler` and `sync` refuse a list of two names, with both names (two `Rpc.iface` values with different text but the same type). An object namespace of this Worker (no `script`) must have the interface name of its class when both have one: a mismatch stops the load. The checked manifest (`checkManifest`) has the one name as `iface` (`defaultIface` for the default export), `""` for none. The wire format of the calls does not change. |
 | Link across Workers | The types check each Worker alone. A service binding goes to a Worker and an entry point, and a `namespace_remote` goes to a class of a Worker: both links are in the Wrangler config, so no type checks them. `roc-cfw sync` (and `sync --check`) compares the interface names of the Workers of one repo (the `sync`, links row below). |
 
+Fixed responses of a trap (`on_trap`, rules `API.md` 10.3, design note `research/design-notes/trap-response.md`): after a trap the app cannot run Roc code to answer (the instance can be damaged, `PLAN.md` 12). So the app gives, at load, a fixed response for each cause, and the shim sends a new copy of it with plain JS: no Roc code, no export of the instance, no read of wasm memory, no `ops` function of the app.
+
+```roc
+problem : U16, Str, List(Header) -> Worker.Fixed
+problem = |status, title, extra| {
+	status,
+	headers: [Header.{ name: "content-type", value: "application/problem+json" }, Header.{ name: "cache-control", value: "no-store" }].concat(extra),
+	body: Str.to_utf8("{\"type\":\"/errors/internal\",\"title\":\"${title}\",\"status\":${status.to_str()}}"),
+}
+
+internal = problem(500, "Internal error", [])
+busy = problem(503, "Service unavailable", [Header.{ name: "retry-after", value: "1" }])
+
+worker = Worker.new({
+	fetch!: fetch!,
+	on_trap: { default: internal, crashed: internal, oom: busy, shed: busy, cpu: busy, deadline: busy },
+})
+```
+
+| Item | Rule |
+| --- | --- |
+| Write the literal in the call | Write the record of `on_trap` as a literal in `Worker.new({ ..., on_trap: { ... } })`. The compiler accepts a record that omits optional fields only as a literal at the call (a record value in a name gives "This record is missing these fields"). |
+| Causes | The table of `API.md` 10.3 (TR2). The manifest name of the field `crashed` is `crash`. A cause with no field uses `default`. |
+| Scope | The `fetch` of the default export, of an object class (`Object.class`) and of a named entry point (`Rpc.entrypoint`). One table for the Worker: `Object.class` and `Rpc.entrypoint` have no field of their own. Not: a trap after `Response.after` (the response is sent), after `Ctx.pass_through!` (a throw, Workers sends the request to the origin), and the kinds with no HTTP response (`scheduled`, `queue`, `email`, `tail`, RPC, an object alarm). |
+| Check at load | `makeHandler` and `sync` refuse a bad table, with the name of the field (`makeHandler: Worker.new on_trap.crash.status: the status 200 is not 400 to 599`): `status` 400 to 599; at most 16 headers; a header name is an HTTP token; a value has no CR, LF or NUL and has at most 1,024 bytes; the body has at most 4,096 bytes. The names `content-length`, `transfer-encoding`, `connection`, `upgrade`, `keep-alive` and `set-cookie` are refused (Workers sets the length from the body). Any content type is good, also `application/problem+json`. |
+| `retry-after` | On `shed` and `oom` the shim adds `retry-after: <ceil(graceMs / 1000)>` (`1` with the default `graceMs`) when the entry has none. The app can give another value. It cannot remove it. |
+| Log and counters | The log line (`fetch: trap: <crash text>`), the counters and the instance rules do not change. The crash text never goes to a response of the table. |
+| No `on_trap` | The responses of 0.0.2: `trap <error>` as `text/plain;charset=UTF-8` with the status of the runner (500, or 503), and 500 with no body for `Err` and `Unhandled`. One change: a 503 of `shed` and `oom` has `retry-after` (decided O2). |
+| `sync` | Prints the table: the status, the content type and the body size of each cause, and the causes that use `default`. With no `on_trap`: one line. |
+| Manifest | `traps: { default: { status, headers: [[name, value], ...], body }, crash: { ... }, ... }`, the body as `Bytes` (a `Uint8Array`). No `traps` key with no `on_trap`. |
+
 Names of classes and methods come from Roc only (`API.md` AQ10). At load, the shim sends the event `Manifest`, and `Worker` answers with the names of its `objects`, `entrypoints` and their `Rpc` methods, the `rpc` methods of the default entry point, and the handlers that each class has (for the default export: the fields `fetch!`, `scheduled!`, `queue!`, `email!`, `tail!` and `other!` that the app gives):
 
 ```js
@@ -356,7 +403,8 @@ Names of classes and methods come from Roc only (`API.md` AQ10). At load, the sh
   objects: { Room: { handlers: ["init", "fetch", "alarm", "webSocketMessage"], methods: ["increment"], ifaces: ["Room"] } },
   entrypoints: { Admin: { handlers: ["fetch"], methods: ["purge"], ifaces: ["Admin"] } },
   bindings: [{ name: "DB", kind: "d1" }, { name: "ROOMS", kind: "object", class: "Room", iface: "Room" }],
-  crons: ["*/5 * * * *"] }
+  crons: ["*/5 * * * *"],
+  traps: { default: { status: 500, headers: [["content-type", "application/problem+json"]], body: Uint8Array } } }   // only with on_trap
 ```
 
 The shim defines a JS method only for a handler in the list, so a class with no `alarm!` has no `alarm` method (7), and a default export with no `queue!` has no `queue` method (the same for `email` and `tail`; `fetch` and `scheduled` are always there). The JS entry file has one line for each class, because Workers needs a named export. the command `sync` writes it from the manifest:

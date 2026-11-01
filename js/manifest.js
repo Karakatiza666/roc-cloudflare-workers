@@ -48,5 +48,75 @@ export function checkManifest(m) {
     if (typeof c !== 'string' || out.crons.includes(c)) throw new Error(`makeHandler: the cron ${JSON.stringify(c)} is twice in Worker.new crons, or not text`);
     out.crons.push(c);
   }
+  out.traps = m.traps == null ? null : checkTraps(m.traps);
   return out;
+}
+
+// The causes of `Worker.OnTrap` (TR2), with their manifest names. The Roc field of `crash` is `crashed` (a keyword).
+export const TRAP_CAUSES = ['default', 'crash', 'alarm', 'cpu', 'oom', 'shed', 'deadline', 'cancelled', 'event', 'failed'];
+// The limits of a fixed response (TR5, TR6, decided O6, O7).
+export const TRAP_LIMITS = { headers: 16, valueBytes: 1024, bodyBytes: 4096 };
+// TR6: header names that a fixed response cannot give. Workers sets the length from the body.
+const REFUSED_HEADERS = new Set(['content-length', 'transfer-encoding', 'connection', 'upgrade', 'keep-alive', 'set-cookie']);
+const TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
+// The table of `on_trap` (TR5, TR6): `default` and the given causes, each `{ status, headers: [[name, value], ...], body:
+// Uint8Array }`. A bad value is a throw that names the field (`on_trap.crash.status`), so the load fails. The result has the
+// same form, with plain arrays and the body as a Uint8Array of its own (no other code has a reference to it).
+export function checkTraps(t) {
+  const bad = (field, why) => new Error(`makeHandler: Worker.new on_trap.${field}: ${why}`);
+  if (typeof t !== 'object' || Array.isArray(t)) throw bad('', `the table is not an object: ${JSON.stringify(t)}`);
+  if (!Object.hasOwn(t, 'default')) throw bad('default', 'the field default is missing');
+  const out = {};
+  for (const [cause, f] of Object.entries(t)) {
+    if (!TRAP_CAUSES.includes(cause)) throw bad(cause, `the cause is not one of ${TRAP_CAUSES.join(', ')}`);
+    if (typeof f !== 'object' || f === null) throw bad(cause, 'the entry is not an object');
+    const status = typeof f.status === 'bigint' ? Number(f.status) : f.status;
+    if (!Number.isInteger(status) || status < 400 || status > 599) throw bad(`${cause}.status`, `the status ${status} is not 400 to 599`);
+    const headers = f.headers ?? [];
+    if (!Array.isArray(headers)) throw bad(`${cause}.headers`, 'the headers are not a list');
+    if (headers.length > TRAP_LIMITS.headers) throw bad(`${cause}.headers`, `${headers.length} headers, the limit is ${TRAP_LIMITS.headers}`);
+    const pairs = headers.map((h, i) => {
+      if (!Array.isArray(h) || h.length !== 2 || typeof h[0] !== 'string' || typeof h[1] !== 'string') throw bad(`${cause}.headers[${i}]`, `not a name and a value: ${JSON.stringify(h)}`);
+      const [name, value] = h;
+      if (!TOKEN.test(name)) throw bad(`${cause}.headers[${i}].name`, `${JSON.stringify(name)} is not an HTTP token`);
+      if (REFUSED_HEADERS.has(name.toLowerCase())) throw bad(`${cause}.headers[${i}].name`, `the header ${name} cannot be in a fixed response (${[...REFUSED_HEADERS].join(', ')})`);
+      if (/[\r\n\0]/.test(value)) throw bad(`${cause}.headers[${i}].value`, `the value of ${name} has a CR, an LF or a NUL`);
+      const n = new TextEncoder().encode(value).length;
+      if (n > TRAP_LIMITS.valueBytes) throw bad(`${cause}.headers[${i}].value`, `the value of ${name} has ${n} bytes, the limit is ${TRAP_LIMITS.valueBytes}`);
+      return [name, value];
+    });
+    if (!(f.body instanceof Uint8Array)) throw bad(`${cause}.body`, 'the body is not bytes');
+    if (f.body.length > TRAP_LIMITS.bodyBytes) throw bad(`${cause}.body`, `${f.body.length} bytes, the limit is ${TRAP_LIMITS.bodyBytes}`);
+    out[cause] = { status, headers: pairs, body: f.body.slice() };
+  }
+  return out;
+}
+
+// TR2: the cause of a runner result (`js/runner.js`). A result with no trap is an outcome that is not `Respond` (`Failed`,
+// `Unhandled`, another one): `failed`.
+export function causeOf(r) {
+  if (!r.trap) return 'failed';
+  if (r.cancelled) return r.cancelled === 'deadline' ? 'deadline' : 'cancelled';
+  if (r.shed) return 'shed';
+  if (r.cause === 'oom' || r.cause === 'cpu' || r.cause === 'event') return r.cause;
+  if (r.alarm) return 'alarm';
+  return 'crash';
+}
+
+// The response of `fetch` for a trap or an outcome that is not `Respond` (TR1, TR4, TR7). `traps`: the checked table, or null.
+// It uses only JS values: no export of the instance, no wasm memory, no app code. A table entry gives a new copy of its
+// body each time (a body is read once). `retryAfter`: the value of `retry-after` on `shed` and `oom` when the entry has
+// none. With no table: the response of 0.0.2 (`trap <text>`, or no body for an outcome), plus `retry-after` (O2).
+export function trapResponse(traps, r, retryAfter) {
+  const cause = causeOf(r);
+  const retry = cause === 'shed' || cause === 'oom';
+  if (!traps) {
+    if (!r.trap) return new Response(null, { status: 500 });
+    return new Response(`trap ${r.trap}`, retry ? { status: r.status ?? 500, headers: { 'retry-after': retryAfter } } : { status: r.status ?? 500 });
+  }
+  const f = traps[cause] ?? traps.default;
+  const headers = new Headers(f.headers);
+  if (retry && !headers.has('retry-after')) headers.set('retry-after', retryAfter);
+  return new Response(f.body.slice(), { status: f.status, headers });
 }

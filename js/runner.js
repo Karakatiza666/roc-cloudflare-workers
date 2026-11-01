@@ -164,12 +164,12 @@ export function makeRunner(module, opts = {}) {
     });
     return crash;
   };
-  // The event as CBOR, before the task enters wasm. A value that cannot cross (J1, J3): a 500, no task in wasm.
+  // The event as CBOR, before the task enters wasm. A value that cannot cross (J1, J3): a 500 (cause `event`), no task in wasm.
   const encode = (ev, t, x) => {
     try {
       return { bytes: eventBytes(ev, t.refs) };
     } catch (e) {
-      return { fail: { trap: `the event cannot cross: ${e.message}`, status: 500, x } };
+      return { fail: { trap: `the event cannot cross: ${e.message}`, status: 500, cause: 'event', x } };
     }
   };
   // A request that memory pressure refuses (M7 step 2): a 503, one log line.
