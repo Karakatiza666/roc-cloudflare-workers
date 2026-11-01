@@ -7,6 +7,10 @@
 // 4. The production build serves requests as bench/node-test.mjs does (200 + 200 at once, 4 traps)
 //    with the runner of bench/core.js: it needs no bench export. The runner refuses `resumeCheck: "off"` there.
 // 5. With a bench build: its export section is the bench header list, and the runner accepts "off".
+// 6. Both builds also export COMPILER (below): the compiler adds them to each module, they are in no header.
+//    The stack bounds agree with `initial_stack_size`, and after the requests of 4 (with 4 traps) the stack pointer
+//    is at the top of the stack again. No file of js/ names them: the host owns the stack pointer (it reads and
+//    sets it in wasm, host/host.zig `getSP`, `setSP`), and JS never reads or writes it.
 // Exit 1 on a failure.
 import { readFileSync, readdirSync } from 'node:fs';
 import { makeRunner, check } from './core.js';
@@ -20,6 +24,11 @@ const PRODUCTION = [
   'double_frees', 'dealloc_miss', 'idle_reset', 'trap_cause', 'set_sum', 'set_suspect', '__instance_signal',
   '__instance_terminated',
 ];
+
+// The stack exports that the compiler adds to each wasm module (roc-lang/roc a9923530f0, PR 12643, nightly
+// 2026-10-28 and later; roc `design.md`: "Every wasm module exports `__stack_pointer`, `__stack_low`, and
+// `__stack_high`"). A platform cannot turn them off. They are in no `exports:` list of a header.
+const COMPILER = ['__stack_pointer', '__stack_low', '__stack_high'];
 
 let failed = false;
 const fail = (msg) => {
@@ -67,7 +76,8 @@ if (!prodFile) {
 const prodNames = wasmExports(prodFile);
 const leaked = prodNames.filter((n) => BENCH_ONLY.includes(n));
 if (leaked.length) fail(`bench exports in the production build: ${leaked}`);
-if (!same(prodNames, PRODUCTION)) fail(`the production build exports differ from the list: extra [${diff(prodNames, PRODUCTION)}], missing [${diff(PRODUCTION, prodNames)}]`);
+const PROD_ALL = [...PRODUCTION, ...COMPILER];
+if (!same(prodNames, PROD_ALL)) fail(`the production build exports differ from the list: extra [${diff(prodNames, PROD_ALL)}], missing [${diff(PROD_ALL, prodNames)}]`);
 console.log(`${prodFile}: ${prodNames.length} exports, ${leaked.length} bench names`);
 // The production host object (platform/targets/wasm32/host.wasm) has no code for the bench exports: no symbol of
 // their names. The linker drops an unlisted export, so only this shows that `zig build` left them out.
@@ -108,6 +118,22 @@ console.log({ bad, traps, live, alarms: r.stats.alarms, retired: r.stats.retired
 if (bad !== 0 || traps !== 4 || live !== 0) fail(`bad ${bad}, traps ${traps}, live bytes ${live}`);
 if (r.stats.alarms !== 0 || r.stats.retired !== 0 || r.stats.heapFails !== 0) fail(`an alarm, a replace or a failed check`);
 if (checkCode !== 0) fail(`check_heap gave ${checkCode}`);
+// 6: the compiler stack exports. The stack is [__stack_low, __stack_high) and has the size of the header. No task is
+// in wasm now, so the stack pointer is at the top: each trap of 4 gave the stack back (`task_abort`).
+const stackSize = Number(/^\s*initial_stack_size:\s*(\d+)\s*,/m.exec(prodHeader)?.[1]);
+const sp = r.x.__stack_pointer?.value;
+const low = r.x.__stack_low?.value;
+const high = r.x.__stack_high?.value;
+console.log({ stackSize, __stack_low: low, __stack_high: high, __stack_pointer: sp });
+if (high - low !== stackSize) fail(`__stack_high - __stack_low is ${high - low}, the header says initial_stack_size ${stackSize}`);
+if (sp !== high) fail(`after the requests the stack pointer is ${sp}, not __stack_high ${high}`);
+// JS does not use them: no file of js/ names one.
+const jsFiles = readdirSync(new URL('../js/', import.meta.url), { recursive: true }).filter((f) => /\.m?js$/.test(f));
+for (const f of jsFiles) {
+  const named = COMPILER.filter((n) => read(`js/${f}`).includes(n));
+  if (named.length) fail(`js/${f} names the compiler stack exports ${named}: the host owns the stack pointer`);
+}
+console.log(`js/: ${jsFiles.length} files, no compiler stack export named`);
 // The sum mode "off" is bench only: the production host refuses it (`set_sum(0)` gives 0).
 let refused = false;
 try {
@@ -121,7 +147,8 @@ console.log('resumeCheck "off" refused on the production build:', refused);
 // 5: the bench build
 if (benchFile) {
   const names = wasmExports(benchFile);
-  if (!same(names, benchList ?? [])) fail(`the bench build exports differ from bench/platform/main.roc: extra [${diff(names, benchList ?? [])}], missing [${diff(benchList ?? [], names)}]`);
+  const benchAll = [...(benchList ?? []), ...COMPILER];
+  if (!same(names, benchAll)) fail(`the bench build exports differ from bench/platform/main.roc: extra [${diff(names, benchAll)}], missing [${diff(benchAll, names)}]`);
   try {
     const r = makeRunner(new WebAssembly.Module(readFileSync(benchFile)), io, { resumeCheck: 'off' });
     const x = await r.run('7 0');

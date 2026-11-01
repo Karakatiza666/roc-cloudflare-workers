@@ -1147,7 +1147,7 @@ Choices for 7b:
 |---|---|
 | Field names and units | `initial_stack_size`, `minimum_memory`, `maximum_memory`: integer literals in bytes (`roc:src/compile/targets_config.zig:584-606`). `roc:src/cli/main.zig:9742-9756` passes them to the linker as `-z stack-size=N` and `--initial-memory=N`. The pinned nightly 10-12 and the nightly 10-09 both read them (checked below). |
 | `minimum_memory: 0` | The same as the old `--wasm-memory=0`. The linker sizes memory from the data and the stack: 21 pages, the same file as with no field. The field stays so that a nightly with another default does not change the memory. |
-| `maximum_memory` | Not set. M5: the platform header sets no maximum, because the app developer cannot change it. The module has no maximum (`bench/mem-limits.mjs`: initial 21 pages, maximum none), as before. |
+| `maximum_memory` | Not set. M5: the platform header sets no maximum, because the app developer cannot change it. The module has no maximum (`bench/mem-limits.mjs`: initial 21 pages, maximum none), as before. From nightly 2026-10-28 the compiler sets the maximum of a stack-first module to 4 GiB minus the stack (`roc:src/cli/linker.zig` `stackFirstMaximumMemory`): 65,520 pages with the 1 MB stack. A wrapped stack pointer then cannot address memory. It is far above the memory limit of a Worker (128 MB), so the cap of M5 (`maxInstanceBytes`) does not change. |
 | `STACK_SIZE` in `canary.zig` | Removed. Stack first: the floor is 0 and the size is not needed. Data first: the floor is the linker symbol `__data_end` (the stack starts there). One source of truth with no build option, no second file and no generated constant. It is the real layout, not a copy of the request. |
 | `research/alloc/build.sh` | Not changed. It builds a harness copy with its own header, so its flags stay. |
 | `bench/check-layout.mjs --header platform/main.roc` | A stack-first build must have a stack size (the start of `__stack_pointer`) equal to `initial_stack_size` in the header. A missing field is a failure too. `bench/build.sh` and `bench/ci-layout.sh` pass it. |
@@ -3685,6 +3685,28 @@ Tests (2026-11-01):
 | `node conformance/run.mjs bench/out/conformance.wasm "accept_with! protocols"`, Node 26.7.0 and 26.13.0, workerd 2026-10-12 and 2026-10-23 | 4 of 4 pairs: 2 passed, `PASS end` (before the fix: `FAIL end` with Node 26.13.0) |
 | `bench/test-all.sh`, Node 26.13.0, Wrangler 4.156.0, workerd 2026-10-23 (as the release run) | ALL PASS (55 steps, with the whole conformance run) |
 | `bench/test-all.sh`, Node 26.7.0, Wrangler 4.151.0, workerd 2026-10-12 | ALL PASS (55 steps) |
+
+## Status of the move to nightly 2026-10-31 (2026-11-01)
+
+The release 0.0.2 builds with `nightly-2026-10-31-f7bef6b` (`compat/last-stack-first-nightly`). The scheduled job `nightly-layout` failed for the nightlies 2026-10-28, 10-29 and 10-30 (issues 1 to 3). The layout stayed STACK-FIRST. Only `bench/exports-test.mjs` failed: "extra [__stack_pointer,__stack_high,__stack_low]", in the production build and in the bench build.
+
+| Item | Fact |
+| --- | --- |
+| Cause | roc-lang/roc PR 12643 (merge a9923530f0, in nightly 2026-10-28 bad769b), commit 357494c633 "Choose the wasm stack layout from the platform's reserved low memory". `roc:src/cli/linker.zig` `wasmStackExports` adds `--export=__stack_pointer`, `__stack_low`, `__stack_high` to each wasm link (`wasm32v1`: accessor functions). Purpose (roc `design.md`): a host can tell a stack overflow from another trap, because the stack pointer is then outside `[__stack_low + 128, __stack_high]`. No platform option turns it off. |
+| Second change of the same commit | A stack-first module now has a maximum memory of 4 GiB minus the stack: 65,520 pages (before: no maximum). See the `maximum_memory` row of 7b. |
+| Other changes | None for this platform. The glue (`host/roc_platform_abi.zig`) is the same. The stack checks of c35c5e005a are only for a platform with `global_base`: this platform has none. `roc build` of the platform, the bench apps and the examples: 0 warnings (only the `dbg` warning that `bench/app.roc` has on purpose). |
+| Decision | Keep the 3 exports, do not use them. The compiler adds them to each module (roc `design.md`: "Every wasm module exports"), so a strip is a post-link step in the build of each app (`roc build` runs on the machine of the app author), against the compiler design. The platform already exports two mutable globals that JS writes (`__instance_signal`, `__instance_terminated`). The instance exports are only in the runner (`js/runner.js` `cell.x`): `makeHandler` gives the app no instance. The host reads and sets the stack pointer in wasm (`host/host.zig` `getSP`, `setSP`; `task_abort`), so JS has no use for them. |
+| Test | `bench/exports-test.mjs`: the list `COMPILER` (the 3 names), in no header. Each build exports its header list and `COMPILER`. New check 6: `__stack_high - __stack_low` is `initial_stack_size`; after the 400 requests with 4 traps the stack pointer is `__stack_high`; no file of `js/` names a name of `COMPILER`. Each new check fails on its mutation: `COMPILER` empty (the failure of the job), a JS write of `__stack_pointer` (`value -= 16`: "the stack pointer is 1048560, not __stack_high 1048576"), a file of `js/` that names `__stack_pointer`. |
+
+Tests (2026-11-01, nightly 2026-10-31, Zig 0.17.0, workerd of Wrangler 4):
+
+| Test | Result |
+| --- | --- |
+| `bench/test-all.sh` | ALL PASS |
+| `bench/ci-layout.sh nightly-2026-10-31-f7bef6b` (the job `nightly-layout`) | PASS: 4 files STACK-FIRST, glue the same, `exports-test.mjs` PASS |
+| `tln install --frozen`, `zig build`, `tln run examples` (isolated XDG dirs, nightly 2026-10-31 as the default) | Exit 0, 0 errors and 0 warnings, `git diff --exit-code examples/` is empty |
+
+Open question: should the runner use the 3 exports to tell a stack overflow from another trap (the way of the compiler), in place of `isStackError` and the canary of `hostlib/canary.zig`? Not done: the current way passes `overflow-test.mjs`, and this is a release of a nightly move only.
 
 ## Done when
 
