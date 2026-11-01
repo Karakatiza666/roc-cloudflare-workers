@@ -40,6 +40,8 @@ Use the release URL. `dist/` of this repository is a local build of `scripts/bun
 | `Body.chunk!` fills a chunk to 64 KiB; `Body.chunk_with!` | `chunk!` gave each part of the JS stream: about 4 KiB in workerd, so 28,766 crossings for 110 MB. | `chunk!` adds the next parts that are ready (they complete before a timer of 0 ms) to 64 KiB (`Body.default_fill`). The first part is the only wait, so a slow stream still gives each part when it comes. `chunk_with!(body, { fill_bytes ?: U64, max_bytes ?: U64 })` sets the target and the limit. 110 MB of a Miniflare `fetch` body: 1,760 crossings and 392 ms, it was 28,161 and 1,472 ms (`MODULES.md` 4, "Chunks"). `pass_through!`, `Body.writer!` and WebSocket do not change. | Nothing. Code that needs each part at once (a proxy that writes each part on) uses `chunk_with!(body, { fill_bytes: 1 })`. Code that counted on chunks of about 4 KiB gets larger chunks (at most `default_max`). |
 | Docs: `Worker.new({ fetch! })` with one handler | Only a short note in `MODULES.md` 3. | `MODULES.md` 2 shows the error text ("This argument has the type: `Request => Try(Response, _a)`") and the fix `Worker.new({ fetch!: fetch! })`. `{ fetch! }` with one name is a block in Roc, not a record: a language rule, no platform change. | Write `{ fetch!: fetch! }` (or `{ fetch!, }`). |
 | zstd: a faster decoder, `ZstdStream.feed!` | `Native` decoded zstd with `std.compress.zstd`: about 40 MB of output per second (basic-cli 0.26.0, 83 MB: 1.9 s of CPU in Node, 2.3 s in workerd). 274 KB of stack for each op. The frame checksum was not checked. One push gave all the output of its chunk: a chunk with a high ratio (a long run of zeros) could pass the 16 MiB push limit. | A pure Zig port of the libzstd 1.5.7 decoder (`hostlib/zstd/`, ReleaseSafe): 470 to 1,000 MB/s (the same file: 0.1 s in Node, 0.18 s in workerd). 6 KB of stack (the reserve is 32 KB, was 300 KB). A wrong frame checksum is `BadFrame`. New: `Native.ZstdStream.feed!(stream, chunk, max_bytes)` gives the output of a chunk in parts of at most `max_bytes` (`{ out, more }`). The API, the window limit, the error tags and the handles are the same. Some damaged frames give other answers (`research/zstd-speed/README.md` 4). | Nothing. For archives from the network, use `feed!` in place of `push!` (call it again with an empty chunk while `more` is `Bool.True`), so a high ratio chunk does not give `OutputLimit`. |
+| The test helper: `js/test.mjs` (`startApp`) and `js/test-entry.js`, `"test": 1` in `js/cfw.json` | Each app wrote its own Miniflare harness (the module list, the clock control, the binding counts, the traps of "Testing an app"). | `startApp` of `.roc-cfw/test.mjs` ("Testing an app"). `js/cfw.json` is `{ "api": 1, "test": 1, "min_nightly": ... }`. `roc-cfw` 0.0.1 reads only `api`, and copies both files with the rest of `js/` (checked with 0.0.1). | Replace a harness with `startApp`. Install `wrangler` (or `miniflare`) for the tests. |
+| The shim option `wrapEnv` | No supported hook to count or wrap a binding. A subclass of the class of `makeHandler` that replaced `this.env` worked only for `fetch`, `scheduled` and `queue` of the default export. | `makeHandler(app, { wrapEnv: (env, info) => env })`: once per event of each kind (`Fetch`, `Scheduled`, `Queue`, `Email`, `Tail`, `Rpc`, `Init`, `Alarm`, `Socket`, `Other`), after the binding check of the raw `env`. Its result is the root `env` of the task. `info`: `{ kind, name, event }` (`MODULES.md` 3, "The option wrapEnv"). | Nothing. A test uses it through `startApp({ count, hooks })`. |
 
 ## Changes in 0.0.2
 
@@ -276,12 +278,68 @@ wrangler deploy
 
 ## Testing an app
 
-There is no test helper in the release yet. A test runs the app in Miniflare (`conformance/run.mjs` shows the options). Two facts of Node and Miniflare change what a request has:
+The release has a test helper: `.roc-cfw/test.mjs` (Node) and `.roc-cfw/test-entry.js` (the part in the isolate). `roc-cfw shim` copies both with the rest of `js/`. It runs the built app (`app.wasm` and the shim) in Miniflare with local bindings, with no `.wrangler/` dir and no network. The design and the rules TH1 to TH19 are in `research/design-notes/test-helper.md`.
 
-| Fact | What to do |
+```js
+// tests/app.test.mjs (node --test, or a plain script). The project has app.wasm and .roc-cfw/ (roc-cfw sync).
+import { startApp } from '../.roc-cfw/test.mjs';
+
+const app = await startApp({
+  dir: '.',                                       // app.wasm, .roc-cfw/, worker.options.js, wrangler.toml
+  now: 1767225600000,                             // the shim clock (Time.now_ms!, Memo, deadlines); null: the real clock
+  d1: { DB: ['sql/0001_init.sql', 'tests/seed.sql'] },   // .sql files or SQL texts, run in order
+  kv: { CACHE: { key: 'value' } },
+  r2: { BUCKET: { 'a/b.txt': 'text' } },
+  outbound: { 'GET https://api.github.com/repos/o/r': [{ status: 200, body: '{}' }, { status: 304 }] },
+  count: ['DB'],                                  // count the calls of these bindings
+});
+const res = await app.fetch('/v1/x', { method: 'POST', body: '{"a":1}', headers: { 'content-type': 'application/json' } });
+res.status; await res.text(); res.calls.DB.n;     // the D1 calls of this request
+await app.reset();                                 // D1, KV, R2, the Cache API, the clock, the Memo pins: back to the start
+await app.close();
+```
+
+| Call | Gives |
 | --- | --- |
-| `dispatchFetch` with a string body adds `Content-Type: text/plain;charset=UTF-8` | For a request with no `Content-Type`, send the body as bytes (`Buffer.from(text)`) |
-| Node `fetch` (undici, also under `dispatchFetch`) adds `Cache-Control: no-cache` and `Pragma: no-cache` to a request that has `If-None-Match` (the fetch cache mode `default`) | Give `cache: 'force-cache'` in the request init. Then a header is sent only when the test sets it |
+| `startApp(opts)` | The app in Miniflare. Options: `dir`, `wasm` (any path), `shim` (default `.roc-cfw` of `dir`), `config`, `now`, `d1`, `kv`, `r2`, `queues` (consumer settings), `outbound` (a table or a Node function), `services` (Node functions for service bindings), `bindings` (vars and secrets, on top of `vars` of the config), `compatibility` (`{ date, flags }`, default: the config), `count`, `hooks` (a module in the isolate), `options` (JSON `makeHandler` options on top of `worker.options.js`), `miniflare` (a dir or the module), `persist`, `modules`, `cf`, `miniflareOptions` |
+| `app.fetch(pathOrUrl, init)` | A `Response` with `calls` (`{ DB: { n, ops, list: [{ op, session, kind, name }] } }`, the calls of the tasks of this request only) and `sessions` (`{ DB: [withSession arguments] }`). `init.now`: the clock before the request |
+| `app.setNow(ms \| null)`, `app.advance(ms)`, `app.now` | The shim clock, through a control path (no Roc task, so no sweep) |
+| `app.scheduled({ cron, time, now })` | `{ outcome, noRetry }` of `/cdn-cgi/local/scheduled` |
+| `app.queue(name, messages, { now })` | The result of the `queue` handler: `{ outcome, ackAll, retryBatch, explicitAcks, retryMessages }`. A message with no `timestamp` gets the helper clock |
+| `app.d1(name)`, `app.kv(name)`, `app.r2(name)`, `app.queueProducer(name)`, `app.object(name)` | The Miniflare handles |
+| `app.sql(name, texts)` | SQL between requests, split as the seeds (one statement at a time; a trigger body stays whole) |
+| `await app.calls({ reset })` | Each counted call of any task since the last reset (`Response.after` work, objects, alarms) |
+| `app.idle(ms = 5000)` | Waits until the shim has no task (a throw with the count after `ms`) |
+| `app.outbound()` | `{ log: ['GET https://...'], count: { 'GET https://...': 2 }, unmatched: [...] }` |
+| `app.reset()` | Waits for `idle`, then: D1 (drop the user tables and views, run the `d1` seeds again), KV and R2 (delete each key, seed again), the Cache API keys that the app put (`caches.default` and `caches.open(name)`), the clock (the `now` of the start), the pin table (`Memo`, `Js.pin!`), the calls, the outbound log and the answer order, `app.logs`. The isolate and the wasm stay. Not reset: Durable Object storage and alarms, queue messages in flight, module globals of JS (`ops`, `hooks`) |
+| `app.logs` | The structured log lines of workerd |
+| `app.close()` | Disposes Miniflare and removes the run dir |
+| `app.mf`, `app.url` | The Miniflare instance and its URL (no promise of stability) |
+| `TEST_API` (export) | `1`, equal to `test` of `cfw.json`. A breaking change of `startApp` adds 1 |
+
+| Rule | What the helper does |
+| --- | --- |
+| Bindings | It reads the manifest of the wasm in Node. Each declared D1, KV, R2, queue producer and object class of this Worker is made, seeded or empty (an object class is SQLite-backed). A seed of a binding that the app does not declare is a throw with its name. A kind with no local form (`ai`, `vectorize`, a service) needs `services`, `bindings` or `hooks` |
+| Count | `count: [names]`. A call is one round trip: D1 `all`, `run`, `first`, `raw`, `batch`, `exec` (`prepare`, `bind`, `withSession` are not calls); KV `get`, `getWithMetadata`, `put`, `delete`, `list`; R2 `get`, `head`, `put`, `delete`, `list`, `createMultipartUpload`, `resumeMultipartUpload`; a queue `send`, `sendBatch`. The count uses the shim option `wrapEnv` (`MODULES.md` 3) |
+| Hooks | `hooks: 'tests/hooks.js'`: a module in the isolate. Its exports `wrapEnv(env, info)` and `fetch(request, env, next)` run after the count. Its local imports are in the module list |
+| Outbound | A table `{ 'METHOD url': [answer, ...] }`: each request to a key takes the next answer, then the last again. An answer is a `Response`, or `{ status, headers, body, chunked }`. The helper sets `Content-Length` from the body. `chunked: true` sends the body in chunks with no length: use it for a byte count or a size limit test (workerd frames a body by its `Content-Length`: a smaller value cuts the body, a larger one makes the read wait). A request with no key gets a 599 and goes to `unmatched`. A Node function in place of the table, or of one answer, gives a `Response` or an answer object |
+| Run dir | `<tmp>/cfw-test-<pid>-<n>` for each app, and `TMPDIR` is `<tmp>/cfw-test-<pid>` (the `miniflare-*` dirs) while an app runs. `close`, exit, SIGINT and SIGTERM remove them |
+| Miniflare | The option `miniflare`, env `MINIFLARE`, `miniflare` or `wrangler/node_modules/miniflare` from the project, the global wrangler of this node. Else a throw with each place. Tested with wrangler 4.151.0 (Miniflare 5.20261012.0-beta, `convertV4MiniflareOptions`) |
+| Options file | `worker.options.js` and its relative imports are in the module list. An import that is not relative (an npm package) is a throw: give it in `modules`, or bundle the file |
+
+The traps of a test setup. The helper avoids T1 to T3, T5, T6 and T8 by default.
+
+| Trap | Effect | The helper |
+| --- | --- | --- |
+| T1 | `dispatchFetch` with a string body adds `Content-Type: text/plain;charset=UTF-8` | Sends a text body as UTF-8 bytes |
+| T2 | Node `fetch` (undici) adds `Cache-Control: no-cache` and `Pragma: no-cache` to a request with `If-None-Match` | `cache: 'force-cache'` when the test gives no `cache` |
+| T3 | `wrangler d1 execute --local` and `getPlatformProxy` make `.wrangler/` dirs next to the config | Uses neither: the state is in memory (or under the run dir with `persist`) |
+| T4 | Local D1 accepts any bookmark (`withSession("bookmark-abc")` gives no error) | No fix: `res.sessions` records the argument |
+| T5 | Miniflare leaves `miniflare-*` temp dirs after a kill | Its own `TMPDIR`, removed on exit and on a signal |
+| T6 | With no `cf` option, Miniflare fetches `request.cf` from the network at start | A fixed `cf` (option `cf`) |
+| T7 | A clock that jumps forward makes the next sweep cancel the tasks in flight past their deadline, also `Response.after` work | No fix: move the clock when `app.idle()` is done. `Date.now()` of JS, the Cache API `max-age` and alarm times stay on the real clock |
+| T8 | `redirect: 'follow'` of `dispatchFetch` hides a 3xx of the app | `redirect: 'manual'` |
+| O1 | The helper marks each request with the header `cfw-test-request` | The isolate part removes it before the app runs (the copy keeps `request.signal`) |
 
 ## Build from source
 

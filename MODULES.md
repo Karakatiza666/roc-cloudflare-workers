@@ -450,6 +450,19 @@ import options from './worker.options.js';
 export default makeHandler(app, options);
 ```
 
+#### The option `wrapEnv`
+
+`wrapEnv: (env, info) => env` wraps the bindings of each event (after 0.0.2, rule TH11 of `research/design-notes/test-helper.md`). The test helper (`README.md` "Testing an app") uses it to count the binding calls. An app can also use it in production.
+
+| Item | Rule |
+| --- | --- |
+| When | Once per event, in `run` of `js/index.js` (the one place that each event passes): `fetch`, `scheduled`, `queue`, `email`, `tail` and `Other` of the default export, the RPC methods, the `fetch` of a named entry point, and the `init`, `fetch`, `alarm`, RPC and socket events of an object class |
+| Order | After the binding check of the raw `env` (the check above). So the check sees the bindings of Workers, not the result |
+| Result | The root `env` of the task (`API.md` 6.2, OP3): `Get(Root("env"), name)`, `Env.var!` and each binding module read it |
+| `info` | `{ kind, name, event }`. `kind`: the kind of the task context (`Fetch`, `Scheduled`, `Queue`, `Email`, `Tail`, `Rpc`, `Init`, `Alarm`, `Socket`, `Other`; the `fetch` of an object or an entry point is `Fetch`). `name`: the log tag (`fetch`, `Room.alarm`, `Admin.purge`). `event`: the root `event` (the request, the controller, the batch, the argument) |
+| A throw | Fails the event as a throw of the event (as a binding check that fails) |
+| None | No call, no cost |
+
 #### A handler that is not listed
 
 Roc gives no warning for a top-level def of an app that nothing uses. A handler that the app defines and does not put in `Worker.new` (or in `Object.class`, `Rpc.entrypoint`) never runs. `sync` finds it.

@@ -81,6 +81,16 @@ step "native-test.mjs (8e: Native in app_native.wasm: decode, limit, hashes, str
 step "conformance/run.mjs (8c, 8d: a route for each function and Io twin in Miniflare)" node conformance/run.mjs bench/out/conformance.wasm
 step "conformance/must-not-compile.sh (8c: a Secret in Log fields and in a CBOR encode does not compile)" conformance/must-not-compile.sh
 step "conformance/tmpdir-test.sh (8f: run.mjs leaves no temp dir: a normal run, FAIL start, SIGTERM)" conformance/tmpdir-test.sh bench/out/conformance.wasm
+# The test helper (research/design-notes/test-helper.md 7, 10): examples/hello and test-helper/app on the production host
+# (platform/targets/wasm32/host.wasm, made by bench/build.sh), in Miniflare.
+th=.cache/test-helper
+mkdir -p "$th"
+roc_bin=${ROC:-$(bench/get-roc.sh)}
+step "build examples/hello and test-helper/app (production host)" env ROC_CACHE_DIR="$PWD/.cache/roc" XDG_CACHE_HOME="$PWD/.cache" bash -c 'cd examples/hello && "$0" build --target=wasm32 --no-cache --output="$1" main.roc && cd ../../test-helper/app && "$0" build --target=wasm32 --no-cache --output="$2" main.roc' "$roc_bin" "$PWD/$th/hello.wasm" "$PWD/$th/helper.wasm"
+step "test-helper/wrapenv-test.mjs (S2: wrapEnv for each event kind; Node)" node test-helper/wrapenv-test.mjs "$th/helper.wasm"
+step "test-helper/count-test.mjs (S3: the count rules TH6, TH16; Node)" node test-helper/count-test.mjs
+step "test-helper/helper-test.mjs (S4 to S6: startApp, reset, H1 to H11, in Miniflare)" node test-helper/helper-test.mjs "$th/hello.wasm" "$th/helper.wasm"
+step "test-helper/helper-tmpdir.sh (H8: SIGTERM and SIGINT remove the run dirs)" test-helper/helper-tmpdir.sh "$th/helper.wasm"
 rm -f ".cache/test-all-$$.log"
 [ "$rc" -eq 0 ] && echo "ALL PASS" || echo "FAIL"
 exit "$rc"

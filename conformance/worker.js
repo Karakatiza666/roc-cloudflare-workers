@@ -5,6 +5,7 @@
 import app from 'app.wasm';
 import { makeHandler, objectClass, entrypointClass } from './js/index.js';
 import { withStubs, stubRoute, Flow, Waiter } from './bindings.js';
+import { countBinding } from './js/test-entry.js';
 export { Flow, Waiter };
 
 // PLAN.md 8f: the Durable Object classes and the named entry point of the app (conformance/ObjectRoutes.roc,
@@ -51,7 +52,11 @@ let clockSkew = 0;
 const now = () => Date.now() + clockSkew;
 // `tailMaxBytes`: 100 kB, so a trace with the logs of 2 MiB (cut by workerd to 200 kB) is above the limit (checks/tail.mjs).
 // `initMs`: the `Init` deadline of API.md 10.2, smaller for the test (class `Slow`).
-const Handler = makeHandler(app, { ops, now, heapCheckWhenIdle: false, tailMaxBytes: 100_000, initMs: 1000 });
+// The shim option `wrapEnv` (TH11, checks/wrapenv.mjs): a request with the header `x-count-d1` gets a counted `DB` (the count
+// of the test helper, js/test-entry.js). `GET /__d1_calls` gives the count and sets it to 0.
+let d1Calls = 0;
+const wrapEnv = (env, info) => (info.kind === 'Fetch' && info.event?.headers?.has?.('x-count-d1') && env.DB ? { ...env, DB: countBinding(env.DB, () => d1Calls++, () => {}) } : env);
+const Handler = makeHandler(app, { ops, now, wrapEnv, heapCheckWhenIdle: false, tailMaxBytes: 100_000, initMs: 1000 });
 
 // The messages that the JS consumer of the queue `v8` got (PLAN.md 8f): a `Queue.v8` message with a `Cbor.Bytes` field is
 // a `Uint8Array` here, and a `U64` of 2^60 is a `BigInt`. `GET /__queue_seen` gives them.
@@ -106,6 +111,11 @@ export default class extends Handler {
     if (path === '/__clock') {
       clockSkew = Number(new URL(request.url).searchParams.get('skew'));
       return new Response(String(clockSkew));
+    }
+    if (path === '/__d1_calls') {
+      const n = d1Calls;
+      d1Calls = 0;
+      return new Response(String(n));
     }
     if (path === '/__mem') return new Response(String(r.x.memory.buffer.byteLength));
     // FO6 (PLAN.md 8f): a JS call with no argument of the RPC method `hello` (argument type `{}`): the default export

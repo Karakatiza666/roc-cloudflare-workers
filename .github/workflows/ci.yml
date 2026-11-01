@@ -2,6 +2,8 @@
 # nightly and make it the default compiler, fetch the closure, build each example and
 # run its sync, then check that the committed worker.js files are what sync writes.
 # No npm: sync is `node js/cli.mjs`. No Wrangler: sync reads wrangler.toml as text.
+# The test helper (js/test.mjs, research/design-notes/test-helper.md S8): its tests run on examples/hello and
+# test-helper/app, built on the production host, in the Miniflare of the pinned global wrangler (README "Testing an app").
 name: ci
 on:
   push:
@@ -40,6 +42,17 @@ jobs:
         run: tln run examples
       - name: The committed worker.js files are what sync writes
         run: git diff --exit-code examples/
+      - name: Install wrangler (the Miniflare of the test helper)
+        run: npm install -g wrangler@4.151.0
+      - name: Build the app of the test helper tests
+        run: tln run helper
+      - name: Test helper (wrapEnv, the count rules, startApp, the run dirs)
+        run: |
+          node test-helper/wrapenv-test.mjs test-helper/app/app.wasm
+          node test-helper/count-test.mjs
+          node test-helper/helper-test.mjs examples/hello/app.wasm test-helper/app/app.wasm
+          test-helper/helper-tmpdir.sh test-helper/app/app.wasm
+
   # The claim `min_nightly` of js/cfw.json (research/min-nightly/README.md): the apps build with that nightly
   # against the hosts of the pinned nightly, and the tests that take a wasm file pass.
   min-nightly:

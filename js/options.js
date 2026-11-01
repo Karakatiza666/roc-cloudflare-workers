@@ -42,6 +42,10 @@ const RULES = {
   // `Io.timeout_at` and `Object.Self.set_alarm_in!`. A test sets one clock. Timers stay real: `Time.sleep`,
   // `Io.timeout` and the deadline timer use `setTimeout` or `scheduler.wait`. A cron `time_ms` comes from the event.
   now: fn,
+  // TH11 (research/design-notes/test-helper.md): `(env, info) => env`, once per event, in `run` of index.js, after the binding
+  // check of the raw `env`. Its result is the root `env` of the task. `info`: `{ kind, name, event }`. The test helper
+  // (`test-entry.js`) counts the binding calls with it.
+  wrapEnv: fn,
 };
 
 // Names that `other` cannot take: the class has these methods already.

@@ -287,6 +287,10 @@ export function makePins(limit = 1000, now = () => Date.now()) {
     unpin(name) {
       if (table.delete(name)) stats.unpins++;
     },
+    // The test helper (`app.reset()`, TH15): drop each pin. Not counted as unpins.
+    clear() {
+      table.clear();
+    },
   };
 }
 

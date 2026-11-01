@@ -5,6 +5,7 @@
 #   1. Each file of js/ is in the unpacked bundle, and the unpacked js/ has no other file.
 #   2. Each file has the content of the file in js/. js/package.json is `{ "type": "module" }` only.
 #   3. js/cfw.json has `api` 1 and a `min_nightly` tag (README "Supported nightlies"), and js/template/ has main.roc, wrangler.toml, talon.toml, .gitignore.
+#   4. js/test.mjs and js/test-entry.js (the test helper) are in it, and js/cfw.json has `test` 1.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROC=${ROC:-$(bench/get-roc.sh)}
@@ -24,6 +25,11 @@ for f in $want; do
 done
 [ "$(tr -d ' \n' < "$dir/js/package.json")" = '{"type":"module"}' ] || { echo "FAIL: js/package.json of the bundle is not only the type field"; exit 1; }
 node -e 'const c = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); process.exit(c.api === 1 && /^nightly-\d{4}-\d{2}-\d{2}-[0-9a-f]+$/.test(c.min_nightly) ? 0 : 1)' "$dir/js/cfw.json" || { echo "FAIL: js/cfw.json has no api 1 or no min_nightly tag"; exit 1; }
+# 4. The test helper (research/design-notes/test-helper.md 6): js/test.mjs, js/test-entry.js, and "test" 1 in cfw.json (TH13).
+for f in test.mjs test-entry.js; do
+	test -s "$dir/js/$f" || { echo "FAIL: js/$f (the test helper) is not in the bundle"; exit 1; }
+done
+node -e 'process.exit(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).test === 1 ? 0 : 1)' "$dir/js/cfw.json" || { echo "FAIL: js/cfw.json has no test 1"; exit 1; }
 for f in main.roc wrangler.toml talon.toml .gitignore; do
 	test -s "$dir/js/template/$f" || { echo "FAIL: js/template/$f is not in the bundle"; exit 1; }
 done

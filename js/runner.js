@@ -189,6 +189,7 @@ export function makeRunner(module, opts = {}) {
     stats,
     tasks,
     budget,
+    pins: shim.pins,
     x: cur.x,
     // The counters of the host for the current instance.
     counters() {

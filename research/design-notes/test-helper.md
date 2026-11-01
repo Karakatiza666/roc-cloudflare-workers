@@ -1,6 +1,6 @@
 # Design note: a test helper for apps (`js/test.mjs`)
 
-State: accepted by talon-04 (2026-11-02), with the decisions of section 9. Plan: section 10 (release 0.0.3). No platform code is changed by this note.
+State: accepted by talon-04 (2026-11-02), with the decisions of section 9. Plan: section 10 (release 0.0.3). Built 2026-11-02 on the branch `test-helper` (not released): section 11 has the probe results, the changes to the design, the reset time and the registry migration.
 
 Rule ids: `API.md` has no family for an app test helper. This note proposes the family `TH` (TH1 to TH19, section 5.3). It cites the existing ids `OP3` (roots `env`, `ctx`, `event`), `RN15` (the clock), `RF9` (no fake platform in Roc), `AG1` (the app sees Roc only), `M1`, `3b` (deadline sweep) and `API.md` 10.1, 10.2, 11.
 
@@ -234,8 +234,6 @@ Revert checks (5 tricky ones): drop the bytes conversion (H3 T1 fails); drop `fo
 
 ## 8. How the registry moves to it
 
-| Registry part today (`worker/tests/`) | With the helper |
-| --- | --- |
 | Need of the registry (review items a to h) | Registry part today (`worker/tests/`) | With the helper |
 | --- | --- | --- |
 | (a) A clock that each request can set | `clock.js` (`Date.now` override) and the header `x-test-now` | `app.fetch(path, { now: ms })`: the helper sets the shim clock through the control path before it sends the request (TH5). `clock.js` is removed (also follow-up W1). The registry reads time through `Time.now_ms!` only (R-WH4), so the `Date.now` override is not needed. |
@@ -284,3 +282,82 @@ The steps are in order. Each step ends green (its tests pass) before the next st
 | S8 | CI: the helper tests in the platform CI (a step after the build of `examples/hello` and `helper-app`) | The CI run | None |
 
 After 0.0.3: a registry slice moves `worker/tests/run.mjs` to the helper (section 8), with `reset` between cases of the same seed.
+
+## 11. As built (2026-11-02, branch `test-helper`)
+
+### 11.1 Probe results (step S1)
+
+The probes are in `research/test-helper/probes/` (`p1-p2.mjs`, `p3.mjs`), run in workerd through Miniflare 5.20261012.0-beta (wrangler 4.151.0).
+
+| Probe | Result | Decision |
+| --- | --- | --- |
+| P1 `new Request(req, { headers })` keeps `request.signal` | Pass. `copy.signal === req.signal` (the same object). A client that resets the socket (TCP RST, as `bench/signal-workerd.mjs`) fires both. An undici `fetch` that aborts its `AbortController` fires neither: the abort does not reach the Worker through the entry worker of Miniflare (a fact of the test setup, not of the copy). | O1: the test entry strips `cfw-test-request` (TH4). |
+| P2 the test entry can replace `globalThis.caches`, and the app sees the wrap | Pass. An assignment works at global scope. `Cache.roc` reads `Get(Root("global"), "caches")` at each call (`js/bridge.js`: `global: globalThis`), so `caches.default.put` and `caches.open(name).put` of the app go through the wrap. A `delete` of each recorded key with the real `caches` empties both. | TH15: the cache reset deletes the recorded keys. No `setOptions` fallback. |
+| P3 the pin table can be cleared from a JS route | Not possible before: the runner had only `stats.pins`. Two lines make it possible: `runner.pins` (`js/runner.js`) and `pins.clear()` (`js/helpers.js`). After the clear with no task, the next `Memo` read loads again (`p3.mjs`: pins 1, then 0, then a new id). | TH15: the reset clears the pins (`/reset` of the control path refuses with 409 when a task runs; `app.reset()` waits for `idle` first). |
+| O4 `roc-cfw` 0.0.1 and the key `test` | Pass. `Cfw.check` of 0.0.1 accepts `{ "api": 1, "test": 1, "min_nightly": ... }` (`research/test-helper/o4-cfw-check.roc`, `roc test`). `roc-cfw shim --js js/` of a 0.0.1 build (nightly 2026-10-14) copies `test.mjs` and `test-entry.js` to `.roc-cfw/`. | No `roc-cfw` release first. |
+
+### 11.2 Changes to the design
+
+| Item | Note (sections 5, 7) | As built | Why |
+| --- | --- | --- | --- |
+| Test location | `js/test/helper-test.mjs`, `js/test/helper-app/` | `test-helper/` at the root: `helper-test.mjs`, `wrapenv-test.mjs`, `count-test.mjs`, `helper-tmpdir.sh` (+ `tmpdir-child.mjs`), `reverts.mjs`, `app/main.roc` (+ `app/tests/hooks.js`) | `scripts/bundle.sh` puts each file of `js/` in the bundle. Tests and a Roc app do not belong in a release. |
+| `app.calls()` | Sync | `await app.calls({ reset })` | The calls are in the isolate: one dispatch of the control path. |
+| `res.calls` | `{ n, ops }`, `list: [{ op, session }]` | Each `list` item also has `kind` and `name` (the task of the call) | It shows which task made a call. |
+| How `res.calls` comes back | (not given) | The test entry adds the header `cfw-test-calls` (URI-encoded JSON) to the response, and `app.fetch` removes it. No extra dispatch. A 101 response (WebSocket) has no counts. | One dispatch per request. |
+| TH18 answers | `{ status, headers, body }` | Also `chunked` (and `chunkBytes`). The helper sets `Content-Length` from the body. A `Response` answer is read and sent again with its length. A function in the table (for one key) or in place of the table may give a `Response` or an answer object. | Talon slice 111 section 8: Miniflare sends a Node answer with no length, and a size limit test needs a chunked body (a `Content-Length` cannot send more bytes than it says: a smaller value cuts the body, test `TH18: an answer body ...`). |
+| `app.queue` | `(name, messages)` | `(name, messages, { now })` | As `scheduled`. |
+| Run dirs (TH9, O7) | `<os tmp>/cfw-test-<pid>-<n>` | The same, from the temp dir before the first `startApp`. `TMPDIR` is `<os tmp>/cfw-test-<pid>` while an app runs (the `miniflare-*` dirs), restored at the last `close`. | A run dir made after `TMPDIR` changed went into the parent. |
+| Runner | (not in the note) | `runner.pins` and `pins.clear()` | Probe P3. |
+| Options | `options`, `modules` | Also `config` (the Wrangler config file) and `miniflareOptions` (V4 options on top: an escape hatch) | A project with two configs (`examples/auction`); options that the helper does not know. |
+| Not reset by `reset` | Module globals of JS | Also Durable Object storage and alarms, queue messages in flight | No local API lists them. A test that needs a new object uses a new object name. |
+| H6 `Socket` | In Miniflare | In the Node unit test only (`wrapenv-test.mjs`, the stand-in class) | A WebSocket client in the helper test adds little; the kind goes through the same `run`. |
+
+### 11.3 Reset time (H10)
+
+`test-helper/helper-test.mjs`, the helper app with a D1 seed of 3 statements, one request before each reset or close, this machine:
+
+| Run | Total | Each |
+| --- | --- | --- |
+| 20 `startApp` and `close` | 5985 ms | 299 ms |
+| 20 `app.reset()` | 694 ms | 35 ms |
+
+A reset is about 8 times faster than a start. The registry W2 case (about 0.5 s of start, migrations and seed in 0.75 s) moves most of that time to one start per file of cases.
+
+### 11.4 Tests and revert checks
+
+| Test | Checks |
+| --- | --- |
+| `test-helper/wrapenv-test.mjs` (S2) | 14: one call for each kind (`Fetch`, `Scheduled`, `Queue`, `Init`, `Rpc`, `Alarm`, `Socket`) with `info`; the raw `env` goes in; the result is the root `env` (the alarm writes to the KV that `wrapEnv` gave); a throw fails the event; the binding check sees the raw `env`; a bad option value |
+| `test-helper/count-test.mjs` (S3) | 18: TH6 and TH16 with plain-object fakes (`prepare` and `bind` are not calls, `batch` is 1 and gets the real statements, the session of each call), the order of count, options `wrapEnv`, `hooks.wrapEnv` |
+| `test-helper/helper-test.mjs` (S4 to S6) | 28: H1, H2, H3 (T1, T2, T8, O1), H4, H5 (also two requests at the same time), H6, H7, H9, H10, H11, TH1, TH9 (two apps), TH13, TH18 (length, chunked, a size limit, a lying length), TH19 |
+| `test-helper/helper-tmpdir.sh` (H8) | SIGTERM and SIGINT: 3 run dirs during the run, 0 after |
+| `conformance/checks/wrapenv.mjs` (S2) | A wrapped D1 counts 1 call for a route with 1 batch; 0 with no header |
+| `scripts/test_bundle_js.sh` (S7) | `js/test.mjs` and `js/test-entry.js` are in the bundle; `cfw.json` has `test` 1 |
+
+Revert checks (`node test-helper/reverts.mjs <filter>`, 8 entries, each run filtered; all seen):
+
+| Revert | Seen by |
+| --- | --- |
+| `wrapEnv` in `Handler.fetch` only, not in `run` | `wrapenv-test.mjs`: `Init` (and `Alarm`, `Rpc`, ...) fail |
+| Count `prepare` as a call | `count-test.mjs` |
+| Drop the text-to-bytes conversion of the body | H3 T1 |
+| Drop the `force-cache` default | H3 T2 |
+| Key the run dir by pid only | TH9: two apps |
+| Key the counts globally (all calls in the time of the request) | H5 TH4: two requests at the same time |
+| Record only the keys of `caches.default` | H9: the named cache |
+| No default `Content-Length` of an answer | TH18 |
+
+### 11.5 Registry migration (a Talon slice after 0.0.3)
+
+| Step | Change in `worker/tests/` |
+| --- | --- |
+| 1 | Remove `worker-test.js` and `clock.js`. The registry reads time with `Time.now_ms!` only (R-WH4), which the shim clock drives. |
+| 2 | `run.mjs`: remove the module list, `convertV4MiniflareOptions`, `MINIFLARE`, the run dir, `TMPDIR` and the signal handlers. Import `startApp` from `../.roc-cfw/test.mjs` (the copy of `roc-cfw shim` in `worker/`). |
+| 3 | For each case (or for each group of cases with the same seed, with `app.reset()` between them): `startApp({ dir: w2Dir, wasm: <app.wasm or archive-test.wasm>, now: DEFAULT_NOW, d1: { DB: [...migrations, seed.sql of the case] }, count: ['DB'], bindings: { ...settings.json, ...case settings.json }, compatibility: { flags: ['enable_request_signal', 'global_fetch_strictly_public'] }, outbound: <a function that serves github/ of the case>, hooks: 'tests/selftest-hooks.js' })`. |
+| 4 | A request line: `app.fetch(spec.path, { method, headers, body: spec.body or JSON text, now: spec.now ?? DEFAULT_NOW })` (the helper gives bytes, `force-cache`, `redirect: 'manual'`). A `token` line sets `authorization` as now. A cron line: `app.scheduled({ cron, time, now })`. A `sql` line: `app.sql('DB', spec.sql)`. |
+| 5 | `expect/d1-calls`: `res.calls.DB.n` (and `res.calls.DB.ops` in the message) in place of `x-d1-calls`, `x-d1-ops`. `x-d1-session`: `res.sessions.DB.at(-1)`, or `res.calls.DB.list[i].session` for the session of each call. |
+| 6 | `expect/github.log`: `app.outbound().log`. The fake GitHub stays a function (`fakeGithub` gives a `Response`; the helper adds the `Content-Length`; a `.gen.json` body that a size test needs can return `{ body, chunked: true }`). A request with no file still pushes the error of the case. |
+| 7 | `expect/db.tsv`: `(await app.d1('DB')).prepare(sql).raw()` as now. |
+| 8 | The `/__test/*` self-test paths: a hooks module (`fetch(request, env, next)`) with the code of `selfTest` of `worker-test.js`. Its `env.DB` is the counted one, so `/__test/d1?n=K` keeps its counts. `/__test/now` reads `Date.now()` there, which is now the real clock: change it to read the time of the case through a header, or drop it (the shim clock is checked by the Roc routes). |
+| Check | The W2 run before and after the move gives the same PASS list, with the `expect/` files byte for byte. |
+

@@ -80,7 +80,7 @@ function register(kind, name, make) {
 // `opts.ops`: the JS functions of the app (API.md 6.4). The class has the static `runner` for tests and the bench.
 export function makeHandler(module, opts = {}) {
   if (!(module instanceof WebAssembly.Module)) throw new TypeError('makeHandler: module must be a WebAssembly.Module');
-  const { other = [], tailMaxBytes, ...runnerOpts } = checkOptions(opts);
+  const { other = [], tailMaxBytes, wrapEnv, ...runnerOpts } = checkOptions(opts);
   const log = runnerOpts.log ?? ((text) => console.warn(text));
   // workerd forbids random values at global scope (the free mark of an instance, `freeMark`), and the default export
   // is made there. So the runner and its first instance start at the first use (an event, or a read of `runner`), and
@@ -98,8 +98,10 @@ export function makeHandler(module, opts = {}) {
   // Run one event as a task. A trap gives `{ trap, status }`; its log line has the text of a Roc `crash` (8a O2).
   // `ro`: the task context (PLAN.md 9b, API.md 6.2 OP3): `kind`, `signal`, `env`, `ctx` and `event` (the root `event`).
   // Each task has the own-context timer of its deadline (`watch`).
+  // `wrapEnv` (TH11): after the check of the raw `env`, its result is the root `env` of the task (a throw fails the event).
   const run = async (name, ev, ro) => {
     checkEnv(ro.env);
+    if (wrapEnv) ro.env = wrapEnv(ro.env, { kind: ro.kind, name, event: ro.event });
     const stop = watch(ro.hooks);
     let r;
     try {

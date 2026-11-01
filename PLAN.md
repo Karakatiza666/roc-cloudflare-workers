@@ -38,6 +38,7 @@ Problem 12 (2026-10-14) is the goal of problem 4: one wasm instance per isolate.
 | 11 | 11a to 11c, then 5d on the edge. 11a and 11b: done locally 2026-10-17 (the section "Status of steps 11a, 11b"). The edge run of 11c, 5d and 8g: 2026-10-17, the section "Status of the edge run (11c, 5d, 8g edge)" (after 8g). The example app deployed by CI (11c) is not done. | 7 to 10 |
 | 12 | Update DESIGN.md §6.1, Q12 and Q14, DESIGN-REGISTRY.md §8 and `bench/README.md` (API.md RF10) | all |
 | 13 | 12g: measure with talon | talon runs on the platform |
+| 14 | The test helper of apps (`research/design-notes/test-helper.md` 10, steps S1 to S8): `js/test.mjs`, `js/test-entry.js`, the shim option `wrapEnv`. Done 2026-11-02 on the branch `test-helper` (not released): the probes P1 to P3, `test-helper/` (H1 to H11, 8 revert checks in `test-helper/reverts.mjs`), the CI steps. | 8f, the one clock (after 0.0.2) |
 
 Each new test must fail when its change is reverted. Exceptions: moves, releases and edge runs (9a, 11a to 11c, 5d), comparisons (the replay row of 6e) and measurements (8g, 12-pre, 12f, 12g). Their test is that the old tests still pass, or the run gives its numbers.
 
@@ -487,6 +488,7 @@ Done or not needed:
 | `now` | `Date.now` | The one clock of the shim (after 0.0.2): `Time.now_ms!`, `Memo` and pin expiry, the task deadlines, `graceMs`, `Io.timeout_at`, `set_alarm_in!`. Timers stay real (`MODULES.md` 11, "The clock"). |
 | `ops` | none | API.md 6.4: JS functions of the app, the root `ops` |
 | `other` | none | API.md 10.1: Workers handler names that give the event `Other` |
+| `wrapEnv` | none | After 0.0.2: `(env, info) => env`, once per event, after the binding check of the raw `env`. Its result is the root `env` of the task (`MODULES.md` 3, "The option wrapEnv"; the test helper, `research/design-notes/test-helper.md` TH11) |
 
 ### Steps
 
