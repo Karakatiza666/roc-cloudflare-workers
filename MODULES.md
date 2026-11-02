@@ -209,7 +209,7 @@ event! = |e| worker.event!(e)
 | Build | Rule |
 | --- | --- |
 | Command | `roc build --target=wasm32 --no-cache --output=app.wasm main.roc`, from the root of the repository: a build inside a subdirectory can give `PathOutsideWorkspace` when the platform line is a relative path (`examples/auction/README.md`). |
-| Mode | The default `--opt=speed`, or `--opt=size`. Do not use `--opt=dev`: on nightly 2026-10-31 (f7bef6b) and 2026-11-01 the dev backend for wasm32 gives a wrong `to_u8_try`, `to_u16_try`, `to_i8_try` and `to_i16_try` of an `I128` (`Err(OutOfRange)` for 3). roc-cbor 0.2.2 reads each integer through an `I128`, so a typed read of a `U8`, `U16`, `I8` or `I16`, of a BLOB into `List(U8)` or `Cbor.Bytes` (D1 gives a BLOB as an array of numbers), and of a `Memo` value with a `List(U8)` (9) is `BadData` or a load on each `get!`. The conformance run and the release use `speed` (`research/blob-002/README.md`). roc-cbor 0.2.3 and 0.4.1 (not released) read through an `I64`, so a dev build reads them (`research/memo-roundtrip/README.md`). |
+| Mode | The default `--opt=speed`, or `--opt=size`. `--opt=dev` also works for the platform: with roc-cbor 0.2.3 the typed reads of the platform (D1 rows, a BLOB into `List(U8)` or `Cbor.Bytes`, `Memo` values, RPC and queue data) read each small integer through an `I64`, so they are right in a dev build (`research/memo-roundtrip/dev-check.sh`). App code is not safe in a dev build when it calls `I128.to_u8_try`, `I128.to_u16_try`, `I128.to_i8_try` or `I128.to_i16_try`: on nightly 2026-10-31 (f7bef6b) and 2026-11-01 the dev backend for wasm32 gives a wrong result for them (`Err(OutOfRange)` for 3 of the 4), until roc-lang/roc#12782 is fixed (https://github.com/roc-lang/roc/issues/12782, `research/blob-002/README.md`). In app code, convert through `I64`, or build with `speed`. The release uses `speed`. |
 | Result | A build with type errors still writes the `.wasm`, prints "N errors and 0 warnings found ... while successfully building", and exits with 1 (checked 2026-10-20). A build is good only when the exit code is 0 and the text is "0 errors and 0 warnings". A script checks the exit code, not the file. |
 
 One handler: write `Worker.new({ fetch!: fetch! })`, not `Worker.new({ fetch! })`. In Roc, `{ name }` with one name and no comma is a block that gives the value of `name`, not a record (a language rule, not a platform type: design issue X3). With two or more fields (`{ fetch!, queue! }`) or a comma (`{ fetch!, }`) it is a record. `roc fmt` writes `{ fetch!, }` on three lines, and keeps it a record. The error of `{ fetch! }` names the type of the handler, not a record (nightly 2026-10-31, `research/chunk-fill/shorthand.roc`):
@@ -1414,13 +1414,13 @@ A value that does not parse back (Talon slice 108b, P1; `research/memo-roundtrip
 | --- | --- | --- | --- |
 | Older type after a deploy: the pin of an older version of the app, with the same name | The read of the pin | Loads again, pins the new value | None: this is the normal path of a deploy |
 | The type of the `Memo` does not round-trip | The write check | Gives the value of the loader, does not pin it, so each `get!` loads again | One line for each name in the isolate |
-| Build with `--opt=dev` and roc-cbor 0.2.2: a `U8`, `U16`, `I8` or `I16`, so also a `List(U8)` (an array), does not read (compiler bug, `research/blob-002/`) | The write check | The same | The same, for example `InvalidCbor(42) at keys[0].material.Rsa.e[0]` |
+| A type of the app whose own code reads a small integer through `I128.to_u8_try` (or the 3 others) in a `--opt=dev` build (roc-lang/roc#12782) | The write check | The same | The same, for example `InvalidCbor(42) at keys[0].material.Rsa.e[0]` |
 
 The log line: `Memo "<name>": the value of load! does not parse back from its CBOR form (<error>). It is not pinned, so each get! runs load! again. Use a type that round-trips (MODULES.md 9).` `<error>` is `InvalidCbor(<pos>) at <path>` (the path of `Cbor.path_at`: `keys[0].n`, or `the root`) or the inspect text of another error (`MissingRequiredField("note")`).
 
 | Type | Round trip |
 | --- | --- |
-| Records, `Try(a, [Missing])` fields, optional fields, tag unions, lists, `Str`, integers, `Dec`, `Bool`, `Cbor.Bytes`, `List(U8)` | Yes (`List(U8)` with `--opt=dev`: only with roc-cbor 0.2.3 or later, see `PLAN.md` "Status of the Memo write check") |
+| Records, `Try(a, [Missing])` fields, optional fields, tag unions, lists, `Str`, integers, `Dec`, `Bool`, `Cbor.Bytes`, `List(U8)` | Yes (`List(U8)` also in a `--opt=dev` build: roc-cbor 0.2.3 reads small integers through an `I64`, roc-lang/roc#12782) |
 | A record field `Try(a, [Null])` with `Err(Null)` (roc-cbor rule N5: no key) | No: `MissingRequiredField`. Use `Try(a, [Missing])`. |
 | `F32`, `F64` NaN | Parses, but `NaN != NaN`: no log line (the check is the parse, not `==`) |
 
