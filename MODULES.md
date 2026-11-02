@@ -97,7 +97,7 @@ Modules. The groups below are the index: an app uses the first four groups. The 
 | In scope | `Native.zstd_decode!` (one shot), `Native.ZstdStream` (chunks), `Native.Blake3`, `Native.Sha256` |
 | Window of a `ZstdStream` | 8 MiB by default, and 8 MiB is the hard limit. A frame that needs a larger window is `WindowTooLarge`. `open_with!` with a `window_limit_bytes` over 8 MiB is `BadArgument`. `roc bundle` makes a window of 2 MiB, and `zstd -19` from a pipe makes 8 MiB. `zstd --long` makes a larger window: decode such an archive with `zstd_decode!` (no window limit, but all the output is in memory). |
 | One push of a `ZstdStream` | 16 MiB of output by default (`push_limit_bytes`) |
-| tar | Not in scope: `Native` has no tar reader. Use the generic package roc-tar 0.0.1 (`https://github.com/Karakatiza666/roc-tar/releases/download/0.0.1/FGAUE1Pds7Fvd48GkrAYd9rRUpztew8bgUZjUrKPGyo7.tar.zst`): a streaming ustar, pax and GNU reader in pure Roc. Give it the output of each `ZstdStream` push. |
+| tar | Not in scope: `Native` has no tar reader. Use the generic package roc-tar 0.0.2 (`https://github.com/Karakatiza666/roc-tar/releases/download/0.0.2/ynGk61syE32Lobjgwd3ZNRURf78xPGxr8Nzi1bSuhUr.tar.zst`): a streaming ustar, pax and GNU reader in pure Roc. Give it the output of each `ZstdStream` push. |
 
 Exceptions to MC10 and MC12 (each other name is the Workers name in snake_case, and each other unit follows MC10):
 
