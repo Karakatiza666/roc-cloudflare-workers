@@ -67,7 +67,7 @@ Needs: a Roc nightly (see "Supported nightlies"), Node (JSPI: the tests use Node
 
 ### Supported nightlies
 
-Supported nightlies: `nightly-2026-10-19-601b54c` (the `min_nightly` of `js/cfw.json`) to `nightly-2026-10-31-f7bef6b` (the release build, `compat/last-stack-first-nightly`). A later nightly is not checked before a release: the scheduled job `nightly-layout` builds and tests each new one. Checked 2026-11-02 against the platform after 0.0.2 (`research/min-nightly/`): the conformance app (489 checks in Miniflare), `bench/node-test.mjs` and `bench/handler-test.mjs` with the hosts of the release nightly.
+Supported nightlies: `nightly-2026-10-19-601b54c` (the `min_nightly` of `js/cfw.json`) to `nightly-2026-10-31-f7bef6b` (the release build, `compat/last-stack-first-nightly`). A later nightly is not checked before a release: the scheduled job `nightly-layout` builds and tests each new one. Checked 2026-11-02 against the platform at 0.0.3 (`research/min-nightly/`): the conformance app (512 checks in Miniflare, with the `on_trap` checks), `bench/node-test.mjs` and `bench/handler-test.mjs` with the hosts of the release nightly.
 
 | Nightly | Result |
 | --- | --- |

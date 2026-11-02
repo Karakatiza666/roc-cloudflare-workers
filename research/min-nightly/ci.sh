@@ -18,6 +18,7 @@ grep -q '^build conformance: exit 0 ' <<<"$log" || bad=1
 grep -q '^build app_prod: exit [02] ' <<<"$log" || bad=1
 grep -q '^build app: exit [02] ' <<<"$log" || bad=1
 grep -q '^build app_b3: exit [02] ' <<<"$log" || bad=1
+grep -q '^build app_trap: exit [02] ' <<<"$log" || bad=1
 grep -q '^node-test: exit 0$' <<<"$log" || bad=1
 grep -q '^handler-test: exit 0$' <<<"$log" || bad=1
 grep -q '^conformance: exit 0 ' <<<"$log" || bad=1

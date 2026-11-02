@@ -9,7 +9,9 @@ ROC=$(bench/get-roc.sh "$tag")
 out=.cache/min-nightly/$tag
 mkdir -p "$out"
 export ROC_CACHE_DIR=$PWD/.cache/roc XDG_CACHE_HOME=$PWD/.cache
-for app in conformance/app.roc bench/app_prod.roc bench/app.roc bench/app_b3.roc; do
+# bench/app_prod.roc is made here as bench/build.sh makes it (the file is not in git).
+sed '1s|platform "platform/main.roc"|platform "../platform/main.roc"|' bench/app.roc > bench/app_prod.roc
+for app in conformance/app.roc bench/app_prod.roc bench/app.roc bench/app_b3.roc bench/app_trap.roc; do
   name=$(basename "$app" .roc); [ "$name" = app ] && [ "$app" = conformance/app.roc ] && name=conformance
   "$ROC" build --opt=speed --target=wasm32 --no-cache --output="$out/$name.wasm" "$app" > "$out/$name.build.log" 2>&1
   echo "build $name: exit $? ($(tail -n 3 "$out/$name.build.log" | grep -o '[0-9]* errors and [0-9]* warnings' | head -1))"
@@ -19,4 +21,4 @@ node -e 'const fs=require("fs");for (const f of process.argv.slice(1)) { try { c
 node bench/node-test.mjs "$out/app.wasm" > "$out/node-test.log" 2>&1; echo "node-test: exit $?"
 node bench/handler-test.mjs "$out/app.wasm" "$out/app_prod.wasm" > "$out/handler-test.log" 2>&1; echo "handler-test: exit $?"
 node bench/exports-test.mjs "$out/app_prod.wasm" "$out/app.wasm" > "$out/exports-test.log" 2>&1; echo "exports-test: exit $? ($(grep -c ^FAIL "$out/exports-test.log") FAIL lines)"
-node conformance/run.mjs "$out/conformance.wasm" > "$out/conformance.log" 2>&1; echo "conformance: exit $? ($(tail -n 1 "$out/conformance.log"))"
+TRAP_WASM=$PWD/$out/app_trap.wasm node conformance/run.mjs "$out/conformance.wasm" > "$out/conformance.log" 2>&1; echo "conformance: exit $? ($(tail -n 1 "$out/conformance.log"))"
