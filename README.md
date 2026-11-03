@@ -2,7 +2,7 @@
 
 A Roc platform for Cloudflare Workers. The app compiles to a wasm32 reactor. The host is in Zig. Effects (fetch, D1, R2, KV, Cache API, Durable Object SQL) are direct-style hosted functions that wait on JS promises through JSPI.
 
-Status: phases A and B are built (`PLAN.md`). The release files are made by `scripts/bundle.sh` and published by `.github/workflows/release.yml` (`PLAN.md` 11). The latest release is 0.0.6: see "Changes in 0.0.6".
+Status: phases A and B are built (`PLAN.md`). The release files are made by `scripts/bundle.sh` and published by `.github/workflows/release.yml` (`PLAN.md` 11). The latest release is 0.0.5: see "Changes in 0.0.5". "Changes in 0.0.6" lists the changes on `main` for the next release.
 
 | Document | Content |
 | --- | --- |
@@ -31,7 +31,7 @@ There is no npm package and no `package.json` in a project. The release notes ha
 
 Use the release URL. `dist/` of this repository is a local build of `scripts/bundle.sh` (gitignored). Its hash is not the hash of the release, so do not take a URL or a file from `dist/`.
 
-## Changes in 0.0.6
+## Changes in 0.0.6 (not released)
 
 | Change | In 0.0.5 | In 0.0.6 | What the app author does |
 | --- | --- | --- | --- |
