@@ -37,7 +37,7 @@ Use the release URL. `dist/` of this repository is a local build of `scripts/bun
 | --- | --- | --- | --- |
 | `startApp`: `delaySeconds` in `res.calls` and `app.calls()` | The record had it, but the grouped view dropped it (bug). | Each field of a call record is in `list`. | Nothing. |
 | `app.now` | A value copied at the start (bug): it did not follow `setNow` or `advance`. | A getter: the clock of the isolate, or `null` for real time. | Nothing. |
-| D1 seeds | One round trip for each statement. | One batch for each seed text (`reset()` is faster). A failed batch runs again one statement at a time, for the error. | Nothing. |
+| D1 seeds | One round trip for each statement. | One batch for each seed text: `reset()` with 101 seed statements takes 123 ms, not 418 ms. A failed batch runs again one statement at a time, for the error. | Nothing. |
 | Docs: the result of `app.queue` | The fields were not given. | The shape of `retryBatch`, `explicitAcks` and `retryMessages`, with `delaySeconds` of a retry. | A test can check the delay of a retry. |
 | Docs: queue consumers in a test | Not said. | "Testing an app", Bindings: with no `queues.consumers`, the Worker consumes its own sends; `consumers = []` stops that. | Add `consumers = []` to a test config that checks only `calls`. |
 
@@ -98,7 +98,7 @@ Needs: a Roc nightly (see "Supported nightlies"), Node (JSPI: the tests use Node
 
 ### Supported nightlies
 
-Supported nightlies: `nightly-2026-10-19-601b54c` (the `min_nightly` of `js/cfw.json`) to `nightly-2026-11-01-48d3369` (the build of 0.0.4, `compat/last-stack-first-nightly`). A later nightly is not checked before a release: the scheduled job `nightly-layout` builds and tests each new one. Checked 2026-11-02 against the platform at 0.0.3 (`research/min-nightly/`): the conformance app (512 checks in Miniflare, with the `on_trap` checks), `bench/node-test.mjs` and `bench/handler-test.mjs` with the hosts of the release nightly.
+Supported nightlies: `nightly-2026-10-19-601b54c` (the `min_nightly` of `js/cfw.json`) to `nightly-2026-11-03-34bd006` (the build of 0.0.6, `compat/last-stack-first-nightly`). A later nightly is not checked before a release: the scheduled job `nightly-layout` builds and tests each new one. Checked 2026-11-02 against the platform at 0.0.3 (`research/min-nightly/`): the conformance app (512 checks in Miniflare, with the `on_trap` checks), `bench/node-test.mjs` and `bench/handler-test.mjs` with the hosts of the release nightly.
 
 | Nightly | Result |
 | --- | --- |
