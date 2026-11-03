@@ -2,7 +2,7 @@
 
 A Roc platform for Cloudflare Workers. The app compiles to a wasm32 reactor. The host is in Zig. Effects (fetch, D1, R2, KV, Cache API, Durable Object SQL) are direct-style hosted functions that wait on JS promises through JSPI.
 
-Status: phases A and B are built (`PLAN.md`). The release files are made by `scripts/bundle.sh` and published by `.github/workflows/release.yml` (`PLAN.md` 11). The latest release is 0.0.4: see "Changes in 0.0.4".
+Status: phases A and B are built (`PLAN.md`). The release files are made by `scripts/bundle.sh` and published by `.github/workflows/release.yml` (`PLAN.md` 11). The latest release is 0.0.5: see "Changes in 0.0.5".
 
 | Document | Content |
 | --- | --- |
@@ -29,6 +29,14 @@ There is no npm package and no `package.json` in a project. The release notes ha
 | 0.0.2 | `https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/0.0.2/f352LLRKJCZ4JJVEocp3H9e4e6Sxa6Ym5CxZ1GZCpfd.tar.zst` | `nightly-2026-10-31-f7bef6b` |
 
 Use the release URL. `dist/` of this repository is a local build of `scripts/bundle.sh` (gitignored). Its hash is not the hash of the release, so do not take a URL or a file from `dist/`.
+
+## Changes in 0.0.5
+
+| Change | In 0.0.4 | In 0.0.5 | What the app author does |
+| --- | --- | --- | --- |
+| `startApp`: `delaySeconds` of a queue send in `calls` | A queue send record had the body and the content type, not the delay. | `delaySeconds` is kept when the call gives it: on a `send`, on each message of a `sendBatch`, and on the batch options. | A test can check the delay of a send. |
+
+The Roc API and the ABI do not change.
 
 ## Changes in 0.0.4
 
@@ -334,7 +342,7 @@ await app.close();
 | Rule | What the helper does |
 | --- | --- |
 | Bindings | It reads the manifest of the wasm in Node. Each declared D1, KV, R2, queue producer, rate limit and object class of this Worker is made, seeded or empty (an object class is SQLite-backed). A rate limit binding (`RateLimit.binding`) gets `{ limit, period }` from the option `ratelimits`, else from `[[ratelimits]]` or `unsafe.bindings` of type `ratelimit` in the config (`simple`, `namespace_id`), else `RATELIMIT_DEFAULT` (export of `test.mjs`): 100 in 60 s. Miniflare allows `period` 10 or 60 only (else a throw). Miniflare counts by the real wall clock, not by `app.setNow`. A seed of a binding that the app does not declare is a throw with its name. A kind with no local form (`ai`, `vectorize`, a service) needs `services`, `bindings` or `hooks` |
-| Count | `count: [names]`. A call is one round trip: D1 `all`, `run`, `first`, `raw`, `batch`, `exec` (`prepare`, `bind`, `withSession` are not calls); KV `get`, `getWithMetadata`, `put`, `delete`, `list`; R2 `get`, `head`, `put`, `delete`, `list`, `createMultipartUpload`, `resumeMultipartUpload`; a queue `send`, `sendBatch`; a rate limit `limit`. A queue `send` item in `list` also has `contentType` and `body`: `{ bytes (base64), size, value?, truncated? }`. `bytes` is the CBOR of the message (the UTF-8 for a text, the raw bytes for the type `bytes`), `value` the decoded value (a `BigInt` is `{ $bigint }`, a byte string is `{ $bytes }`). A `sendBatch` item has `bodies`, one such object (with `contentType`) for each message, and counts as one call. `bytes` keeps 4096 bytes at most (`BODY_MAX` of `test-entry.js`; `size` is the full length): a longer body has `truncated: true` and no `value`, because the calls of a request travel in a response header. The count uses the shim option `wrapEnv` (`MODULES.md` 3) |
+| Count | `count: [names]`. A call is one round trip: D1 `all`, `run`, `first`, `raw`, `batch`, `exec` (`prepare`, `bind`, `withSession` are not calls); KV `get`, `getWithMetadata`, `put`, `delete`, `list`; R2 `get`, `head`, `put`, `delete`, `list`, `createMultipartUpload`, `resumeMultipartUpload`; a queue `send`, `sendBatch`; a rate limit `limit`. A queue `send` item in `list` also has `contentType` and `body`: `{ bytes (base64), size, value?, truncated? }`. `bytes` is the CBOR of the message (the UTF-8 for a text, the raw bytes for the type `bytes`), `value` the decoded value (a `BigInt` is `{ $bigint }`, a byte string is `{ $bytes }`). A `sendBatch` item has `bodies`, one such object (with `contentType`) for each message, and counts as one call. `delaySeconds` is kept when the call gives it: on a `send` item, on each message of `bodies`, and on a `sendBatch` item for the batch options (0.0.5). `bytes` keeps 4096 bytes at most (`BODY_MAX` of `test-entry.js`; `size` is the full length): a longer body has `truncated: true` and no `value`, because the calls of a request travel in a response header. The count uses the shim option `wrapEnv` (`MODULES.md` 3) |
 | Hooks | `hooks: 'tests/hooks.js'`: a module in the isolate. Its exports `wrapEnv(env, info)` and `fetch(request, env, next)` run after the count. Its local imports are in the module list |
 | Outbound | A table `{ 'METHOD url': [answer, ...] }`: each request to a key takes the next answer, then the last again. An answer is a `Response`, or `{ status, headers, body, chunked }`. The helper sets `Content-Length` from the body. `chunked: true` sends the body in chunks with no length: use it for a byte count or a size limit test (workerd frames a body by its `Content-Length`: a smaller value cuts the body, a larger one makes the read wait). A request with no key gets a 599 and goes to `unmatched`. A Node function in place of the table, or of one answer, gives a `Response` or an answer object |
 | Run dir | `<tmp>/cfw-test-<pid>-<n>` for each app, and `TMPDIR` is `<tmp>/cfw-test-<pid>` (the `miniflare-*` dirs) while an app runs. `close`, exit, SIGINT and SIGTERM remove them |

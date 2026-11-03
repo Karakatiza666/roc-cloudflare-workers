@@ -126,8 +126,10 @@ export function countBinding(b, rec, onSession) {
   if (kind === 'queue') {
     // TH21: a send keeps the body of the message, a sendBatch the bodies of its items.
     return proxy(b, (k, f) => {
-      if (k === 'send') return (...a) => (rec(k, null, { body: bodyOf(a[0]), contentType: a[1]?.contentType }), f(...a));
-      if (k === 'sendBatch') return (...a) => (rec(k, null, { bodies: (Array.isArray(a[0]) ? a[0] : []).map((x) => ({ ...bodyOf(x?.body), contentType: x?.contentType })) }), f(...a));
+      // `delaySeconds` is kept only when the call gives it: on a send, on each batch message, and on the batch options.
+      const delay = (o) => (o?.delaySeconds === undefined ? {} : { delaySeconds: o.delaySeconds });
+      if (k === 'send') return (...a) => (rec(k, null, { body: bodyOf(a[0]), contentType: a[1]?.contentType, ...delay(a[1]) }), f(...a));
+      if (k === 'sendBatch') return (...a) => (rec(k, null, { bodies: (Array.isArray(a[0]) ? a[0] : []).map((x) => ({ ...bodyOf(x?.body), contentType: x?.contentType, ...delay(x) })), ...delay(a[1]) }), f(...a));
       return null;
     });
   }
