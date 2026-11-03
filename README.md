@@ -38,6 +38,7 @@ Use the release URL. `dist/` of this repository is a local build of `scripts/bun
 | `startApp`: `delaySeconds` in `res.calls` and `app.calls()` | The record had it, but the grouped view dropped it (bug). | Each field of a call record is in `list`. | Nothing. |
 | `app.now` | A value copied at the start (bug): it did not follow `setNow` or `advance`. | A getter: the clock of the isolate, or `null` for real time. | Nothing. |
 | D1 seeds | One round trip for each statement. | One batch for each seed text (`reset()` is faster). A failed batch runs again one statement at a time, for the error. | Nothing. |
+| Docs: the result of `app.queue` | The fields were not given. | The shape of `retryBatch`, `explicitAcks` and `retryMessages`, with `delaySeconds` of a retry. | A test can check the delay of a retry. |
 | Docs: queue consumers in a test | Not said. | "Testing an app", Bindings: with no `queues.consumers`, the Worker consumes its own sends; `consumers = []` stops that. | Add `consumers = []` to a test config that checks only `calls`. |
 
 ## Changes in 0.0.5
@@ -337,7 +338,7 @@ await app.close();
 | `app.fetch(pathOrUrl, init)` | A `Response` with `calls` (`{ DB: { n, ops, list: [{ op, session, kind, name }] } }`, the calls of the tasks of this request only; a queue `send` item also has `body` and `contentType`, a `sendBatch` item `bodies`: see Count) and `sessions` (`{ DB: [withSession arguments] }`). `init.now`: the clock before the request |
 | `app.setNow(ms \| null)`, `app.advance(ms)`, `app.now` | The shim clock, through a control path (no Roc task, so no sweep). `app.now` is a getter: the clock of the isolate (`Time.now_ms!`), or `null` when the clock is real time (`Date.now`) |
 | `app.scheduled({ cron, time, now })` | `{ outcome, noRetry }` of `/cdn-cgi/local/scheduled` |
-| `app.queue(name, messages, { now })` | The result of the `queue` handler: `{ outcome, ackAll, retryBatch, explicitAcks, retryMessages }`. A message with no `timestamp` gets the helper clock |
+| `app.queue(name, messages, { now })` | The result of the `queue` handler: `{ outcome, ackAll, retryBatch, explicitAcks, retryMessages }`. `retryBatch` is `{ retry, delaySeconds? }`, `explicitAcks` the acked ids, and `retryMessages` `[{ msgId, delaySeconds? }]`: `delaySeconds` is there when the consumer gives a delay (`retry_with!`, `retry_all_with!`; probe `research/test-helper/probes/p-retry-delay.mjs`). A message with no `timestamp` gets the helper clock |
 | `app.d1(name)`, `app.kv(name)`, `app.r2(name)`, `app.queueProducer(name)`, `app.object(name)` | The Miniflare handles |
 | `app.sql(name, texts)` | SQL between requests, split as the seeds (one statement at a time; a trigger body stays whole) |
 | `await app.calls({ reset })` | Each counted call of any task since the last reset (`Response.after` work, objects, alarms) |
