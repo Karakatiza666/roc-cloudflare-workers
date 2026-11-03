@@ -16,6 +16,8 @@ app [event!] { pf: platform "../../platform/main.roc" }
 ## | `/room/bump?name=` | an Rpc call to the object `name` of `Room` (`init!` runs at the first event) |
 ## | `/room/alarm?name=` | the object sets an alarm in 10 ms; the alarm writes the KV key `alarm` |
 ## | `/send?n=` | a queue message to `JOBS`; the consumer writes the KV key `job-<n>` |
+## | `/send_batch?n=` | `sendBatch` of 2 messages to `JOBS` (`n` and `n + 1`) |
+## | `/limit?k=` | `LIMITER.limit({ key })`: `allowed` or `limited` |
 ## | `/out?url=`, `/out_max?url=&max=` | an outbound fetch: the status, the body length, the Content-Length header |
 ## | `/echo` | the method, the headers `content-type`, `cache-control`, `pragma`, and the body |
 ## | `/header?name=` | one request header, or `none` |
@@ -31,6 +33,7 @@ import pf.R2
 import pf.Cache
 import pf.Memo
 import pf.Queue
+import pf.RateLimit
 import pf.Object
 import pf.Rpc
 import pf.Time
@@ -47,6 +50,8 @@ store = Kv.text("KV")
 bucket = R2.binding("BUCKET")
 
 Job : { n : U64 }
+
+limiter = RateLimit.binding("LIMITER")
 
 jobs : Queue(Job)
 jobs = Queue.json("JOBS")
@@ -161,6 +166,12 @@ fetch! = |req| {
 			Err(e) => show(Err(e))
 		}
 		["send"] => show(jobs.send!({ n: num(req, "n") }))
+		["send_batch"] => show(jobs.send_batch!([{ n: num(req, "n") }, { n: num(req, "n") + 1 }]))
+		["limit"] => match limiter.limit!(q(req, "k")) {
+			Ok({}) => ok("allowed")
+			Err(RateLimited) => ok("limited")
+			Err(e) => show(Err(e))
+		}
 		["out"] => match Http.get!(q(req, "url")) {
 			Ok(r) => {
 				cl = r.header("content-length") ?? "none"
@@ -222,7 +233,7 @@ queue! = |batch| {
 	Ok({})
 }
 
-bindings = [db.declare(), store.declare(), bucket.declare(), jobs.declare(), rooms.declare()]
+bindings = [db.declare(), store.declare(), bucket.declare(), jobs.declare(), limiter.declare(), rooms.declare()]
 
 worker = Worker.new({ fetch!, scheduled!, queue!, objects: [room_class.erase()], bindings, crons: [] })
 

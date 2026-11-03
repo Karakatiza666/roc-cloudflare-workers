@@ -269,7 +269,27 @@ function wasmOfConfig(dir, cfg) {
   return join(dir, 'app.wasm');
 }
 
-const KNOWN = new Set(['dir', 'wasm', 'shim', 'config', 'now', 'd1', 'kv', 'r2', 'queues', 'outbound', 'services', 'bindings', 'compatibility', 'count', 'hooks', 'options', 'miniflare', 'persist', 'modules', 'cf', 'miniflareOptions']);
+// TH20: the limit of a rate limit binding when neither `ratelimits` nor the config gives it: the value of `roc-cfw add` (js/bindings.js).
+export const RATELIMIT_DEFAULT = { limit: 100, period: 60 };
+
+// The rate limits of the config: `[[ratelimits]]` and `unsafe.bindings` of type ratelimit, as { name: { namespace_id, simple } }.
+function configRatelimits(cfg) {
+  const list = [...(cfg.ratelimits ?? []), ...(cfg.unsafe?.bindings ?? []).filter((b) => b.type === 'ratelimit')];
+  return Object.fromEntries(list.filter((b) => b && typeof b.name === 'string').map((b) => [b.name, b]));
+}
+
+// The Miniflare form of one rate limit binding (option `ratelimits`, then the config, then RATELIMIT_DEFAULT).
+function ratelimitOf(name, index, opts, fromConfig) {
+  const given = opts.ratelimits?.[name];
+  const conf = fromConfig[name];
+  const simple = given ?? conf?.simple ?? RATELIMIT_DEFAULT;
+  const { limit, period = 60 } = simple;
+  if (typeof limit !== 'number' || !(limit > 0)) throw new Error(`startApp: the rate limit ${name}: limit must be a number above 0, got ${JSON.stringify(limit)}`);
+  if (period !== 10 && period !== 60) throw new Error(`startApp: the rate limit ${name}: period must be 10 or 60 (Miniflare), got ${JSON.stringify(period)}`);
+  return { namespace_id: String(conf?.namespace_id ?? index + 1), simple: { limit, period } };
+}
+
+const KNOWN = new Set(['dir', 'wasm', 'shim', 'config', 'now', 'd1', 'kv', 'r2', 'queues', 'outbound', 'services', 'bindings', 'compatibility', 'count', 'hooks', 'options', 'miniflare', 'persist', 'modules', 'cf', 'miniflareOptions', 'ratelimits']);
 
 // ---- startApp ----
 
@@ -304,12 +324,19 @@ export async function startApp(opts = {}) {
   const services = opts.services ?? {};
   const vars = { ...(cfg.vars ?? {}), ...(opts.bindings ?? {}) };
   const queueOf = (name) => (cfg.queues?.producers ?? []).find((p) => p.binding === name)?.queue ?? name.toLowerCase();
-  const mfo = { d1Databases: [], kvNamespaces: [], r2Buckets: [], queueProducers: {}, queueConsumers: {}, durableObjects: {}, serviceBindings: {} };
+  const mfo = { d1Databases: [], kvNamespaces: [], r2Buckets: [], queueProducers: {}, queueConsumers: {}, durableObjects: {}, serviceBindings: {}, ratelimits: {} };
+  const rlConfig = configRatelimits(cfg);
+  for (const name of Object.keys(opts.ratelimits ?? {})) {
+    const b = declared.get(name);
+    if (!b) throw new Error(`startApp: the option ratelimits names ${name}, and the app does not declare it (Worker.new bindings)`);
+    if (b.kind !== 'ratelimit') throw new Error(`startApp: the option ratelimits names ${name}, which the app declares as ${b.kind}`);
+  }
   for (const b of m.bindings) {
     if (b.kind === 'd1') mfo.d1Databases.push(b.name);
     else if (b.kind === 'kv') mfo.kvNamespaces.push(b.name);
     else if (b.kind === 'r2') mfo.r2Buckets.push(b.name);
     else if (b.kind === 'queue') mfo.queueProducers[b.name] = queueOf(b.name);
+    else if (b.kind === 'ratelimit' && !Object.hasOwn(services, b.name)) mfo.ratelimits[b.name] = ratelimitOf(b.name, Object.keys(mfo.ratelimits).length, opts, rlConfig);
     else if (b.kind === 'object' && !b.script) mfo.durableObjects[b.name] = { className: b.class, useSQLite: true };
     else if (Object.hasOwn(services, b.name)) continue;
     else if (Object.hasOwn(vars, b.name) || opts.hooks) continue;
@@ -375,6 +402,8 @@ export async function startApp(opts = {}) {
     ...persist,
     ...(opts.miniflareOptions ?? {}),
   };
+  // TH20: `miniflareOptions.ratelimits` adds to the rate limits of the helper (a plain spread would drop them: the other bindings).
+  if (opts.miniflareOptions?.ratelimits) v4.ratelimits = { ...mfo.ratelimits, ...opts.miniflareOptions.ratelimits };
   const mf = new Miniflare(convertV4MiniflareOptions ? convertV4MiniflareOptions(v4) : v4);
   const app = { mf, runDir };
   live.add(app);
@@ -385,7 +414,10 @@ export async function startApp(opts = {}) {
     live.delete(app);
     await mf.dispose().catch(() => {});
     rmSync(runDir, { recursive: true, force: true });
-    throw new Error(`startApp: the Worker did not start: ${String(e.message).split('\n').find((l) => l.includes('Uncaught')) ?? e.message}`);
+    const why = String(e.message).split('\n').find((l) => l.includes('Uncaught')) ?? e.message;
+    // TH20: workerd gives "internal error" with no detail; name the options that can cause it.
+    const hint = /internal error/.test(why) && v4.ratelimits ? ` (rate limits are set: ${Object.keys(v4.ratelimits).join(', ')}; check that each one is { namespace_id: text, simple: { limit, period: 10 or 60 } } and that the Miniflare version is the one of this helper)` : '';
+    throw new Error(`startApp: the Worker did not start: ${why}${hint}`);
   }
 
   // ---- The handles and the seeds ----
@@ -457,7 +489,7 @@ export async function startApp(opts = {}) {
       const x = (g[c.binding] ??= { n: 0, ops: [], list: [] });
       x.n++;
       x.ops.push(c.op);
-      x.list.push({ op: c.op, session: c.session, kind: c.kind, name: c.name });
+      x.list.push({ op: c.op, session: c.session, kind: c.kind, name: c.name, ...(c.body ? { body: c.body } : {}), ...(c.bodies ? { bodies: c.bodies } : {}), ...(c.contentType ? { contentType: c.contentType } : {}) });
     }
     return g;
   };

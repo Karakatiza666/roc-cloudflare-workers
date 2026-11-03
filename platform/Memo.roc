@@ -1,6 +1,8 @@
 ## A value kept in the isolate across requests (MODULES.md 9): a cache, never state. The pin table of the shim (API.md
 ## RS2) keeps the value as CBOR bytes, so JS never parses it, and a later request reads it with one `call!` (no wait)
 ## and `Cbor.parse`. The first `get!` in an isolate, and the first after `max_age_ms`, runs the loader of the call.
+## The edge: a value pinned at time t expires when `Time.now_ms!` is t + `max_age_ms` or later (age >= max, not age > max).
+## So with `max_age_ms: 1_000`, a `get!` at t + 999 is a hit and a `get!` at t + 1_000 runs the loader.
 ## A `Memo` has no error type: the loader is an argument of `get!`, so a `Memo` constant joins with the errors of
 ## each caller (MODULES.md 9, "A constant and its error type").
 ## Typed data: the format, what a JS peer sees, and what survives a round trip are in MODULES.md 1, "Formats of typed data".

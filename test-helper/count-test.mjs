@@ -1,7 +1,7 @@
 // S3 of research/design-notes/test-helper.md 10: the count rules of TH6 and TH16 in Node (js/test-entry.js), with stand-in
 // D1, KV, R2 and queue bindings made of plain objects.
 //   node test-helper/count-test.mjs
-import { countBinding, kindOf, testEntry } from '../js/test-entry.js';
+import { countBinding, kindOf, testEntry, bodyOf, BODY_MAX } from '../js/test-entry.js';
 
 let failed = 0;
 const check = (name, cond, why = '') => {
@@ -84,6 +84,26 @@ const seen = [];
 const t3 = testEntry({ token: 'tok', count: ['DB'], wrapEnv: (e, i) => (seen.push(['app', i.kind]), e), hooks: { wrapEnv: (e) => (seen.push(['hooks', e.DB !== env.DB]), e) } });
 t3.wrapEnv(env, { kind: 'Queue' });
 check('TH7: the count, then wrapEnv of the options file, then hooks.wrapEnv (it sees the counted DB)', JSON.stringify(seen) === JSON.stringify([['app', 'Queue'], ['hooks', true]]), JSON.stringify(seen));
+
+// TH21: the body of a queue message in the call record.
+const b64 = (a) => Buffer.from(a).toString('base64');
+const bodies = [];
+const spyQueue = countBinding(queue, (op, session, extra) => bodies.push([op, extra]));
+await spyQueue.send({ n: 1 }, { contentType: 'json' });
+await spyQueue.sendBatch([{ body: 'hi', contentType: 'text' }, { body: new Uint8Array([1, 2]), contentType: 'bytes' }]);
+check('TH21: send records body and contentType', JSON.stringify(bodies[0][1]) === JSON.stringify({ body: { bytes: b64([0xa1, 0x61, 0x6e, 1]), size: 4, value: { n: 1 } }, contentType: 'json' }), JSON.stringify(bodies[0]));
+check('TH21: sendBatch records bodies; text is UTF-8; non-CBOR bytes have no value', JSON.stringify(bodies[1][1]) === JSON.stringify({ bodies: [{ bytes: b64('hi'), size: 2, value: 'hi', contentType: 'text' }, { bytes: b64([1, 2]), size: 2, contentType: 'bytes' }] }), JSON.stringify(bodies[1]));
+check('TH21: a binary body that is CBOR has the decoded value too', JSON.stringify(bodyOf(new Uint8Array([0xa1, 0x61, 0x6e, 5]))) === JSON.stringify({ bytes: b64([0xa1, 0x61, 0x6e, 5]), size: 4, value: { n: 5 } }));
+check('TH21: a BigInt and a Uint8Array in the value are JSON-safe', JSON.stringify(bodyOf({ a: 5n, b: new Uint8Array([9]) }).value) === JSON.stringify({ a: { $bigint: '5' }, b: { $bytes: b64([9]) } }));
+const big = bodyOf('x'.repeat(BODY_MAX + 10));
+check('TH21: a body over BODY_MAX keeps BODY_MAX bytes, size, truncated, no value', Buffer.from(big.bytes, 'base64').length === BODY_MAX && big.size === BODY_MAX + 10 && big.truncated === true && big.value === undefined, JSON.stringify(big).slice(0, 80));
+check('TH20: kindOf: a ratelimit binding', kindOf({ limit: async () => ({ success: true }) }) === 'ratelimit');
+const keys = [];
+const rl = { limit: async (o) => (keys.push(o.key), { success: true }) };
+const tr = testEntry({ token: 'tok', count: [] });
+const w1 = tr.wrapEnv({ RL: rl }, { kind: 'Fetch' });
+await w1.RL.limit({ key: 'k' });
+check('TH20: the key of a limit call has the generation as a prefix', keys[0] === '0:k', keys[0]);
 
 console.log(`${failed ? 'FAIL' : 'PASS'} count-test: ${failed} failed`);
 process.exit(failed ? 1 : 0);

@@ -1385,6 +1385,8 @@ jwks = Memo.new("github-jwks", { max_age_ms: 3_600_000 })
 keys = jwks.get!(load_jwks!)?    # the first call in an isolate runs load_jwks!, later calls do not
 ```
 
+The expiry edge: a value pinned at time t expires when the clock (`Time.now_ms!`, the shim option `now`) is t + `max_age_ms` or later. The rule is age >= max, not age > max. With `max_age_ms: 1_000`, a `get!` at t + 999 is a hit, and a `get!` at t + 1_000 runs the loader. An app rule that says "older than max" (age > max) is 1 ms later than the `Memo`.
+
 The loader is an argument of `get!`, as the default is an argument of `cell.get_or!(default)`. The error type of `get!` is the error type of the loader at that call. A `Memo` has no error type, so it can be a constant in any module, and each caller joins the errors of the loader with its own errors. Give the same loader at each call of one `Memo`: the first call in the isolate pins the value, and the other calls get that value. `examples/auction/Gavel.roc` has the constants `config` and `tables` with their loaders `load_config!` and `create_tables!`.
 
 A constant and its error type (roc PR #12330, nightly 2026-10-21 and later; `research/memo-error-join/DESIGN-NOTE.md`):

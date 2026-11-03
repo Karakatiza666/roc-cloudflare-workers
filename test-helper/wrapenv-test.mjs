@@ -20,7 +20,7 @@ class Kv { constructor() { this.puts = []; } async get() { return null; } async 
 class R2 { async head() { return null; } async put() { return {}; } async createMultipartUpload() {} async get() { return null; } }
 class Q { async send() {} async sendBatch() {} }
 class Ns { idFromName() {} newUniqueId() {} }
-const envOf = () => ({ DB: new D1(), KV: new Kv(), BUCKET: new R2(), JOBS: new Q(), ROOMS: new Ns() });
+const envOf = () => ({ DB: new D1(), KV: new Kv(), BUCKET: new R2(), JOBS: new Q(), LIMITER: { limit: async () => ({ success: true }) }, ROOMS: new Ns() });
 
 const seen = [];
 let mode = 'count';

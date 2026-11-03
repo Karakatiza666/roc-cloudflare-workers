@@ -8,16 +8,20 @@
 // `/__cfw_test/<token>/...` and strips the header `cfw-test-request` before the app sees it (probe P1: the copy keeps
 // `request.signal`).
 
+import { pack, plain, decode } from './values.js';
+
 export const TEST_ENTRY = 1;
 export const REQUEST_HEADER = 'cfw-test-request';
 export const CALLS_HEADER = 'cfw-test-calls';
+// TH21: a queue message body in a call record keeps at most this many bytes (the calls travel in a response header).
+export const BODY_MAX = 4096;
 
 // TH6: the methods that are one round trip to the binding, for each kind. `prepare`, `bind`, `withSession` are not calls.
 const D1_STMT = new Set(['all', 'run', 'first', 'raw']);
 const D1_DB = new Set(['batch', 'exec']);
 const KV = new Set(['get', 'getWithMetadata', 'put', 'delete', 'list']);
 const R2 = new Set(['get', 'head', 'put', 'delete', 'list', 'createMultipartUpload', 'resumeMultipartUpload']);
-const QUEUE = new Set(['send', 'sendBatch']);
+const RATELIMIT = new Set(['limit']);
 
 // The kind of a binding by its functions (the same tests as js/bindings.js).
 export function kindOf(b) {
@@ -26,7 +30,58 @@ export function kindOf(b) {
   if (has('head', 'put', 'createMultipartUpload')) return 'r2';
   if (has('get', 'put', 'getWithMetadata')) return 'kv';
   if (has('send', 'sendBatch')) return 'queue';
+  if (has('limit')) return 'ratelimit';
   return null;
+}
+
+// TH21: a queue message body as { bytes (base64), size, truncated?, value? }. The platform gives `send` the decoded value
+// (an object, a text, or a Uint8Array/ArrayBuffer for the content type "bytes"). `bytes`: the raw bytes of a binary body,
+// the UTF-8 of a text, else the CBOR of the value. `value`: the decoded value (a binary body: only when its bytes are CBOR).
+// `size` is the full length; `bytes` and `value` keep at most BODY_MAX bytes (a longer body has `truncated` and no `value`).
+export function bodyOf(body) {
+  const b64 = (u8) => {
+    let t = '';
+    for (let i = 0; i < u8.length; i += 0x8000) t += String.fromCharCode(...u8.subarray(i, i + 0x8000));
+    return btoa(t);
+  };
+  let bytes;
+  let value;
+  try {
+    if (body instanceof ArrayBuffer) body = new Uint8Array(body);
+    else if (ArrayBuffer.isView(body) && !(body instanceof Uint8Array)) body = new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+    if (body instanceof Uint8Array) {
+      bytes = body;
+      try {
+        value = plain(decode(body));
+      } catch {
+        // not CBOR: the bytes only
+      }
+    } else if (typeof body === 'string') {
+      bytes = new TextEncoder().encode(body);
+      value = body;
+    } else {
+      // pack() writes tag 24 (2 bytes) and the CBOR as a byte string: skip the tag and the head of the string.
+      const p = pack(body);
+      const extra = { 24: 1, 25: 2, 26: 4 }[p[2] & 31] ?? 0;
+      bytes = p.subarray(3 + extra);
+      value = body;
+    }
+  } catch (e) {
+    return { error: String(e?.message ?? e) };
+  }
+  if (value !== undefined) {
+    // JSON-safe: a BigInt is { $bigint: text }, a Uint8Array is { $bytes: base64 }.
+    const swap = (k, v) => (typeof v === 'bigint' ? { $bigint: String(v) } : v instanceof Uint8Array ? { $bytes: b64(v) } : v);
+    try {
+      value = JSON.parse(JSON.stringify(value, swap));
+    } catch {
+      value = undefined;
+    }
+  }
+  const out = { bytes: b64(bytes.subarray(0, BODY_MAX)), size: bytes.length };
+  if (bytes.length > BODY_MAX) out.truncated = true;
+  else if (value !== undefined) out.value = value;
+  return out;
 }
 
 // A proxy of `target` whose functions are bound to it, and `pick(name, fn)` for the methods that it replaces. `rawOf`: the
@@ -68,7 +123,15 @@ export function countBinding(b, rec, onSession) {
       });
     return db(b, null);
   }
-  const set = kind === 'kv' ? KV : kind === 'r2' ? R2 : kind === 'queue' ? QUEUE : null;
+  if (kind === 'queue') {
+    // TH21: a send keeps the body of the message, a sendBatch the bodies of its items.
+    return proxy(b, (k, f) => {
+      if (k === 'send') return (...a) => (rec(k, null, { body: bodyOf(a[0]), contentType: a[1]?.contentType }), f(...a));
+      if (k === 'sendBatch') return (...a) => (rec(k, null, { bodies: (Array.isArray(a[0]) ? a[0] : []).map((x) => ({ ...bodyOf(x?.body), contentType: x?.contentType })) }), f(...a));
+      return null;
+    });
+  }
+  const set = kind === 'kv' ? KV : kind === 'r2' ? R2 : kind === 'ratelimit' ? RATELIMIT : null;
   if (!set) return b;
   return proxy(b, methods(set, null));
 }
@@ -89,6 +152,12 @@ export function testEntry(opts = {}) {
   const reqOf = new WeakMap();
   const open = new Map();
 
+  // TH20: Miniflare keeps the rate limit counters in a Durable Object that Node cannot clear. `reset` makes a new generation,
+  // and `limit({ key })` gets the key `<generation>:<key>`, so each reset starts with empty counters.
+  let generation = 0;
+  const limited = (b) =>
+    proxy(b, (k, f) => (k === 'limit' ? (o, ...rest) => f(o && typeof o === 'object' ? { ...o, key: `${generation}:${o.key ?? ''}` } : o, ...rest) : null));
+
   const appWrap = opts.wrapEnv;
   const wrapEnv = (env, info) => {
     let out = env;
@@ -99,8 +168,8 @@ export function testEntry(opts = {}) {
         if (env[name] === undefined || env[name] === null) continue;
         out[name] = countBinding(
           env[name],
-          (op, session) => {
-            const c = { binding: name, op, session, request: n, kind: info.kind, name: info.name };
+          (op, session, extra) => {
+            const c = { binding: name, op, session, request: n, kind: info.kind, name: info.name, ...extra };
             calls.push(c);
             if (n !== null && open.has(n)) open.get(n).calls.push(c);
           },
@@ -108,6 +177,13 @@ export function testEntry(opts = {}) {
             if (n !== null && open.has(n)) (open.get(n).sessions[name] ??= []).push(arg);
           },
         );
+      }
+    }
+    if (env && typeof env === 'object') {
+      for (const name of Object.keys(env)) {
+        if (kindOf(env[name]) !== 'ratelimit') continue;
+        if (out === env) out = { ...env };
+        out[name] = limited(out[name]);
       }
     }
     if (appWrap) out = appWrap(out, info);
@@ -180,6 +256,7 @@ export function testEntry(opts = {}) {
       fixed = start;
       runner().pins.clear();
       calls = [];
+      generation++;
       return json({ caches: await clearCaches() });
     }
     return json({ error: `no control path ${path}` }, 404);

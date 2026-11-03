@@ -2,7 +2,7 @@
 
 A Roc platform for Cloudflare Workers. The app compiles to a wasm32 reactor. The host is in Zig. Effects (fetch, D1, R2, KV, Cache API, Durable Object SQL) are direct-style hosted functions that wait on JS promises through JSPI.
 
-Status: phases A and B are built (`PLAN.md`). The release files are made by `scripts/bundle.sh` and published by `.github/workflows/release.yml` (`PLAN.md` 11). The latest release is 0.0.3: see "Changes in 0.0.3".
+Status: phases A and B are built (`PLAN.md`). The release files are made by `scripts/bundle.sh` and published by `.github/workflows/release.yml` (`PLAN.md` 11). The latest release is 0.0.4: see "Changes in 0.0.4".
 
 | Document | Content |
 | --- | --- |
@@ -27,6 +27,16 @@ There is no npm package and no `package.json` in a project. The release notes ha
 | 0.0.2 | `https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/0.0.2/f352LLRKJCZ4JJVEocp3H9e4e6Sxa6Ym5CxZ1GZCpfd.tar.zst` | `nightly-2026-10-31-f7bef6b` |
 
 Use the release URL. `dist/` of this repository is a local build of `scripts/bundle.sh` (gitignored). Its hash is not the hash of the release, so do not take a URL or a file from `dist/`.
+
+## Changes in 0.0.4
+
+| Change | In 0.0.3 | In 0.0.4 | What the app author does |
+| --- | --- | --- | --- |
+| `startApp`: a local form for rate limit bindings | A rate limit binding had no local form. `startApp` refused the app unless the test gave the binding in `services`, `bindings` or `hooks`. | Miniflare makes each declared rate limit binding. The limit comes from the option `ratelimits: { NAME: { limit, period } }`, else from `[[ratelimits]]` or `unsafe.bindings` in the config, else 100 in 60 s. `app.reset()` also clears the counters ("Testing an app"). | Remove a hooks module or a `services` entry that only made a fake rate limiter. |
+| `startApp`: the body of a queue send in `calls` | A queue `send` or `sendBatch` call had no body. | A `send` call has `body` (`bytes`, `size`, the decoded `value`) and `contentType`. A `sendBatch` call has `bodies`. At most 4096 bytes are kept. | A test can check what a send carried. |
+| Docs: the `Memo` expiry edge | Not in `MODULES.md` 9. | A value pinned at time t expires when the clock is t + `max_age_ms` or later (age >= max). | An app rule "older than max" (age > max) is 1 ms later than the `Memo`. |
+
+The Roc API and the ABI do not change. An app built for 0.0.3 works with 0.0.4.
 
 ## Changes in 0.0.3
 
@@ -67,7 +77,7 @@ Needs: a Roc nightly (see "Supported nightlies"), Node (JSPI: the tests use Node
 
 ### Supported nightlies
 
-Supported nightlies: `nightly-2026-10-19-601b54c` (the `min_nightly` of `js/cfw.json`) to `nightly-2026-10-31-f7bef6b` (the release build, `compat/last-stack-first-nightly`). A later nightly is not checked before a release: the scheduled job `nightly-layout` builds and tests each new one. Checked 2026-11-02 against the platform at 0.0.3 (`research/min-nightly/`): the conformance app (512 checks in Miniflare, with the `on_trap` checks), `bench/node-test.mjs` and `bench/handler-test.mjs` with the hosts of the release nightly.
+Supported nightlies: `nightly-2026-10-19-601b54c` (the `min_nightly` of `js/cfw.json`) to `nightly-2026-11-01-48d3369` (the build of 0.0.4, `compat/last-stack-first-nightly`). A later nightly is not checked before a release: the scheduled job `nightly-layout` builds and tests each new one. Checked 2026-11-02 against the platform at 0.0.3 (`research/min-nightly/`): the conformance app (512 checks in Miniflare, with the `on_trap` checks), `bench/node-test.mjs` and `bench/handler-test.mjs` with the hosts of the release nightly.
 
 | Nightly | Result |
 | --- | --- |
@@ -303,8 +313,8 @@ await app.close();
 
 | Call | Gives |
 | --- | --- |
-| `startApp(opts)` | The app in Miniflare. Options: `dir`, `wasm` (any path), `shim` (default `.roc-cfw` of `dir`), `config`, `now`, `d1`, `kv`, `r2`, `queues` (consumer settings), `outbound` (a table or a Node function), `services` (Node functions for service bindings), `bindings` (vars and secrets, on top of `vars` of the config), `compatibility` (`{ date, flags }`, default: the config), `count`, `hooks` (a module in the isolate), `options` (JSON `makeHandler` options on top of `worker.options.js`), `miniflare` (a dir or the module), `persist`, `modules`, `cf`, `miniflareOptions` |
-| `app.fetch(pathOrUrl, init)` | A `Response` with `calls` (`{ DB: { n, ops, list: [{ op, session, kind, name }] } }`, the calls of the tasks of this request only) and `sessions` (`{ DB: [withSession arguments] }`). `init.now`: the clock before the request |
+| `startApp(opts)` | The app in Miniflare. Options: `dir`, `wasm` (any path), `shim` (default `.roc-cfw` of `dir`), `config`, `now`, `d1`, `kv`, `r2`, `queues` (consumer settings), `outbound` (a table or a Node function), `services` (Node functions for service bindings), `bindings` (vars and secrets, on top of `vars` of the config), `compatibility` (`{ date, flags }`, default: the config), `count`, `hooks` (a module in the isolate), `options` (JSON `makeHandler` options on top of `worker.options.js`), `miniflare` (a dir or the module), `persist`, `modules`, `cf`, `miniflareOptions` (V4 options on top; a `ratelimits` key adds to the rate limits of the helper, any other key replaces the key of the helper), `ratelimits` (`{ NAME: { limit, period } }`, see Bindings) |
+| `app.fetch(pathOrUrl, init)` | A `Response` with `calls` (`{ DB: { n, ops, list: [{ op, session, kind, name }] } }`, the calls of the tasks of this request only; a queue `send` item also has `body` and `contentType`, a `sendBatch` item `bodies`: see Count) and `sessions` (`{ DB: [withSession arguments] }`). `init.now`: the clock before the request |
 | `app.setNow(ms \| null)`, `app.advance(ms)`, `app.now` | The shim clock, through a control path (no Roc task, so no sweep) |
 | `app.scheduled({ cron, time, now })` | `{ outcome, noRetry }` of `/cdn-cgi/local/scheduled` |
 | `app.queue(name, messages, { now })` | The result of the `queue` handler: `{ outcome, ackAll, retryBatch, explicitAcks, retryMessages }`. A message with no `timestamp` gets the helper clock |
@@ -313,7 +323,7 @@ await app.close();
 | `await app.calls({ reset })` | Each counted call of any task since the last reset (`Response.after` work, objects, alarms) |
 | `app.idle(ms = 5000)` | Waits until the shim has no task (a throw with the count after `ms`) |
 | `app.outbound()` | `{ log: ['GET https://...'], count: { 'GET https://...': 2 }, unmatched: [...] }` |
-| `app.reset()` | Waits for `idle`, then: D1 (drop the user tables and views, run the `d1` seeds again), KV and R2 (delete each key, seed again), the Cache API keys that the app put (`caches.default` and `caches.open(name)`), the clock (the `now` of the start), the pin table (`Memo`, `Js.pin!`), the calls, the outbound log and the answer order, `app.logs`. The isolate and the wasm stay. Not reset: Durable Object storage and alarms, queue messages in flight, module globals of JS (`ops`, `hooks`) |
+| `app.reset()` | Waits for `idle`, then: D1 (drop the user tables and views, run the `d1` seeds again), KV and R2 (delete each key, seed again), the Cache API keys that the app put (`caches.default` and `caches.open(name)`), the clock (the `now` of the start), the pin table (`Memo`, `Js.pin!`), the calls, the outbound log and the answer order, `app.logs`. The isolate and the wasm stay. The rate limit counters (the key of each `limit` call gets a prefix with the number of resets: Miniflare keeps the counters in a Durable Object that Node cannot clear, so the old counters stay but are not used again). Not reset: Durable Object storage and alarms, queue messages in flight, module globals of JS (`ops`, `hooks`) |
 | `app.logs` | The structured log lines of workerd |
 | `app.close()` | Disposes Miniflare and removes the run dir |
 | `app.mf`, `app.url` | The Miniflare instance and its URL (no promise of stability) |
@@ -321,8 +331,8 @@ await app.close();
 
 | Rule | What the helper does |
 | --- | --- |
-| Bindings | It reads the manifest of the wasm in Node. Each declared D1, KV, R2, queue producer and object class of this Worker is made, seeded or empty (an object class is SQLite-backed). A seed of a binding that the app does not declare is a throw with its name. A kind with no local form (`ai`, `vectorize`, a service) needs `services`, `bindings` or `hooks` |
-| Count | `count: [names]`. A call is one round trip: D1 `all`, `run`, `first`, `raw`, `batch`, `exec` (`prepare`, `bind`, `withSession` are not calls); KV `get`, `getWithMetadata`, `put`, `delete`, `list`; R2 `get`, `head`, `put`, `delete`, `list`, `createMultipartUpload`, `resumeMultipartUpload`; a queue `send`, `sendBatch`. The count uses the shim option `wrapEnv` (`MODULES.md` 3) |
+| Bindings | It reads the manifest of the wasm in Node. Each declared D1, KV, R2, queue producer, rate limit and object class of this Worker is made, seeded or empty (an object class is SQLite-backed). A rate limit binding (`RateLimit.binding`) gets `{ limit, period }` from the option `ratelimits`, else from `[[ratelimits]]` or `unsafe.bindings` of type `ratelimit` in the config (`simple`, `namespace_id`), else `RATELIMIT_DEFAULT` (export of `test.mjs`): 100 in 60 s. Miniflare allows `period` 10 or 60 only (else a throw). Miniflare counts by the real wall clock, not by `app.setNow`. A seed of a binding that the app does not declare is a throw with its name. A kind with no local form (`ai`, `vectorize`, a service) needs `services`, `bindings` or `hooks` |
+| Count | `count: [names]`. A call is one round trip: D1 `all`, `run`, `first`, `raw`, `batch`, `exec` (`prepare`, `bind`, `withSession` are not calls); KV `get`, `getWithMetadata`, `put`, `delete`, `list`; R2 `get`, `head`, `put`, `delete`, `list`, `createMultipartUpload`, `resumeMultipartUpload`; a queue `send`, `sendBatch`; a rate limit `limit`. A queue `send` item in `list` also has `contentType` and `body`: `{ bytes (base64), size, value?, truncated? }`. `bytes` is the CBOR of the message (the UTF-8 for a text, the raw bytes for the type `bytes`), `value` the decoded value (a `BigInt` is `{ $bigint }`, a byte string is `{ $bytes }`). A `sendBatch` item has `bodies`, one such object (with `contentType`) for each message, and counts as one call. `bytes` keeps 4096 bytes at most (`BODY_MAX` of `test-entry.js`; `size` is the full length): a longer body has `truncated: true` and no `value`, because the calls of a request travel in a response header. The count uses the shim option `wrapEnv` (`MODULES.md` 3) |
 | Hooks | `hooks: 'tests/hooks.js'`: a module in the isolate. Its exports `wrapEnv(env, info)` and `fetch(request, env, next)` run after the count. Its local imports are in the module list |
 | Outbound | A table `{ 'METHOD url': [answer, ...] }`: each request to a key takes the next answer, then the last again. An answer is a `Response`, or `{ status, headers, body, chunked }`. The helper sets `Content-Length` from the body. `chunked: true` sends the body in chunks with no length: use it for a byte count or a size limit test (workerd frames a body by its `Content-Length`: a smaller value cuts the body, a larger one makes the read wait). A request with no key gets a 599 and goes to `unmatched`. A Node function in place of the table, or of one answer, gives a `Response` or an answer object |
 | Run dir | `<tmp>/cfw-test-<pid>-<n>` for each app, and `TMPDIR` is `<tmp>/cfw-test-<pid>` (the `miniflare-*` dirs) while an app runs. `close`, exit, SIGINT and SIGTERM remove them |

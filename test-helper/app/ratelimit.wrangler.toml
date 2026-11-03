@@ -1,0 +1,5 @@
+# A config for the rate limit tests of test-helper/helper-test.mjs (TH20): the namespace id and the limit of LIMITER.
+[[ratelimits]]
+name = "LIMITER"
+namespace_id = "1001"
+simple = { limit = 2, period = 60 }

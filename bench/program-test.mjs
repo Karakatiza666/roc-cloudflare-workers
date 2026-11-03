@@ -228,6 +228,8 @@ await test('pf: the pin table (pinLimit, max age, counts)', async () => {
   pins.pin('a', 3); // a pin of a name that is there is not a new entry
   assert.throws(() => pins.pin('c', 4), (e) => e instanceof RangeError && /pinLimit/.test(e.message));
   assert.equal(pins.pinned('a'), 3);
+  now = 99; // MODULES.md 9, the expiry edge: age < max is a hit, age >= max is expired
+  assert.equal(pins.pinned('b'), 2);
   now = 100;
   assert.equal(pins.pinned('b'), undefined);
   pins.unpin('a');

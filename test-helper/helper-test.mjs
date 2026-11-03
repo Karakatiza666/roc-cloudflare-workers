@@ -337,6 +337,93 @@ test('TH19: app.sql runs statements between requests', async () => {
   await app.sql('DB', ["DELETE FROM items WHERE v LIKE 's%' AND v != 'seed'"]);
 });
 
+// TH20: rate limit bindings. The config gives the limit; the option `ratelimits` and `miniflareOptions.ratelimits` change it.
+const limitRuns = async (a, n, key = 'x') => {
+  const got = [];
+  for (let i = 0; i < n; i++) got.push(await text(a, `/limit?k=${key}`));
+  return got.join();
+};
+test('TH20: a ratelimit binding takes limit and period from the config ([[ratelimits]])', async () => {
+  const a = await helper({ config: 'ratelimit.wrangler.toml' });
+  try {
+    eq(await limitRuns(a, 4), 'allowed,allowed,limited,limited');
+    eq(await limitRuns(a, 1, 'other'), 'allowed', 'another key');
+  } finally {
+    await a.close();
+  }
+});
+test('TH20: with no config the limit is RATELIMIT_DEFAULT (100 in 60 s); the option ratelimits wins over the config', async () => {
+  const a = await helper();
+  try {
+    const got = (await limitRuns(a, 101)).split(',');
+    eq([got[99], got[100]], ['allowed', 'limited'], 'request 100 and 101');
+  } finally {
+    await a.close();
+  }
+  const b = await helper({ config: 'ratelimit.wrangler.toml', ratelimits: { LIMITER: { limit: 1 } } });
+  try {
+    eq(await limitRuns(b, 2), 'allowed,limited');
+  } finally {
+    await b.close();
+  }
+});
+test('TH20: hooks with miniflareOptions.ratelimits starts, and the Worker counts', async () => {
+  const a = await helper({ hooks: 'tests/hooks.js', count: ['LIMITER'], miniflareOptions: { ratelimits: { LIMITER: { namespace_id: '7', simple: { limit: 1, period: 10 } } } } });
+  try {
+    const r = await a.fetch('/limit?k=x');
+    eq(await r.text(), 'allowed');
+    eq(r.calls.LIMITER.ops, ['limit'], 'the limit call is counted');
+    eq(await text(a, '/limit?k=x'), 'limited');
+  } finally {
+    await a.close();
+  }
+});
+test('TH20: a bad option ratelimits is a throw with the name', async () => {
+  const e1 = await helper({ ratelimits: { NOPE: { limit: 1 } } }).then((a) => (a.close(), 'no throw'), (x) => x.message);
+  ok(/NOPE/.test(e1) && /does not declare/.test(e1), e1);
+  const e2 = await helper({ ratelimits: { LIMITER: { limit: 1, period: 30 } } }).then((a) => (a.close(), 'no throw'), (x) => x.message);
+  ok(/LIMITER/.test(e2) && /period must be 10 or 60/.test(e2), e2);
+  const e3 = await helper({ ratelimits: { KV: { limit: 1 } } }).then((a) => (a.close(), 'no throw'), (x) => x.message);
+  ok(/declares as kv/.test(e3), e3);
+});
+test('TH20: app.reset() clears the rate limit counters', async () => {
+  const a = await helper({ ratelimits: { LIMITER: { limit: 2 } } });
+  try {
+    eq(await limitRuns(a, 3), 'allowed,allowed,limited');
+    await a.reset();
+    eq(await limitRuns(a, 3), 'allowed,allowed,limited', 'after the reset');
+  } finally {
+    await a.close();
+  }
+});
+
+// TH21: the body of a queue send in the call record.
+test('TH21: a queue send keeps the CBOR bytes and the decoded value of the message', async () => {
+  const a = await helper({ count: ['JOBS'] });
+  try {
+    const r = await a.fetch('/send?n=7');
+    eq(r.calls.JOBS.ops, ['send']);
+    const c = r.calls.JOBS.list[0];
+    eq(c.body, { bytes: Buffer.from([0xa1, 0x61, 0x6e, 7]).toString('base64'), size: 4, value: { n: 7 } }, 'body');
+    eq(c.contentType, 'json', 'contentType');
+    const all = await a.calls();
+    eq(all.JOBS.list[0].body.value, { n: 7 }, 'app.calls()');
+  } finally {
+    await a.close();
+  }
+});
+test('TH21: a queue sendBatch keeps the body of each item in bodies', async () => {
+  const a = await helper({ count: ['JOBS'] });
+  try {
+    const r = await a.fetch('/send_batch?n=3');
+    eq(r.calls.JOBS.n, 1, 'one call');
+    eq(r.calls.JOBS.list[0].bodies.map((b) => b.value), [{ n: 3 }, { n: 4 }], 'values');
+    ok(r.calls.JOBS.list[0].bodies.every((b) => typeof b.bytes === 'string' && b.size === 4), 'bytes and size');
+  } finally {
+    await a.close();
+  }
+});
+
 // Run.
 app = await helper({ count: ['DB', 'KV'] });
 try {

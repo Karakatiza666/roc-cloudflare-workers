@@ -2,7 +2,7 @@
 
 State: accepted by talon-04 (2026-11-02), with the decisions of section 9. Plan: section 10 (release 0.0.3). Built 2026-11-02 on the branch `test-helper` (not released): section 11 has the probe results, the changes to the design, the reset time and the registry migration.
 
-Rule ids: `API.md` has no family for an app test helper. This note proposes the family `TH` (TH1 to TH19, section 5.3). It cites the existing ids `OP3` (roots `env`, `ctx`, `event`), `RN15` (the clock), `RF9` (no fake platform in Roc), `AG1` (the app sees Roc only), `M1`, `3b` (deadline sweep) and `API.md` 10.1, 10.2, 11.
+Rule ids: `API.md` has no family for an app test helper. This note proposes the family `TH` (TH1 to TH21, section 5.3). It cites the existing ids `OP3` (roots `env`, `ctx`, `event`), `RN15` (the clock), `RF9` (no fake platform in Roc), `AG1` (the app sees Roc only), `M1`, `3b` (deadline sweep) and `API.md` 10.1, 10.2, 11.
 
 ## 1. Problem
 
@@ -183,7 +183,7 @@ New shim option (in `js/options.js` `RULES`):
 | Id | Rule |
 | --- | --- |
 | TH1 | `startApp` reads the manifest of the wasm in Node (`manifestOf`). It refuses to start (a throw with the name) when a seed names a binding that the manifest does not declare, or when the app has no `.roc-cfw/index.js` (the text: run `roc-cfw sync`). |
-| TH2 | Each declared binding of a kind that Miniflare has locally (`d1`, `kv`, `r2`, `queue`, `object` of this Worker) is made, seeded or empty. An object class is SQLite-backed (`useSQLite: true`, `MODULES.md` 7). A kind with no local form (`ai`, `vectorize`, ...) needs `services` or `hooks`. |
+| TH2 | Each declared binding of a kind that Miniflare has locally (`d1`, `kv`, `r2`, `queue`, `ratelimit` (TH20), `object` of this Worker) is made, seeded or empty. An object class is SQLite-backed (`useSQLite: true`, `MODULES.md` 7). A kind with no local form (`ai`, `vectorize`, ...) needs `services` or `hooks`. |
 | TH3 | `app.fetch` defaults: a text body is sent as UTF-8 bytes (no implicit `Content-Type`, T1); `cache: 'force-cache'` when the caller gives no `cache` (T2); `redirect: 'manual'` (T8); a path is joined to `http://localhost`. The caller can give each one. |
 | TH4 | `res.calls` and `res.sessions` hold the calls of the tasks of this request only. The helper sets the header `cfw-test-request: <n>`; the test entry keys the counts by it. Calls of other tasks (an object that the request called, `Response.after` work after the response) go to `app.calls()` only. |
 | TH5 | The helper clock is the shim option `now`, in the isolate. `setNow` and `advance` go through the control path. No Roc task runs for them, so no sweep. A jump forward cancels the tasks in flight past their deadline at the next sweep (T7). `Date.now()` of JS, the Cache API `max-age`, and alarm times of Workers stay on the real clock. |
@@ -201,6 +201,8 @@ New shim option (in `js/options.js` `RULES`):
 | TH17 | The option `wasm` is any path. The generated entry imports it as `./app.wasm`; the helper reads the bytes from the path. The shim is `.roc-cfw/` of `dir`, or the option `shim` (a dir). |
 | TH18 | `outbound` is a Node function, or a table `{ 'METHOD url': [answer, ...] }`. An answer is a `Response`, or `{ status, headers, body }`. Each request to a key takes the next answer; after the last, the last again. A request with no key is a 599 answer and an error in `app.outbound().unmatched`. `app.outbound()` gives `{ log, count, unmatched }`. |
 | TH19 | `app.sql(name, texts)` runs SQL texts on a D1 binding in order, with the split rules of the seeds. |
+| TH20 | A binding of the kind `ratelimit` has a local form (the Miniflare option `ratelimits`: `{ NAME: { namespace_id, simple: { limit, period } } }`). `limit` and `period` come from the option `ratelimits` of `startApp`, else from `[[ratelimits]]` or `unsafe.bindings` of type `ratelimit` in the config, else `RATELIMIT_DEFAULT` (100 in 60 s, the value of `roc-cfw add`). `period` is 10 or 60 (Miniflare); other values are a throw. `miniflareOptions.ratelimits` adds to these (other keys of `miniflareOptions` replace the key). `app.reset()` makes the old counters unreachable: the test entry gives the key of each `limit` call a prefix `<resets>:`, because Miniflare keeps the counters in a SQLite Durable Object that Node cannot clear. The windows follow the real wall clock, not `app.setNow`. If workerd stops with "internal error" and rate limits are set, the throw names them. |
+| TH21 | A queue `send` in `res.calls.<name>.list` also has `contentType` and `body` = `{ bytes, size, value?, truncated? }`; a `sendBatch` has `bodies` (one such object for each message, with `contentType`) and counts as one call. `bytes` is base64: the CBOR of the value for `json` and `v8`, the UTF-8 for `text`, the raw bytes for `bytes`. `value` is the decoded value; for `bytes` only when the bytes are CBOR. A `BigInt` is `{ $bigint: text }`, a `Uint8Array` is `{ $bytes: base64 }`. The record keeps 4096 bytes at most (`BODY_MAX`): the calls of a request travel in the header `cfw-test-calls`. A longer body has `size` (the full length), `truncated: true`, the first 4096 bytes and no `value`. |
 
 ## 6. How it ships
 
@@ -309,6 +311,7 @@ The probes are in `research/test-helper/probes/` (`p1-p2.mjs`, `p3.mjs`), run in
 | Run dirs (TH9, O7) | `<os tmp>/cfw-test-<pid>-<n>` | The same, from the temp dir before the first `startApp`. `TMPDIR` is `<os tmp>/cfw-test-<pid>` while an app runs (the `miniflare-*` dirs), restored at the last `close`. | A run dir made after `TMPDIR` changed went into the parent. |
 | Runner | (not in the note) | `runner.pins` and `pins.clear()` | Probe P3. |
 | Options | `options`, `modules` | Also `config` (the Wrangler config file) and `miniflareOptions` (V4 options on top: an escape hatch) | A project with two configs (`examples/auction`); options that the helper does not know. |
+| Rate limits (after 0.0.3, Talon registry report) | (not in the note) | TH20 and TH21; the helper app has `LIMITER` and the routes `/limit` and `/send_batch` | The registry has 3 `ratelimit` bindings, and a test must check what a queue send carried. Probe: with `hooks` and `miniflareOptions: { ratelimits }` on Miniflare 5.20261012.0-beta the Worker starts and counts; the first `"internal error"` report was not reproduced in 8 variants (3 limits, equal and different namespace ids, `persist`, D1, parallel requests, `count`). The helper now adds `miniflareOptions.ratelimits` to its own and names the rate limits when workerd says "internal error". |
 | Not reset by `reset` | Module globals of JS | Also Durable Object storage and alarms, queue messages in flight | No local API lists them. A test that needs a new object uses a new object name. |
 | H6 `Socket` | In Miniflare | In the Node unit test only (`wrapenv-test.mjs`, the stand-in class) | A WebSocket client in the helper test adds little; the kind goes through the same `run`. |
 
@@ -328,8 +331,8 @@ A reset is about 8 times faster than a start. The registry W2 case (about 0.5 s 
 | Test | Checks |
 | --- | --- |
 | `test-helper/wrapenv-test.mjs` (S2) | 14: one call for each kind (`Fetch`, `Scheduled`, `Queue`, `Init`, `Rpc`, `Alarm`, `Socket`) with `info`; the raw `env` goes in; the result is the root `env` (the alarm writes to the KV that `wrapEnv` gave); a throw fails the event; the binding check sees the raw `env`; a bad option value |
-| `test-helper/count-test.mjs` (S3) | 18: TH6 and TH16 with plain-object fakes (`prepare` and `bind` are not calls, `batch` is 1 and gets the real statements, the session of each call), the order of count, options `wrapEnv`, `hooks.wrapEnv` |
-| `test-helper/helper-test.mjs` (S4 to S6) | 28: H1, H2, H3 (T1, T2, T8, O1), H4, H5 (also two requests at the same time), H6, H7, H9, H10, H11, TH1, TH9 (two apps), TH13, TH18 (length, chunked, a size limit, a lying length), TH19 |
+| `test-helper/count-test.mjs` (S3) | 26 (TH20 and TH21 added: the queue body record, the key prefix of a rate limit): TH6 and TH16 with plain-object fakes (`prepare` and `bind` are not calls, `batch` is 1 and gets the real statements, the session of each call), the order of count, options `wrapEnv`, `hooks.wrapEnv` |
+| `test-helper/helper-test.mjs` (S4 to S6) | 35 (TH20: config, default, option, hooks with `miniflareOptions.ratelimits`, bad option, reset; TH21: send and sendBatch bodies); before: 28: H1, H2, H3 (T1, T2, T8, O1), H4, H5 (also two requests at the same time), H6, H7, H9, H10, H11, TH1, TH9 (two apps), TH13, TH18 (length, chunked, a size limit, a lying length), TH19 |
 | `test-helper/helper-tmpdir.sh` (H8) | SIGTERM and SIGINT: 3 run dirs during the run, 0 after |
 | `conformance/checks/wrapenv.mjs` (S2) | A wrapped D1 counts 1 call for a route with 1 batch; 0 with no header |
 | `scripts/test_bundle_js.sh` (S7) | `js/test.mjs` and `js/test-entry.js` are in the bundle; `cfw.json` has `test` 1 |
