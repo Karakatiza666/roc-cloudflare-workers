@@ -24,6 +24,7 @@ There is no npm package and no `package.json` in a project. The release notes ha
 
 | Release | URL for the app header | Built with |
 | --- | --- | --- |
+| 0.0.6 | `https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/0.0.6/HgUugW5V5QQbmrjdjkRhjiZ8B9D9gzpEkSwdojqJcW4p.tar.zst` | `nightly-2026-11-03-34bd006` |
 | 0.0.5 | `https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/0.0.5/7cJKFdsThj1QcGDftbB9pJVyLNJuMx5SgWXyVf5Te48k.tar.zst` | `nightly-2026-11-01-48d3369` |
 | 0.0.4 | `https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/0.0.4/AuZxUqJVSbVSbPX9EUhBGLVqgS3yZUE7ZC5VC2EqSeUk.tar.zst` | `nightly-2026-11-01-48d3369` |
 | 0.0.3 | `https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/0.0.3/Bup7G6Xgk53Bot1YY9AKQP9e73JVGbWqUyqD24taUYRv.tar.zst` | `nightly-2026-10-31-f7bef6b` |
