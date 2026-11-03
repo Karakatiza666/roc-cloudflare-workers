@@ -424,7 +424,17 @@ export async function startApp(opts = {}) {
   const d1Seeds = Object.fromEntries(Object.entries(opts.d1 ?? {}).map(([k, list]) => [k, (Array.isArray(list) ? list : [list]).map((x) => sqlOf(dir, x))]));
   const runSql = async (name, texts) => {
     const db = await mf.getD1Database(name);
-    for (const text of Array.isArray(texts) ? texts : [texts]) for (const s of splitSql(sqlOf(dir, text))) await db.prepare(s).run();
+    // Each text is one D1 batch (one round trip, all or nothing). When the batch fails, the statements run again one at a
+    // time, so the error names the statement that fails.
+    for (const text of Array.isArray(texts) ? texts : [texts]) {
+      const list = splitSql(sqlOf(dir, text));
+      if (!list.length) continue;
+      try {
+        await db.batch(list.map((s) => db.prepare(s)));
+      } catch {
+        for (const s of list) await db.prepare(s).run();
+      }
+    }
   };
   const seed = async () => {
     for (const [name, texts] of Object.entries(d1Seeds)) await runSql(name, texts);
@@ -489,7 +499,9 @@ export async function startApp(opts = {}) {
       const x = (g[c.binding] ??= { n: 0, ops: [], list: [] });
       x.n++;
       x.ops.push(c.op);
-      x.list.push({ op: c.op, session: c.session, kind: c.kind, name: c.name, ...(c.body ? { body: c.body } : {}), ...(c.bodies ? { bodies: c.bodies } : {}), ...(c.contentType ? { contentType: c.contentType } : {}) });
+      // The fixed fields, then each extra field of the record (TH21: body, bodies, contentType, delaySeconds).
+      const { binding, request, op, session, kind, name, ...extra } = c;
+      x.list.push({ op, session, kind, name, ...Object.fromEntries(Object.entries(extra).filter(([, v]) => v !== undefined)) });
     }
     return g;
   };
@@ -557,7 +569,8 @@ export async function startApp(opts = {}) {
     }
   }
 
-  return Object.assign(app, {
+  // defineProperties, not Object.assign: assign reads a getter once and copies its value (`now` must stay live).
+  return Object.defineProperties(app, Object.getOwnPropertyDescriptors({
     url,
     logs,
     manifest: m,
@@ -596,5 +609,5 @@ export async function startApp(opts = {}) {
     outbound: () => ({ log: [...out.state.log], count: { ...out.state.count }, unmatched: [...out.state.unmatched] }),
     reset,
     close,
-  });
+  }));
 }

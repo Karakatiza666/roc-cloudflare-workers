@@ -63,6 +63,24 @@ test('H1: examples/hello: start, fetch, D1 seed and read, close; no run dir, no 
 });
 
 // TH1.
+test('TH19: a seed text runs as one D1 batch; a bad statement is a throw that names it, and the statements before it run', async () => {
+  const a = await helper({ d1: { DB: ['CREATE TABLE a1 (v TEXT); CREATE TABLE a2 (v TEXT)'] } });
+  try {
+    await a.sql('DB', ['INSERT INTO a1 (v) VALUES (1); INSERT INTO a2 (v) VALUES (2)']);
+    const db = await a.mf.getD1Database('DB');
+    eq((await db.prepare('SELECT (SELECT count(*) FROM a1) + (SELECT count(*) FROM a2) AS n').first()).n, 2, 'both seed tables and both inserts');
+    let err;
+    try {
+      await a.sql('DB', ['INSERT INTO a1 (v) VALUES (3); INSERT INTO no_such_table (v) VALUES (4)']);
+    } catch (e) {
+      err = e;
+    }
+    ok(err && /no_such_table/.test(String(err.message ?? err)), `the error names the table: ${err?.message}`);
+    eq((await db.prepare('SELECT count(*) AS n FROM a1').first()).n, 2, 'the statement before the bad one ran (one at a time after the batch fails)');
+  } finally {
+    await a.close();
+  }
+});
 test('TH1: a seed of a binding that the app does not declare is a throw with the name', async () => {
   const e = await helper({ kv: { NOPE: { a: 'b' } } }).then((a) => (a.close(), 'no throw'), (x) => x.message);
   ok(/NOPE/.test(e) && /does not declare/.test(e), e);
@@ -408,6 +426,30 @@ test('TH21: a queue send keeps the CBOR bytes and the decoded value of the messa
     eq(c.contentType, 'json', 'contentType');
     const all = await a.calls();
     eq(all.JOBS.list[0].body.value, { n: 7 }, 'app.calls()');
+  } finally {
+    await a.close();
+  }
+});
+test('TH21: res.calls and app.calls() keep delaySeconds of a send; a send with no delay has no key', async () => {
+  const a = await helper({ count: ['JOBS'] });
+  try {
+    const r = await a.fetch('/send_delay?n=1&ms=1500');
+    eq(r.calls.JOBS.list[0].delaySeconds, 2, 'res.calls (1500 ms is 2 s, rounded up)');
+    eq((await a.calls()).JOBS.list[0].delaySeconds, 2, 'app.calls()');
+    const plain = await a.fetch('/send?n=2');
+    ok(!('delaySeconds' in plain.calls.JOBS.list[0]), 'no delaySeconds key');
+  } finally {
+    await a.close();
+  }
+});
+test('app.now is live: it follows setNow and advance', async () => {
+  const a = await helper({ now: 1000 });
+  try {
+    eq(a.now, 1000, 'start');
+    await a.setNow(5000);
+    eq(a.now, 5000, 'after setNow');
+    await a.advance(250);
+    eq(a.now, 5250, 'after advance');
   } finally {
     await a.close();
   }

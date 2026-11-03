@@ -2,7 +2,7 @@
 
 A Roc platform for Cloudflare Workers. The app compiles to a wasm32 reactor. The host is in Zig. Effects (fetch, D1, R2, KV, Cache API, Durable Object SQL) are direct-style hosted functions that wait on JS promises through JSPI.
 
-Status: phases A and B are built (`PLAN.md`). The release files are made by `scripts/bundle.sh` and published by `.github/workflows/release.yml` (`PLAN.md` 11). The latest release is 0.0.5: see "Changes in 0.0.5".
+Status: phases A and B are built (`PLAN.md`). The release files are made by `scripts/bundle.sh` and published by `.github/workflows/release.yml` (`PLAN.md` 11). The latest release is 0.0.6: see "Changes in 0.0.6".
 
 | Document | Content |
 | --- | --- |
@@ -30,6 +30,15 @@ There is no npm package and no `package.json` in a project. The release notes ha
 | 0.0.2 | `https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/0.0.2/f352LLRKJCZ4JJVEocp3H9e4e6Sxa6Ym5CxZ1GZCpfd.tar.zst` | `nightly-2026-10-31-f7bef6b` |
 
 Use the release URL. `dist/` of this repository is a local build of `scripts/bundle.sh` (gitignored). Its hash is not the hash of the release, so do not take a URL or a file from `dist/`.
+
+## Changes in 0.0.6
+
+| Change | In 0.0.5 | In 0.0.6 | What the app author does |
+| --- | --- | --- | --- |
+| `startApp`: `delaySeconds` in `res.calls` and `app.calls()` | The record had it, but the grouped view dropped it (bug). | Each field of a call record is in `list`. | Nothing. |
+| `app.now` | A value copied at the start (bug): it did not follow `setNow` or `advance`. | A getter: the clock of the isolate, or `null` for real time. | Nothing. |
+| D1 seeds | One round trip for each statement. | One batch for each seed text (`reset()` is faster). A failed batch runs again one statement at a time, for the error. | Nothing. |
+| Docs: queue consumers in a test | Not said. | "Testing an app", Bindings: with no `queues.consumers`, the Worker consumes its own sends; `consumers = []` stops that. | Add `consumers = []` to a test config that checks only `calls`. |
 
 ## Changes in 0.0.5
 
@@ -326,7 +335,7 @@ await app.close();
 | --- | --- |
 | `startApp(opts)` | The app in Miniflare. Options: `dir`, `wasm` (any path), `shim` (default `.roc-cfw` of `dir`), `config`, `now`, `d1`, `kv`, `r2`, `queues` (consumer settings), `outbound` (a table or a Node function), `services` (Node functions for service bindings), `bindings` (vars and secrets, on top of `vars` of the config), `compatibility` (`{ date, flags }`, default: the config), `count`, `hooks` (a module in the isolate), `options` (JSON `makeHandler` options on top of `worker.options.js`), `miniflare` (a dir or the module), `persist`, `modules`, `cf`, `miniflareOptions` (V4 options on top; a `ratelimits` key adds to the rate limits of the helper, any other key replaces the key of the helper), `ratelimits` (`{ NAME: { limit, period } }`, see Bindings) |
 | `app.fetch(pathOrUrl, init)` | A `Response` with `calls` (`{ DB: { n, ops, list: [{ op, session, kind, name }] } }`, the calls of the tasks of this request only; a queue `send` item also has `body` and `contentType`, a `sendBatch` item `bodies`: see Count) and `sessions` (`{ DB: [withSession arguments] }`). `init.now`: the clock before the request |
-| `app.setNow(ms \| null)`, `app.advance(ms)`, `app.now` | The shim clock, through a control path (no Roc task, so no sweep) |
+| `app.setNow(ms \| null)`, `app.advance(ms)`, `app.now` | The shim clock, through a control path (no Roc task, so no sweep). `app.now` is a getter: the clock of the isolate (`Time.now_ms!`), or `null` when the clock is real time (`Date.now`) |
 | `app.scheduled({ cron, time, now })` | `{ outcome, noRetry }` of `/cdn-cgi/local/scheduled` |
 | `app.queue(name, messages, { now })` | The result of the `queue` handler: `{ outcome, ackAll, retryBatch, explicitAcks, retryMessages }`. A message with no `timestamp` gets the helper clock |
 | `app.d1(name)`, `app.kv(name)`, `app.r2(name)`, `app.queueProducer(name)`, `app.object(name)` | The Miniflare handles |
@@ -342,7 +351,7 @@ await app.close();
 
 | Rule | What the helper does |
 | --- | --- |
-| Bindings | It reads the manifest of the wasm in Node. Each declared D1, KV, R2, queue producer, rate limit and object class of this Worker is made, seeded or empty (an object class is SQLite-backed). A rate limit binding (`RateLimit.binding`) gets `{ limit, period }` from the option `ratelimits`, else from `[[ratelimits]]` or `unsafe.bindings` of type `ratelimit` in the config (`simple`, `namespace_id`), else `RATELIMIT_DEFAULT` (export of `test.mjs`): 100 in 60 s. Miniflare allows `period` 10 or 60 only (else a throw). Miniflare counts by the real wall clock, not by `app.setNow`. A seed of a binding that the app does not declare is a throw with its name. A kind with no local form (`ai`, `vectorize`, a service) needs `services`, `bindings` or `hooks` |
+| Bindings | It reads the manifest of the wasm in Node. Each declared D1, KV, R2, queue producer, rate limit and object class of this Worker is made, seeded or empty (an object class is SQLite-backed). A rate limit binding (`RateLimit.binding`) gets `{ limit, period }` from the option `ratelimits`, else from `[[ratelimits]]` or `unsafe.bindings` of type `ratelimit` in the config (`simple`, `namespace_id`), else `RATELIMIT_DEFAULT` (export of `test.mjs`): 100 in 60 s. Miniflare allows `period` 10 or 60 only (else a throw). Miniflare counts by the real wall clock, not by `app.setNow`. A seed of a binding that the app does not declare is a throw with its name. A kind with no local form (`ai`, `vectorize`, a service) needs `services`, `bindings` or `hooks`. Queue consumers: the `queues.consumers` of the config. A config with no `queues.consumers` and an app with a `queue` handler: the Worker consumes each of its producer queues, so its own sends go to its `queue` handler. To keep the sends in the queue (a test that checks only `calls`), put `consumers = []` in `[queues]` of the test config. A D1 seed text runs as one batch; when the batch fails, its statements run again one at a time, so the error names the bad statement |
 | Count | `count: [names]`. A call is one round trip: D1 `all`, `run`, `first`, `raw`, `batch`, `exec` (`prepare`, `bind`, `withSession` are not calls); KV `get`, `getWithMetadata`, `put`, `delete`, `list`; R2 `get`, `head`, `put`, `delete`, `list`, `createMultipartUpload`, `resumeMultipartUpload`; a queue `send`, `sendBatch`; a rate limit `limit`. A queue `send` item in `list` also has `contentType` and `body`: `{ bytes (base64), size, value?, truncated? }`. `bytes` is the CBOR of the message (the UTF-8 for a text, the raw bytes for the type `bytes`), `value` the decoded value (a `BigInt` is `{ $bigint }`, a byte string is `{ $bytes }`). A `sendBatch` item has `bodies`, one such object (with `contentType`) for each message, and counts as one call. `delaySeconds` is kept when the call gives it: on a `send` item, on each message of `bodies`, and on a `sendBatch` item for the batch options (0.0.5). `bytes` keeps 4096 bytes at most (`BODY_MAX` of `test-entry.js`; `size` is the full length): a longer body has `truncated: true` and no `value`, because the calls of a request travel in a response header. The count uses the shim option `wrapEnv` (`MODULES.md` 3) |
 | Hooks | `hooks: 'tests/hooks.js'`: a module in the isolate. Its exports `wrapEnv(env, info)` and `fetch(request, env, next)` run after the count. Its local imports are in the module list |
 | Outbound | A table `{ 'METHOD url': [answer, ...] }`: each request to a key takes the next answer, then the last again. An answer is a `Response`, or `{ status, headers, body, chunked }`. The helper sets `Content-Length` from the body. `chunked: true` sends the body in chunks with no length: use it for a byte count or a size limit test (workerd frames a body by its `Content-Length`: a smaller value cuts the body, a larger one makes the read wait). A request with no key gets a 599 and goes to `unmatched`. A Node function in place of the table, or of one answer, gives a `Response` or an answer object |

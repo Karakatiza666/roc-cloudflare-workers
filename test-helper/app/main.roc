@@ -17,6 +17,7 @@ app [event!] { pf: platform "../../platform/main.roc" }
 ## | `/room/alarm?name=` | the object sets an alarm in 10 ms; the alarm writes the KV key `alarm` |
 ## | `/send?n=` | a queue message to `JOBS`; the consumer writes the KV key `job-<n>` |
 ## | `/send_batch?n=` | `sendBatch` of 2 messages to `JOBS` (`n` and `n + 1`) |
+## | `/send_delay?n=&ms=` | a queue message to `JOBS` with `delay_ms` (`delaySeconds`: whole seconds, rounded up) |
 ## | `/limit?k=` | `LIMITER.limit({ key })`: `allowed` or `limited` |
 ## | `/out?url=`, `/out_max?url=&max=` | an outbound fetch: the status, the body length, the Content-Length header |
 ## | `/echo` | the method, the headers `content-type`, `cache-control`, `pragma`, and the body |
@@ -167,6 +168,7 @@ fetch! = |req| {
 		}
 		["send"] => show(jobs.send!({ n: num(req, "n") }))
 		["send_batch"] => show(jobs.send_batch!([{ n: num(req, "n") }, { n: num(req, "n") + 1 }]))
+		["send_delay"] => show(jobs.send_with!({ n: num(req, "n") }, { delay_ms: num(req, "ms") }))
 		["limit"] => match limiter.limit!(q(req, "k")) {
 			Ok({}) => ok("allowed")
 			Err(RateLimited) => ok("limited")
