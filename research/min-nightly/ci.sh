@@ -21,7 +21,7 @@ grep -q '^build app_b3: exit [02] ' <<<"$log" || bad=1
 grep -q '^build app_trap: exit [02] ' <<<"$log" || bad=1
 grep -q '^node-test: exit 0$' <<<"$log" || bad=1
 grep -q '^handler-test: exit 0$' <<<"$log" || bad=1
-grep -q '^conformance: exit 0 ' <<<"$log" || bad=1
+grep -q '^conformance: exit 0 ' <<<"$log" || { bad=1; grep -E '^(FAIL|not ok)' ".cache/min-nightly/$tag/conformance.log" | head -20; }
 # exports-test may fail only for the 3 exports of the compiler from nightly 2026-10-28
 out=.cache/min-nightly/$tag
 if ! grep ^FAIL "$out/exports-test.log" | grep -qv '__stack_\|^FAIL$'; then :; else echo "exports-test: a FAIL that is not a stack export"; bad=1; fi
