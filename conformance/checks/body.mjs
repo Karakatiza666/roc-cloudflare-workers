@@ -75,13 +75,15 @@ export const checks = [
     ok(r.status === 200 && r.body === 'first=100 rest=200 bad=0', `${r.status} ${r.body}`);
     return r.body;
   }],
-  // The request body (a stream of the request), and the bodies that are not streams.
+  // The request body (a stream of the request), and the bodies that are not streams. The request comes from Node at the
+  // speed of the local socket, so the count of chunks follows the timing: 5 with wrangler 4.151, 8 or 9 with 4.158. With
+  // no fill (one part for each call), it is about 75.
   ['body chunk!: the request body, an empty body, the end', async (t) => {
     const n = 300 * KB;
     const body = Uint8Array.from({ length: n }, (_, i) => i % 251);
     const g = parse(await t.get('/body/read', { method: 'POST', body }));
     whole(g, n);
-    ok(g.sizes.length <= 8, `${show(g)}`);
+    ok(g.sizes.length <= 16, `${show(g)}`);
     const e = parse(await t.get('/body/read', { method: 'POST' }));
     ok(e.sizes.length === 0 && e.again === 'End', `an empty body: ${JSON.stringify(e)}`);
     return show(g);
