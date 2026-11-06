@@ -17,7 +17,8 @@ step() { # name, command...
   timeout 600 "$@" > ".cache/test-all-$$.log" 2>&1
   local code=$?
   printf '%3d  %s\n' "$code" "$name"
-  if [ "$code" -ne 0 ]; then rc=1; tail -n 15 ".cache/test-all-$$.log" | sed 's/^/     | /'; fi
+  # The FAIL lines first: a long run (conformance) can have its one failure far above the last 15 lines.
+  if [ "$code" -ne 0 ]; then rc=1; { grep -E '^FAIL ' ".cache/test-all-$$.log" | head -n 10; tail -n 15 ".cache/test-all-$$.log"; } | sed 's/^/     | /'; fi
 }
 mkdir -p .cache
 glue0=$(cat host/roc_platform_abi.zig | md5sum)
