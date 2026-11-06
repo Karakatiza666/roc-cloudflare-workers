@@ -2,7 +2,7 @@
 
 A Roc platform for Cloudflare Workers. The app compiles to a wasm32 reactor. The host is in Zig. Effects (fetch, D1, R2, KV, Cache API, Durable Object SQL) are direct-style hosted functions that wait on JS promises through JSPI.
 
-Status: phases A and B are built (`PLAN.md`). The release files are made by `scripts/bundle.sh` and published by `.github/workflows/release.yml` (`PLAN.md` 11). The latest release is 0.0.6: see "Changes in 0.0.6".
+Status: phases A and B are built (`PLAN.md`). The release files are made by `scripts/bundle.sh` and published by `.github/workflows/release.yml` (`PLAN.md` 11). The latest release is 0.0.7: see "Changes in 0.0.7".
 
 | Document | Content |
 | --- | --- |
@@ -31,6 +31,12 @@ There is no npm package and no `package.json` in a project. The release notes ha
 | 0.0.2 | `https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/0.0.2/f352LLRKJCZ4JJVEocp3H9e4e6Sxa6Ym5CxZ1GZCpfd.tar.zst` | `nightly-2026-10-31-f7bef6b` |
 
 Use the release URL. `dist/` of this repository is a local build of `scripts/bundle.sh` (gitignored). Its hash is not the hash of the release, so do not take a URL or a file from `dist/`.
+
+## Changes in 0.0.7
+
+| Change | In 0.0.6 | In 0.0.7 | What the app author does |
+| --- | --- | --- | --- |
+| The check of `Worker.new bindings` | At load, with the `env` of `cloudflare:workers` at global scope, and again at the first event. `wrangler deploy` of an app with a D1 binding failed (code 10021, "env has no DB"): in the upload validation, that `env` does not have the bindings of the config (bug). | At the first event of each `env` only. A binding that is not in `env` fails each event with the same text. | Nothing. |
 
 ## Changes in 0.0.6
 
@@ -250,7 +256,7 @@ event! = |e| worker.event!(e)
 | `app [event!]` | The one function that takes every event (`API.md` 10.1). |
 | `Worker.new({ fetch!, scheduled!, queue!, ... })` | A record with the handlers that the app has, each with its own error type. One field: `Worker.new({ fetch!: fetch! })` (`{ fetch! }` alone is a block). `worker.event!` sends each event to its handler. A kind with no handler is `Unhandled`. |
 | `import pf.D1`, `pf.R2`, `pf.Kv`, ... | The modules of `MODULES.md`. A binding is `D1.binding("DB")`: the name is the name in the Wrangler config. A Durable Object namespace takes its class value: `Object.namespace("ROOMS", { class: room })`, with `room = Object.class("Room", ...)`. The namespace has the interface of the class, so `call!` takes the `Rpc` constants of that interface only (`Rpc(Room, ..)`, with `Room := []`). `Worker.new` takes `objects: [room.erase()]`. For a class of this Worker with no importable value (a module cycle): `Object.namespace_named("ROOMS", "Room", room_iface)`. For a class of another Worker: `Object.namespace_remote("FAR", { class: "Room", script: "other" }, room_iface)`. `room_iface : Rpc.Iface(Room)` is `Rpc.Iface.{}`. |
-| `Worker.new({ ..., bindings: [db.declare(), rooms.declare()] })` | The bindings that the app uses, in the manifest (`MODULES.md` 3). The shim checks at load that `env` has each one with its kind, and `sync` checks the Wrangler config. Optional. |
+| `Worker.new({ ..., bindings: [db.declare(), rooms.declare()] })` | The bindings that the app uses, in the manifest (`MODULES.md` 3). The shim checks at the first event that `env` has each one with its kind, and `sync` checks the Wrangler config. Optional. |
 | `Worker.new({ ..., crons: [Worker.cron("*/5 * * * *", settle!)] })` | A handler for each cron expression, in place of one `scheduled!` that matches `s.cron()`. `sync` checks `triggers.crons`. `scheduled!` stays: it gets the runs of the other crons. |
 | `req.method()`, `req.url()`, `res.status()` | `Request`, `Response` and the payloads of the handlers are opaque: the app reads them with methods, and a field read does not compile (`MODULES.md` MC15). A function with no argument is `f!()` (MC14). |
 | `import pf.Cbor` | Typed data as CBOR. It wraps roc-cbor, so no `cbor` entry. An app may add the same roc-cbor URL: the types are the same. |
@@ -277,7 +283,7 @@ import { makeHandler } from './.roc-cfw/index.js';
 export default makeHandler(app);
 ```
 
-`makeHandler(module, opts)` throws at load for a bad option, a module that is not stack-first, a class with no export line, and a binding of `Worker.new({ bindings })` that is not in `env` with its kind. The options are in `js/options.js`. A Durable Object class or a named entry point of the app is one export line before the default export (`objectClass("Room")`, `entrypointClass("Admin")`, `API.md` AQ10): `sync` writes these lines. An app with options (`ops` and others) puts them in `worker.options.js` next to `worker.js`: its default export is the options object. `sync` then writes `import options from './worker.options.js';` and `makeHandler(app, options)`, and `sync --check` checks the import. `sync` never writes the options file (`MODULES.md` 3, "The options file"). `sync` also reads the app source (`--file`, default `<wasm name>.roc`, else `main.roc`) and warns of a handler that the app defines and `Worker.new` does not list (`sync --check` fails for it; `MODULES.md` 3).
+`makeHandler(module, opts)` throws at load for a bad option, a module that is not stack-first, and a class with no export line. A binding of `Worker.new({ bindings })` that is not in `env` with its kind fails the first event. The options are in `js/options.js`. A Durable Object class or a named entry point of the app is one export line before the default export (`objectClass("Room")`, `entrypointClass("Admin")`, `API.md` AQ10): `sync` writes these lines. An app with options (`ops` and others) puts them in `worker.options.js` next to `worker.js`: its default export is the options object. `sync` then writes `import options from './worker.options.js';` and `makeHandler(app, options)`, and `sync --check` checks the import. `sync` never writes the options file (`MODULES.md` 3, "The options file"). `sync` also reads the app source (`--file`, default `<wasm name>.roc`, else `main.roc`) and warns of a handler that the app defines and `Worker.new` does not list (`sync --check` fails for it; `MODULES.md` 3).
 
 4. The Wrangler config (`examples/hello/wrangler.toml`):
 

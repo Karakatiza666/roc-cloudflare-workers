@@ -1,4 +1,4 @@
-// The check of `Worker.new bindings` at load (MODULES.md 3, js/bindings.js): the app (conformance/app.roc) declares the D1
+// The check of `Worker.new bindings` at the first event (MODULES.md 3, js/bindings.js): the app (conformance/app.roc) declares the D1
 // database DB, the KV namespace KV and the object namespace COUNTERS (class Counter). Each case is a second Miniflare with
 // `t.startBare` (no binding added) that must not serve, and the error has the clear text. The manifest cases (a name twice,
 // a class that is not in objects) need other apps: bench/bindings-test.mjs.
@@ -9,7 +9,7 @@ export const options = {};
 const counters = { COUNTERS: { className: 'Counter', useSQLite: true } };
 const quiet = () => {};
 
-// The text of the failure: the error of the load (workerd with `env` at global scope), or the error of the first request.
+// The text of the failure: the error of the load, or the error of the first request (0.0.7: the binding check is there).
 async function failure(t, opts) {
   const lines = [];
   const mf = t.startBare({ handleStructuredLogs: (l) => lines.push(String(l.message)), ...opts });

@@ -49,7 +49,8 @@ if (process.argv[3] === 'plain') {
 objectClass('Counter');
 const b3 = makeHandler(load('app_b3.wasm'), opts);
 
-// 1. All bindings there with their kind: the app serves.
+// 1. All bindings there with their kind: the app serves. `makeHandler` above did not throw for the empty `env` of the
+// stand-in at load (bench/cf-workers-stub.mjs): the check waits for the first event.
 {
   const r = await get(b3, good());
   const text = await r.text();

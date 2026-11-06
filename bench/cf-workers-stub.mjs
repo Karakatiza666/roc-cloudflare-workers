@@ -13,3 +13,6 @@ export class DurableObject {
     this.env = env;
   }
 }
+// `env` at global scope, as in the upload validation of `wrangler deploy`: it does not have the bindings of the config.
+// bench/bindings-test.mjs check 1 loads an app with bindings, so a check of this `env` at load fails it (0.0.6, code 10021).
+export const env = {};

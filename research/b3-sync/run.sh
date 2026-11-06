@@ -57,7 +57,7 @@ dev=$!
 for _ in $(seq 30); do grep -q "env has no DB\|Ready on" ../dev4.log && break; sleep 1; done
 sleep 2
 curl -s "http://127.0.0.1:$port/d1" > ../d1-4.txt 2>&1 || true
-if grep -q "env has no DB" ../dev4.log; then echo "PASS the load error: $(grep -m1 -o 'DB (d1): env has no DB[^.]*' ../dev4.log)"; else echo "FAIL: no load error in dev4.log"; tail -20 ../dev4.log; fail=1; fi
+if grep -q "env has no DB" ../dev4.log; then echo "PASS the first-event error: $(grep -m1 -o 'DB (d1): env has no DB[^.]*' ../dev4.log)"; else echo "FAIL: no binding error in dev4.log"; tail -20 ../dev4.log; fail=1; fi
 kill -- -$dev 2>/dev/null || true
 sleep 1
 echo "== 5. DB is a KV namespace"
@@ -68,5 +68,5 @@ setsid wrangler dev --local --ip 127.0.0.1 --port "$port" > ../dev5.log 2>&1 &
 dev=$!
 for _ in $(seq 30); do grep -q "is not a D1\|Ready on" ../dev5.log && break; sleep 1; done
 sleep 2
-if grep -q "env.DB is not a D1 database" ../dev5.log; then echo "PASS the load error: $(grep -m1 -o 'DB (d1): env.DB is not[^.]*' ../dev5.log)"; else echo "FAIL: no kind error in dev5.log"; tail -20 ../dev5.log; fail=1; fi
+if grep -q "env.DB is not a D1 database" ../dev5.log; then echo "PASS the first-event error: $(grep -m1 -o 'DB (d1): env.DB is not[^.]*' ../dev5.log)"; else echo "FAIL: no kind error in dev5.log"; tail -20 ../dev5.log; fail=1; fi
 exit $fail

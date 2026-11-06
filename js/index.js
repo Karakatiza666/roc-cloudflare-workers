@@ -18,8 +18,6 @@
 // `cloudflare:workers` resolves in workerd and in Wrangler. In Node, a test registers a resolve hook to a stand-in class
 // (`bench/cf-node.mjs`, `bench/cf-workers-stub.mjs`).
 import { WorkerEntrypoint, DurableObject } from 'cloudflare:workers';
-// `cf.env`: the env at global scope (workerd). The Node stand-in has none: the check of the bindings waits for an event.
-import * as cf from 'cloudflare:workers';
 import { bindingProblems } from './bindings.js';
 import { checkManifest, RESERVED, trapResponse } from './manifest.js';
 import { BUDGET_OPTS } from './budget.js';
@@ -239,11 +237,8 @@ export function makeHandler(module, opts = {}) {
     const problems = bindingProblems(manifest.bindings, env);
     return problems.length ? new Error(`makeHandler: the bindings of the app (Worker.new bindings) are not in env:\n  ${problems.join('\n  ')}\nThe command sync (node .roc-cfw/cli.mjs sync) prints the parts of the Wrangler config to add.`) : null;
   };
-  const loadEnv = cf.env;
-  if (manifest.bindings.length && loadEnv && typeof loadEnv === 'object') {
-    const e = envError(loadEnv);
-    if (e) throw e;
-  }
+  // The check runs at the first event of each env, not at load: in the upload validation of `wrangler deploy`, the env of
+  // `cloudflare:workers` at global scope does not have the bindings of the config (0.0.6, code 10021).
   function checkEnv(env) {
     if (!manifest.bindings.length || !env || typeof env !== 'object' || envChecked.has(env)) return;
     const e = envError(env);
