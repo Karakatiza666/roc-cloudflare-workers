@@ -1,0 +1,19 @@
+{
+  "limit_ms": 10,
+  "calibration": { "ins_per_ms": 3000000, "note": "workerd instructions in 1 ms of CPU on the dev machine (small: 3.6 M instructions, 1.1 to 1.2 ms of CPU). Not a measure of the edge." },
+  "proc_factor": 4,
+  "relative": [
+    { "scenario": "small", "metric": "ins_per_req", "max_pct": 3 },
+    { "scenario": "*", "metric": "ins_per_req", "max_pct": 5 },
+    { "scenario": "small", "metric": "cold_first_ins", "max_pct": 3 },
+    { "scenario": "*", "metric": "allocs_per_req", "max_pct": 1 },
+    { "scenario": "static", "metric": "app_wasm_bytes", "max_pct": 2 },
+    { "scenario": "static", "metric": "largest_fn_bytes", "max_pct": 5 }
+  ],
+  "absolute": [
+    { "scenario": "small", "metric": "ins_per_req", "max_ms": 1, "edge_share": 0.4, "target_ms": 1 },
+    { "scenario": "mixed-ro", "metric": "ins_per_req", "max_ms": 3, "edge_share": 0.4, "target_ms": 3 },
+    { "scenario": "closure", "metric": "ins_per_req", "max_ms": 4, "edge_share": 0.4, "target_ms": 4 },
+    { "scenario": "small", "metric": "cold_first_ins", "max_ms": 75, "edge_share": 1, "target_ms": 10 }
+  ]
+}

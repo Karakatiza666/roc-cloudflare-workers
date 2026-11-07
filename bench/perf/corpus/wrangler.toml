@@ -1,0 +1,13 @@
+# The config of the W2 runner for startApp (slice 123e). It is not the deploy config (worker/wrangler.toml): the runner gives the settings (bindings),
+# the rate limits (ratelimits) and the clock itself, and the Worker must have no queue consumer, so a message that the Worker sends stays in the queue.
+# `consumers = []` is needed: with no `queues.consumers` key, startApp makes a consumer for each producer queue when the app has a queue handler.
+name = "talon-registry-w2"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["enable_request_signal", "global_fetch_strictly_public"]
+
+[queues]
+consumers = []
+
+[[queues.producers]]
+binding = "INDEX"
+queue = "talon-index"

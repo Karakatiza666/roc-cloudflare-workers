@@ -1,0 +1,5 @@
+app.wasm
+.roc-cfw/
+worker.js
+worker.options.js
+.wrangler/

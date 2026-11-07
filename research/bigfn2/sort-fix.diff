@@ -1,0 +1,239 @@
+diff -ruN '--exclude=app.wasm' base/lib/ArchiveRead.roc m2/app/lib/ArchiveRead.roc
+--- base/lib/ArchiveRead.roc	2026-11-03 14:28:18.855447998 +0400
++++ m2/app/lib/ArchiveRead.roc	2026-11-07 18:07:21.987157861 +0400
+@@ -1,4 +1,5 @@
+ import tar.Tar
++import records.Sorted
+ import header.Header
+ import header.PackageUrl
+ import base58.Base58
+@@ -310,7 +311,7 @@
+ 				Err(None) => set
+ 			},
+ 		)
+-		names.to_list().sort_with(Artifact.compare)
++		Sorted.sort_with(names.to_list(), Artifact.compare)
+ 	}
+ 
+ 	## The problem of a refusal (R-AP21): 422 `not-a-candidate` with the `detail` of the slice file (section 5) for each refusal. `HashMismatch` too (row 8).
+diff -ruN '--exclude=app.wasm' base/lib/Ingest.roc m2/app/lib/Ingest.roc
+--- base/lib/Ingest.roc	2026-11-03 12:10:34.814218786 +0400
++++ m2/app/lib/Ingest.roc	2026-11-07 18:07:21.988080311 +0400
+@@ -3,6 +3,7 @@
+ ## The effects (the body read, the D1 session and its calls, the GitHub reads, the archive read, the clock) are in `worker/IngestRoutes.roc`.
+ ## The tests are in `worker/tests/unit/IngestTest.roc` (W0) and `worker/tests/cases/ingest/` (W2).
+ ## The texts of the `detail` of a problem and the body form are proposals (TW24): `docs/slices/112-ingest.md` section 5.
++import records.Sorted
+ import base58.Base58
+ import header.PackageUrl
+ import records.Artifact
+@@ -279,7 +280,7 @@
+ 		a = input.artifact
+ 		hash_name = |h| { id: 0, kind: 1, value: hash_bytes(h) ?? [] }
+ 		text_name = |kind, text| { id: 0, kind, value: text.to_utf8() }
+-		deps = a.deps.sort_with(|x, y| Artifact.compare(x.alias, y.alias))
++		deps = Sorted.sort_with(a.deps, |x, y| Artifact.compare(x.alias, y.alias))
+ 		dep_names = deps.join_map(
+ 			|d| match d.version {
+ 				Ok(_) => [hash_name(d.hash), text_name(2, d.group)]
+@@ -291,10 +292,10 @@
+ 			Err(None) => []
+ 		}
+ 		all = [hash_name(a.hash)].concat(platform_names).concat(dep_names).concat([text_name(2, t.form), text_name(3, t.name)])
+-		names = all
++		unique = all
+ 			.map(|n| { ..n, id: Id.name_id(n.kind, n.value) })
+ 			.fold([], |acc, n| if (acc.any(|m| m.id == n.id)) acc else acc.append(n))
+-			.sort_with(|x, y| x.id.order_relative_to(y.id))
++		names = Sorted.sort_with(unique, |x, y| x.id.order_relative_to(y.id))
+ 		id_of_hash = |h| Id.name_id(1, hash_bytes(h) ?? [])
+ 		artifact_id = id_of_hash(a.hash)
+ 		repo = Id.name_id(3, t.name.to_utf8())
+@@ -318,7 +319,7 @@
+ 					}
+ 				},
+ 			),
+-			target_names: a.target_names.sort_with(Artifact.compare),
++			target_names: Sorted.sort_with(a.target_names, Artifact.compare),
+ 			leaf: { grp: t.form, version: t.version.to_str(), hash: t.hash, time: input.now_ms },
+ 			release: {
+ 				form: Reads.form_id(t.form),
+diff -ruN '--exclude=app.wasm' base/lib/Reads.roc m2/app/lib/Reads.roc
+--- base/lib/Reads.roc	2026-11-03 12:10:34.813218792 +0400
++++ m2/app/lib/Reads.roc	2026-11-07 18:07:21.987759900 +0400
+@@ -4,6 +4,7 @@
+ ## The ETag, the conditional request and the cache rules are design facts: R-AP53 (answers), R-AP54 (ETag, 304, 200), R-AP55 (Cache API, `Talon-Bookmark`), R-AP56 (path and query).
+ ## The texts of the `detail` of a problem are proposals, accepted at the review (TW24): `docs/slices/106-read-routes.md` section 6.
+ ## Every body is built here as text, so that two answers of one state have the same bytes and the same ETag (R-AP24, R-AP49).
++import records.Sorted
+ import records.Artifact
+ import records.Closure
+ import records.Code
+@@ -368,5 +369,5 @@
+ 
+ 	## R-AP53: `repos` sorted by `name` (bytes).
+ 	sorted_repos : List(Reads.RepoItem) -> List(Reads.RepoItem)
+-	sorted_repos = |repos| repos.sort_with(|a, b| Artifact.compare(a.name, b.name))
++	sorted_repos = |repos| Sorted.sort_with(repos, |a, b| Artifact.compare(a.name, b.name))
+ }
+diff -ruN '--exclude=app.wasm' base/lib/Shorts.roc m2/app/lib/Shorts.roc
+--- base/lib/Shorts.roc	2026-11-03 14:26:47.896163240 +0400
++++ m2/app/lib/Shorts.roc	2026-11-07 18:07:21.987908018 +0400
+@@ -3,6 +3,7 @@
+ ## The tests are in `worker/tests/unit/ShortsTest.roc` (W0) and `worker/tests/cases/shorts/` (W2).
+ ## The texts of the `detail` of a problem and the members of the answer that the design does not give are proposals (TW24): `docs/slices/107-short-names.md` section 6.
+ ## Every body is built here as text, so that two answers of one state have the same bytes and the same ETag (R-AP24, R-AP53, R-AP54).
++import records.Sorted
+ import records.Artifact
+ import records.Short
+ import Problem
+@@ -184,7 +185,7 @@
+ 	target_of = |row, rows| if (row.state == 2) chain_end(row.name, rows) else row.name
+ 
+ 	sorted_names : List(Str) -> List(Str)
+-	sorted_names = |names| names.sort_with(|a, b| Artifact.compare(a, b)).fold([], |acc, n| if (acc.contains(n)) acc else acc.append(n))
++	sorted_names = |names| Sorted.sort_with(names, |a, b| Artifact.compare(a, b)).fold([], |acc, n| if (acc.contains(n)) acc else acc.append(n))
+ 
+ 	## The item for one end: the end row and the old names (matched moved rows) that it replaces.
+ 	item_of : Str, List((Shorts.Row, Str)), List(Shorts.Row) -> Try(Shorts.Item, [BadRow(Str)])
+@@ -219,7 +220,7 @@
+ 	rank = |text, names| {
+ 		t = text.with_ascii_lowercased()
+ 		ranked = names.map(|n| (rank_of(t, n), n)).keep_if(|p| p.0 > 0)
+-		ranked.sort_with(|a, b| if (a.0 < b.0) Before else if (a.0 > b.0) After else Artifact.compare(a.1, b.1)).take_first(search_limit).map(|p| p.1)
++		Sorted.sort_with(ranked, |a, b| if (a.0 < b.0) Before else if (a.0 > b.0) After else Artifact.compare(a.1, b.1)).take_first(search_limit).map(|p| p.1)
+ 	}
+ 
+ 	## 1 exact, 2 prefix, 3 substring of the name, 0 no match (R-SN10).
+diff -ruN '--exclude=app.wasm' base/lib/Version.roc m2/app/lib/Version.roc
+--- base/lib/Version.roc	2026-11-01 21:57:03.007916883 +0400
++++ m2/app/lib/Version.roc	2026-11-07 18:07:21.987602294 +0400
+@@ -3,6 +3,7 @@
+ ## Its value is 2^53 or more in most rows, so it goes to D1 as decimal text and comes back through `CAST(version AS TEXT)` (R-IK2).
+ ## So every value of this module that goes to SQL is a `Str` with the decimal form of an `I64`.
+ ## The tests are in `worker/tests/unit/VersionTest.roc` (W0) and `sql/tests/cases/versions/` (W1).
++import records.Sorted
+ import semver.Semver
+ import semver.VersionReq
+ 
+@@ -95,7 +96,7 @@
+ 	## The precedence order (`Semver.order_relative_to`, R-IK5 property 3). The rows come from `ORDER BY version`, which is
+ 	## the order of the keys: versions with one key can be out of order, and this function puts them right. Stable for `Same`.
+ 	sort_precedence : List(Semver) -> List(Semver)
+-	sort_precedence = |versions| versions.sort_with(|a, b| a.order_relative_to(b))
++	sort_precedence = |versions| Sorted.sort_with(versions, |a, b| a.order_relative_to(b))
+ 
+ 	sign_bit : U64
+ 	sign_bit = 0x8000000000000000
+diff -ruN '--exclude=app.wasm' base/ReconcileCron.roc m2/app/ReconcileCron.roc
+--- base/ReconcileCron.roc	2026-11-03 13:19:35.621244466 +0400
++++ m2/app/ReconcileCron.roc	2026-11-07 18:07:21.987488270 +0400
+@@ -37,6 +37,7 @@
+ ## - The clear of `repo-missing` (R-PU24, Q379) comes from `list_work`. The guard of a clear changes: it is the value that the claim saw, `WHERE log_index = ?1 AND withdrawn = ?2` (R-PU36: a job
+ ##   `privatized` can set `repo-missing` during the run, and that value must stay; test `pu36-state-guard`).
+ ## 3. The result is `Ok({})` when the run ran (R-PU37 row 2: one failed row is a log line, not an `Err`). A trap stops the run; the claim makes the rows due again after 15 min (R-PU37 row 1).
++import records.Sorted
+ import pf.Worker
+ import pf.D1
+ import pf.Log
+@@ -62,7 +63,7 @@
+ 		claimed = db.all!(Reconcile.claim_sql(), (now, Reconcile.max_rows))
+ 		match claimed {
+ 			Err(e) => Log.warn!("reconcile claim failed", { error: Str.inspect(e) })
+-			Ok(rows) => rows!(now, rows.sort_with(by_repo))
++			Ok(rows) => rows!(now, Sorted.sort_with(rows, by_repo))
+ 		}
+ 		Ok({})
+ 	}
+diff -ruN packages/records/Artifact.roc m2/packages/records/Artifact.roc
+--- packages/records/Artifact.roc	2026-11-07 17:52:49.786504024 +0400
++++ m2/packages/records/Artifact.roc	2026-11-07 18:07:21.998319377 +0400
+@@ -1,4 +1,5 @@
+ import Code
++import Sorted
+ import Nullable
+ 
+ ## One artifact on the wire (Registry R-RE1, R-RE19, R-RE20, R-AP2, R-AP17). Pure.
+@@ -58,8 +59,8 @@
+ 		platform_hash: Nullable.write(r.platform_hash),
+ 		roc_pin: Nullable.write(r.roc_pin),
+ 		size: r.size,
+-		deps: r.deps.sort_with(|a, b| compare(a.alias, b.alias)).map(|d| { alias: d.alias, hash: d.hash, group: d.group, series: Nullable.write(d.series), version: Nullable.write(d.version), url: d.url, is_platform: d.is_platform }),
+-		target_names: r.target_names.sort_with(compare),
++		deps: Sorted.sort_with(r.deps, |a, b| compare(a.alias, b.alias)).map(|d| { alias: d.alias, hash: d.hash, group: d.group, series: Nullable.write(d.series), version: Nullable.write(d.version), url: d.url, is_platform: d.is_platform }),
++		target_names: Sorted.sort_with(r.target_names, compare),
+ 	}
+ 
+ 	from_wire : Artifact.Wire -> Try(Artifact.Row, [BadJson(Str)])
+diff -ruN packages/records/Code.roc m2/packages/records/Code.roc
+--- packages/records/Code.roc	2026-11-07 17:52:49.786331340 +0400
++++ m2/packages/records/Code.roc	2026-11-07 18:07:28.386969262 +0400
+@@ -1,4 +1,5 @@
+ ## The codes of the closed sets (Registry 5.1, R-IK7): the position of a value in the list of its rule, from 0. Pure.
++import Sorted
+ Code :: [].{
+ 
+ 	## `result` of R-RE3 (Resolution 4, R-RC1 to R-RC4): `pass` 0, `fail` 1, `hang` 2, `crash` 3. The wire text is the lower-case name.
+@@ -109,7 +110,7 @@
+ 	via_sort = |vias| {
+ 		known = ["oidc", "webhook", "poll", "ingest"]
+ 		# Q342: the unknown texts follow the known ones, in ascending UTF-8 byte order.
+-		known.join_map(|k| vias.keep_if(|v| v == k)).concat(vias.keep_if(|v| !known.contains(v)).sort_with(|a, b| compare_bytes(a.to_utf8(), b.to_utf8())))
++		known.join_map(|k| vias.keep_if(|v| v == k)).concat(Sorted.sort_with(vias.keep_if(|v| !known.contains(v)), |a, b| compare_bytes(a.to_utf8(), b.to_utf8())))
+ 	}
+ 
+ 	compare_bytes : List(U8), List(U8) -> [Before, Same, After]
+diff -ruN packages/records/main.roc m2/packages/records/main.roc
+--- packages/records/main.roc	2026-11-07 17:52:49.786430646 +0400
++++ m2/packages/records/main.roc	2026-11-07 18:07:21.975296192 +0400
+@@ -10,6 +10,7 @@
+ 		Code,
+ 		Compat,
+ 		Id,
++		Sorted,
+ 		Index,
+ 		Problem,
+ 		Release,
+diff -ruN packages/records/Sorted.roc m2/packages/records/Sorted.roc
+--- packages/records/Sorted.roc	1970-01-01 04:00:00.000000000 +0400
++++ m2/packages/records/Sorted.roc	2026-11-07 18:07:21.968559095 +0400
+@@ -0,0 +1,39 @@
++## A stable merge sort. `List.sort_with` of the compiler makes 50 to 250 KB of wasm code for each call site (research/bigfn2/README.md).
++## This sort is a few KB for each call site. The lists of the Worker are short (500 rows at most), so speed does not matter.
++Sorted :: [].{
++
++	## The same contract as `List.sort_with`: `Same` keeps the input order.
++	sort_with : List(a), (a, a -> [Before, Same, After]) -> List(a)
++	sort_with = |items, cmp| {
++		n = items.len()
++		if (n < 2) {
++			items
++		} else {
++			mid = n // 2
++			merge(sort_with(items.take_first(mid), cmp), sort_with(items.drop_first(mid), cmp), cmp)
++		}
++	}
++
++	merge : List(a), List(a), (a, a -> [Before, Same, After]) -> List(a)
++	merge = |xs, ys, cmp| {
++		var $i = 0
++		var $j = 0
++		var $out = List.with_capacity(xs.len() + ys.len())
++		while Bool.True {
++			match (xs.get($i), ys.get($j)) {
++				(Ok(x), Ok(y)) => match cmp(y, x) {
++					Before => {
++						$out = $out.append(y)
++						$j = $j + 1
++					}
++					_ => {
++						$out = $out.append(x)
++						$i = $i + 1
++					}
++				}
++				_ => break
++			}
++		}
++		$out.concat(xs.drop_first($i)).concat(ys.drop_first($j))
++	}
++}

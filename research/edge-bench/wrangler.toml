@@ -1,0 +1,52 @@
+# The bench deployment (task T4 of the allocator bench, research/bench/README.md). Not the prod Worker: use `wrangler -c wrangler.bench.toml`.
+# The same app.wasm and shim as prod. Differences: workers.dev only, its own D1, queues and keys, no crons (no GitHub reads), high hint limit (the hints scenario).
+# No GitHub App secrets: ingest and publish do not work here. The data comes from a dump of prod (research/d1-dump/dump.mjs).
+name = "talon-registry-bench"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["enable_request_signal", "global_fetch_strictly_public"]
+workers_dev = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "talon-registry-bench-2"
+database_id = "ddcc66e8-a4df-4e4b-aee9-ac4a5fb1ebaa"
+migrations_dir = "../../../sql"
+
+# The namespace ids are unique in the account, so they are not the prod ids.
+[[ratelimits]]
+name = "RL_HINTS"
+namespace_id = "2001"
+simple = { limit = 100000, period = 60 }
+
+[[ratelimits]]
+name = "RL_INGEST"
+namespace_id = "2002"
+simple = { limit = 60, period = 60 }
+
+[[ratelimits]]
+name = "RL_LOGIN"
+namespace_id = "2003"
+simple = { limit = 10, period = 60 }
+
+[vars]
+MIN_TLN = ""
+MIN_TLN_WRITE = ""
+AUDIENCE = "https://talon-registry-bench.bellup.workers.dev"
+ISSUES_URL = "https://github.com/roc-talon/talon/issues"
+BOT_REPOSITORY_ID = "1434744226"
+BOT_WORKFLOW_REF = "roc-talon/talon/.github/workflows/compat-bot.yml@refs/heads/main"
+GITHUB_APP_ID = "5572595"
+GITHUB_APP_INSTALLATION_ID = "177657685"
+
+[[queues.producers]]
+binding = "INDEX"
+queue = "talon-bench-index"
+
+[[queues.consumers]]
+queue = "talon-bench-index"
+max_retries = 4
+dead_letter_queue = "talon-bench-index-dlq"
+
+[[queues.consumers]]
+queue = "talon-bench-index-dlq"

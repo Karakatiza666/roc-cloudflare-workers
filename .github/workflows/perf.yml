@@ -1,0 +1,184 @@
+# The per-PR performance bench (bench/perf/README.md). Not enabled yet: the first run of this file is the first real run.
+# PR: build the pinned registry app on the base and on the head of the PR, run both in turn on this one runner, fail on a regression
+# above the thresholds of bench/perf/budget.json. Push to main: append the rows to the branch `bench-data` and update the charts.
+# The metric is the instructions of workerd (perf). A hosted runner may give no counters: then run.mjs uses CPU ms (source `proc`) and
+# the check uses the wider thresholds. The comparison of the base and the head in one job stays valid with both sources.
+name: perf
+on:
+  pull_request:
+    paths:
+      - 'host/**'
+      - 'hostlib/**'
+      - 'platform/**'
+      - 'js/**'
+      - 'build.zig'
+      - 'bench/perf/**'
+      - 'compat/last-stack-first-nightly'
+      - '.github/workflows/perf.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'host/**'
+      - 'hostlib/**'
+      - 'platform/**'
+      - 'js/**'
+      - 'build.zig'
+      - 'bench/perf/**'
+permissions:
+  contents: read
+concurrency:
+  group: perf-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  GH_TOKEN: ${{ github.token }}
+  WRANGLER: 4.151.0
+jobs:
+  pr:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: base
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+      - run: npm install -g wrangler@${{ env.WRANGLER }}
+      - uses: actions/cache@v4
+        with:
+          path: .cache/nightlies
+          key: nightlies-${{ hashFiles('compat/last-stack-first-nightly') }}
+      - name: Counters (perf)
+        run: |
+          sudo apt-get install -y linux-tools-common "linux-tools-$(uname -r)" || true
+          sudo sysctl -w kernel.perf_event_paranoid=-1 || true
+          perf stat -e instructions true 2>&1 | tail -3 || true
+      - name: Build the head and the base (the same pinned app on each platform)
+        run: |
+          export ZIG=$(which zig)
+          export ROC=$(bench/get-roc.sh)
+          # The base run uses the corpus, run.mjs and the budget of the head: the base may have no bench/perf.
+          node bench/perf/run.mjs --build-only --platform-root "$PWD"
+          cp .cache/perf/app.wasm head-app.wasm
+          node bench/perf/run.mjs --build-only --platform-root "$PWD/base"
+          cp base/.cache/perf/app.wasm base-app.wasm
+      - name: Run the base and the head in turn (3 times)
+        run: |
+          export MINIFLARE="$(npm root -g)/wrangler/node_modules/miniflare"
+          for i in 1 2 3; do
+            node bench/perf/run.mjs --wasm base-app.wasm --shim base/js --commit base --rounds 1 --out "$RUNNER_TEMP/base.jsonl"
+            node bench/perf/run.mjs --wasm head-app.wasm --shim js --commit head --rounds 1 --out "$RUNNER_TEMP/head.jsonl"
+          done
+      - name: Budget
+        run: node bench/perf/check.mjs --head "$RUNNER_TEMP/head.jsonl" --base "$RUNNER_TEMP/base.jsonl"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-rows
+          path: ${{ runner.temp }}/*.jsonl
+  main:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: bench-data
+          path: data
+        continue-on-error: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+      - run: npm install -g wrangler@${{ env.WRANGLER }}
+      - uses: actions/cache@v4
+        with:
+          path: .cache/nightlies
+          key: nightlies-${{ hashFiles('compat/last-stack-first-nightly') }}
+      - name: Counters (perf)
+        run: |
+          sudo apt-get install -y linux-tools-common "linux-tools-$(uname -r)" || true
+          sudo sysctl -w kernel.perf_event_paranoid=-1 || true
+      - name: Run
+        run: |
+          export ZIG=$(which zig)
+          export ROC=$(bench/get-roc.sh)
+          export MINIFLARE="$(npm root -g)/wrangler/node_modules/miniflare"
+          mkdir -p data
+          cp data/rows.jsonl bench/perf/results/rows.jsonl 2>/dev/null || true
+          node bench/perf/run.mjs --rounds 3
+          node bench/perf/chart.mjs
+      # Rows of main come from hosted runners: compare them only with each other. The PR job does not use them.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-wasm
+          path: .cache/perf/app.wasm
+      - name: Publish the rows
+        run: |
+          cp bench/perf/results/rows.jsonl bench/perf/results/rows.csv bench/perf/results/CHART.md data/
+          cd data
+          git config user.name "perf-bench"
+          git config user.email "perf-bench@users.noreply.github.com"
+          [ -d .git ] || { git init -b bench-data; git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"; }
+          git add rows.jsonl rows.csv CHART.md
+          git commit -m "perf rows for ${GITHUB_SHA::8}" || exit 0
+          git push origin HEAD:bench-data
+
+  # Optional, after a merge only (never on a PR): the CPU time on the real runtime. It deploys the pinned app, built on the main platform, to
+  # the bench Worker talon-registry-bench (corpus/wrangler.edge.toml: one version, no traffic split), sends 400 read requests to
+  # https://talon-registry-bench.bellup.workers.dev and reads p50, p90 and p99 of the CPU time of that version from the Workers analytics
+  # (GraphQL workersInvocationsAdaptive, after a wait of up to 20 minutes). Rows have where=edge. Free plan: 100,000 requests a day, this uses 400.
+  # Needs the repository secrets CLOUDFLARE_API_TOKEN (Workers Scripts edit, Account Analytics read) and CLOUDFLARE_ACCOUNT_ID. Without them the job is skipped.
+  edge:
+    if: github.event_name == 'push' && vars.PERF_EDGE == 'true'
+    needs: main
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    concurrency:
+      group: perf-edge
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: bench-data
+          path: data
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      - run: npm install -g wrangler@${{ env.WRANGLER }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-wasm
+          path: .cache/perf
+      - name: Deploy and measure
+        run: |
+          cp data/rows.jsonl bench/perf/results/rows.jsonl
+          version=$(node bench/perf/edge.mjs deploy)
+          node bench/perf/edge.mjs run --version "$version" --commit "${GITHUB_SHA::8}"
+          node bench/perf/chart.mjs
+      - name: Publish the rows
+        run: |
+          cp bench/perf/results/rows.jsonl bench/perf/results/rows.csv bench/perf/results/CHART.md data/
+          cd data
+          git config user.name "perf-bench"
+          git config user.email "perf-bench@users.noreply.github.com"
+          git add rows.jsonl rows.csv CHART.md
+          git commit -m "edge perf rows for ${GITHUB_SHA::8}" || exit 0
+          git push origin HEAD:bench-data
