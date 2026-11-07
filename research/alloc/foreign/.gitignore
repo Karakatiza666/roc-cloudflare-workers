@@ -1,0 +1,7 @@
+vendor/
+gen/
+edge/
+out-*
+*.log
+sustained/out/
+heavy/out/

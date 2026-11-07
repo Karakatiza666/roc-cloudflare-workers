@@ -10,6 +10,11 @@
 // Each response: status, and the sha256 of the body ({{uniq}} is a counter, so the bodies are the same in each run).
 // The stats header (x-roc-stats) gives the peak wasm memory and the peak of live bytes in a request.
 // Prints a table (median, p25 to p75 per variant) and the body check (all variants against the first). Exit 1 on a body difference.
+// --events <perf events> (default instructions,cycles,page-faults): each one per request, idle subtracted (research/alloc/foreign).
+// --v8 <flags>: V8 flags of workerd, e.g. "--no-liftoff --no-wasm-lazy-compilation" (all wasm by TurboFan at the start).
+// --cpu <n>: pin workerd (all threads) to CPU n; --node-cpus <list>: pin the server node process (and this process) there.
+// A variant <name>=<dir>@off runs with the sums and the global check off (resumeCheck "off", heapCheckEvery 0,
+// heapCheckWhenIdle false); it needs a host that takes sum mode 0 (research/alloc/foreign/app.sh).
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
@@ -22,7 +27,11 @@ const opt = {};
 const vars = [];
 for (let i = 0; i < argv.length; i++) {
   if (argv[i].startsWith('--')) opt[argv[i].slice(2)] = argv[++i];
-  else { const [n, d] = argv[i].split('='); vars.push({ name: n, dir: resolve(d) }); }
+  else {
+    const [n, d0] = argv[i].split('=');
+    const [d, mode] = d0.split('@');
+    vars.push({ name: n, dir: resolve(d), opts: mode === 'off' ? { resumeCheck: 'off', heapCheckEvery: 0, heapCheckWhenIdle: false } : {} });
+  }
 }
 const rounds = Number(opt.rounds ?? 5);
 const warm = Number(opt.warm ?? 100);
@@ -46,8 +55,10 @@ function workerdOf(nodePid) {
   }
   return null;
 }
+const EVENTS = (opt.events ?? 'instructions,cycles,page-faults').split(',');
+if (opt['node-cpus']) spawnSync('taskset', ['-p', '-c', opt['node-cpus'], String(process.pid)]);
 async function perfStat(pid, fn) {
-  const p = spawn('perf', ['stat', '-x', ',', '-e', 'instructions,cycles,page-faults', '-p', String(pid)], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const p = spawn('perf', ['stat', '-x', ',', '-e', EVENTS.join(','), '-p', String(pid)], { stdio: ['ignore', 'ignore', 'pipe'] });
   let err = '';
   p.stderr.on('data', (d) => { err += d; });
   await sleep(150);
@@ -60,7 +71,7 @@ async function perfStat(pid, fn) {
   await new Promise((r) => p.on('close', r));
   const m = {};
   for (const l of err.trim().split('\n')) { const f = l.split(','); if (f[2]) m[f[2].replace(/:.*$/, '')] = Number(f[0]); }
-  return { ins: m.instructions, cyc: m.cycles, pf: m['page-faults'], cpu: c1 - c0, ms, extra };
+  return { ev: m, ins: m.instructions, cyc: m.cycles, pf: m['page-faults'], cpu: c1 - c0, ms, extra };
 }
 
 let counter = 0n;
@@ -87,14 +98,17 @@ async function runSeries(base, lines, n, c, acc) {
 async function one(v, s) {
   const state = join(here, 'state');
   rmSync(join(state, 'worker.url'), { force: true });
-  const env = { ...process.env, W2_DIR: v.dir, TALON_NOW: '2026-11-07T12:00:00Z', MINIFLARE_WORKERD_V8_FLAGS: '', CFW_TEST_OPTIONS: '{"stats":true}' };
+  const env = { ...process.env, W2_DIR: v.dir, TALON_NOW: '2026-11-07T12:00:00Z', MINIFLARE_WORKERD_V8_FLAGS: opt.v8 ?? '', CFW_TEST_OPTIONS: JSON.stringify({ stats: true, ...v.opts }) };
   delete env.CFW_TEST_TRACE;
-  const srv = spawn(join(here, 'serve.sh'), [], { env, stdio: ['ignore', 'ignore', 'inherit'] });
+  const srv = opt['node-cpus']
+    ? spawn('taskset', ['-c', opt['node-cpus'], join(here, 'serve.sh')], { env, stdio: ['ignore', 'ignore', 'inherit'] })
+    : spawn(join(here, 'serve.sh'), [], { env, stdio: ['ignore', 'ignore', 'inherit'] });
   try {
     for (let i = 0; !existsSync(join(state, 'worker.url')); i++) { if (i > 600 || srv.exitCode !== null) throw new Error(`${v.name}: no server`); await sleep(200); }
     const base = readFileSync(join(state, 'worker.url'), 'utf8').trim();
     const wd = workerdOf(srv.pid);
     if (!wd) throw new Error('no workerd');
+    if (opt.cpu !== undefined && spawnSync('taskset', ['-a', '-p', '-c', String(opt.cpu), String(wd)]).status !== 0) throw new Error('taskset');
     const lines = scen(s.sc);
     counter = 0n;
     await runSeries(base, lines, warm, 1, null);
@@ -107,6 +121,7 @@ async function one(v, s) {
       insPerReq: (run.ins - idle.ins * k) / s.n, cycPerReq: (run.cyc - idle.cyc * k) / s.n, cpuMsPerReq: (run.cpu - idle.cpu * k) / s.n,
       pfPerReq: run.pf / s.n, wallMs: run.ms, idleInsPerS: idle.ins / (idle.ms / 1000), memMB: acc.mem / 2 ** 20, livePeakKB: acc.live / 1024, rssMB: hwmKB(wd) / 1024,
       bodies: run.extra,
+      ev: Object.fromEntries(EVENTS.map((e) => [e, (run.ev[e] - (idle.ev[e] ?? 0) * k) / s.n])),
     };
     await fetch(`${base}/__regserve/stop`, { method: 'POST' }).catch(() => {});
     return res;

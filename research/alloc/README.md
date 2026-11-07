@@ -28,6 +28,7 @@ Contents:
 | port | `hostlib/alloc.zig` | v7 without the switches, plus `mayFree`, the live peak, step counts, sums of adopted JS blocks, the counters of the stats header. Since 2026-11-07: the short paths of v8 | As v7 | As v7 | In the platform |
 | v8 | `versions/v8.zig` | As v7, short paths: one read of each table per call | As v7 | As v7 | In the port (2026-11-07) |
 | v9, v9f, v9b1, v9b2 | `versions/v9*.zig` | The port at 6c580d5 (v9), and one change each (no zero write; 8 classes; 21 classes) | As the port | As the port | Tried on the full registry: no gain (2026-11-07) |
+| foreign | `foreign/` | Other designs behind an adapter: bump, Zig WasmAllocator, dlmalloc, emmalloc, mimalloc, a reap per task (`foreign/README.md`) | | | Measured on the total registry CPU, sums off (2026-11-07): ceiling -1.7 % instructions, no cache effect; dlmalloc 35 % less memory |
 | null | `versions/null.zig` | Not an allocator: one static block, no frees | | | Tool: the replay cost with no allocator |
 
 ## Build and run
