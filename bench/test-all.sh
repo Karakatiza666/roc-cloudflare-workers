@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build everything and run every test of the platform, each with `timeout 600`. One line for each test:
+# Build everything and run every test of the platform, each with `timeout 600` (the build steps: 1800). One line for each test:
 # the exit code and the name. Exit 1 when one fails.
 # Env: ZIG (Zig 0.17, required), WORKERD (the workerd binary, required), ROC (default: bench/get-roc.sh).
 # `bench/build.sh` copies the glue of its compiler into host/: the step after the build checks that
@@ -14,7 +14,7 @@ rc=0
 step() { # name, command...
   local name=$1
   shift
-  timeout 600 "$@" > ".cache/test-all-$$.log" 2>&1
+  timeout "${STEP_TIMEOUT:-600}" "$@" > ".cache/test-all-$$.log" 2>&1
   local code=$?
   printf '%3d  %s\n' "$code" "$name"
   # The FAIL lines first: a long run (conformance) can have its one failure far above the last 15 lines.
@@ -22,7 +22,8 @@ step() { # name, command...
 }
 mkdir -p .cache
 glue0=$(cat host/roc_platform_abi.zig | md5sum)
-step "build (bench/build.sh, layout check of the outputs)" bench/build.sh
+# The builds get 1800 s: with nightly 11-06 on a CI runner, bench/build.sh went over 600 s (release 0.0.8, exit 124).
+STEP_TIMEOUT=1800 step "build (bench/build.sh, layout check of the outputs)" bench/build.sh
 step "glue is the glue of the pinned nightly (as at the start)" test "$(cat host/roc_platform_abi.zig | md5sum)" = "$glue0"
 
 step "exports-test.mjs (7a: the two export lists, requests on the production build)" node bench/exports-test.mjs bench/out/app_prod.wasm bench/out/app.wasm
@@ -88,7 +89,7 @@ step "memo-roundtrip/dev-check.sh (the memo checks in a --opt=dev build, roc-cbo
 th=.cache/test-helper
 mkdir -p "$th"
 roc_bin=${ROC:-$(bench/get-roc.sh)}
-step "build examples/hello and test-helper/app (production host)" env ROC_CACHE_DIR="$PWD/.cache/roc" XDG_CACHE_HOME="$PWD/.cache" bash -c 'cd examples/hello && "$0" build --target=wasm32 --no-cache --output="$1" main.roc && cd ../../test-helper/app && "$0" build --target=wasm32 --no-cache --output="$2" main.roc' "$roc_bin" "$PWD/$th/hello.wasm" "$PWD/$th/helper.wasm"
+STEP_TIMEOUT=1800 step "build examples/hello and test-helper/app (production host)" env ROC_CACHE_DIR="$PWD/.cache/roc" XDG_CACHE_HOME="$PWD/.cache" bash -c 'cd examples/hello && "$0" build --target=wasm32 --no-cache --output="$1" main.roc && cd ../../test-helper/app && "$0" build --target=wasm32 --no-cache --output="$2" main.roc' "$roc_bin" "$PWD/$th/hello.wasm" "$PWD/$th/helper.wasm"
 step "test-helper/wrapenv-test.mjs (S2: wrapEnv for each event kind; Node)" node test-helper/wrapenv-test.mjs "$th/helper.wasm"
 step "test-helper/count-test.mjs (S3: the count rules TH6, TH16; Node)" node test-helper/count-test.mjs
 step "test-helper/helper-test.mjs (S4 to S6: startApp, reset, H1 to H11, in Miniflare)" node test-helper/helper-test.mjs "$th/hello.wasm" "$th/helper.wasm"
