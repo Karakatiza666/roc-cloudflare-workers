@@ -82,8 +82,12 @@ export function makeBridge(cell, tasks, shim) {
 
   // The crossings of the instance (`stats.crossings` of the runner): one count for each import call.
   const crossings = shim.crossings ?? { await: 0, call: 0 };
+  // The bytes of the programs and the results that cross (exact, for the bench: they follow the CPU of the CBOR coder).
+  crossings.bytes ??= 0;
+  const outBytes = (x, out) => new DataView(x.memory.buffer).getUint32(out + 4, true);
   async function js_await(id, ap, al, out) {
     crossings.await++;
+    crossings.bytes += al;
     const x = cell.x;
     const t = tasks?.get(id);
     // The task suspends here: the stack is free for other tasks. Each return below resumes it, so each return comes
@@ -125,7 +129,9 @@ export function makeBridge(cell, tasks, shim) {
       // 12c: a global check that is due runs before the resume. A failed check cancels this task.
       cell.gate?.();
       if (t?.cancelled) return end5(x, t, cell.cancelTrap);
-      return writeResult(x, out, res[0], res[1], c.refs);
+      const st = writeResult(x, out, res[0], res[1], c.refs);
+      if (st !== STATUS_OOM) crossings.bytes += outBytes(x, out);
+      return st;
     } catch {
       await back();
       if (t?.cancelled) return end5(x, t, cell.cancelTrap);
@@ -136,6 +142,7 @@ export function makeBridge(cell, tasks, shim) {
   // No wait: a promise is status 2 (OP1). The task is not cancelled here: a cancel stops a task at a wait.
   function js_call(id, ap, al, out) {
     crossings.call++;
+    crossings.bytes += al;
     const x = cell.x;
     try {
       const c = contextOf(tasks?.get(id));
@@ -145,7 +152,9 @@ export function makeBridge(cell, tasks, shim) {
       } catch (e) {
         res = [statusOf(e), errorOf(e)];
       }
-      return writeResult(x, out, res[0], res[1], c.refs);
+      const st = writeResult(x, out, res[0], res[1], c.refs);
+      if (st !== STATUS_OOM) crossings.bytes += outBytes(x, out);
+      return st;
     } catch {
       return STATUS_OOM;
     }

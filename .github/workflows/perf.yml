@@ -1,8 +1,10 @@
 # The per-PR performance bench (bench/perf/README.md). Not enabled yet: the first run of this file is the first real run.
 # PR: build the pinned registry app on the base and on the head of the PR, run both in turn on this one runner, fail on a regression
 # above the thresholds of bench/perf/budget.json. Push to main: append the rows to the branch `bench-data` and update the charts.
-# The metric is the instructions of workerd (perf). A hosted runner may give no counters: then run.mjs uses CPU ms (source `proc`) and
-# the check uses the wider thresholds. The comparison of the base and the head in one job stays valid with both sources.
+# The metric is the instructions of workerd (perf). A hosted runner has no counters (measured: `instructions` is not supported there): then
+# run.mjs uses CPU ms (source `proc`) and the check uses the thresholds times 4. The exact counters (allocations, crossings, sizes) gate with
+# small thresholds in all modes. valgrind is not used in CI: its Ir has a 26 % jump between runs (bench/perf/README.md "Without perf").
+# The comparison of the base and the head in one job stays valid with both sources.
 name: perf
 on:
   pull_request:
@@ -58,7 +60,7 @@ jobs:
         run: |
           sudo apt-get install -y linux-tools-common "linux-tools-$(uname -r)" || true
           sudo sysctl -w kernel.perf_event_paranoid=-1 || true
-          perf stat -e instructions true 2>&1 | tail -3 || true
+          perf stat -e instructions true 2>&1 | tail -3 || true # on a hosted runner: "not supported", so the source is proc
       - name: Build the head and the base (the same pinned app on each platform)
         run: |
           export ZIG=$(which zig)

@@ -41,6 +41,10 @@ lines.push('# Platform performance bench', '', `Runs: ${runs.length} (${runs[0]?
 chart('Instructions per request, small (M)', 'M instructions', [{ scenario: 'small', metric: 'ins_per_req', name: 'small, steady' }], 1e6);
 chart('Cold extra of the first request, small (M)', 'M instructions', [{ scenario: 'small', metric: 'cold_extra_ins', name: 'first request minus steady' }], 1e6);
 chart('Instructions per request, other scenarios (M)', 'M instructions', ['search', 'releases', 'closure', 'compat', 'mixed-ro'].map((s) => ({ scenario: s, metric: 'ins_per_req', name: s })), 1e6);
+// Rows of the source `vg` (valgrind Ir, hosted runners): own metric names, so they never mix with the perf charts.
+chart('Valgrind Ir per request, small (M), hosted runner', 'M Ir', [{ scenario: 'small', metric: 'ir_per_req', name: 'small, steady' }], 1e6);
+chart('Valgrind Ir per request, other scenarios (M), hosted runner', 'M Ir', ['search', 'releases', 'closure', 'compat', 'mixed-ro'].map((s) => ({ scenario: s, metric: 'ir_per_req', name: s })), 1e6);
+chart('Crossings per request (JS/wasm calls, exact)', 'calls', ['small', 'closure', 'mixed-ro'].map((s) => ({ scenario: s, metric: 'cross_per_req', name: s })), 1);
 chart('Allocations per request', 'allocs', ['small', 'closure', 'mixed-ro'].map((s) => ({ scenario: s, metric: 'allocs_per_req', name: s })), 1);
 chart('Size of app.wasm and its largest function (KB)', 'KB', [{ scenario: 'static', metric: 'app_wasm_bytes', name: 'app.wasm' }, { scenario: 'static', metric: 'largest_fn_bytes', name: 'largest function' }], 1024);
 chart('Edge CPU time of the bench Worker (ms, Workers analytics, after merge)', 'ms', [{ scenario: 'edge-series', metric: 'cpu_p50_us', name: 'p50' }, { scenario: 'edge-series', metric: 'cpu_p90_us', name: 'p90' }, { scenario: 'edge-series', metric: 'cpu_p99_us', name: 'p99' }], 1000, edgeRuns);
@@ -49,8 +53,8 @@ const last = runs.at(-1);
 if (last) {
   const sc = [...new Set(last.rows.map((r) => r.scenario))].filter((s) => s !== 'static');
   const f = (v, d = 3, k = 1e6) => (v === undefined ? '' : (v / k).toFixed(d));
-  lines.push(`### Latest run (${last.commit}, ${last.date}, nightly ${last.nightly})`, '', '| Scenario | M ins per request | Cold extra, M ins | Allocs per request | Peak memory, MB |', '| --- | --- | --- | --- | --- |',
-    ...sc.map((s) => `| ${s} | ${f(last.get(s, 'ins_per_req'))} | ${f(last.get(s, 'cold_extra_ins'), 2)} | ${f(last.get(s, 'allocs_per_req'), 1, 1)} | ${f(last.get(s, 'mem_peak_bytes'), 1, 1048576)} |`), '',
+  lines.push(`### Latest run (${last.commit}, ${last.date}, nightly ${last.nightly})`, '', '| Scenario | M ins (perf) or Ir (vg) per request | Cold extra, M ins | Allocs per request | Peak memory, MB |', '| --- | --- | --- | --- | --- |',
+    ...sc.map((s) => `| ${s} | ${f(last.get(s, 'ins_per_req') ?? last.get(s, 'ir_per_req'))} | ${f(last.get(s, 'cold_extra_ins') ?? last.get(s, 'cold_extra_ir'), 2)} | ${f(last.get(s, 'allocs_per_req'), 1, 1)} | ${f(last.get(s, 'mem_peak_bytes'), 1, 1048576)} |`), '',
     `app.wasm ${f(last.get('static', 'app_wasm_bytes'), 0, 1024)} KB, largest function ${f(last.get('static', 'largest_fn_bytes'), 0, 1024)} KB.`, '');
 }
 writeFileSync(outFile, lines.join('\n'));

@@ -42,7 +42,7 @@ node bench/perf/check.mjs --head head.jsonl --base base.jsonl
 node bench/perf/chart.mjs
 ```
 
-Needs `perf` for the main metric, and the Miniflare of a global wrangler (`MINIFLARE=<dir>` otherwise). Node 26.
+Needs `perf` for the main metric (else `proc`; `PERF_SOURCE=vg` needs `valgrind` and `callgrind_control`), and the Miniflare of a global wrangler (`MINIFLARE=<dir>` otherwise). Node 26.
 
 ## What a round does
 
@@ -62,7 +62,7 @@ One row for each (commit, scenario, metric), in `results/rows.jsonl`. `results/r
 
 | Column | Meaning |
 | --- | --- |
-| `commit` | Short hash, `+dirty` when the tree has changes outside `bench/perf/results` and `research/` |
+| `commit` | Short hash, `+dirty` when the tree has changes outside `bench/perf/results`, `research/`, `data/` (the checkout of `bench-data` in CI) and `base/` (the base of a PR in CI). `run.mjs` prints the files that make it dirty |
 | `date`, `nightly` | UTC time, the Roc nightly of `compat/last-stack-first-nightly` |
 | `label` | Free text (`--label`) |
 | `where` | `local` (Miniflare, this bench) or `edge` (the real runtime, `edge.mjs`). A row with no `where` is `local` |
@@ -70,12 +70,15 @@ One row for each (commit, scenario, metric), in `results/rows.jsonl`. `results/r
 | `metric`, `unit` | See below |
 | `value` | Median of the rounds |
 | `requests`, `rounds`, `min`, `max` | Measured requests, number of rounds, range of the rounds |
-| `source` | `perf`, `proc`, `stats` or `static` |
+| `source` | `perf`, `vg`, `proc`, `stats` or `static` |
 
 | Metric | Scenario | Source | Meaning |
 | --- | --- | --- | --- |
 | `ins_per_req` | each | perf | Instructions of workerd for each request. The main metric |
 | `cold_first_ins` | small | perf | Instructions of the first request of a fresh isolate |
+| `ir_per_req`, `cold_first_ir`, `cold_extra_ir` | small, each | vg | Same as the `ins_*` rows, but the Ir of valgrind (opt in, see "Without perf") |
+| `cpu_min_ms_per_req` | each | proc | Smallest CPU time of the blocks of about 100 requests (whole scenario cycles). Information only: not tested on CI yet |
+| `cross_per_req`, `xbytes_per_req` | each | stats | Calls across the JS/wasm boundary (`js_await`, `js_call`) and bytes of their programs and results, for each request. Exact |
 | `cold_extra_ins` | small | perf | `cold_first_ins` minus `ins_per_req` (the start cost: lazy wasm compile, first D1 use) |
 | `cpu_ms_per_req` | each | proc | CPU time of workerd from `/proc`. Information only (noise 10 to 25 %) |
 | `allocs_per_req`, `alloc_bytes_per_req` | each | stats | Allocator calls and bytes of the Roc heap for each request (header `x-roc-stats`). Exact |
@@ -104,6 +107,7 @@ CPU ms is not usable as a gate on a shared machine. Instructions are. A short me
 | other scenarios `ins_per_req` | at most +5 % | A/A range up to 2.9 % |
 | `small` `cold_first_ins` | at most +3 % | A/A range 0.26 % |
 | `allocs_per_req` | at most +1 % | Exact. A new allocation in a small request shows at once |
+| `alloc_bytes_per_req`, `cross_per_req`, `xbytes_per_req` | at most +2 %, +1 %, +2 % | Exact |
 | `app_wasm_bytes` | at most +2 % | Exact |
 | `largest_fn_bytes` | at most +5 % | Exact |
 | `small` `ins_per_req` absolute | at most 1 ms of estimated edge CPU | 10 % of the limit. Now 0.48 ms |
@@ -116,13 +120,37 @@ A relative rule needs a base from the same machine. The CI job builds the base a
 
 ## Without perf
 
-`perf stat` needs counters. A hosted GitHub runner is a VM, and it may give none (the workflow tries `linux-tools` and `kernel.perf_event_paranoid=-1`). Then `run.mjs` prints `source: proc`, and writes `cpu_ms_per_req` and `cold_first_cpu_ms` with the source `proc` instead of the instruction rows. `check.mjs` then compares these with the thresholds times `proc_factor` (4) and skips the absolute rules. The allocation, memory and size rows stay exact in both modes. They are the safe gate when CPU is noisy. Rows of different sources are never compared: `chart.mjs` draws only `perf` rows in the instruction charts.
+A hosted GitHub runner is a VM with no hardware counters. Measured on `ubuntu-24.04` (AMD EPYC 7763), run 42386276899: `perf stat -e instructions` and `-e instructions:u` give "not supported" (also with `perf_event_paranoid=-1`). The other `perf` events there are software events (`cpu-clock`, `task-clock`, `page-faults`), and they are time or count of events, not instructions. So the CI rows have the source `proc` (CPU ms of workerd, now from the ns counter of `schedstat`), and the base and the head run in turn on one runner.
+
+Options for a stable CPU value without counters (A/A: the same `app.wasm` in each run):
+
+| Option | Runtime | Noise (A/A) | Result |
+| --- | --- | --- | --- |
+| perf software events | 0 | Same as `proc` (time based) | No gain |
+| `proc` CPU ms, CI, 5 runs in turn | 1 min each | CV 6.4 to 8.5 %, range 15 to 20 % (a rise from run 1 to run 5) | Gate with thresholds times 4, base and head in turn |
+| `proc` CPU ms, dev machine under load | 1 min each | Range 180 to 290 % | Not usable on a loaded machine |
+| valgrind callgrind on workerd (`PERF_SOURCE=vg`) | 3 to 6 min for each round (about 30 ms for each request, 100 s start, 15 to 25 times slower) | Ir of the event-loop thread: CV 0.6 % in one run, but 2 states between runs: 3.58 M and 4.5 to 4.6 M for each request (+26 %), 5 of 7 runs in the high state. One CI round failed with `ECONNRESET` | Opt in only, not a gate |
+| Exact counters (`allocs_per_req`, `alloc_bytes_per_req`, `cross_per_req`, `xbytes_per_req`, sizes) | 0 | 0 % | Gate with small thresholds in all modes |
+
+Valgrind runs workerd and the V8 JIT with no flags (valgrind 3.22 on CI, 3.26 on the dev machine; `MINIFLARE_WORKERD_PATH` is a wrapper script). The metric is the busiest thread of `--separate-threads=yes`: it has 98 % of the Ir, the helper threads (GC, wasm compile) vary by 5 to 15 %. The Ir of the low state is equal to the perf value (3.58 M against 3.59 M for `small`), so the low state is the right one. The jump follows the tier-up state of the wasm in V8, and the bench cannot set V8 flags in workerd. A gate would need many rounds and a minimum, which costs more than the PR job can use.
+
+The exact counters follow the CPU only in part. Over the 6 scenarios `ins_per_req` is about 11 k instructions for each allocation (residual 5 to 16 %), so `allocs_per_req` shows an allocation-heavy change, but not a codegen or host change. `cross_per_req` is 1.5 for `small`: the boundary is not the CPU cost, so it is a guard for the number of crossings only.
+
+| Source | Gate in the PR job |
+| --- | --- |
+| `perf` (counters) | Instructions: `small` +3 %, other scenarios +5 %, plus the absolute rules |
+| `proc` (no counters) | CPU ms with the thresholds times `proc_factor` (4): `small` +12 %, other scenarios +20 %; no absolute rules |
+| `vg` (opt in) | Ir with the thresholds times `vg_factor` (10); absolute rules with `ir_per_ms` |
+| all | Exact counters and sizes (table "Budget"), the same small thresholds |
+
+Rows of different sources are never compared: `check.mjs` stops with exit 2 when the head and the base have different sources, and `chart.mjs` draws `perf` rows and `vg` rows in separate charts.
 
 | Metric | Comparable between runs on different machines | Between the base and the head of one job |
 | --- | --- | --- |
 | `ins_per_req` (perf) | Only on the same CPU type | Yes |
 | `cpu_ms_per_req` (proc) | No | Yes, with wide thresholds |
-| `allocs_per_req`, `mem_peak_bytes`, sizes | Yes | Yes |
+| `ir_per_req` (vg) | Yes (user code only), but with the 26 % jump | No |
+| `allocs_per_req`, `cross_per_req`, `mem_peak_bytes`, sizes | Yes | Yes |
 
 ## Edge CPU (optional, after a merge)
 

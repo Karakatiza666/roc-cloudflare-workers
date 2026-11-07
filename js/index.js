@@ -237,6 +237,8 @@ export function makeHandler(module, opts = {}) {
       const t0 = clock();
       if (!born) born = t0;
       const a = allocStats(x);
+      const cr = r.stats.crossings;
+      const c0 = { n: cr.await + cr.call, bytes: cr.bytes ?? 0 };
       x.alloc_window();
       const res = await inner.call(this, request);
       const b = allocStats(x);
@@ -253,6 +255,8 @@ export function makeHandler(module, opts = {}) {
         served: ++served,
         ageMs: clock() - born,
         inst: r.stats.retired,
+        cross: cr.await + cr.call - c0.n,
+        xbytes: (cr.bytes ?? 0) - c0.bytes,
       };
       const text = JSON.stringify(stat);
       try {

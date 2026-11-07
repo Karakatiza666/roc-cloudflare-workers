@@ -5,7 +5,9 @@
 // the last row of main). Two kinds of rule (budget.json):
 //   relative: the head value may not be more than max_pct above the base value. Needs --base.
 //   absolute: the value of the head run, converted with calibration.ins_per_ms, may not be above max_ms. A fixed share of the 10 ms CPU limit.
-// With the metric source `proc` (no perf), the instruction rules use the CPU ms metric, with the threshold times proc_factor, and the absolute rules are skipped.
+// The metric source of a run is perf (instructions), vg (valgrind Ir) or proc (CPU ms), the first that its rows have. The instruction rules use
+// the metric of that source: vg with the threshold times vg_factor, proc with proc_factor. The absolute rules run for perf, and for vg with
+// calibration.ir_per_ms; they are skipped for proc. Head and base must have the same source: rows of different sources are never compared.
 import { readFileSync, appendFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -30,9 +32,15 @@ function last(f) {
 const head = last(opt.head);
 const base = opt.base ? last(opt.base) : null;
 if (!head) { console.error('check: no rows in the head file'); process.exit(2); }
-const proc = head.get('small', 'ins_per_req') === undefined;
-const PROC = { ins_per_req: 'cpu_ms_per_req', cold_first_ins: 'cold_first_cpu_ms', cold_extra_ins: null };
-const metricOf = (m) => (proc && m in PROC ? PROC[m] : m);
+const sourceOf = (run) => (run.get('small', 'ins_per_req') !== undefined ? 'perf' : run.get('small', 'ir_per_req') !== undefined ? 'vg' : 'proc');
+const source = sourceOf(head);
+if (base && sourceOf(base) !== source) { console.error(`check: head source ${source}, base source ${sourceOf(base)}: rows of different sources are never compared`); process.exit(2); }
+const proc = source === 'proc';
+const MAPS = { perf: {}, vg: { ins_per_req: 'ir_per_req', cold_first_ins: 'cold_first_ir', cold_extra_ins: 'cold_extra_ir' }, proc: { ins_per_req: 'cpu_ms_per_req', cold_first_ins: 'cold_first_cpu_ms', cold_extra_ins: null } };
+const PROC = MAPS[source];
+const factor = source === 'vg' ? (budget.vg_factor ?? 1) : source === 'proc' ? budget.proc_factor : 1;
+const insPerMs = source === 'vg' ? budget.calibration.ir_per_ms : budget.calibration.ins_per_ms;
+const metricOf = (m) => (m in PROC ? PROC[m] : m);
 const scenariosOf = (run, sc) => (sc === '*' ? [...new Set(run.rows.map((r) => r.scenario))].filter((s) => s !== 'static') : [sc]);
 
 const out = [];
@@ -42,7 +50,7 @@ for (const r of budget.relative) {
   if (!base) continue;
   const m = metricOf(r.metric);
   if (!m) continue;
-  const pct = r.max_pct * (proc && r.metric in PROC ? budget.proc_factor : 1);
+  const pct = r.max_pct * (r.metric in PROC ? factor : 1);
   for (const sc of scenariosOf(head, r.scenario)) {
     if (r.scenario === '*' && budget.relative.some((x) => x.scenario === sc && x.metric === r.metric)) continue; // the rule of that scenario is more specific
     const h = head.get(sc, m); const b = base.get(sc, m);
@@ -54,20 +62,20 @@ for (const r of budget.relative) {
   }
 }
 for (const r of budget.absolute) {
-  if (proc && r.metric in PROC) { add('absolute', r.scenario, r.metric, null, null, `${r.max_ms} ms`, 'skipped (no perf)'); continue; }
-  const h = head.get(r.scenario, r.metric);
+  if ((proc || (source === 'vg' && !insPerMs)) && r.metric in MAPS.proc) { add('absolute', r.scenario, r.metric, null, null, `${r.max_ms} ms`, `skipped (source ${source})`); continue; }
+  const h = head.get(r.scenario, metricOf(r.metric));
   if (h === undefined) continue;
   // ms of the CPU limit: instructions / ins_per_ms, times the share of workerd CPU that the edge also pays (Miniflare and local D1 do not run on the edge).
-  const ms = (h / budget.calibration.ins_per_ms) * (r.edge_share ?? 1);
+  const ms = (h / insPerMs) * (r.edge_share ?? 1);
   const bad = ms > r.max_ms;
   if (bad) fail = true;
   const note = r.target_ms !== undefined && ms > r.target_ms ? `, above the target ${r.target_ms} ms` : '';
-  add('absolute', r.scenario, r.metric, h, null, `${r.max_ms} ms`, `${ms.toFixed(2)} ms${bad ? ' FAIL' : ' ok'}${note}`);
+  add('absolute', r.scenario, metricOf(r.metric), h, null, `${r.max_ms} ms`, `${ms.toFixed(2)} ms${bad ? ' FAIL' : ' ok'}${note}`);
 }
 
 const fmt = (v) => (v === null || v === undefined ? '' : v >= 1e5 ? `${(v / 1e6).toFixed(3)} M` : Number(v.toPrecision(5)).toString());
 const md = [
-  `Perf bench: head ${head.commit}${base ? `, base ${base.commit}` : ', no base'} (${head.runs} head runs${base ? `, ${base.runs} base runs` : ''}), metric source ${proc ? 'proc (CPU ms)' : 'perf (instructions)'}: **${fail ? 'FAIL' : 'pass'}**`.replace(/\*\*/g, ''),
+  `Perf bench: head ${head.commit}${base ? `, base ${base.commit}` : ', no base'} (${head.runs} head runs${base ? `, ${base.runs} base runs` : ''}), metric source ${proc ? 'proc (CPU ms)' : source === 'vg' ? 'vg (valgrind Ir)' : 'perf (instructions)'}: **${fail ? 'FAIL' : 'pass'}**`.replace(/\*\*/g, ''),
   '',
   '| Rule | Scenario | Metric | Head | Base | Limit | Result |',
   '| --- | --- | --- | --- | --- | --- | --- |',
