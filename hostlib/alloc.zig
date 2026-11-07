@@ -1,12 +1,14 @@
 //! Allocator (PLAN.md 6e: a port of research/alloc/versions/v7.zig, without its research switches).
 //! Units: 4 KB, max 128 MB (u16 indexes). Tables per unit, outside the units.
 //! Free units: a bitmap (to find the lowest free unit) and lists of free runs by length.
-//! Small blocks (<= 2048 B): one size class and one task per 4 KB page, at the lowest
-//! free unit. No header: the page tables give the class and the task. An empty page
-//! goes back at once, to a reserve of at most 256 pages that only small pages use.
+//! Small blocks (<= 8 KB): one size class and one task per page, at the lowest free unit.
+//! A page is 1 unit (classes up to 2048 B, near 4096 / k) or a span of 2 to 7 units
+//! (classes in 1 KB steps above 2048 B, that fill the span). No header: the page tables
+//! give the class and the task. An empty 1-unit page goes back at once, to a reserve of at
+//! most 256 pages that only small pages use. An empty span goes back to the free runs.
 //! Other blocks: their own run of units, best fit, at the top end of the run. A block
-//! that a realloc moves goes to the low end of a run of 2x its size, so that the next
-//! realloc can grow it in place.
+//! that a realloc moves above 2048 B is also a large block: it goes to the low end of a run
+//! of 2x its size, so that the next realloc can grow it in place.
 //! JS blocks (`js_alloc`) are in their own pages, with an owner word for `adopt`.
 //! Live data never moves: Roc values and saved stacks hold raw addresses.
 
@@ -22,7 +24,9 @@ const PAGE: usize = 64 * 1024;
 const CH_SHIFT = 12;
 const CH: usize = 1 << CH_SHIFT;
 const MAX_UNITS: usize = (128 << 20) >> CH_SHIFT;
-const SMALL_MAX: usize = 2048;
+const SMALL_MAX: usize = 8192;
+/// A block that a realloc moves above this size is a large block (not a span class): the next realloc can grow it in place.
+const GROW_LARGE: usize = 2048;
 
 pub var OWNER: usize = 0;
 
@@ -33,13 +37,14 @@ const KIND_SMALL: u8 = 1;
 const KIND_LARGE: u8 = 2; // the first unit of a large block
 const KIND_BODY: u8 = 3; // the other units of a large block
 const KIND_FOREIGN: u8 = 4;
+const KIND_SPAN: u8 = 5; // the other units of a span page; U_START gives its first unit
 pub var U_KIND: [MAX_UNITS]u8 = @splat(0);
 /// Small page or large block: the task slot.
 var U_SLOT: [MAX_UNITS]u8 = @splat(0);
 /// Large block or free run (at its first unit): the length in units.
 pub var U_UNITS: [MAX_UNITS]u16 = @splat(0);
-/// Free run (at its last unit): its first unit.
-var U_START: [MAX_UNITS]u16 = @splat(0);
+/// Free run (at its last unit): its first unit. Span unit (KIND_SPAN): the first unit of the span.
+pub var U_START: [MAX_UNITS]u16 = @splat(0);
 /// Small pages and large blocks: the task's lists. Free runs: the lists of the index.
 var U_NEXT: [MAX_UNITS]u16 = @splat(0);
 var U_PREV: [MAX_UNITS]u16 = @splat(0);
@@ -83,6 +88,8 @@ const CACHE_MAX: usize = 256;
 var CACHE: [CACHE_MAX]u16 = @splat(0);
 var CACHED: usize = 0;
 fn smallGive(h: usize) void {
+    const n: usize = SPAN_UNITS[U_CLASS[h]];
+    if (n > 1) return runGive(h, n);
     if (CACHED < CACHE_MAX) {
         U_KIND[h] = KIND_NONE;
         CACHE[CACHED] = @intCast(h);
@@ -306,10 +313,31 @@ fn takeRun(n: usize, grow: bool) usize {
 
 // ---------------------------------------------------------------- tasks
 
-pub const CLASSES = [13]usize{ 16, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 2048 };
+/// From 256 B: 4096 / k (k = 16 to 2) rounded down to 16 B, so a 4 KB page has little waste.
+/// Above 2048 B: 1 KB steps in spans (SPAN_UNITS).
+pub const CLASSES = [_]usize{
+    16,  32,  48,  64,   96,   128,  192,  256,  288,  336,  400,  448,  512,
+    576, 672, 816, 1024, 1360, 2048, 3072, 4096, 5120, 6144, 7168, 8192,
+};
 const NCLASS = CLASSES.len;
+/// The units of a page of each class: the fewest whole units that whole blocks fill (lcm with 4 KB).
+const SPAN_UNITS: [NCLASS]u8 = blk: {
+    var t: [NCLASS]u8 = undefined;
+    for (CLASSES, 0..) |c, i| t[i] = if (c <= CH / 2) 1 else @intCast(std.math.lcm(c, CH) / CH);
+    break :blk t;
+};
+/// The bytes of a page of each class: the bump limit.
+const PAGE_END: [NCLASS]u16 = blk: {
+    var t: [NCLASS]u16 = undefined;
+    for (SPAN_UNITS, 0..) |n, i| t[i] = @intCast(@as(usize, n) * CH);
+    break :blk t;
+};
+comptime {
+    std.debug.assert(CLASSES[NCLASS - 1] == SMALL_MAX);
+    for (CLASSES) |c| std.debug.assert(c % 16 == 0);
+}
 const CLASS_UP: [SMALL_MAX / 16]u8 = blk: {
-    @setEvalBranchQuota(10_000);
+    @setEvalBranchQuota(100_000);
     var t: [SMALL_MAX / 16]u8 = undefined;
     for (0..SMALL_MAX / 16) |s| {
         var c = 0;
@@ -331,7 +359,7 @@ const Task = extern struct {
     small_head: u32, // all small pages (U_NEXT, U_PREV)
     large_head: u32, // all large blocks (U_NEXT, U_PREV)
     avail: [NCLASS]u16, // per class: the pages that can have room (U_ANEXT, U_APREV)
-    _pad: [48 - 16 - 2 * NCLASS]u8,
+    _pad: [alignUp(16 + 2 * NCLASS, 16) - 16 - 2 * NCLASS]u8,
 };
 comptime {
     std.debug.assert(@sizeOf(Task) % 16 == 0);
@@ -447,7 +475,7 @@ inline fn smallTake(t: *Task, class: usize) usize {
             return p;
         }
         const b: usize = U_BUMP[h];
-        if (b + CLASSES[class] <= CH) {
+        if (b + CLASSES[class] <= PAGE_END[class]) {
             U_BUMP[h] = @intCast(b + CLASSES[class]);
             U_LIVE[h] += 1;
             // A page used before can hold an old FREE_MARK here.
@@ -473,7 +501,7 @@ noinline fn smallAlloc(t: *Task, class: usize) usize {
             return p;
         }
         const b: usize = U_BUMP[h];
-        if (b + size <= CH) {
+        if (b + size <= PAGE_END[class]) {
             U_BUMP[h] = @intCast(b + size);
             U_LIVE[h] += 1;
             // A page used before can hold an old FREE_MARK here.
@@ -483,11 +511,16 @@ noinline fn smallAlloc(t: *Task, class: usize) usize {
         // Full: it leaves the list until a block in it is freed.
         availRemove(t, h);
     }
-    const h = if (CACHED > 0) blk: {
+    const n: usize = SPAN_UNITS[class];
+    const h = if (n > 1) takeRun(n, false) else if (CACHED > 0) blk: {
         CACHED -= 1;
         break :blk CACHE[CACHED];
     } else takeLow();
     if (h == 0) return 0;
+    if (n > 1) for (h + 1..h + n) |u| {
+        U_KIND[u] = KIND_SPAN;
+        U_START[u] = @intCast(h);
+    };
     U_KIND[h] = KIND_SMALL;
     U_SLOT[h] = @intCast(t.slot);
     U_CLASS[h] = @intCast(class);
@@ -517,10 +550,12 @@ export fn double_frees() u32 {
 fn onFreeList(h: usize, p: usize) bool {
     const base = h << CH_SHIFT;
     var f: usize = U_FREE[h];
-    var steps = CH / CLASSES[U_CLASS[h]];
+    var steps = PAGE_END[U_CLASS[h]] / CLASSES[U_CLASS[h]];
     while (f != 0 and steps > 0) : (steps -= 1) {
         if (base + f - 1 == p) return true;
-        f = rdUsize(base + f - 1 + 4) & (CH - 1);
+        f = rdUsize(base + f - 1 + 4);
+        // A link past the bump is not a free list: stop inside the page.
+        if (f > U_BUMP[h]) return false;
     }
     return false;
 }
@@ -531,11 +566,9 @@ inline fn isLink(h: usize, link: usize) bool {
     return ((off * RECIP[U_CLASS[h]]) >> 32) * CLASSES[U_CLASS[h]] == off;
 }
 
-/// The start of the small block that holds `ptr`.
-inline fn smallStart(ptr: usize) usize {
-    const base = ptr & ~(CH - 1);
-    const idx: usize = @intCast(((ptr - base) * RECIP[U_CLASS[ptr >> CH_SHIFT]]) >> 32);
-    return base + idx * CLASSES[U_CLASS[ptr >> CH_SHIFT]];
+/// The start of the small block that holds `ptr` in the page at unit `h` (its first unit).
+inline fn smallStart(h: usize, ptr: usize) usize {
+    return startIn(h, ptr, U_CLASS[h]);
 }
 
 /// The block at `p` (its start) in page `h` holds the mark: true when it is a second free (the link
@@ -669,7 +702,7 @@ fn allocIn(t: *Task, len: usize, grow: bool) usize {
         FAIL_AT -= 1;
         if (FAIL_AT == 0) return 0;
     }
-    const small = len <= SMALL_MAX;
+    const small = len <= SMALL_MAX and !(grow and len > GROW_LARGE);
     const class = if (small) classOf(len) else 0;
     const p = if (small) smallTake(t, class) else largeAlloc(t, len, grow);
     if (p == 0) return 0;
@@ -693,17 +726,19 @@ pub fn hostAllocFor(owner: usize, length: usize, alignment: usize) usize {
     return allocIn(taskOf(owner), length, false);
 }
 
-/// The unit of `ptr` when it is in a block of ours (a small page, or the first unit of a large block), else 0.
+/// The unit of `ptr` when it is in a block of ours (the first unit of a small page or span, or of a
+/// large block), else 0.
 inline fn blockUnit(ptr: usize) usize {
     const u = ptr >> CH_SHIFT;
     if (u -% POOL_LO >= POOL_HI -% POOL_LO) return 0;
     const k = U_KIND[u];
-    return if (k == KIND_SMALL or k == KIND_LARGE) u else 0;
+    if (k == KIND_SMALL or k == KIND_LARGE) return u;
+    return if (k == KIND_SPAN) U_START[u] else 0;
 }
 
 /// The capacity of the block at unit `u`, from `ptr` on.
 inline fn usableAt(u: usize, ptr: usize) usize {
-    if (U_KIND[u] == KIND_SMALL) return smallStart(ptr) + CLASSES[U_CLASS[u]] - ptr;
+    if (U_KIND[u] == KIND_SMALL) return smallStart(u, ptr) + CLASSES[U_CLASS[u]] - ptr;
     return (u << CH_SHIFT) + (@as(usize, U_UNITS[u]) << CH_SHIFT) - ptr;
 }
 
@@ -751,6 +786,15 @@ pub fn hostDealloc(ptr: usize) void {
             largeRelease(u);
             return;
         }
+        // A block in a later unit of a span: its page is the first unit.
+        if (k == KIND_SPAN) {
+            const h: usize = U_START[u];
+            if (mayFree(h)) {
+                const class: usize = U_CLASS[h];
+                smallRelease(h, startIn(h, ptr, class), class);
+                return;
+            }
+        }
     }
     DEALLOC_MISS += 1;
 }
@@ -795,7 +839,7 @@ pub fn hostReallocFor(owner: usize, ptr: usize, new_length: usize, alignment: us
         return ptr;
     }
     // A large block grows in place when the units after it are free.
-    if (new_length > SMALL_MAX) {
+    if (new_length > GROW_LARGE) {
         const m = (end_ + CH - 1) >> CH_SHIFT;
         const old = @as(usize, U_UNITS[u]) << CH_SHIFT;
         if (largeGrowInPlace(u, m, false) or (runFind(m) == 0 and largeGrowInPlace(u, m, true))) {
@@ -864,7 +908,7 @@ pub export fn roc_realloc(ptr: ?*anyopaque, new_length: usize, alignment: usize)
 
 /// The block start of `ptr` (a small block or a large block).
 inline fn blockStart(u: usize, ptr: usize) usize {
-    return if (U_KIND[u] == KIND_SMALL) smallStart(ptr) else u << CH_SHIFT;
+    return if (U_KIND[u] == KIND_SMALL) smallStart(u, ptr) else u << CH_SHIFT;
 }
 
 /// A JS block now belongs to the task that runs: its owner word, so `freeOwner` finds it.
@@ -929,6 +973,8 @@ pub fn taskEnd(owner: usize) usize {
     var p: usize = t.small_head;
     while (p != 0) {
         step(&steps);
+        // A damaged list (a page given back already, or not of this task): stop. The global check finds it (12c).
+        if (U_KIND[p] != KIND_SMALL or U_SLOT[p] != t.slot) break;
         const next = U_NEXT[p];
         live += @as(usize, U_LIVE[p]) * CLASSES[U_CLASS[p]];
         U_INAV[p] = 0;
@@ -1295,7 +1341,8 @@ pub fn checkTables() u32 {
         const t = &TASKS[i];
         const owner = SLOT_OWNER[i];
         if (owner == 0 and i != 0) {
-            if (!std.mem.allEqual(u8, std.mem.asBytes(t), 0)) return CHECK_TASK;
+            // Word-wise: the record is 16-aligned.
+            if (!std.mem.allEqual(u64, @as(*const [@sizeOf(Task) / 8]u64, @ptrCast(t)), 0)) return CHECK_TASK;
             continue;
         }
         const want: usize = if (i == 0 or i == JS_SLOT) 0 else owner;
@@ -1335,13 +1382,20 @@ fn checkSmallPages(t: *const Task, slot: usize, live: *usize) u32 {
         if (class >= NCLASS) return CHECK_SMALL;
         const size = CLASSES[class];
         const bump: usize = U_BUMP[h];
-        if (bump < size or bump > CH or bump % size != 0) return CHECK_SMALL;
+        const end_: usize = PAGE_END[class];
+        if (bump < size or bump > end_ or bump % size != 0) return CHECK_SMALL;
+        // The other units of a span: kind, first unit, in use, in no other place.
+        for (h + 1..h + SPAN_UNITS[class]) |u| {
+            if (!inPool(u) or U_KIND[u] != KIND_SPAN or U_START[u] != h) return CHECK_SMALL;
+            if (isFree(u)) return CHECK_BITMAP;
+            if (!see(u)) return CHECK_UNIT;
+        }
         const slots = bump / size;
         const n: usize = U_LIVE[h];
         if (n == 0 or n > slots) return CHECK_SMALL;
         if (freeListLen(h, size, bump, slots) != slots - n) return CHECK_FREELIST;
         // A page leaves its list of pages with room only when it is full.
-        if (U_INAV[h] > 1 or (U_INAV[h] == 0 and (U_FREE[h] != 0 or bump + size <= CH))) return CHECK_AVAIL;
+        if (U_INAV[h] > 1 or (U_INAV[h] == 0 and (U_FREE[h] != 0 or bump + size <= end_))) return CHECK_AVAIL;
         inav += U_INAV[h];
         live.* += n * size;
         prev = h;
@@ -1410,7 +1464,7 @@ pub fn slotBlockOk(p: usize, slot: usize, len: usize) bool {
 fn blockOf(p: usize, slot: usize, len: usize) bool {
     const u = blockUnit(p);
     if (u == 0 or U_SLOT[u] != slot) return false;
-    if (U_KIND[u] == KIND_SMALL) return U_CLASS[u] < NCLASS and smallStart(p) == p and len <= CLASSES[U_CLASS[u]] and p - (u << CH_SHIFT) < U_BUMP[u];
+    if (U_KIND[u] == KIND_SMALL) return U_CLASS[u] < NCLASS and smallStart(u, p) == p and len <= CLASSES[U_CLASS[u]] and p - (u << CH_SHIFT) < U_BUMP[u];
     return p == u << CH_SHIFT and len <= U_HW[u];
 }
 

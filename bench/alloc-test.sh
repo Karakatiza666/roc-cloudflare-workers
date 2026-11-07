@@ -19,7 +19,7 @@ printf 'pub const small_buffers = false;\npub const bench = true;\npub const tra
   -femit-bin=bench/out/alloc_driver_grow.wasm
 rc=0
 node bench/grow.mjs bench/out/alloc_driver_grow.wasm || rc=1
-for t in dfree fmark reserve adopt sumjs oomclean rowner fastpath; do node "bench/$t.mjs" bench/out/alloc_driver.wasm || rc=1; done
+for t in dfree fmark reserve adopt sumjs oomclean rowner fastpath classes; do node "bench/$t.mjs" bench/out/alloc_driver.wasm || rc=1; done
 # PLAN.md 4h, 4j: the counters and the idle reset against a manual walk of the unit tables (both drivers).
 node bench/counters.mjs bench/out/alloc_driver.wasm bench/out/alloc_driver_grow.wasm || rc=1
 exit $rc

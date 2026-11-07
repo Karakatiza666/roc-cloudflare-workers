@@ -47,6 +47,13 @@ export fn table_live() usize {
 export fn table_class() usize {
     return @intFromPtr(&alloc.U_CLASS);
 }
+export fn table_start() usize {
+    return @intFromPtr(&alloc.U_START);
+}
+/// The size of class `i` (0 past the last class), so the walk needs no copy of the class table.
+export fn class_size(i: u32) usize {
+    return if (i < alloc.CLASSES.len) alloc.CLASSES[i] else 0;
+}
 export fn table_units() usize {
     return @intFromPtr(&alloc.U_UNITS);
 }

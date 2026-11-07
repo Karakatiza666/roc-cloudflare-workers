@@ -19,7 +19,8 @@ const modGrow = new WebAssembly.Module(readFileSync(process.argv[3]));
 let failed = false;
 const fail = (...m) => { failed = true; console.log('FAIL', ...m); };
 const CH = 4096;
-const CLASSES = [16, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 2048];
+// The class sizes come from the driver (`class_size`).
+const classesOf = (x) => { const c = []; for (let i = 0; x.class_size(i) !== 0; i++) c.push(x.class_size(i)); return c; };
 const A = 1 | (4 << 8);
 const FREE = (owner, id) => [2, owner, id, 0];
 const ALLOC = (owner, id, len) => [A, owner, id, len];
@@ -36,6 +37,7 @@ function walk(x) {
   const kind = new Uint8Array(buf, x.table_kind(), 32768), live = new Uint16Array(buf, x.table_live(), 32768);
   const cls = new Uint8Array(buf, x.table_class(), 32768), units = new Uint16Array(buf, x.table_units(), 32768);
   const bits = new BigUint64Array(buf, x.table_free_bits(), 512);
+  const CLASSES = classesOf(x);
   const free = (u) => ((bits[u >> 6] >> BigInt(u & 63)) & 1n) === 1n;
   const w = { lo, hi, free: 0, runs: 0, maxRun: 0, foreign: 0, reserve: 0, regions: 0, liveBytes: 0, kind: kind.slice(lo, hi), bits: bits.slice() };
   let run_ = 0, inRegion = false;
@@ -109,7 +111,7 @@ const SIZES = [16, 24, 40, 100, 300, 700, 2000, 3000, 9000, 50000, 200000];
 // 4h-3 ----------------------------------------------------------------------------------------
 {
   const x = inst();
-  // Task 9 frees one block and leaks the rest: 24 B (class 32), 3,000 B (1 unit).
+  // Task 9 frees one block and leaks the rest: 24 B (class 32), 3,000 B (class 3072, in a span of 3 units).
   run(x, [ALLOC(9, 0, 24), ALLOC(9, 1, 100), ALLOC(9, 2, 3000), FREE(9, 1)]);
   const w = walk(x);
   const l0 = x.leaked_at_end();
@@ -121,7 +123,7 @@ const SIZES = [16, 24, 40, 100, 300, 700, 2000, 3000, 9000, 50000, 200000];
   // `taskEnd` (a task that trapped and was freed): no leak count.
   run(x, [ALLOC(11, 5, 500), [4, 11, 0, 0]]);
   console.log('4h-3', JSON.stringify({ walkLive: w.liveBytes, leak, clean, afterTrapPath: x.leaked_at_end() - l0 - leak - clean, live: x.live_bytes() }));
-  if (w.liveBytes !== 32 + 4096 || leak !== w.liveBytes) fail(`4h-3: leak ${leak}, the walk saw ${w.liveBytes} live bytes (want 4128)`);
+  if (w.liveBytes !== 32 + 3072 || leak !== w.liveBytes) fail(`4h-3: leak ${leak}, the walk saw ${w.liveBytes} live bytes (want 3104)`);
   if (clean !== 0) fail(`4h-3: a task with no leak counted ${clean}`);
   if (x.leaked_at_end() !== l0 + leak) fail('4h-3: taskEnd (a trap) counted as a leak');
   if (x.live_bytes() !== 0) fail('4h-3: live bytes are not 0 at the end');

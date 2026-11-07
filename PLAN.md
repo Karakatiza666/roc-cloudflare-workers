@@ -456,7 +456,7 @@ Need measurement (do not implement until the numbers show a gain):
 | # | Option | What it is | What to measure |
 |---|---|---|---|
 | H7 | Replace for fragmentation | Replace the instance (M1) when the heap bytes divided by the peak of `LIVE_BYTES` (H3) go above a limit. Only when no task runs or waits (at an idle check, 12e), so no task is cancelled. | The ratio in long mixed runs and in talon (12g) |
-| H8 | Size classes | v7 has 13 classes (16 to 2,048 B). The old 16 classes gave no change. | The waste in each class for real talon handlers (12g) |
+| H8 | Size classes | The platform has 25 classes (16 to 8,192 B, 6e). v7 had 13 (16 to 2,048 B). The old 16 classes gave no change. | The waste in each class for real talon handlers (12g) |
 
 Done or not needed:
 
@@ -972,13 +972,13 @@ Design:
 | Part | v7 |
 |---|---|
 | Unit | 4 KB, up to 128 MB (u16 unit indexes). Tables per unit, outside the units (about 26 B per unit). |
-| Small blocks (up to 2,048 B, 13 classes) | One class and one task per 4 KB page. No block header: the page tables give the class and the task. Slot index by a multiply (`(off * ceil(2^32/size)) >> 32`). Per task and class, a list of pages with room. Small pages take the lowest free unit. |
-| Large blocks (above 2,048 B) | A run of whole units. Free runs: lists by length (exact below 8, then 8 lists per power of 2), boundary tags, a join with both neighbors at each free, a bounded walk of 8. Best fit at the top end of a run. |
-| Realloc | Grows in place into the free run after the block. A moved block goes to the low end of a free run of 2x its size, so the next growth can be in place. Copies only up to the requested end. |
+| Small blocks (up to 8,192 B, 25 classes) | One class and one task per page: 1 unit up to 2,048 B (classes near 4096 / k), a span of 2 to 7 units above (3,072 to 8,192 B in 1 KB steps, `KIND_SPAN`). No block header: the page tables give the class and the task. Slot index by a multiply (`(off * ceil(2^32/size)) >> 32`). Per task and class, a list of pages with room. Small pages take the lowest free unit. |
+| Large blocks (above 8,192 B, and a block that a realloc moves above 2,048 B: `GROW_LARGE`) | A run of whole units. Free runs: lists by length (exact below 8, then 8 lists per power of 2), boundary tags, a join with both neighbors at each free, a bounded walk of 8. Best fit at the top end of a run. |
+| Realloc | Grows in place into the free run after the block. A block that moves above 2,048 B (`GROW_LARGE`) is a large block, so a string or list that grows stays able to grow in place. A moved block goes to the low end of a free run of 2x its size, so the next growth can be in place. Copies only up to the requested end. |
 | Empty small page | Goes back at once, to a reserve of at most 256 pages that only small pages use. When memory cannot grow, the reserve goes back to the pool, then the large block tries again. |
 | Double free | A freed small block holds a mark (random per instance, set by JS with `set_free_mark`) in word 0. On a match, the free checks the page's free list: on it, the free is ignored and counted; not on it, it is a live block and is freed. |
 | JS blocks (`js_alloc`) | Own pages, with an owner word for `adopt` |
-| Task end | Frees all pages and runs of the task in O(its pages) (`freeOwner`) |
+| Task end | Frees all pages and runs of the task in O(its pages) (`freeOwner`). The walk of the small list stops at a page that is not `KIND_SMALL` or not of the task (`hostlib/alloc.zig:977`). The other units of a span page are `KIND_SPAN`; a free of a block there goes to the first unit (`U_START`). |
 | Sum of a task (problem 12) | The task record, its small pages up to the bump offset, its large blocks up to the requested end. Fletcher with SIMD (128-bit lanes). |
 
 Measured (replay of recorded allocator calls of the real app, and synthetic traces; `research/alloc/README.md`, "Benchmarks"):
