@@ -24,6 +24,7 @@ There is no npm package and no `package.json` in a project. The release notes ha
 
 | Release | URL for the app header | Built with |
 | --- | --- | --- |
+| 0.0.8 | `https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/0.0.8/DDDLMRuP5Qxi8pcCWbP7AHg5gmrmGTRN1jWqDjbfEbSe.tar.zst` | `nightly-2026-11-06-34f137a` |
 | 0.0.7 | `https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/0.0.7/H2XzG4R2kci1kL4iVzvjx4CF1ohs1XYv1CMHjZzJ5TTi.tar.zst` | `nightly-2026-11-04-2622062` |
 | 0.0.6 | `https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/0.0.6/HgUugW5V5QQbmrjdjkRhjiZ8B9D9gzpEkSwdojqJcW4p.tar.zst` | `nightly-2026-11-03-34bd006` |
 | 0.0.5 | `https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/0.0.5/7cJKFdsThj1QcGDftbB9pJVyLNJuMx5SgWXyVf5Te48k.tar.zst` | `nightly-2026-11-01-48d3369` |
@@ -112,7 +113,7 @@ Needs: a Roc nightly (see "Supported nightlies"), Node (JSPI: the tests use Node
 
 ### Supported nightlies
 
-Supported nightlies: `nightly-2026-10-19-601b54c` (the `min_nightly` of `js/cfw.json`) to `nightly-2026-11-04-2622062` (the build of 0.0.7, `compat/last-stack-first-nightly`). A later nightly is not checked before a release: the scheduled job `nightly-layout` builds and tests each new one. Checked 2026-11-02 against the platform at 0.0.3 (`research/min-nightly/`): the conformance app (512 checks in Miniflare, with the `on_trap` checks), `bench/node-test.mjs` and `bench/handler-test.mjs` with the hosts of the release nightly.
+Supported nightlies: `nightly-2026-10-19-601b54c` (the `min_nightly` of `js/cfw.json`) to `nightly-2026-11-06-34f137a` (the build of 0.0.8, `compat/last-stack-first-nightly`). A later nightly is not checked before a release: the scheduled job `nightly-layout` builds and tests each new one. Checked 2026-11-02 against the platform at 0.0.3 (`research/min-nightly/`): the conformance app (512 checks in Miniflare, with the `on_trap` checks), `bench/node-test.mjs` and `bench/handler-test.mjs` with the hosts of the release nightly.
 
 | Nightly | Result |
 | --- | --- |
