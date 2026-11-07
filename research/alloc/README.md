@@ -27,6 +27,7 @@ Contents:
 | v7 | `versions/v7.zig` | As v6, empty page at once to a reserve of 256 pages | As v6 | At once | Chosen (PLAN.md step 6e) |
 | port | `hostlib/alloc.zig` | v7 without the switches, plus `mayFree`, the live peak, step counts, sums of adopted JS blocks, the counters of the stats header. Since 2026-11-07: the short paths of v8 | As v7 | As v7 | In the platform |
 | v8 | `versions/v8.zig` | As v7, short paths: one read of each table per call | As v7 | As v7 | In the port (2026-11-07) |
+| v9, v9f, v9b1, v9b2 | `versions/v9*.zig` | The port at 6c580d5 (v9), and one change each (no zero write; 8 classes; 21 classes) | As the port | As the port | Tried on the full registry: no gain (2026-11-07) |
 | null | `versions/null.zig` | Not an allocator: one static block, no frees | | | Tool: the replay cost with no allocator |
 
 ## Build and run
@@ -220,6 +221,26 @@ Wall time of the same versions, ms of allocator per trace (replay minus `null`),
 
 `set_small_room(4)` has fewer instructions, but its wall time was not better in this run: more page takes, and blocks of 2x the size. Not decided (see "Settings tried").
 
+### CPU: full app, registry series (2026-11-07)
+
+The total CPU of the workerd process (the registry Worker, Miniflare and local D1) on a fixed series, `research/regprof/cpuseries.mjs`: a fresh server per run, 100 warm-up requests, then `perf stat -p <workerd>` (all threads, user and kernel) minus 1 s of idle at the same rate. 5 rounds, variants interleaved; median (p25 to p75). `base` and `base again` are the same file (the A/A noise). Instructions are the measure: cycles and CPU ms changed 10 % to 50 % between rounds (shared machine, load 3 to 24), so they are not in the table. Apps: `variant-app.sh`.
+
+| Series | Measure | base (port, 6c580d5) | base again | v9f | v9b1 | v9b2 |
+|---|---|---|---|---|---|---|
+| `mixed`, 2,000 requests | M instructions per request | 16.391 (16.366 to 16.407) | 16.400 (16.376 to 16.419) | 16.465 (16.453 to 16.477) | 16.393 (16.361 to 16.397) | 16.416 (16.406 to 16.430) |
+| `mixed`, 2,000, 8 at once | M instructions per request | 16.055 (16.046 to 16.058) | 16.049 (16.042 to 16.056) | 16.109 (16.109 to 16.118) | 16.030 (16.024 to 16.037) | 16.041 (16.026 to 16.048) |
+| `closure`, 500 | M instructions per request | 20.810 (20.795 to 20.822) | 20.836 (20.792 to 20.881) | 20.929 (20.915 to 21.022) | 20.795 (20.764 to 20.798) | 20.858 (20.846 to 20.875) |
+| `releases`, 500 (8 rounds) | M instructions per request | 6.214 (6.202 to 6.235) | 6.210 (6.194 to 6.213) | 6.189 (6.110 to 6.209) | 6.177 (6.149 to 6.192) | 6.224 (6.129 to 6.243), 5 rounds |
+| `mixed`, 2,000 | Peak wasm memory, MB; peak live KB in a request | 2.81; 511 | 2.81; 511 | 2.81; 511 | 2.81; 511 | 2.81; 511 |
+| `mixed`, 8 at once | Same | 3.13; 771 | 3.13; 710 | 3.06; 771 | 3.13; 706 | 3.13; 704 |
+| `releases` | Same | 2.50; 25 | 2.50; 25 | 2.50; 25 | 2.50; 26 | 2.50; 24 |
+| Replay, peak of pages, KB | `reg_mixed_c8`, `reg_releases`, `2000_6` | 1,004; 508; 49,568 | | same as base | 968; 544 (+7 %); 49,716 | 1,020; 476; 49,568 |
+| Replay, allocator M instructions | `reg_mixed-ro`, minus `null` | 128.8 | | 128.3 | 116.8 | 129.3 |
+
+Response bodies (sha256) are the same in all variants and rounds of the series with 1 at once. With 8 at once, 7 to 12 of 2,000 differ between the rounds of each variant, `base` too: the order of the hint writes changes them, not the allocator.
+
+The allocator is a small part of the total: the replay of the same requests is 0.32 M instructions per request (`reg_mixed-ro`), 0.37 M (`reg_closure`), 0.09 M (`reg_releases`), that is 2.0 %, 1.8 % and 1.4 % of the workerd instructions. An allocator that costs nothing would save at most that. All differences in the table are 0.6 % or less.
+
 ### Profile of v7 (2026-11-07)
 
 Where the allocator CPU of v7 goes. Method: the instruction counts above with one part removed (`set_no_copy(1)`: the copy is not done; sum mode 0, 1, 2), the call counts of `scripts/tstats.mjs`, and self time per function with V8 inlining off (`replay/profbuild.sh`, `scripts/prof.mjs`, `node --no-wasm-inlining`).
@@ -308,6 +329,10 @@ Each row is a switch in one version. The numbers are from the run of that change
 | v8 | A small block that realloc moves gets a class for 1.5x its length (`set_small_room(2)`) | 49.8; 200 items 5.9 | Slower (more page takes) | 166; 200 items 132 | Worse |
 | v8 | Same, for 2x its length (`set_small_room(4)`) | 49.1, pages peak 48.8 (+0.4); 200 items 5.7 (+0.1) | -7 % to -8 % instructions on `2000_6` and `200_40`; same on the synthetic traces | 162 (1.55 M copies, not 2.32 M); 200 items 102 | Promising. Needs a full-app memory test and the registry traces |
 | v8 | Same, on the registry traces (2026-11-07) | Pages peak, KB: `reg_small` 124 to 140 (+13 %), `reg_releases` 508 to 696 (+37 %), `reg_closure` 384 to 392 (+2.1 %), `reg_mixed_c8` 1,004 to 1,024 (+2.0 %), others +0 to +2.1 % | 0 % to -4 % instructions (inside the noise on 4 of 7 traces) | 13 % to 19 % fewer copies; `reg_releases` 1,004 to 767 KB | Not ported: the rule was "port only if the peak grows 2 % or less" |
+
+| v9f | No zero write of word 0 at a small alloc (option f) | Same | +0.3 % to +0.6 % total instructions (`mixed`, `closure`): Roc's refcount is at offset 4 of an 8-aligned block, so word 0 can keep an old free mark, and the free then walks the page's free list (`isDoubleFree`) | Same | Worse |
+| v9b1 | Powers of 2 classes, 8 classes (option b, fewer) | Replay peak `reg_releases` +7 %, `2000_6` +0.3 %; full app the same | Allocator -9 % instructions (replay); total -0.6 % to 0 %, inside the noise | +26 % on `2000_6` | Fails the memory limit on `reg_releases`; no total gain |
+| v9b2 | 21 classes, 4 per power of 2 up to 512 (option b, more) | Replay peak `reg_releases` -6 %, `reg_mixed_c8` +1.6 % | Total +0.1 % to +0.2 %, inside the noise | -4 % to -10 % (registry), +2 % (`2000_6`) | No gain |
 
 ## The allocators, in order
 
@@ -516,6 +541,21 @@ W2_DIR=<build dir: app.wasm on the trace platform, .roc-cfw/ with the current js
 | `reg_mixed_c8` | 400, 8 at once | 1,173,709 | 593,784 | 1,478 | 0 |
 
 The registry holds little memory: at most 1 MB of pages (`reg_mixed_c8`), and a few KB of live bytes per request. All traces replay on v7, the port and v8 with `bad & 0xffff` = 0 in sum mode 2 and no live byte at the end.
+
+### v9: tries on the total CPU of the registry (2026-11-07)
+
+Goal: less total CPU of the registry Worker on real series, not only allocator instructions (table "CPU: full app, registry series"). `versions/v9.zig` is the port at 6c580d5. Each `v9<x>.zig` changes one thing. Result: no try changed the total by more than the noise (0.6 %). The allocator is 1.4 % to 2.0 % of the workerd instructions, so the upper limit of any allocator change is about 2 %.
+
+| Option | Tried | Why not more |
+|---|---|---|
+| a. Locality, reuse order | Not built | The free list is LIFO, and the page that gets a free goes to the head of its list (hot first). Block life on `reg_mixed-ro`: median 4 calls, p90 171 calls, so the reused block is in cache already |
+| b. Size classes | v9b1, v9b2 | No total gain; v9b1 fails the memory limit |
+| c. Pages of 8 or 16 KB for small classes | Not built | Page takes and gives: about 160 per request on `reg_mixed-ro`, about 0.1 % of the total instructions at most |
+| d. Realloc headroom | Not built | 15,296 reallocs of 575,774 allocs; copies 17 KB per request (`reg_mixed-ro`), about 2 µs per request of 3 ms CPU (0.06 %) |
+| e. Reaps (bump for the life of a task) | Not built | A request allocates about 43 KB on average (more for `closure`), and 8 at once would hold all of it: the peak goes up many times over the live peak (771 KB) |
+| f. Less work for the checks | v9f | Worse (see "Settings tried"). The free mark is kept |
+
+Builds: `variant-app.sh` builds the registry copy on a variant host in about 2.5 min (not 5): the Roc cache is on, and only the platform copy (`.../pfv`) changes between builds.
 
 ### v8: short paths for small blocks (2026-11-07)
 

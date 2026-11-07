@@ -10,6 +10,7 @@ Files in `talon/` outside `cloudflare-workers/` are only read.
 | --- | --- |
 | `regserve.mjs` | A copy of `talon/worker/tests/serve.mjs`. Miniflare gets `inspectorPort` (env `INSPECT_PORT`, default 9230) |
 | `serve.sh` | Starts `regserve.mjs` on 127.0.0.1:8787 with `MINIFLARE_WORKERD_V8_FLAGS=--perf-prof`. The cwd is `perf/`, so the jitdump of workerd goes there. `POST /__regserve/stop` closes the app, then exits (a trace of `CFW_TEST_TRACE` needs it: `research/alloc/scripts/regtrace.sh`) |
+| `cpuseries.mjs` | The total CPU of workerd (perf stat instructions and cycles, /proc CPU) on a fixed series of requests, for app variants (`W2` dirs), interleaved rounds, a fresh server per run; also the sha256 of each body, and the peak memory from the stats header. Used for research/alloc v9 |
 | `regprof.mjs` | Sends the requests of a scenario. `--perf`: `perf record --call-graph fp` on workerd during the measured requests, then `perf inject --jit`, then `perfstacks.mjs`. Also the CPU time of the workerd and node processes from `/proc`. Without `--perf`: the V8 profiler over the inspector (not used: the samples of workerd are not regular) |
 | `perfstacks.mjs` | Puts each perf sample into a part, from its call stack (below) |
 | `buckets.mjs` | Sums the parts into the rows of the tables below |
