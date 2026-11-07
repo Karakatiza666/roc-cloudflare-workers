@@ -221,10 +221,6 @@ Worker :: {
 	## A missing handler gives `Unhandled`. An `Err(e)` gives `Failed` with `Str.inspect(e)`.
 	event! : Worker, Worker.Event => Worker.Outcome
 	event! = |w, ev| match ev {
-		Fetch(_) | Scheduled(_) | Queue(_) | Email(_) | Tail(_) | Other(_) => {
-			own! = w.own!
-			own!(ev)
-		}
 		# RPC of the default entry point ("default") or of a named one: the handler of the method (MODULES.md 8).
 		Rpc({ entrypoint, method, arg }) => {
 			handlers = if (entrypoint == "default") w.rpc else match w.entrypoints.find_first(|ep| ep.name == entrypoint) {
@@ -261,6 +257,13 @@ Worker :: {
 			Err(_) => Unhandled
 		}
 		Manifest => Reply(manifest(w))
+		# Fetch, Scheduled, Queue, Email, Tail and Other. Not an or-pattern: the compiler writes the body of an
+		# or-pattern arm once for each alternative, so the whole own! path of the app was in roc_event 6 times
+		# (1.2 MB of wasm in the Talon registry, 27 ms of V8 compile at the first event; roc#12903).
+		_ => {
+			own! = w.own!
+			own!(ev)
+		}
 	}
 }
 

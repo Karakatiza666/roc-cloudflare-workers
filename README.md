@@ -2,7 +2,7 @@
 
 A Roc platform for Cloudflare Workers. The app compiles to a wasm32 reactor. The host is in Zig. Effects (fetch, D1, R2, KV, Cache API, Durable Object SQL) are direct-style hosted functions that wait on JS promises through JSPI.
 
-Status: phases A and B are built (`PLAN.md`). The release files are made by `scripts/bundle.sh` and published by `.github/workflows/release.yml` (`PLAN.md` 11). The latest release is 0.0.7: see "Changes in 0.0.7".
+Status: phases A and B are built (`PLAN.md`). The release files are made by `scripts/bundle.sh` and published by `.github/workflows/release.yml` (`PLAN.md` 11). The latest release is 0.0.8: see "Changes in 0.0.8".
 
 | Document | Content |
 | --- | --- |
@@ -32,6 +32,12 @@ There is no npm package and no `package.json` in a project. The release notes ha
 | 0.0.2 | `https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/0.0.2/f352LLRKJCZ4JJVEocp3H9e4e6Sxa6Ym5CxZ1GZCpfd.tar.zst` | `nightly-2026-10-31-f7bef6b` |
 
 Use the release URL. `dist/` of this repository is a local build of `scripts/bundle.sh` (gitignored). Its hash is not the hash of the release, so do not take a URL or a file from `dist/`.
+
+## Changes in 0.0.8
+
+| Change | In 0.0.7 | In 0.0.8 | What the app author does |
+| --- | --- | --- | --- |
+| Code size of `roc_event` (`Worker.event!`) | The arm `Fetch(_) \| Scheduled(_) \| Queue(_) \| Email(_) \| Tail(_) \| Other(_) => own!(ev)` is an or-pattern. The compiler writes the body of such an arm once for each alternative, so the whole `fetch!` path of the app was in `roc_event` 6 times. In the Talon registry, `roc_event` was 1.2 MB of wasm, and V8 used 27 ms to compile it at the first event of an isolate (compiler issue roc-lang/roc#12903). | The arm is `_ => own!(ev)`, after the arms `Rpc`, `EntrypointFetch`, `Object` and `Manifest`. The app's code is in `roc_event` one time. | Nothing. Rebuild the app. |
 
 ## Changes in 0.0.7
 
