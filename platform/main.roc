@@ -19,7 +19,7 @@ platform ""
 			# Stack: 1 MB, read by hostlib/canary.zig from the linker. Memory: sized by the linker. No maximum (PLAN.md M5).
 			initial_stack_size: 1048576,
 			minimum_memory: 0,
-			exports: ["init", "handle", "task_abort", "task_cancel", "task_slots", "js_alloc", "res_free", "stack_first", "set_free_mark", "set_grow_step", "check_heap", "log_ptr", "log_len", "log_clear", "heap_used", "heap_bytes", "live_bytes", "live_peak", "reclaim_walks", "reclaim_bytes", "leaked_at_end", "idle_resets", "idle_reset_bytes", "alarms", "sum_checks", "double_frees", "dealloc_miss", "idle_reset", "trap_cause", "set_sum", "set_suspect", "__instance_signal", "__instance_terminated"],
+			exports: ["init", "handle", "task_abort", "task_cancel", "task_slots", "js_alloc", "res_free", "stack_first", "set_free_mark", "set_grow_step", "check_heap", "log_ptr", "log_len", "log_clear", "heap_used", "heap_bytes", "live_bytes", "live_peak", "alloc_stat", "alloc_window", "reclaim_walks", "reclaim_bytes", "leaked_at_end", "idle_resets", "idle_reset_bytes", "alarms", "sum_checks", "double_frees", "dealloc_miss", "idle_reset", "trap_cause", "set_sum", "set_suspect", "__instance_signal", "__instance_terminated"],
 		},
 	}
 

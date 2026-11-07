@@ -69,6 +69,10 @@ step "entry-test.mjs (8b: makeHandler class, Worker, Request, Response, Body, cr
 step "bindings-test.mjs (8h wave B: bindings and crons of Worker.new, checks at load; Node)" node bench/bindings-test.mjs bench/out
 step "envread-test.mjs (N7: the dev-mode warning of an undeclared binding; Node)" node bench/envread-test.mjs bench/out
 step "cli-test.mjs (8h wave B: roc-cloudflare-workers sync, sync --check, --force, the shim import)" node bench/cli-test.mjs bench/out
+step "stats-test.mjs (the option stats: the header x-roc-stats; Node)" node bench/stats-test.mjs bench/out/app_prod.wasm
+step "replay build (research/alloc/replay/build.sh port: the allocator of the platform)" research/alloc/replay/build.sh port
+step "trace-test.mjs (the option trace on the trace host, replayed on the platform allocator; Node)" node bench/trace-test.mjs bench/out/app_trace.wasm bench/out/app_prod.wasm research/alloc/out/replay_port.wasm
+step "test-helper/trace-env-test.mjs (CFW_TEST_TRACE: the trace of an app under startApp, in Miniflare)" node test-helper/trace-env-test.mjs bench/out/app_trace.wasm research/alloc/out/replay_port.wasm
 step "trap-test.mjs (on_trap: the table, the cause of each failure, retry-after, no export after the trap; Node)" node bench/trap-test.mjs bench/out
 step "iface-test.mjs (MODULES.md 3: interface names in the manifest, checkManifest errors)" node bench/iface-test.mjs bench/out
 step "sync-cross-test.mjs (MODULES.md 3: sync checks the links to other Workers of the repo)" node bench/sync-cross-test.mjs bench/out

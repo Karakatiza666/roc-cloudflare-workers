@@ -24,7 +24,8 @@ import { BUDGET_OPTS } from './budget.js';
 import { checkOptions } from './options.js';
 import { makeRunner, manifestOf, NOT_STACK_FIRST } from './runner.js';
 import { fetchEvent, scheduledEvent, queueEvent, emailEvent, tailEvent, otherEvent, responseOf, rpcEvent, entrypointFetchEvent, objectEvent, objectInit, objectFetch, objectAlarm, objectRpc, objectSocketMessage, objectSocketClose, objectSocketError, manifestEvent } from './events.js';
-import { isBenchHost } from './host.js';
+import { isBenchHost, hasStats, isTraceHost, allocStats } from './host.js';
+import { makeTracer } from './trace.js';
 
 // The classes of the entry file (PLAN.md 8f, API.md AQ10): `objectClass` and `entrypointClass` make a class for each
 // name, and `makeHandler` checks the names against the manifest of the app and puts the methods on each prototype.
@@ -78,20 +79,25 @@ function register(kind, name, make) {
 // `opts.ops`: the JS functions of the app (API.md 6.4). The class has the static `runner` for tests and the bench.
 export function makeHandler(module, opts = {}) {
   if (!(module instanceof WebAssembly.Module)) throw new TypeError('makeHandler: module must be a WebAssembly.Module');
-  const { other = [], tailMaxBytes, wrapEnv, ...runnerOpts } = checkOptions(opts);
+  const { other = [], tailMaxBytes, wrapEnv, stats: statsOn = false, trace, ...runnerOpts } = checkOptions(opts);
   const log = runnerOpts.log ?? ((text) => console.warn(text));
   // workerd forbids random values at global scope (the free mark of an instance, `freeMark`), and the default export
   // is made there. So the runner and its first instance start at the first use (an event, or a read of `runner`), and
   // `resumeCheck: "off"` on a production host throws now by the export list of the module (PLAN.md 7a). The runner
   // checks it again with `set_sum` at the first instance.
   if (runnerOpts.resumeCheck === 'off' && !isBenchHost(module)) throw new Error('resumeCheck "off" needs the bench host: the production host refuses it');
+  // Option `stats`: the module needs the counter exports of the host (`alloc_stat`). Option `trace`: a trace host, and the reverse.
+  if (statsOn && !hasStats(module)) throw new Error('makeHandler: option stats needs a host with the exports alloc_stat and alloc_window: build the platform again');
+  if (trace && !isTraceHost(module)) throw new Error('makeHandler: option trace needs the trace host: zig build -Dtrace=true (research/alloc/README.md 6)');
+  if (!trace && isTraceHost(module)) throw new Error('makeHandler: this is a trace host (it imports js_trace): set the option trace, or build with the release host');
+  const tracer = trace ? makeTracer() : null;
   let runner = null;
   // TR7: the `retry-after` of a shed and of OOM, in seconds (the time of the memory pressure, `graceMs`), at least 1.
   const retryAfter = String(Math.max(1, Math.ceil((runnerOpts.graceMs ?? BUDGET_OPTS.graceMs) / 1000)));
   // MODULES.md 3: the dev-mode check of `bindings`. Set after the manifest is read (below); the runner calls it at each
   // `Get(Root("env"), name)`.
   let envRead = null;
-  const runnerOf = () => (runner ??= makeRunner(module, { ...runnerOpts, envRead: (name, v) => envRead?.(name, v) }));
+  const runnerOf = () => (runner ??= makeRunner(module, { ...runnerOpts, tracer, envRead: (name, v) => envRead?.(name, v) }));
 
   // Run one event as a task. A trap gives `{ trap, status }`; its log line has the text of a Roc `crash` (8a O2).
   // `ro`: the task context (PLAN.md 9b, API.md 6.2 OP3): `kind`, `signal`, `env`, `ctx` and `event` (the root `event`).
@@ -108,6 +114,8 @@ export function makeHandler(module, opts = {}) {
       stop();
     }
     if (r.trap && !r.shed && !r.cancelled) log(`${name}: trap: ${r.crash ?? r.trap}`);
+    // The records of this event (and of the tasks that ran with it) go to the function of the option `trace`.
+    if (typeof trace === 'function') trace(tracer.take());
     return r;
   };
   // The deadline of a task (API.md 10.2): a timer in the context of the task, so the deadline needs no other request. It sweeps
@@ -208,6 +216,57 @@ export function makeHandler(module, opts = {}) {
   }
   // For tests and the bench: counters, the task table, the budget. A read starts the runner.
   Object.defineProperty(Handler, 'runner', { get: runnerOf });
+  // Option `trace` (a trace host): the records since the last call, as a Uint32Array in the format of `js/trace.js`.
+  // The chunks of one isolate join into one trace. `stats`: ids, live blocks and the blocks that the trace did not see.
+  if (tracer) {
+    Handler.takeTrace = () => tracer.take();
+    Handler.traceStats = tracer.stats;
+  }
+  // Option `stats` (research/alloc/README.md 6): the header `x-roc-stats` on each response of `fetch`. The counters are the
+  // host counters of the instance, so a request that runs next to others counts their calls too. The values are those at
+  // the time of the response: a body that streams later, or the work after `Response.after`, is not in them. Not on
+  // the prototype when the option is off: the production path has no wrapper.
+  if (statsOn) {
+    const inner = Handler.prototype.fetch;
+    const clock = runnerOpts.now ?? (() => Date.now());
+    let born = 0;
+    let served = 0;
+    Handler.prototype.fetch = async function (request) {
+      const r = runnerOf();
+      const x = r.x;
+      const t0 = clock();
+      if (!born) born = t0;
+      const a = allocStats(x);
+      x.alloc_window();
+      const res = await inner.call(this, request);
+      const b = allocStats(x);
+      const stat = {
+        allocs: (b.allocs - a.allocs) >>> 0,
+        frees: (b.frees - a.frees) >>> 0,
+        reallocs: (b.reallocs - a.reallocs) >>> 0,
+        bytes: (b.bytes - a.bytes) >>> 0,
+        livePeak: b.peak,
+        liveEnd: x.live_bytes() >>> 0,
+        mem: x.memory.buffer.byteLength,
+        grows: (b.grows - a.grows) >>> 0,
+        ms: clock() - t0,
+        served: ++served,
+        ageMs: clock() - born,
+        inst: r.stats.retired,
+      };
+      const text = JSON.stringify(stat);
+      try {
+        res.headers.set('x-roc-stats', text);
+        return res;
+      } catch {
+        // A Response with immutable headers (a fetch result): copy it. A WebSocket upgrade has no header.
+        if (res.webSocket) return res;
+        const copy = new Response(res.body, res);
+        copy.headers.set('x-roc-stats', text);
+        return copy;
+      }
+    };
+  }
 
   // PLAN.md 8f. The manifest of the app (API.md AQ10): the RPC methods of the default export, the Durable Object classes
   // and the named entry points, each with its handlers and methods. It runs now, at load, so a class in Roc with no

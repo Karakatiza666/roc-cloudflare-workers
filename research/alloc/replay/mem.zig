@@ -23,10 +23,13 @@ pub inline fn wrUsize(a: usize, v: usize) void {
 /// Replay: bytes copied by realloc.
 pub var COPY_BYTES: u64 = 0;
 pub var COPIES: u64 = 0;
+/// Replay profile: true skips the copy (the bytes are still counted), to measure its time.
+pub var NO_COPY: bool = false;
 pub inline fn copyBytes(dst: usize, src: usize, len: usize) void {
     if (len == 0) return;
     COPY_BYTES += len;
     COPIES += 1;
+    if (NO_COPY) return;
     const d: [*]u8 = @ptrFromInt(dst);
     const s: [*]const u8 = @ptrFromInt(src);
     @memcpy(d[0..len], s[0..len]);
@@ -129,4 +132,18 @@ test "bytesEq and fnv1a" {
     try std.testing.expect(bytesEq(@intFromPtr(a.ptr), a.len, @intFromPtr(b.ptr), b.len));
     try std.testing.expect(!bytesEq(@intFromPtr(a.ptr), a.len, @intFromPtr(b.ptr), b.len - 1));
     try std.testing.expectEqual(fnv1a(@intFromPtr(a.ptr), a.len), fnv1a(@intFromPtr(b.ptr), b.len));
+}
+
+/// Port replay stubs (hostlib/mem.zig): the export-call counter and the sum of constant data.
+pub var RUN_EPOCH: u32 = 0;
+pub inline fn enter() void {
+    RUN_EPOCH +%= 1;
+}
+pub fn sumBytes(p: usize, len: usize, seed: u64) u64 {
+    const K: u64 = 0x9E37_79B9_7F4A_7C15;
+    var acc = seed;
+    var i: usize = 0;
+    while (i + 4 <= len) : (i += 4) acc = (acc ^ rd32(p + i)) *% K;
+    while (i < len) : (i += 1) acc = (acc ^ rd8(p + i)) *% K;
+    return acc;
 }

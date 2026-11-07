@@ -1,8 +1,10 @@
 // Synthetic traces (format as trace.mjs) for sizes the bench app does not make.
 // node synth.mjs <kind> [tasks=64] [turns=4000] -> out/trace_synth_<kind>.bin
 // Kinds (block sizes): med = log-uniform 2 to 16 KB; mix = 80 % 16 to 512 B, 20 % log-uniform
-// 1 to 64 KB; grow = small blocks plus one buffer per task that grows 1.5x to 1 MB.
-// Tasks take turns: a turn is 40 calls, then a wait (sum). A task lives 20 to 60 turns.
+// 1 to 64 KB; grow = small blocks plus one buffer per task that grows 1.5x to 1 MB;
+// tiny = short tasks (1 to 3 turns): small blocks plus one buffer that grows 1.5x from 2.4 KB to 16 KB
+// (the fixed cost of a request: task start and end, first pages, sums of a task with a few KB).
+// Tasks take turns: a turn is 40 calls, then a wait (sum). A task lives 20 to 60 turns (tiny: 1 to 3).
 import { writeFileSync } from 'node:fs';
 const [kind, tasks = 64, turns = 4000] = [process.argv[2], ...process.argv.slice(3).map(Number)];
 let seed = 12345;
@@ -21,16 +23,18 @@ const put = (op, owner, id, len) => {
 const freeIds = [];
 let nextId = 0, owners = 0, liveB = 0, livePeak = 0;
 const add = (d) => { liveB += d; if (liveB > livePeak) livePeak = liveB; };
-const newTask = () => ({ owner: ++owners, live: [], lens: new Map(), left: 20 + Math.floor(rnd() * 40), grow: -1 });
+const tiny = kind === 'tiny';
+const GROW_MAX = tiny ? 16384 : 1 << 20;
+const newTask = () => ({ owner: ++owners, live: [], lens: new Map(), left: tiny ? 1 + Math.floor(rnd() * 3) : 20 + Math.floor(rnd() * 40), grow: -1 });
 const slots = Array.from({ length: tasks }, newTask);
 for (let turn = 0; turn < turns; turn++) {
   const t = slots[turn % tasks];
   for (let k = 0; k < 40; k++) {
     const r = rnd();
-    if (kind === 'grow' && k === 0) {
+    if ((kind === 'grow' || tiny) && k === 0) {
       // One buffer per task grows 1.5x per turn up to 1 MB, then it is freed.
       if (t.grow < 0) { const id = freeIds.length ? freeIds.pop() : nextId++; t.grow = id; t.lens.set(id, 2400); add(2400); put(1 | (4 << 8), t.owner, id, 2400); }
-      else if (t.lens.get(t.grow) < 1 << 20) { const l = Math.round(t.lens.get(t.grow) * 1.5); add(l - t.lens.get(t.grow)); t.lens.set(t.grow, l); put(3 | (4 << 8), t.owner, t.grow, l); }
+      else if (t.lens.get(t.grow) < GROW_MAX) { const l = Math.round(t.lens.get(t.grow) * 1.5); add(l - t.lens.get(t.grow)); t.lens.set(t.grow, l); put(3 | (4 << 8), t.owner, t.grow, l); }
       else { put(2, t.owner, t.grow, 0); freeIds.push(t.grow); add(-t.lens.get(t.grow)); t.lens.delete(t.grow); t.grow = -1; }
     } else if (r < 0.45 || t.live.length === 0) {
       const id = freeIds.length ? freeIds.pop() : nextId++;

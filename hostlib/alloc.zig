@@ -252,6 +252,7 @@ fn poolGrow(n: usize) bool {
         pages = need;
     }
     if (@wasmMemoryGrow(0, pages) < 0) return false;
+    N_GROW +%= 1;
     GROWN_END = @wasmMemorySize(0) * PAGE;
     const hi = GROWN_END >> CH_SHIFT;
     const old_hi = POOL_HI;
@@ -355,11 +356,23 @@ var SLOT_OWNER: [MAX_TASKS]usize = blk: {
 var LAST_OWNER: usize = 0;
 var LAST_SLOT: usize = 0;
 
+/// The first slot to try for `owner`: task ids go up by one, so the tasks that run at the same
+/// time mostly have different home slots, and a lookup needs no scan (research/alloc v8).
+inline fn homeSlot(owner: usize) usize {
+    return 1 + (owner & 127);
+}
+
 /// The record of `owner`, made on first use.
 fn taskOf(owner: usize) *Task {
     if (owner == 0) return &TASKS[0];
     if (owner == LAST_OWNER) return &TASKS[LAST_SLOT];
-    var free_slot: usize = 0;
+    const home = homeSlot(owner);
+    if (SLOT_OWNER[home] == owner) {
+        LAST_OWNER = owner;
+        LAST_SLOT = home;
+        return &TASKS[home];
+    }
+    var free_slot: usize = if (SLOT_OWNER[home] == 0) home else 0;
     for (1..JS_SLOT) |i| {
         if (SLOT_OWNER[i] == owner) {
             LAST_OWNER = owner;
@@ -382,6 +395,7 @@ fn taskOf(owner: usize) *Task {
 fn taskFind(owner: usize) ?*Task {
     if (owner == 0) return &TASKS[0];
     if (owner == LAST_OWNER) return &TASKS[LAST_SLOT];
+    if (SLOT_OWNER[homeSlot(owner)] == owner) return &TASKS[homeSlot(owner)];
     for (1..JS_SLOT) |i| if (SLOT_OWNER[i] == owner) return &TASKS[i];
     return null;
 }
@@ -420,7 +434,32 @@ fn availRemove(t: *Task, h: usize) void {
     U_INAV[h] = 0;
 }
 
-fn smallAlloc(t: *Task, class: usize) usize {
+/// The short path of a small alloc: the free list or the bump of the current page of the class.
+inline fn smallTake(t: *Task, class: usize) usize {
+    const h: usize = t.avail[class];
+    if (h != 0) {
+        const f: usize = U_FREE[h];
+        if (f != 0) {
+            const p = (h << CH_SHIFT) + f - 1;
+            U_FREE[h] = @truncate(rdUsize(p + 4));
+            wrUsize(p, 0);
+            U_LIVE[h] += 1;
+            return p;
+        }
+        const b: usize = U_BUMP[h];
+        if (b + CLASSES[class] <= CH) {
+            U_BUMP[h] = @intCast(b + CLASSES[class]);
+            U_LIVE[h] += 1;
+            // A page used before can hold an old FREE_MARK here.
+            wrUsize((h << CH_SHIFT) + b, 0);
+            return (h << CH_SHIFT) + b;
+        }
+    }
+    return smallAlloc(t, class);
+}
+
+/// The slow path: the current page is full (or there is none), so the next page with room, else a new page.
+noinline fn smallAlloc(t: *Task, class: usize) usize {
     const size = CLASSES[class];
     while (true) {
         const h: usize = t.avail[class];
@@ -499,30 +538,41 @@ inline fn smallStart(ptr: usize) usize {
     return base + idx * CLASSES[U_CLASS[ptr >> CH_SHIFT]];
 }
 
-/// Free the small block at `p` (its start). An empty page goes back at once.
-/// False when it was a second free (caught, nothing changed).
-fn smallFree(t: *Task, p: usize) bool {
-    const h = p >> CH_SHIFT;
-    // A second free of the block: the mark is there, the link is a block offset + 1
-    // (or 0), and the block is on the free list.
-    if (rdUsize(p) == FREE_MARK and isLink(h, rdUsize(p + 4))) {
-        if (onFreeList(h, p)) {
-            DOUBLE_FREES += 1;
-            return false;
-        }
+/// The block at `p` (its start) in page `h` holds the mark: true when it is a second free (the link
+/// is a block offset + 1 or 0, and the block is on the free list). Off the short path.
+noinline fn isDoubleFree(h: usize, p: usize) bool {
+    if (isLink(h, rdUsize(p + 4)) and onFreeList(h, p)) {
+        DOUBLE_FREES += 1;
+        return true;
     }
+    return false;
+}
+
+/// Free the small block at `p` (its start) of class `class` in page `h`. The short path reads each table
+/// once; the slow path runs only when the page was full (not in its avail list) or is now empty
+/// (it goes back at once). A caught double free changes nothing: the live count stays (it must never be
+/// too low, H2).
+inline fn smallRelease(h: usize, p: usize, class: usize) void {
+    if (rdUsize(p) == FREE_MARK and isDoubleFree(h, p)) return;
     // The mark is not an owner, so a free block of a JS page has none.
     wrUsize(p, FREE_MARK);
     wrUsize(p + 4, U_FREE[h]);
     U_FREE[h] = @intCast(p - (h << CH_SHIFT) + 1);
-    U_LIVE[h] -= 1;
+    const live = U_LIVE[h] - 1;
+    U_LIVE[h] = live;
+    if (TRACK_LIVE) LIVE_BYTES -%= CLASSES[class];
+    if (live == 0 or U_INAV[h] == 0) smallFreeSlow(h);
+}
+
+noinline fn smallFreeSlow(h: usize) void {
+    // The page tables of a task that ended are cleared, so `h` belongs to a live task.
+    const t = &TASKS[U_SLOT[h]];
     if (U_INAV[h] == 0) availPush(t, h);
     if (U_LIVE[h] == 0) {
         availRemove(t, h);
         listRemove(&t.small_head, h);
         smallGive(h);
     }
-    return true;
 }
 
 // ---------------------------------------------------------------- large blocks
@@ -576,12 +626,24 @@ pub var LEAKED: usize = 0;
 var RESETS: u32 = 0;
 var RESET_BYTES: usize = 0;
 pub var DEALLOC_MISS: u32 = 0;
+/// Call counters for the stats header of the shim (`alloc_stat`). They wrap at 2^32: JS reads differences.
+/// `N_BYTES`: the bytes asked for by allocs, and by reallocs that move the block.
+var N_ALLOC: u32 = 0;
+var N_FREE: u32 = 0;
+var N_REALLOC: u32 = 0;
+var N_BYTES: u32 = 0;
+var N_GROW: u32 = 0;
+/// The peak of `LIVE_BYTES` since the last `alloc_window` (one request). Always at most `LIVE_PEAK`.
+var WIN_PEAK: usize = 0;
 
-/// Add `n` bytes to the live count and keep its peak.
+/// Add `n` bytes to the live count and keep its peaks.
 inline fn liveAdd(n: usize) void {
     if (!TRACK_LIVE) return;
     LIVE_BYTES +%= n;
-    if (LIVE_BYTES > LIVE_PEAK) LIVE_PEAK = LIVE_BYTES;
+    if (LIVE_BYTES > WIN_PEAK) {
+        WIN_PEAK = LIVE_BYTES;
+        if (LIVE_BYTES > LIVE_PEAK) LIVE_PEAK = LIVE_BYTES;
+    }
 }
 pub var ROC_BYTES: usize = 0;
 
@@ -595,6 +657,11 @@ pub var FAIL_AT: u32 = 0;
 /// Test only (the export `alloc_count`): the allocations so far, to aim `FAIL_AT` (`bench/tasktable-test.mjs`).
 pub var ALLOCS: u32 = 0;
 const BENCH = @import("build_options").bench;
+/// Trace build (`zig build -Dtrace=true`, never the release build): each top-level call goes to the
+/// JS import `js_trace(op, owner, a, b, c)`. The ops are the records of research/alloc/scripts/trace.mjs:
+/// 1 alloc, 2 free, 3 realloc, 4 task end, 5 sum (wait), 6 adopt. JS: `js/trace.js`.
+const TRACE = @import("build_options").trace;
+extern "env" fn js_trace(op: u32, owner: usize, a: usize, b: usize, c: usize) void;
 
 fn allocIn(t: *Task, len: usize, grow: bool) usize {
     if (BENCH) ALLOCS +%= 1;
@@ -604,7 +671,7 @@ fn allocIn(t: *Task, len: usize, grow: bool) usize {
     }
     const small = len <= SMALL_MAX;
     const class = if (small) classOf(len) else 0;
-    const p = if (small) smallAlloc(t, class) else largeAlloc(t, len, grow);
+    const p = if (small) smallTake(t, class) else largeAlloc(t, len, grow);
     if (p == 0) return 0;
     const cap = if (small) CLASSES[class] else alignUp(len, CH);
     liveAdd(cap);
@@ -612,20 +679,24 @@ fn allocIn(t: *Task, len: usize, grow: bool) usize {
 }
 
 pub fn hostAlloc(length: usize, alignment: usize) usize {
-    return hostAllocFor(OWNER, length, alignment);
+    const p = hostAllocFor(OWNER, length, alignment);
+    if (TRACE) js_trace(1 | (@as(u32, @intCast(alignment)) << 8), OWNER, 0, length, p);
+    return p;
 }
 
 /// A block of `owner`. Owner 0 is the host: the block outlives the task that runs.
 pub fn hostAllocFor(owner: usize, length: usize, alignment: usize) usize {
     _ = alignment;
     canary.check();
+    N_ALLOC +%= 1;
+    N_BYTES +%= @truncate(length);
     return allocIn(taskOf(owner), length, false);
 }
 
 /// The unit of `ptr` when it is in a block of ours (a small page, or the first unit of a large block), else 0.
 inline fn blockUnit(ptr: usize) usize {
     const u = ptr >> CH_SHIFT;
-    if (u < POOL_LO or u >= POOL_HI) return 0;
+    if (u -% POOL_LO >= POOL_HI -% POOL_LO) return 0;
     const k = U_KIND[u];
     return if (k == KIND_SMALL or k == KIND_LARGE) u else 0;
 }
@@ -636,18 +707,24 @@ inline fn usableAt(u: usize, ptr: usize) usize {
     return (u << CH_SHIFT) + (@as(usize, U_UNITS[u]) << CH_SHIFT) - ptr;
 }
 
-fn release(u: usize, ptr: usize) void {
+/// The start of the block of class `class` in page `h` that holds `ptr`.
+inline fn startIn(h: usize, ptr: usize, class: usize) usize {
+    const base = h << CH_SHIFT;
+    return base + @as(usize, @intCast(((ptr - base) * RECIP[class]) >> 32)) * CLASSES[class];
+}
+
+fn largeRelease(u: usize) void {
+    if (TRACK_LIVE) LIVE_BYTES -%= @as(usize, U_UNITS[u]) << CH_SHIFT;
     // The page tables of a task that ended are cleared, so `u` belongs to a live task.
-    const t = &TASKS[U_SLOT[u]];
+    largeFree(&TASKS[U_SLOT[u]], u);
+}
+
+/// Free the block of unit `u` (a small page or the first unit of a large block) that holds `ptr`.
+fn release(u: usize, ptr: usize) void {
     if (U_KIND[u] == KIND_SMALL) {
-        const cap = CLASSES[U_CLASS[u]];
-        // A caught double free changes nothing: the count stays (it must never be too low, H2).
-        if (smallFree(t, smallStart(ptr)) and TRACK_LIVE) LIVE_BYTES -%= cap;
-    } else {
-        const cap = @as(usize, U_UNITS[u]) << CH_SHIFT;
-        if (TRACK_LIVE) LIVE_BYTES -%= cap;
-        largeFree(t, u);
-    }
+        const class: usize = U_CLASS[u];
+        smallRelease(u, startIn(u, ptr, class), class);
+    } else largeRelease(u);
 }
 
 /// A block of the host, of JS, or of the task that runs may be freed. A late
@@ -658,19 +735,37 @@ inline fn mayFree(u: usize) bool {
 }
 
 pub fn hostDealloc(ptr: usize) void {
+    if (TRACE) js_trace(2, OWNER, ptr, 0, 0);
     if (ptr == 0) return;
-    const u = blockUnit(ptr);
-    if (u != 0 and mayFree(u)) release(u, ptr) else DEALLOC_MISS += 1;
+    N_FREE +%= 1;
+    // As `blockUnit`, with the kind read once.
+    const u = ptr >> CH_SHIFT;
+    if (u -% POOL_LO < POOL_HI -% POOL_LO) {
+        const k = U_KIND[u];
+        if (k == KIND_SMALL and mayFree(u)) {
+            const class: usize = U_CLASS[u];
+            smallRelease(u, startIn(u, ptr, class), class);
+            return;
+        }
+        if (k == KIND_LARGE and mayFree(u)) {
+            largeRelease(u);
+            return;
+        }
+    }
+    DEALLOC_MISS += 1;
 }
 
 pub fn hostRealloc(ptr: usize, new_length: usize, alignment: usize) usize {
-    return hostReallocFor(OWNER, ptr, new_length, alignment);
+    const p = hostReallocFor(OWNER, ptr, new_length, alignment);
+    if (TRACE) js_trace(3 | (@as(u32, @intCast(alignment)) << 8), OWNER, ptr, new_length, p);
+    return p;
 }
 
 /// As `hostRealloc`. A block that moves goes to `owner`.
 pub fn hostReallocFor(owner: usize, ptr: usize, new_length: usize, alignment: usize) usize {
     _ = alignment;
     if (ptr == 0) return hostAllocFor(owner, new_length, 16);
+    N_REALLOC +%= 1;
     const u = blockUnit(ptr);
     if (u == 0) mem.trap();
     // A block of another task (a stale pointer) is a miss, as at free. The task cannot go on
@@ -679,15 +774,28 @@ pub fn hostReallocFor(owner: usize, ptr: usize, new_length: usize, alignment: us
         DEALLOC_MISS += 1;
         mem.trapClean();
     }
-    const usable = usableAt(u, ptr);
-    const large = U_KIND[u] == KIND_LARGE;
+    if (U_KIND[u] == KIND_SMALL) {
+        // The start and the class once, for the fit test, the copy and the free.
+        const class: usize = U_CLASS[u];
+        const p = startIn(u, ptr, class);
+        const usable = p + CLASSES[class] - ptr;
+        if (new_length <= usable) return ptr;
+        // Move. The new block belongs to `owner` (a JS block too: it needs no owner word then).
+        const new_ptr = allocIn(taskOf(owner), new_length, true);
+        if (new_ptr == 0) return 0;
+        N_BYTES +%= @truncate(new_length);
+        mem.copyBytes(new_ptr, ptr, usable);
+        smallRelease(u, p, class);
+        return new_ptr;
+    }
+    const usable = (u << CH_SHIFT) + (@as(usize, U_UNITS[u]) << CH_SHIFT) - ptr;
+    const end_ = ptr - (u << CH_SHIFT) + new_length;
     if (new_length <= usable) {
-        if (large) U_HW[u] = @intCast(ptr - (u << CH_SHIFT) + new_length);
+        U_HW[u] = @intCast(end_);
         return ptr;
     }
-    const end_ = ptr - (u << CH_SHIFT) + new_length;
     // A large block grows in place when the units after it are free.
-    if (large and new_length > SMALL_MAX) {
+    if (new_length > SMALL_MAX) {
         const m = (end_ + CH - 1) >> CH_SHIFT;
         const old = @as(usize, U_UNITS[u]) << CH_SHIFT;
         if (largeGrowInPlace(u, m, false) or (runFind(m) == 0 and largeGrowInPlace(u, m, true))) {
@@ -697,13 +805,13 @@ pub fn hostReallocFor(owner: usize, ptr: usize, new_length: usize, alignment: us
             return ptr;
         }
     }
-    // Move: copy the used part only (large: up to the requested end). The new
-    // block belongs to the task that runs (a JS block too: it needs no owner word then).
-    const used = if (large) @as(usize, U_HW[u]) - (ptr - (u << CH_SHIFT)) else usable;
+    // Move: copy the used part only (up to the requested end). The new block belongs to `owner`.
+    const used = @as(usize, U_HW[u]) - (ptr - (u << CH_SHIFT));
     const new_ptr = allocIn(taskOf(owner), new_length, true);
     if (new_ptr == 0) return 0;
+    N_BYTES +%= @truncate(new_length);
     mem.copyBytes(new_ptr, ptr, @min(used, new_length));
-    release(u, ptr);
+    largeRelease(u);
     return new_ptr;
 }
 
@@ -761,6 +869,7 @@ inline fn blockStart(u: usize, ptr: usize) usize {
 
 /// A JS block now belongs to the task that runs: its owner word, so `freeOwner` finds it.
 pub fn adopt(ptr: usize) void {
+    if (TRACE) js_trace(6, OWNER, ptr, 0, 0);
     const u = blockUnit(ptr);
     if (u != 0 and U_SLOT[u] == JS_SLOT) wrUsize(blockStart(u, ptr), OWNER);
 }
@@ -810,6 +919,7 @@ inline fn step(n: *usize) void {
 
 /// The task ended (or trapped clean): give all its pages back. Returns its live bytes.
 pub fn taskEnd(owner: usize) usize {
+    if (TRACE) js_trace(4, owner, 0, 0, 0);
     if (owner == 0) return 0;
     // PLAN.md 8e: drop the Native handles of the task. Their blocks are of the task: this call frees them.
     @import("native/native.zig").endTask(allocator, owner, .forget);
@@ -870,6 +980,23 @@ export fn heap_bytes() usize {
 /// The peak of `live_bytes` since the start.
 export fn live_peak() usize {
     return LIVE_PEAK;
+}
+/// The call counters (shim option `stats`): 0 allocs, 1 frees, 2 reallocs, 3 bytes asked for, 4 memory grows,
+/// 5 the peak of live bytes since the last `alloc_window`. They wrap at 2^32.
+export fn alloc_stat(i: u32) usize {
+    return switch (i) {
+        0 => N_ALLOC,
+        1 => N_FREE,
+        2 => N_REALLOC,
+        3 => N_BYTES,
+        4 => N_GROW,
+        5 => WIN_PEAK,
+        else => 0,
+    };
+}
+/// Start a new window for `alloc_stat(5)`: the peak starts at the live bytes now.
+export fn alloc_window() void {
+    WIN_PEAK = LIVE_BYTES;
 }
 /// Reclaim walks (the page reserve gave its pages back to the pool, pressure step 1) and the bytes gained.
 export fn reclaim_walks() u32 {
@@ -985,6 +1112,7 @@ pub const SUM_K: u64 = 0x9E37_79B9_7F4A_7C15;
 /// bump offset, its large blocks up to the requested end, and the JS blocks that
 /// it adopted. 12a calls it at each wait.
 pub fn sumTask(owner: usize) u64 {
+    if (TRACE) js_trace(5, owner, 0, 0, 0);
     var acc: u64 = 1;
     if (taskFind(owner)) |t| {
         acc = fletcher(@intFromPtr(t), @sizeOf(Task), 1);

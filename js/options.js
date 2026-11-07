@@ -34,6 +34,11 @@ const RULES = {
   tailMaxBytes: [(v) => isInt(v) && v > 0, 'an integer number of bytes above 0'],
   // API.md 10.1: the Workers handler names that reach the app as `Other` (a kind with no entry point of its own: `queue`, `email` and `tail` have their own since 8f).
   other: [(v) => Array.isArray(v) && new Set(v).size === v.length && v.every((n) => typeof n === 'string' && /^[A-Za-z_$][\w$]*$/.test(n) && !RESERVED.has(n)), 'an array of handler names, each once, not fetch, scheduled, queue, email, tail or constructor'],
+  // Per-request allocator stats in the response header `x-roc-stats` of each `fetch` (research/alloc/README.md 6). Off by default.
+  stats: [isBool, 'true or false'],
+  // The allocator trace (a trace host only, `zig build -Dtrace=true`): true keeps the records for `Handler.takeTrace()`, a function
+  // also gets the records of each event: `(records: Uint32Array) => void` (format: `js/trace.js`).
+  trace: [(v) => v === true || isFn(v), 'true or a function'],
   // Hooks of the runner that tests use.
   log: fn,
   onLog: fn,

@@ -24,6 +24,8 @@ function importsOf(cell, tasks, budget, shim = SHIM0) {
       js_await: new WebAssembly.Suspending(bridge.js_await),
       js_call: bridge.js_call,
       js_grow: (pages) => (budget ? budget.ask(cell.x.memory, pages) : 1),
+      // The trace host only (`js/trace.js`): the hook of the tracer.
+      ...(shim.tracer ? { js_trace: shim.tracer.hook } : {}),
     },
   };
 }
@@ -102,7 +104,7 @@ export function makeRunner(module, opts = {}) {
   const tasks = makeTaskTable({ ...opts, log, now, onCancel: (t) => hostCancel(t.inst.x, t, cancelTrap) });
   // API.md 6.4: the JS functions of the app (root `ops`), the pin table of the isolate (RS2, `pinLimit`).
   // `crossings`: the calls of `js_await` and `js_call` of all instances (PLAN.md 8c: "one crossing" tests).
-  const shim = { ops: opts.ops ?? {}, pins: makePins(opts.pinLimit ?? 1000, now), log, crossings: { await: 0, call: 0 }, envRead: opts.envRead, now };
+  const shim = { ops: opts.ops ?? {}, pins: makePins(opts.pinLimit ?? 1000, now), log, crossings: { await: 0, call: 0 }, envRead: opts.envRead, now, tracer: opts.tracer };
   stats.pins = shim.pins.stats;
   stats.crossings = shim.crossings;
   const seen = (x) => {
@@ -443,7 +445,7 @@ export function makeRunner(module, opts = {}) {
 // its first event throws (PLAN.md 1b).
 export function manifestOf(module, ev) {
   const none = () => 3; // status 3: the Manifest event has no program
-  const x = new WebAssembly.Instance(module, { env: { js_await: new WebAssembly.Suspending(async () => 3), js_call: none, js_grow: () => 1 } }).exports;
+  const x = new WebAssembly.Instance(module, { env: { js_await: new WebAssembly.Suspending(async () => 3), js_call: none, js_grow: () => 1, js_trace: () => {} } }).exports;
   x.init(1);
   if (!x.stack_first()) return undefined;
   const refs = new Refs();

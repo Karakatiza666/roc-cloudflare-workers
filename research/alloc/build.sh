@@ -15,7 +15,8 @@ cp -r "$D/harness/." "$W/"
 cd "$W"
 export ROC_CACHE_DIR=$W/.cache/roc XDG_CACHE_HOME=$W/.cache ZIG_GLOBAL_CACHE_DIR=$W/.cache/zig
 ROC=${ROC:-$(bench/get-roc.sh)}
-"$ROC" glue host/ZigGlue.roc .cache/glue platform/main.roc >/dev/null
+# The glue of the harness platform (bench/platform/main.roc: Wait.wait!), not of the real platform.
+"$ROC" glue host/ZigGlue.roc .cache/glue bench/platform/main.roc >/dev/null
 cp .cache/glue/roc_platform_abi.zig host/roc_platform_abi.zig
 for v in "${@:-v0 v1 v2 v3 v5}"; do
   for vv in $v; do

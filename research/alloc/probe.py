@@ -66,6 +66,30 @@ if 'pub var SUM_BYTES' not in s:
 
 if missing:
     s += '\n// ---------------------------------------------------------------- harness stubs\n\n' + '\n'.join(STUBS[k] for k in missing) + '\n'
+# The current hostlib (roc.zig, wordbuf.zig) calls these. A research version has no host
+# blocks of owner 0 by name: the shim runs the call as owner 0 (the host). The global check
+# (hostBlockOk) is not in the harness host, so the shim says yes.
+SHIMS = {
+    'allocHostOrTrap': '''pub fn allocHostOrTrap(length: usize, alignment: usize) usize {
+    const o = OWNER;
+    OWNER = 0;
+    defer OWNER = o;
+    return allocOrTrap(length, alignment);
+}''',
+    'reallocHostOrTrap': '''pub fn reallocHostOrTrap(ptr: usize, new_length: usize, alignment: usize) usize {
+    const o = OWNER;
+    OWNER = 0;
+    defer OWNER = o;
+    return reallocOrTrap(ptr, new_length, alignment);
+}''',
+    'hostBlockOk': '''pub fn hostBlockOk(p: usize, len: usize) bool {
+    _ = .{ p, len };
+    return true;
+}''',
+}
+shims = [v for k, v in SHIMS.items() if f'pub fn {k}(' not in s and f'pub inline fn {k}(' not in s]
+if shims:
+    s += '\n// ---------------------------------------------------------------- harness shims (current hostlib)\n\n' + '\n'.join(shims) + '\n'
 # Trace build (env TRACE=1): each top-level API call goes to the JS import `js_trace`.
 # scripts/trace.mjs records it; replay/ runs the record against each version.
 import os

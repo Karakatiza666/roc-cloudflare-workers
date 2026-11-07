@@ -10,7 +10,8 @@ W=$A/.work-replay
 mkdir -p "$W" "$A/out"
 export ZIG_GLOBAL_CACHE_DIR=$W/.cache/zig ZIG_LOCAL_CACHE_DIR=$W/.zig-cache
 for v in "${@:-v0 v1 v2 v3 v5}"; do
-  cp "$D/replay.zig" "$D/mem.zig" "$D/canary.zig" "$D/build_options.zig" "$W/"
+  cp "$D/replay.zig" "$D/mem.zig" "$D/canary.zig" "$D/cpu.zig" "$D/build_options.zig" "$W/"
+  mkdir -p "$W/native" && cp "$D/native/native.zig" "$W/native/"
   # "port": the production allocator (hostlib/alloc.zig, PLAN.md 6e).
   if [ "$v" = port ]; then cp "$A/../../hostlib/alloc.zig" "$W/alloc.zig"; else cp "$A/versions/$v.zig" "$W/alloc.zig"; fi
   (cd "$W" && "$ZIG" build-exe -target wasm32-freestanding -mcpu=generic+simd128 -O "${OPT:-ReleaseSmall}" \

@@ -60,6 +60,21 @@ export function hostCounters(x) {
   };
 }
 
+// The call counters of the host for the shim option `stats` (`alloc_stat` in `hostlib/alloc.zig`). They wrap at 2^32:
+// callers use `(after - before) >>> 0`. `peak` is the peak of live bytes since the last `alloc_window`.
+export const STAT_EXPORTS = ['alloc_stat', 'alloc_window'];
+export const hasStats = (module) => {
+  const names = WebAssembly.Module.exports(module).map((e) => e.name);
+  return STAT_EXPORTS.every((n) => names.includes(n));
+};
+export function allocStats(x) {
+  const g = x.alloc_stat;
+  return { allocs: g(0) >>> 0, frees: g(1) >>> 0, reallocs: g(2) >>> 0, bytes: g(3) >>> 0, grows: g(4) >>> 0, peak: g(5) >>> 0 };
+}
+
+// The trace host (`zig build -Dtrace=true`) imports `js_trace`. The shim option `trace` is for it, and it needs it.
+export const isTraceHost = (module) => WebAssembly.Module.imports(module).some((i) => i.module === 'env' && i.name === 'js_trace');
+
 // The word that marks a free small block: random for each instance, so live
 // data matches it only by chance (as the glibc tcache key).
 export const freeMark = (x) => x.set_free_mark(crypto.getRandomValues(new Uint32Array(1))[0] | 1);

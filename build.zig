@@ -8,6 +8,11 @@ pub fn build(b: *std.Build) void {
     const bench = b.option(bool, "bench", "Bench host: add the test exports (PLAN.md 7a)") orelse false;
     options.addOption(bool, "small_buffers", false);
     options.addOption(bool, "bench", bench);
+    // Trace host (research/alloc/README.md 6): a JS call at each allocator call. Never the release build: it goes to
+    // zig-out/host-trace.wasm and never to platform/targets/.
+    const trace = b.option(bool, "trace", "Trace host: call js_trace at each allocator call (output: zig-out/host-trace.wasm)") orelse false;
+    if (trace and bench) @panic("-Dtrace and -Dbench do not go together");
+    options.addOption(bool, "trace", trace);
     options.addOption(bool, "track_live", b.option(bool, "track_live", "Count live bytes (leak checks)") orelse true);
     // The allocator asks JS (`js_grow`) before each grow (PLAN.md 4b).
     options.addOption(bool, "ask_js", true);
@@ -27,6 +32,10 @@ pub fn build(b: *std.Build) void {
     const host = b.addObject(.{ .name = "host", .root_module = host_mod });
     host.link_function_sections = true;
     host.link_data_sections = true;
+    if (trace) {
+        b.getInstallStep().dependOn(&b.addInstallFile(host.getEmittedBin(), "host-trace.wasm").step);
+        return;
+    }
     const place = b.addUpdateSourceFiles();
     place.addCopyFileToSource(host.getEmittedBin(), if (bench) "bench/platform/targets/wasm32/host.wasm" else "platform/targets/wasm32/host.wasm");
     b.getInstallStep().dependOn(&place.step);

@@ -6,7 +6,7 @@
 // `.mjs`: this file runs only in Node, so the module lists of `*.js` (the shim) never take it. The isolate part is
 // `test-entry.js`. No npm dependency: the app's test setup installs `wrangler` or `miniflare` (TH10).
 import { createRequire } from 'node:module';
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -293,6 +293,27 @@ const KNOWN = new Set(['dir', 'wasm', 'shim', 'config', 'now', 'd1', 'kv', 'r2',
 
 // ---- startApp ----
 
+// The env var CFW_TEST_OPTIONS (a JSON object, for example '{"stats":true}') adds makeHandler options to each startApp, below the
+// option `options` of the call. For a runner that calls startApp and has no way to give options (research/alloc/README.md 6).
+function envOptions() {
+  const t = process.env.CFW_TEST_OPTIONS;
+  if (!t) return {};
+  let o;
+  try {
+    o = JSON.parse(t);
+  } catch (e) {
+    throw new Error(`startApp: CFW_TEST_OPTIONS is not JSON: ${e.message}`);
+  }
+  if (o === null || typeof o !== 'object' || Array.isArray(o)) throw new Error('startApp: CFW_TEST_OPTIONS must be a JSON object');
+  return o;
+}
+
+// The env var CFW_TEST_TRACE=<file> (an app on the trace host, research/alloc/README.md 6): startApp sets the option `trace: true`,
+// and `close()` appends the records of the isolate (format: js/trace.js) to <file>. `app.takeTrace()` gives the records
+// since the last take (those are then not in the file). A function cannot pass through CFW_TEST_OPTIONS, and the Worker
+// in workerd has no file system, so the records come out through the control path of the test entry.
+const traceFile = () => process.env.CFW_TEST_TRACE || null;
+
 export async function startApp(opts = {}) {
   for (const k of Object.keys(opts)) if (!KNOWN.has(k)) throw new Error(`startApp: unknown option ${k}. Known: ${[...KNOWN].join(', ')}`);
   const dir = resolve(opts.dir ?? '.');
@@ -359,7 +380,7 @@ export async function startApp(opts = {}) {
   const rel = (f) => `./${relative(dir, f).split(sep).join('/')}`;
   const entryPath = join(dir, `__cfw_test_entry_${token}.js`);
   const modules = [
-    { type: 'ESModule', path: entryPath, contents: testEntryText(m, { token, now: opts.now ?? null, count, options: opts.options, optionsImport: existsSync(optionsFile) ? rel(optionsFile) : null, hooksImport: hooksFile ? rel(hooksFile) : null }) },
+    { type: 'ESModule', path: entryPath, contents: testEntryText(m, { token, now: opts.now ?? null, count, options: { ...envOptions(), ...(traceFile() ? { trace: true } : {}), ...opts.options }, optionsImport: existsSync(optionsFile) ? rel(optionsFile) : null, hooksImport: hooksFile ? rel(hooksFile) : null }) },
     ...readdirSync(shimDir).filter((f) => f.endsWith('.js')).map((f) => ({ type: 'ESModule', path: join(dir, '.roc-cfw', f), contents: readFileSync(join(shimDir, f), 'utf8') })),
     ...[...local].map(([path, contents]) => ({ type: 'ESModule', path, contents })),
     { type: 'CompiledWasm', path: join(dir, 'app.wasm'), contents: wasmBytes },
@@ -555,9 +576,23 @@ export async function startApp(opts = {}) {
     await seed();
   };
 
+  // CFW_TEST_TRACE: the records since the last take, from the control path `trace` of the test entry.
+  const takeTrace = async () => {
+    const res = await mf.dispatchFetch(`http://localhost/__cfw_test/${token}/trace`);
+    if (!res.ok) throw new Error(`startApp: trace: ${(await res.json()).error ?? res.status}`);
+    return new Uint32Array(await res.arrayBuffer());
+  };
   async function close() {
     if (closed) return;
     closed = true;
+    const tf = traceFile();
+    if (tf) {
+      const rec = await takeTrace().catch((e) => {
+        console.error(`startApp: CFW_TEST_TRACE: no trace: ${e.message}`);
+        return null;
+      });
+      if (rec) appendFileSync(tf, Buffer.from(rec.buffer, rec.byteOffset, rec.byteLength));
+    }
     live.delete(app);
     await mf.dispose().catch(() => {});
     rmSync(runDir, { recursive: true, force: true });
@@ -608,6 +643,7 @@ export async function startApp(opts = {}) {
     sql: runSql,
     outbound: () => ({ log: [...out.state.log], count: { ...out.state.count }, unmatched: [...out.state.unmatched] }),
     reset,
+    takeTrace,
     close,
   }));
 }

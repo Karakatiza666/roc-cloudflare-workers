@@ -7,6 +7,7 @@ pub fn build(b: *std.Build) void {
     // The production hostlib/alloc.zig (the port) reads these two. The harness host has all its test hooks, so bench is on.
     options.addOption(bool, "bench", true);
     options.addOption(bool, "ask_js", false);
+    options.addOption(bool, "trace", false);
     options.addOption(u8, "ch_shift", b.option(u8, "ch_shift", "Arena chunk size: 1 << ch_shift") orelse 14);
     options.addOption(bool, "track_live", b.option(bool, "track_live", "Count live bytes (leak checks)") orelse true);
     options.addOption(bool, "owner_tag", b.option(bool, "owner_tag", "Tag spans with the task, free them after a trap") orelse true);
@@ -17,6 +18,8 @@ pub fn build(b: *std.Build) void {
     });
     const hostlib = b.createModule(.{ .root_source_file = b.path("hostlib/root.zig"), .target = wasm, .optimize = .ReleaseSmall, .pic = true });
     hostlib.addImport("build_options", options.createModule());
+    // As the platform build.zig: the zstd decoder of hostlib/native is a module of its own.
+    hostlib.addImport("zstd_dec", b.createModule(.{ .root_source_file = b.path("hostlib/zstd/decompress.zig"), .target = wasm, .optimize = .ReleaseSafe, .pic = true }));
     const host_mod = b.createModule(.{ .root_source_file = b.path("host/host.zig"), .target = wasm, .optimize = .ReleaseSmall, .pic = true });
     host_mod.addImport("hostlib", hostlib);
     const host = b.addObject(.{ .name = "host", .root_module = host_mod });

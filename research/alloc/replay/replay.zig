@@ -29,6 +29,9 @@ export fn sum_mismatch() u32 {
 export fn copy_bytes() f64 {
     return @floatFromInt(@import("mem.zig").COPY_BYTES);
 }
+export fn set_no_copy(m: u32) void {
+    @import("mem.zig").NO_COPY = m != 0;
+}
 export fn copies() f64 {
     return @floatFromInt(@import("mem.zig").COPIES);
 }

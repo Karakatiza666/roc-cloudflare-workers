@@ -1,0 +1,84 @@
+{
+  "base": "http://127.0.0.1:8787",
+  "generated_at": "2026-11-07T10:33:07.909Z",
+  "seed": 1,
+  "mixed_size": 400,
+  "discovery_requests": 3,
+  "corpus": {
+    "releases": 178,
+    "groups": 46,
+    "github_packages": 46,
+    "hashes": 178,
+    "toolchain_rows": 34,
+    "nightly_tags": 7,
+    "latest_tag": "nightly-2026-11-06-34f137a"
+  },
+  "mixed_weights": [
+    {
+      "class": "closure, 1 group (tln add)",
+      "weight": 12
+    },
+    {
+      "class": "closure, 3 to 4 groups (resolve)",
+      "weight": 20
+    },
+    {
+      "class": "closure, all groups (tln outdated)",
+      "weight": 3
+    },
+    {
+      "class": "toolchains",
+      "weight": 15
+    },
+    {
+      "class": "short match",
+      "weight": 15
+    },
+    {
+      "class": "q search",
+      "weight": 3
+    },
+    {
+      "class": "releases of a package",
+      "weight": 10
+    },
+    {
+      "class": "artifact",
+      "weight": 8
+    },
+    {
+      "class": "artifact compat",
+      "weight": 5
+    },
+    {
+      "class": "hint post (write)",
+      "weight": 4
+    },
+    {
+      "class": "compat_hints audit",
+      "weight": 1
+    },
+    {
+      "class": "sweeps",
+      "weight": 1
+    },
+    {
+      "class": "404",
+      "weight": 3
+    }
+  ],
+  "lines": {
+    "small": 2,
+    "search": 107,
+    "releases": 68,
+    "closure": 59,
+    "compat": 151,
+    "hints": 31,
+    "mixed": 400,
+    "mixed-ro": 400
+  },
+  "write_scenarios": [
+    "hints",
+    "mixed"
+  ]
+}

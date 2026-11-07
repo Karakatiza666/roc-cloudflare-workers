@@ -251,6 +251,11 @@ export function testEntry(opts = {}) {
       return json({ calls: out });
     }
     if (path === 'tasks') return json({ tasks: runner().tasks.size, pins: runner().pins.size });
+    // CFW_TEST_TRACE (js/test.mjs): the allocator records since the last take (option `trace: true`, a trace host).
+    if (path === 'trace') {
+      if (typeof Handler.takeTrace !== 'function') return json({ error: 'trace: the option trace is off (CFW_TEST_TRACE needs a trace host)' }, 409);
+      return new Response(Handler.takeTrace(), { headers: { 'content-type': 'application/octet-stream' } });
+    }
     // TH15: the clock, the pins (probe P3), the cache keys (probe P2), the calls. D1, KV, R2: the helper in Node.
     if (path === 'reset') {
       const tasks = runner().tasks.size;

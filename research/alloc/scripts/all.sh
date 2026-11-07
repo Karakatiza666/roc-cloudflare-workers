@@ -5,11 +5,11 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 V=${*:-v0 v1 v2 v3 v5 v6 v7}
-O=out/all
+O=${O:-out/all}  # env O: another output dir
 mkdir -p "$O"
 date > "$O/date.txt"; uptime >> "$O/date.txt"; node --version >> "$O/date.txt"
 # Lines of code: no blank lines, no comment lines.
-for v in $V; do echo "$v $(grep -cvE '^\s*(//.*)?$' versions/$v.zig)"; done > "$O/loc.txt"
+for v in $V; do f=versions/$v.zig; [ "$v" = port ] && f=../../hostlib/alloc.zig; echo "$v $(grep -cvE '^\s*(//.*)?$' $f)"; done > "$O/loc.txt"
 # Allocator CPU and memory, no app code (replay of recorded and synthetic traces).
 for t in 2000_6 200_40 synth_med synth_mix synth_grow; do
   node scripts/replay.mjs "$t" 7 $V > "$O/replay_$t.txt" 2>&1

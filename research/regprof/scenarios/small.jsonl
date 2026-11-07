@@ -1,0 +1,2 @@
+{"method":"GET","path":"/v1/toolchains","expected_status":200}
+{"method":"GET","path":"/v1/does-not-exist","expected_status":404}

@@ -19,7 +19,7 @@ import { makeRunner, check } from './core.js';
 // the 12b status (JS needs both), and `sum_checks` as a counter export.
 const PRODUCTION = [
   'init', 'handle', 'task_abort', 'task_cancel', 'task_slots', 'js_alloc', 'res_free', 'stack_first', 'set_free_mark',
-  'set_grow_step', 'check_heap', 'log_ptr', 'log_len', 'log_clear', 'heap_used', 'heap_bytes', 'live_bytes', 'live_peak',
+  'set_grow_step', 'check_heap', 'log_ptr', 'log_len', 'log_clear', 'heap_used', 'heap_bytes', 'live_bytes', 'live_peak', 'alloc_stat', 'alloc_window',
   'reclaim_walks', 'reclaim_bytes', 'leaked_at_end', 'idle_resets', 'idle_reset_bytes', 'alarms', 'sum_checks',
   'double_frees', 'dealloc_miss', 'idle_reset', 'trap_cause', 'set_sum', 'set_suspect', '__instance_signal',
   '__instance_terminated',
