@@ -2,7 +2,7 @@
 
 A Roc platform for Cloudflare Workers. The app compiles to a wasm32 reactor. The host is in Zig. Effects (fetch, D1, R2, KV, Cache API, Durable Object SQL) are direct-style hosted functions that wait on JS promises through JSPI.
 
-Status: phases A and B are built (`PLAN.md`). The release files are made by `scripts/bundle.sh` and published by `.github/workflows/release.yml` (`PLAN.md` 11). The latest release is 0.0.8: see "Changes in 0.0.8".
+Status: phases A and B are built (`PLAN.md`). The release files are made by `scripts/bundle.sh` and published by `.github/workflows/release.yml` (`PLAN.md` 11). The latest release is 0.0.9: see "Changes in 0.0.9".
 
 | Document | Content |
 | --- | --- |
@@ -33,6 +33,14 @@ There is no npm package and no `package.json` in a project. The release notes ha
 | 0.0.2 | `https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/0.0.2/f352LLRKJCZ4JJVEocp3H9e4e6Sxa6Ym5CxZ1GZCpfd.tar.zst` | `nightly-2026-10-31-f7bef6b` |
 
 Use the release URL. `dist/` of this repository is a local build of `scripts/bundle.sh` (gitignored). Its hash is not the hash of the release, so do not take a URL or a file from `dist/`.
+
+## Changes in 0.0.9
+
+| Change | In 0.0.8 | In 0.0.9 | What the app author does |
+| --- | --- | --- | --- |
+| Allocator size classes (`hostlib/alloc.zig`) | 13 size classes (16 to 2048 bytes). A block above 2048 bytes had no class of its own (a large block). | 25 classes (16 to 8192 bytes, with 1360 new, and 384 and 768 removed). A block of 2049 to 8192 bytes is in a 1 KB span class (3072 to 8192 in 1 KB steps), owned by one task. The Roc code and the API do not change. When most blocks are 200 B to 8 KB, the wasm memory is up to 17 % less. In the Talon registry bench, the instructions for each request are 0.3 to 4.3 % fewer. The allocator is also faster for small blocks (the paths of `alloc` and `free`). | Nothing. Rebuild the app. |
+| Option `stats` of `makeHandler`: the response header `x-roc-stats` | No allocator numbers for a request. | `makeHandler(module, { stats: true })` sets `x-roc-stats` on each `fetch` response: `allocs`, `frees`, `reallocs`, `bytes`, `livePeak`, `liveEnd`, `mem`, `grows`, `ms`, `served`, `ageMs`, `inst`, `cross` (crossings between JS and wasm) and `xbytes` (their bytes). Off by default: with the option off, there is no wrapper and no header. The option needs a host with the exports `alloc_stat` and `alloc_window`: build the app again with 0.0.9. | Nothing, unless you want the numbers. For tests and benches only: the header is a diagnostic, and its fields can change (`research/alloc/README.md` 6). |
+| Option `trace` of `makeHandler` and `Handler.takeTrace` | No allocator trace. | A trace host (`zig build -Dtrace=true`) with `makeHandler(module, { trace })`: `trace` is a function that gets the records of each event, and `Handler.takeTrace()` gives the records since the last call. A release host with the option `trace`, or a trace host without it, throws at `makeHandler`. | Nothing. This is for allocator research (`research/alloc/README.md` 6). Do not use a trace host in production. |
 
 ## Changes in 0.0.8
 
