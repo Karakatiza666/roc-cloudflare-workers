@@ -1,0 +1,389 @@
+## `Memo` (MODULES.md 9, PLAN.md 8c). `load!` makes a new id each time (`random_uuid!`), so the same id in two requests
+## shows that the second one ran no `load!`. The value has a `U64` of 2^60: it must come back exact (CBOR, MC5).
+import pf.Request
+import pf.Response
+import pf.Memo
+import pf.WebCrypto
+import pf.Time
+import pf.Cbor
+import Q
+
+Keys : { kid : Str, big : U64, made : Str }
+
+## MODULES.md 15: `load!` has an annotation.
+load_keys! : () => Try(Keys, [LoadErr])
+load_keys! = || Ok({ kid: "k1", big: 1_152_921_504_606_846_976, made: WebCrypto.random_uuid!() })
+
+keys : Memo(Keys)
+keys = Memo.new("conformance-keys", { max_age_ms: 600_000 })
+
+## The clock check (checks/clock.mjs): an age of 60 s on the clock of the shim (option `now`), not on real time.
+clock : Memo(Keys)
+clock = Memo.new("conformance-clock", { max_age_ms: 60_000 })
+
+## A short age: a `get!` after 100 ms loads again.
+short : Memo(Keys)
+short = Memo.new("conformance-short", { max_age_ms: 50 })
+
+## The shape of `List(Jwk.Key)` of roc-jwt 0.0.1 (a local copy: no dependency on roc-jwt). Talon slice 108b, P1.
+Curve : [P256, P384, P521]
+
+Material : [
+	Rsa({ n : List(U8), e : List(U8) }),
+	Ec({ crv : Curve, x : List(U8), y : List(U8) }),
+	Okp({ crv : [Ed25519, Ed448], x : List(U8) }),
+]
+
+Jwk : {
+	kid : Try(Str, [Missing]),
+	alg : Try(Str, [Missing]),
+	use : Try(Str, [Missing]),
+	key_ops : Try(List(Str), [Missing]),
+	material : Material,
+}
+
+Jwks : { made : Str, keys : List(Jwk) }
+
+load_jwks! : () => Try(Jwks, [LoadErr])
+load_jwks! = || Ok({ made: WebCrypto.random_uuid!(), keys: jwk_list })
+
+jwk_list : List(Jwk)
+jwk_list = [
+	{ kid: Ok("a"), alg: Ok("RS256"), use: Ok("sig"), key_ops: Err(Missing), material: Rsa({ n: List.repeat(0xc5, 256), e: [1, 0, 1] }) },
+	{ kid: Err(Missing), alg: Err(Missing), use: Err(Missing), key_ops: Ok(["verify"]), material: Ec({ crv: P256, x: List.repeat(1, 32), y: List.repeat(2, 32) }) },
+	{ kid: Ok("c"), alg: Err(Missing), use: Err(Missing), key_ops: Err(Missing), material: Okp({ crv: Ed25519, x: List.repeat(3, 32) }) },
+]
+
+jwks : Memo(Jwks)
+jwks = Memo.new("conformance-jwks", { max_age_ms: 600_000 })
+
+## A type that never round-trips: `Err(Null)` in a record field writes no key, and a `Try(a, [Null])` field is
+## required (roc-cbor rules N4, N5). `get!` logs one line for the name, does not pin, and runs `load!` each time.
+Unreadable : { made : Str, note : Try(Str, [Null]) }
+
+load_unreadable! : () => Try(Unreadable, [LoadErr])
+load_unreadable! = || Ok({ made: WebCrypto.random_uuid!(), note: Err(Null) })
+
+unreadable : Memo(Unreadable)
+unreadable = Memo.new("conformance-unreadable", { max_age_ms: 600_000 })
+
+## An older type after a deploy: two `Memo` constants with one name and two types. The value of `older` does not
+## parse as `newer`, so `newer.get!` loads again with no log line, pins its own value, and the next `get!` reads it.
+older : Memo({ made : Str, kid : Str })
+older = Memo.new("conformance-deploy", { max_age_ms: 600_000 })
+
+newer : Memo({ made : Str, big : U64 })
+newer = Memo.new("conformance-deploy", { max_age_ms: 600_000 })
+
+load_older! : () => Try({ made : Str, kid : Str }, [LoadErr])
+load_older! = || Ok({ made: WebCrypto.random_uuid!(), kid: "k1" })
+
+load_newer! : () => Try({ made : Str, big : U64 }, [LoadErr])
+load_newer! = || Ok({ made: WebCrypto.random_uuid!(), big: 7 })
+
+## Small integer types with values from the request (not constants), in a record and a tag payload.
+Small : { u8 : List(U8), i8 : List(I8), u16 : List(U16), i16 : List(I16), tag : [Bin(List(U8)), Txt(Str)] }
+
+MemoRoutes :: [].{
+	route! : Request, List(Str) => Response
+	route! = |req, path| match path {
+		["get"] => show(keys.get!(load_keys!))
+		["clear"] => {
+			keys.clear!()
+			Response.from_text(200, "cleared")
+		}
+		["clock"] => show(clock.get!(load_keys!))
+		# Two `get!` of `short`, 100 ms apart: two ids.
+		["short"] => {
+			a = short.get!(load_keys!)
+			Time.sleep!(100)
+			b = short.get!(load_keys!)
+			Response.from_text(200, "same=${Str.inspect(a == b)}")
+		}
+		["jwks"] => match jwks.get!(load_jwks!) {
+			Ok(v) => Response.from_text(200, "Ok keys=${v.keys.len().to_str()} made=${v.made}")
+			Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+		}
+		["unreadable"] => match unreadable.get!(load_unreadable!) {
+			Ok(v) => Response.from_text(200, "Ok made=${v.made}")
+			Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+		}
+		["deploy", "older"] => match older.get!(load_older!) {
+			Ok(v) => Response.from_text(200, "Ok made=${v.made}")
+			Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+		}
+		["deploy", "newer"] => match newer.get!(load_newer!) {
+			Ok(v) => Response.from_text(200, "Ok made=${v.made}")
+			Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+		}
+		["deploy", "clear"] => {
+			newer.clear!()
+			Response.from_text(200, "cleared")
+		}
+		# `?n=`: each value is from n, so the compiler cannot fold the round trip.
+		["small"] => {
+			n = Q.num(req, "n")
+			v : Small
+			v = { u8: [n.to_u8_wrap(), 255], i8: [n.to_i8_wrap(), -128], u16: [n.to_u16_wrap(), 65535], i16: [n.to_i16_wrap(), -32768], tag: Bin([n.to_u8_wrap(), 0]) }
+			back : Try(Small, _)
+			back = Cbor.parse(Cbor.encode(v))
+			match back {
+				Ok(b) => Response.from_text(200, "same=${Str.inspect(b == v)}")
+				Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+			}
+		}
+		# Encode then parse in wasm, with no pin table.
+		# Probes of the dev trap with roc-cbor 0.5.0 (research/cbor-0.5.0). `n`: a length from the request.
+		["probe", "bytes"] => {
+			v = List.repeat(Q.num(req, "b").to_u8_wrap(), Q.num(req, "n"))
+			raw = Cbor.encode(v)
+			back : Try(List(U8), _)
+			back = Cbor.parse(raw)
+			Response.from_text(200, "len=${raw.len().to_str()} same=${Str.inspect(back == Ok(v))}")
+		}
+		["probe", "enc"] => {
+			v = List.repeat(Q.num(req, "b").to_u8_wrap(), Q.num(req, "n"))
+			raw = Cbor.encode(v)
+			Response.from_text(200, "len=${raw.len().to_str()}")
+		}
+		["probe", "parse"] => {
+			n = Q.num(req, "n")
+			raw = [0x59, n.shr_zf_wrap(8).to_u8_wrap(), n.to_u8_wrap()].concat(List.repeat(Q.num(req, "b").to_u8_wrap(), n))
+			back : Try(List(U8), _)
+			back = Cbor.parse_with(raw, { allow: [PaddedNumbers] })
+			Response.from_text(200, "len=${raw.len().to_str()} got=${Str.inspect(back.map_ok(|l| l.len()))}")
+		}
+		["probe", "rsa"] => {
+			n = Q.num(req, "n")
+			v : Material
+			v = Rsa({ n: List.repeat(0xc5, n), e: [1, 0, 1] })
+			back : Try(Material, _)
+			back = Cbor.parse(Cbor.encode(v))
+			Response.from_text(200, "same=${Str.inspect(back == Ok(v))}")
+		}
+		["probe", "jwk"] => {
+			i = Q.num(req, "i")
+			v : List(Jwk)
+			v = jwk_list.sublist({ start: i, len: Q.num(req, "len") })
+			raw = Cbor.encode(v)
+			back : Try(List(Jwk), _)
+			back = Cbor.parse(raw)
+			Response.from_text(200, "len=${raw.len().to_str()} same=${Str.inspect(back == Ok(v))}")
+		}
+		["probe", "shape", s] => {
+			n = Q.num(req, "n")
+			text = "k${n.to_str()}"
+			len = match s {
+				"miss_ok" => {
+					v : { kid : Try(Str, [Missing]) }
+					v = { kid: Ok(text) }
+					Cbor.encode(v).len()
+				}
+				"miss_err" => {
+					v : { kid : Try(Str, [Missing]), alg : Str }
+					v = { kid: Err(Missing), alg: text }
+					Cbor.encode(v).len()
+				}
+				"opt" => {
+					v : { kid ?: Str, alg : Str }
+					v = { alg: text }
+					Cbor.encode(v).len()
+				}
+				"null_err" => {
+					v : { kid : Try(Str, [Null]), alg : Str }
+					v = { kid: Err(Null), alg: text }
+					Cbor.encode(v).len()
+				}
+				"curve" => {
+					v : List(Curve)
+					v = if (n == 0) [P256] else [P384, P521]
+					Cbor.encode(v).len()
+				}
+				"ec" => {
+					v : Material
+					v = Ec({ crv: P256, x: [n.to_u8_wrap()], y: [2] })
+					Cbor.encode(v).len()
+				}
+				"rec_str" => {
+					v : { a : Str, b : Str }
+					v = { a: text, b: text }
+					Cbor.encode(v).len()
+				}
+				"ops" => {
+					v : { key_ops : Try(List(Str), [Missing]) }
+					v = { key_ops: Ok([text]) }
+					Cbor.encode(v).len()
+				}
+				"try2_mat" => {
+					v : { kid : Try(Str, [Missing]), material : Material }
+					v = { kid: Ok(text), material: Ec({ crv: P256, x: [n.to_u8_wrap()], y: [2] }) }
+					Cbor.encode(v).len()
+				}
+				"str_mat" => {
+					v : { kid : Str, material : Material }
+					v = { kid: text, material: Ec({ crv: P256, x: [n.to_u8_wrap()], y: [2] }) }
+					Cbor.encode(v).len()
+				}
+				"try4_str" => {
+					v : { kid : Try(Str, [Missing]), alg : Try(Str, [Missing]), use : Try(Str, [Missing]), key_ops : Try(List(Str), [Missing]), material : Str }
+					v = { kid: Ok(text), alg: Err(Missing), use: Ok(text), key_ops: Err(Missing), material: text }
+					Cbor.encode(v).len()
+				}
+				"try1_list" => {
+					v : List({ kid : Try(Str, [Missing]) })
+					v = [{ kid: Ok(text) }]
+					Cbor.encode(v).len()
+				}
+				"rec5_str" => {
+					v : { a : Str, b : Str, c : Str, d : Str, e : Str }
+					v = { a: text, b: text, c: text, d: text, e: text }
+					Cbor.encode(v).len()
+				}
+				"rec_tag_str" => {
+					v : { kid : Str, m : [A(Str), B] }
+					v = { kid: text, m: A(text) }
+					Cbor.encode(v).len()
+				}
+				"rec_tag_unit" => {
+					v : { kid : Str, m : [A(Str), B] }
+					v = { kid: text, m: B }
+					Cbor.encode(v).len()
+				}
+				"rec_tag_rec" => {
+					v : { kid : Str, m : [A({ x : Str })] }
+					v = { kid: text, m: A({ x: text }) }
+					Cbor.encode(v).len()
+				}
+				"one_tag_rec" => {
+					v : { m : [A({ x : Str })] }
+					v = { m: A({ x: text }) }
+					Cbor.encode(v).len()
+				}
+				"one_tag_str" => {
+					v : { m : [A(Str)] }
+					v = { m: A(text) }
+					Cbor.encode(v).len()
+				}
+				"tup_tag_str" => {
+					v : (Str, [A(Str)])
+					v = (text, A(text))
+					Cbor.encode(v).len()
+				}
+				"list_tag_str" => {
+					v : List([A(Str)])
+					v = [A(text)]
+					Cbor.encode(v).len()
+				}
+				"rec_bytes" => {
+					v : { kid : Str, x : List(U8) }
+					v = { kid: text, x: [n.to_u8_wrap()] }
+					Cbor.encode(v).len()
+				}
+				"rec_rec_bytes" => {
+					v : { kid : Str, r : { x : List(U8) } }
+					v = { kid: text, r: { x: [n.to_u8_wrap()] } }
+					Cbor.encode(v).len()
+				}
+				"rec_tag_bytes" => {
+					v : { kid : Str, m : [A({ x : List(U8) })] }
+					v = { kid: text, m: A({ x: [n.to_u8_wrap()] }) }
+					Cbor.encode(v).len()
+				}
+				"rec_tag_bytes1" => {
+					v : { kid : Str, m : [A(List(U8))] }
+					v = { kid: text, m: A([n.to_u8_wrap()]) }
+					Cbor.encode(v).len()
+				}
+				"list_mat" => {
+					v : List(Material)
+					v = [Ec({ crv: P256, x: [n.to_u8_wrap()], y: [2] })]
+					Cbor.encode(v).len()
+				}
+				"tup_mat" => {
+					v : (Str, Material)
+					v = (text, Ec({ crv: P256, x: [n.to_u8_wrap()], y: [2] }))
+					Cbor.encode(v).len()
+				}
+				"tup_bytes" => {
+					v : (Str, List(U8))
+					v = (text, [n.to_u8_wrap()])
+					Cbor.encode(v).len()
+				}
+				"list_bytes" => {
+					v : List(List(U8))
+					v = [[n.to_u8_wrap()]]
+					Cbor.encode(v).len()
+				}
+				"rr1" => {
+					v : { r : { x : List(U8) } }
+					v = { r: { x: [n.to_u8_wrap()] } }
+					Cbor.encode(v).len()
+				}
+				"rr_u64" => {
+					v : { kid : Str, r : { x : List(U64) } }
+					v = { kid: text, r: { x: [n] } }
+					Cbor.encode(v).len()
+				}
+				"rr_str" => {
+					v : { kid : Str, r : { x : Str } }
+					v = { kid: text, r: { x: text } }
+					Cbor.encode(v).len()
+				}
+				"rr_u8" => {
+					v : { kid : U8, r : { x : List(U8) } }
+					v = { kid: n.to_u8_wrap(), r: { x: [n.to_u8_wrap()] } }
+					Cbor.encode(v).len()
+				}
+				"rr_bytes_type" => {
+					v : { kid : Str, r : { x : Cbor.Bytes } }
+					v = { kid: text, r: { x: Cbor.bytes([n.to_u8_wrap()]) } }
+					Cbor.encode(v).len()
+				}
+				_ => 0
+			}
+			Response.from_text(200, "len=${len.to_str()}")
+		}
+		["probe", "jwks_enc"] => {
+			v = { made: WebCrypto.random_uuid!(), keys: jwk_list }
+			raw = Cbor.encode(v)
+			Response.from_text(200, "len=${raw.len().to_str()} hex=${hex(raw)}")
+		}
+		["probe", "jwks_parse"] => {
+			raw = unhex(Q.text(req, "h"))
+			back : Try(Jwks, _)
+			back = Cbor.parse(raw)
+			Response.from_text(200, "len=${raw.len().to_str()} ok=${Str.inspect(back.map_ok(|b| b.keys.len()))}")
+		}
+		["roundtrip"] => {
+			v = { made: WebCrypto.random_uuid!(), keys: jwk_list }
+			back : Try(Jwks, _)
+			back = Cbor.parse(Cbor.encode(v))
+			match back {
+				Ok(b) => Response.from_text(200, "same=${Str.inspect(b == v)}")
+				Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+			}
+		}
+		_ => Response.from_text(404, "no route")
+	}
+}
+
+show : Try(Keys, [LoadErr]) -> Response
+show = |r| match r {
+	Ok(k) => Response.from_text(200, "Ok kid=${k.kid} big=${k.big.to_str()} made=${k.made}")
+	Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+}
+
+hex : List(U8) -> Str
+hex = |bytes| {
+	digits = "0123456789abcdef".to_utf8()
+	Str.from_utf8_lossy(bytes.fold([], |acc, b| acc.append(digits.get(b.shr_zf_wrap(4).to_u64()) ?? 48).append(digits.get(b.bitwise_and(15).to_u64()) ?? 48)))
+}
+
+unhex : Str -> List(U8)
+unhex = |text| {
+	nib = |c| if (c >= 97) c - 87 else c - 48
+	text.to_utf8().chunks_of(2).map(|p| match p {
+		[a, b] => nib(a).shl_wrap(4).bitwise_or(nib(b))
+		_ => 0
+	})
+}

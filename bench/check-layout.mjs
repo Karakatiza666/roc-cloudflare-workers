@@ -1,8 +1,10 @@
 // Memory layout check of a linked wasm: is the shadow stack below the data?
-// Usage: node bench/check-layout.mjs [--header <platform/main.roc>] <app.wasm>...
+// Usage: node bench/check-layout.mjs [--header <platform/main.roc> | --stack <bytes>] <app.wasm>...
 // Exit 0: all stack-first. 1: a file is data-first. 2: a file could not be checked.
 // With --header, the stack size (the start of `__stack_pointer`) must equal `initial_stack_size`
 // in the header. A missing field, or a stack of another size, is exit 1 (verdict STACK-SIZE).
+// With --stack, the stack size must equal the given number of bytes (a `--opt=dev` build has the size of
+// compat/dev-stack-size, set by the flag --wasm-stack-size: bench/stack-modes.sh).
 // Stack-first: `__stack_pointer` starts at or below the lowest active data segment,
 // so an overflow goes below address 0 and traps. Data-first: an overflow writes over data.
 import { readFileSync } from 'node:fs';
@@ -14,6 +16,11 @@ if (h >= 0) {
   const m = /^\s*initial_stack_size:\s*(\d+)\s*,/m.exec(readFileSync(args[h + 1], 'utf8'));
   expectedStack = m ? Number(m[1]) : NaN;
   args.splice(h, 2);
+}
+const st = args.indexOf('--stack');
+if (st >= 0) {
+  expectedStack = Number(args[st + 1]);
+  args.splice(st, 2);
 }
 
 function parse(buf) {
@@ -124,7 +131,7 @@ for (const file of args) {
       detail = `stack pointer starts at ${sp.init} (${sp.how}), data ${lo}..${hi}`;
       if (verdict === 'STACK-FIRST' && expectedStack !== null && sp.init !== expectedStack) {
         verdict = 'STACK-SIZE';
-        detail += Number.isNaN(expectedStack) ? ', and the header has no initial_stack_size' : `, but the header says initial_stack_size ${expectedStack}`;
+        detail += Number.isNaN(expectedStack) ? ', and the header has no initial_stack_size (or --stack is not a number)' : `, but ${h >= 0 ? 'the header says initial_stack_size' : 'the expected stack size is'} ${expectedStack}`;
       }
     }
   } catch (e) {
@@ -134,5 +141,5 @@ for (const file of args) {
   worst = Math.max(worst, code);
   console.log(`${verdict} ${file}: ${detail}`);
 }
-if (args.length < 1) { console.log('usage: node bench/check-layout.mjs [--header <main.roc>] <app.wasm>...'); worst = 2; }
+if (args.length < 1) { console.log('usage: node bench/check-layout.mjs [--header <main.roc> | --stack <bytes>] <app.wasm>...'); worst = 2; }
 process.exit(worst);

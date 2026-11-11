@@ -5,7 +5,7 @@ platform ""
 	# `roc fmt` sorts this list by name. The groups (the app modules, and the low level `Cbor`, `Native`, `Io`, `Js`) are in MODULES.md 1, "Modules".
 	exposes [Ai, Analytics, Assets, Body, Cache, Cbor, Ctx, D1, Email, Env, Http, Hyperdrive, Id64, Io, Js, Kv, Log, Memo, Native, Object, Queue, R2, RateLimit, Request, Response, Rpc, Secret, SecretsStore, Service, Sql, Tcp, Time, Vectorize, Version, WebCrypto, WebSocket, Worker, Workflows]
 	packages {
-		cbor: "https://github.com/Karakatiza666/roc-cbor/releases/download/0.2.3/GkHriTGSE8ww1h2HvUL3GS6x1t2keTW13KQazoUZh4Uc.tar.zst",
+		cbor: "https://github.com/Karakatiza666/roc-cbor/releases/download/0.5.0/B5U2mPsWTtuxfCRMzqQxio2ecDv7CAzCoyEMENMh4FNF.tar.zst",
 		http: "https://github.com/roc-lang/http/releases/download/2.0.0/6ZUwqYhCS8PU9Mo6MF7oV82ET2o7KYb57CLKDq4cq4sS.tar.zst",
 	}
 	provides { "roc_event": event_for_host! }

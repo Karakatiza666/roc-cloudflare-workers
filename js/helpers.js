@@ -1,6 +1,7 @@
 // The platform helpers: the root `pf` of a program (API.md 6.4). Each one is a loop or a branch that a program
 // cannot have (OP4). One `pf` object for each task: `spawn`, `writer`, `respond` and `passThrough` use its task.
-import { Packed, Limited, TooLarge, isDec, decNumber, plain } from './values.js';
+import { Packed, Limited, TooLarge, isDec, decNumber, forJson } from './values.js';
+import { BlobBytes } from './cbor.js';
 import { runAwait, errorOf, onLoss } from './program.js';
 import { responseOf, closedBy } from './events.js';
 
@@ -305,10 +306,14 @@ export function makePins(limit = 1000, now = () => Date.now()) {
 }
 
 // SQL parameters (MODULES.md 5.1, "Parameters"): the decoded CBOR value of the call, as the arguments of `bind` or `exec`.
-// An array is the list of parameters. Any other value that is not a map is one parameter (`db.run!(sql, "ann")` is
-// `[ "ann" ]`): a `List(U8)` is an array, so it stays a list of parameters (use `Sql.blob` for a blob).
-// null, text, a Number and a Uint8Array go as they are. A BigInt is an integer of 2^53 or more: it goes as decimal text
-// (D1 takes no BigInt, a Number rounds) when it fits I64, else it is a BadParam. A map is a tag or a record: BadParam.
+// An array is the list of parameters. Any other value that is not a map and not bytes is one parameter
+// (`db.run!(sql, "ann")` is `[ "ann" ]`). A `BlobBytes` (CBOR tag 64, `Sql.blob(b)`) is one blob: `db.run!(sql, Sql.blob(b))`
+// is `[Sql.blob(b)]`. Bare plain bytes are a BadParam: roc-cbor 0.5.0 writes a `List(U8)` as a byte string, so JS cannot
+// tell a list of integer parameters (0.4) from one blob. Write `Sql.blob(b)` for one blob, a tuple for parameters.
+// A byte string item of a list or a tuple is a blob (`List(U8)` or `Sql.blob`).
+// null, text, a Number and a Uint8Array item go as they are. A BigInt is an integer of 2^53 or more (a U128 or an I128
+// above 64 bits is a bignum, also a BigInt): it goes as decimal text (D1 takes no BigInt, a Number rounds) when it fits
+// I64, else it is a BadParam. A map is a tag or a record: BadParam.
 // A map of one key `Int`, `Real`, `Text` or `Blob` is the old `Sql` tag form (`[Text("ann")]`): the BadParam names the
 // old form and the new form. (The old `Null` has no payload: it encodes as the text "Null", which JS cannot tell from text.)
 const I64_MIN = -(1n << 63n), I64_MAX = (1n << 63n) - 1n;
@@ -318,7 +323,7 @@ class BadParam extends Error {
 const kindOf = (v) => (Array.isArray(v) ? 'a list' : v instanceof Uint8Array ? 'bytes' : v === null ? 'null' : typeof v === 'object' ? 'a record or a tag' : typeof v);
 const isMap = (v) => v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Uint8Array) && !isDec(v);
 const short = (text) => (text.length > 40 ? `${text.slice(0, 37)}...` : text);
-const showValue = (v) => (typeof v === 'string' ? JSON.stringify(v) : typeof v === 'bigint' ? v.toString() : isDec(v) ? String(decNumber(v)) : Array.isArray(v) ? `[${v.join(', ')}]` : String(v));
+const showValue = (v) => (typeof v === 'string' ? JSON.stringify(v) : typeof v === 'bigint' ? v.toString() : isDec(v) ? String(decNumber(v)) : Array.isArray(v) || v instanceof Uint8Array ? `[${[...v].join(', ')}]` : String(v));
 // The old `Sql` tag form: an anonymous tag with a payload encodes as a map of one key (roc-cbor). The text gives the
 // old form and the new form, or null for another map.
 const OLD_TAGS = {
@@ -339,6 +344,9 @@ export function sqlParams(params) {
       const old = oldTag(params);
       throw new BadParam(old ? `SQL parameters: ${old}` : `SQL parameters must be a list, a tuple or one value, not ${kindOf(params)}: write x or [x] for one parameter and (a, b) for more`);
     }
+    if (params instanceof Uint8Array && !(params instanceof BlobBytes)) {
+      throw new BadParam(`SQL parameters: bare bytes ${short(showValue(params))} (a List(U8)) are not a parameter list: a List(U8) is one byte string, not a list of parameters. Write Sql.blob(b) for one blob, or a tuple (a, b) for parameters`);
+    }
     params = [params];
   }
   return params.map((v, i) => {
@@ -350,7 +358,9 @@ export function sqlParams(params) {
       case 'undefined': throw new BadParam(`SQL parameter ${i}: undefined is not a SQL value`);
       case 'boolean': throw new BadParam(`SQL parameter ${i}: a Bool is not a SQL value, use 0 or 1`);
     }
-    if (v === null || v instanceof Uint8Array) return v;
+    if (v === null) return v;
+    // A blob goes as a plain Uint8Array (D1 binds a Uint8Array as a blob); a BlobBytes is one with a mark.
+    if (v instanceof Uint8Array) return v instanceof BlobBytes ? new Uint8Array(v.buffer, v.byteOffset, v.length) : v;
     // A tag 4 value (a Dec with a fraction) is a Number here: SQLite has no exact decimal.
     if (isDec(v)) return decNumber(v);
     const old = isMap(v) ? oldTag(v) : null;
@@ -376,9 +386,10 @@ export function makeHelpers(t, c, shim, tasks) {
       const budget = { left: maxBytes ?? Infinity };
       return array.map((item) => ({ ...item, [key]: new Packed(item?.[key], Infinity, budget) }));
     },
-    // `v` as a JSON message: each tag 4 value (a Dec with a fraction) becomes a Number (`Queue.json`).
+    // `v` as a JSON value (`Queue.json`, the metadata of `Kv.put_with`): a tag 4 value (a Dec with a fraction) is a
+    // Number, a BigInt decimal text, bytes (a Uint8Array) base64 text (cbor.js `forJson`).
     plain(v) {
-      return plain(v);
+      return forJson(v);
     },
     // `stmt.bind(...params)`: `params` is the decoded CBOR array of the call (`D1`, MODULES.md 5.1).
     bind(stmt, params) {

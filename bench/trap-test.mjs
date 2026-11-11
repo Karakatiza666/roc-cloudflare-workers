@@ -78,7 +78,9 @@ const read = async (res) => ({ status: res.status, headers: Object.fromEntries(r
   check('1o any content-type passes, also application/problem+json', one({ headers: [['content-type', 'application/problem+json']] }).default.headers[0][1] === 'application/problem+json', '');
   throws('1p a table with no default is refused', /on_trap\.default: the field default is missing/, () => checkTraps({ crash: entry() }));
   throws('1q an unknown cause is refused', /on_trap\.boom: the cause is not one of/, () => checkTraps({ default: entry(), boom: entry() }));
-  throws('1r a body that is not bytes is refused', /on_trap\.crash\.body: the body is not bytes/, () => checkTraps({ default: entry(), crash: entry({ body: 'text' }) }));
+  // N13 (audit 0.0.10): the text names the Roc field `crashed`, not the manifest name `crash`.
+  throws('1r a body that is not bytes is refused, with the Roc field name crashed (N13)', /on_trap\.crashed\.body: the body is not bytes/, () => checkTraps({ default: entry(), crash: entry({ body: 'text' }) }));
+  throws('1r2 a bad status of crash names on_trap.crashed.status (N13)', /makeHandler: Worker\.new on_trap\.crashed\.status: the status 200 is not 400 to 599/, () => checkTraps({ default: entry(), crash: entry({ status: 200 }) }));
   const body = new Uint8Array([1, 2, 3]);
   const t = checkTraps({ default: entry({ body }) });
   check('1s the checked body is a copy (no other code has a reference to it)', t.default.body !== body && t.default.body.join() === '1,2,3', '');

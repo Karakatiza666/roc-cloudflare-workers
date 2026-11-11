@@ -118,6 +118,37 @@ export const checks = [
     answer(await route(t, 'get_meta', `none-${rand()}`), 'Err NotFound');
     answer(await route(t, 'get_meta_with', 'big', `&max=${MiB}`), 'Err Infra(TooLarge)');
   }],
+  // pf.plain: the metadata is JSON in KV. A BigInt (a U64 of 2^60, a U128 of 2^100) is decimal text, a List(U8) base64
+  // text. The typed read takes the decimal text (IntFromText, up to 39 digits) and base64 text (BytesFromBase64).
+  ['kv put_with! metadata with a U64 of 2^60, a U128 of 2^100 and a List(U8): decimal text and base64 in JSON; the U64 reads back', async (t) => {
+    const kv = await t.mf.getKVNamespace('KV');
+    for (const r of ['put_meta_wide', 'put_meta_wide_io']) {
+      const k = `w-${rand()}`;
+      answer(await route(t, r, k, '&v=val'), 'Ok {}');
+      eq(JSON.stringify((await kv.getWithMetadata(k)).metadata), '{"big":"1152921504606846976","data":"AQL/","wide":"1267650600228229401496703205376"}', `${r}: the metadata that JS reads`);
+      answer(await route(t, 'get_meta_big', k), 'Ok { metadata: Ok({ big: 1152921504606846976 }), value: "val" }');
+      // roc-cbor 0.5.0: IntFromText reads up to 39 digits, so the U128 of 2^100 reads back.
+      answer(await route(t, 'get_meta_wide', k), 'Ok { metadata: Ok({ big: 1152921504606846976, wide: 1267650600228229401496703205376 }), value: "val" }');
+    }
+  }],
+  // The round trip through KV metadata (JSON): a List(U8) and a Cbor.Bytes are base64 text (BytesFromBase64), a U128 above 2^64
+  // and an I128 below -2^63 are decimal text (IntFromText). get_with_metadata! and Metadata.parse read them back.
+  ['kv metadata round trip: List(U8), Cbor.Bytes, U128 above 2^64 and I128 below -2^63 read back (BytesFromBase64, IntFromText)', async (t) => {
+    const kv = await t.mf.getKVNamespace('KV');
+    const k = `rt-${rand()}`;
+    answer(await route(t, 'put_meta_rt', k, '&v=val'), 'Ok {}');
+    eq(JSON.stringify((await kv.getWithMetadata(k)).metadata), '{"bytes":"AID+","data":"AQL/","low":"-170141183460469231731687303715884105728","wide":"1267650600228229401496703205376"}', 'the metadata that JS reads');
+    const want = '{ bytes: [0, 128, 254], data: [1, 2, 255], low: -170141183460469231731687303715884105728, wide: 1267650600228229401496703205376 }';
+    answer(await route(t, 'get_meta_rt', k), `Ok { metadata: Ok(${want}), value: "val" }`);
+    answer(await route(t, 'parse_meta_rt', k), `${k}: Ok(${want})`);
+  }],
+  // Metadata of platform 0.0.9: roc-cbor 0.2.3 wrote a List(U8) as an array, so the JSON has an array of integers.
+  ['kv Metadata.parse_legacy reads metadata of platform 0.0.9 (a List(U8) as a JSON array); parse does not', async (t) => {
+    const kv = await t.mf.getKVNamespace('KV');
+    const p = `lg-${rand()}`;
+    await kv.put(`${p}/a`, 'v', { metadata: { data: [1, 2, 3], n: 1 } });
+    answer(await route(t, 'list_legacy', p), `${p}/a: legacy=Ok({ data: [1, 2, 3], n: 1 }) strict=False`);
+  }],
   ['kv put_with! ttl_ms rounds up to whole seconds, and expires_ms', async (t) => {
     const kv = await t.mf.getKVNamespace('KV');
     const k = `ttl-${rand()}`;

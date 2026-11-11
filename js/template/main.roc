@@ -1,11 +1,11 @@
-## The example Worker (PLAN.md 11b). It has no `cbor` and no `http` entry: the platform brings both.
+## A small Worker in Roc. It has no `cbor` and no `http` entry: the platform brings both.
 ##
 ## | Route | Shows |
 ## | --- | --- |
 ## | `/` | a text answer |
 ## | `/d1` | a D1 read into a record (a BLOB column is a `List(U8)`) |
 ## | `/cbor` | `Cbor.encode` and `Cbor.parse` |
-## | `/fetch?url=U` | `Http.get!` and the status of the answer |
+## | `/fetch` | `Http.get!` of one fixed URL (`page_url`) and the status of the answer |
 import pf.Worker
 import pf.Request
 import pf.Response
@@ -25,7 +25,7 @@ fetch! = |req| {
 		[] => Response.from_text(200, "hello from Roc")
 		["d1"] => d1!()
 		["cbor"] => cbor()
-		["fetch"] => fetch_url!(req.query("url") ?? "")
+		["fetch"] => fetch_url!(page_url)
 		_ => Response.from_text(404, "no route")
 	}
 	Ok(res)
@@ -49,13 +49,18 @@ cbor = || {
 	Response.from_text(200, "${raw.len().to_str()} bytes, ${Str.inspect(back)}")
 }
 
+## The one URL that `/fetch` gets. Do not take the URL from the request: a Worker that fetches any URL that a
+## client gives is an open fetch relay (SSRF) on a public workers.dev URL.
+page_url : Str
+page_url = "https://example.com/"
+
 fetch_url! : Str => Response
 fetch_url! = |url| match Http.get!(url) {
 	Ok(r) => Response.from_text(200, "status ${r.status().to_str()}")
 	Err(e) => Response.from_text(502, "Err ${Str.inspect(e)}")
 }
 
-## `bindings`: the manifest lists the D1 binding, so the shim checks `env.DB` at load, and `roc-cfw sync`
+## `bindings`: the manifest lists the D1 binding, so the shim checks `env.DB` at the first event, and `roc-cfw sync`
 ## checks `wrangler.toml`.
 worker = Worker.new({ fetch!: fetch!, bindings: [db.declare()] })
 

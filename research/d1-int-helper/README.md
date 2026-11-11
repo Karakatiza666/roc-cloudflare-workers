@@ -1,6 +1,6 @@
 # D1 integers of 2^53 or more: is a helper good UX? (probe)
 
-Question (`design_issues_tmp.md` row 2b, `MODULES.md` 5.1 "Integers in rows" and "Ids: Id64"): does a helper for large D1 integers give a better user experience than the CAST rule of today? The user asked for a helper only "if it provides good UX (automatic literal derivation in binary ops, etc.)".
+Question (`research/design_issues_tmp.md` row 2b, `MODULES.md` 5.1 "Integers in rows" and "Ids: Id64"): does a helper for large D1 integers give a better user experience than the CAST rule of today? The user asked for a helper only "if it provides good UX (automatic literal derivation in binary ops, etc.)".
 
 Answer: no. Do not add a number-like type or a SQL helper. Keep `I64` with `CAST(x AS TEXT)`, keep `Id64` for ids, and add the recipes of the table "Recipe" to `MODULES.md`.
 

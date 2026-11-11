@@ -17,6 +17,12 @@ export const checks = [
   ['cbor path: path_at finds the field of an InvalidCbor position', async (t) =>
     answer(await t.get('/cbor/path'), 'Err(InvalidCbor(5)) | Ok([Index(0), Key("id")])')],
   // roc-cbor 0.2.2: Err(Null) in a record field writes no key; a null is a missing key in a record; a Bool reads 0 and 1.
-  ['cbor null: Err(Null) in a record writes no key and reads back as MissingRequiredField, an absent ?: field or Err(Missing); a Bool reads 0 and 1', async (t) =>
-    answer(await t.get('/cbor/null'), '[161, 98, 105, 100, 7] Err(MissingRequiredField("note")) Ok(Err(MissingField)) | Ok(Err(Missing)) Ok([Ok("a"), Err(Null)]) Ok([False, True, False, True])')],
+  // roc-cbor 0.5.0: Err(Null) in a record writes null and reads back strict as Err(Null). Strict: a null into ?: or
+  // Try(a, [Missing]) is an error, and a Bool does not read 0 and 1. Cbor.js_values (a value from JS) reads the null as no key.
+  ['cbor null: Err(Null) in a record writes null and reads back as Err(Null); strict null into ?: or Try Missing is an error; js_values reads it as absent; BoolFromInt reads 0 and 1', async (t) =>
+    answer(await t.get('/cbor/null'), '[162, 98, 105, 100, 7, 100, 110, 111, 116, 101, 246] Ok({ id: 7, note: Err(Null) }) Err(InvalidCbor(10)) | Err(InvalidCbor(10)) Ok([Ok("a"), Err(Null)]) Err(InvalidCbor(3)) | js Ok(Err(MissingField)) Ok(Err(Missing)) Err(MissingRequiredField("note")) Ok([False, True, False, True])')],
+  // The stack of the build (README.md, "Stack size"): a derived codec of a value nested 50 levels deep. In a --opt=dev build
+  // the frames are large (roc-lang/roc#12922): 1 MiB fails at 50 levels, so bench/stack-modes.sh builds dev with 2 MiB.
+  ['cbor nest: a value nested 50 levels deep encodes and reads back', async (t) =>
+    answer(await t.get('/cbor/nest?n=50'), 'n=50 bytes=307 | same=True')],
 ];

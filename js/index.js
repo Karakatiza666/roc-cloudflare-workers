@@ -14,7 +14,7 @@
 //   js/budget.js   the memory budget of the isolate
 //   js/manifest.js the check of the manifest of the app
 //   js/bindings.js the binding kinds of the manifest: the check of `env`, the Wrangler config parts
-//   js/cli.js      the command `roc-cloudflare-workers` (sync, init)
+//   js/cli.mjs     the command `sync` (`init` is `roc-cfw init` of the helper, with the files of js/template/)
 // `cloudflare:workers` resolves in workerd and in Wrangler. In Node, a test registers a resolve hook to a stand-in class
 // (`bench/cf-node.mjs`, `bench/cf-workers-stub.mjs`).
 import { WorkerEntrypoint, DurableObject } from 'cloudflare:workers';

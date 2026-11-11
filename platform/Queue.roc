@@ -2,6 +2,8 @@
 ## One constant gives the type and the format (MC6), so the producer and the consumer agree. A message crosses as
 ## CBOR (MC5): JS gets a plain object (the same as from `JSON.parse`), and sends it with the content type of the
 ## declaration. `Queue.v8` also keeps a `BigInt` and a `Cbor.Bytes` field (a `Uint8Array` in JS).
+## A message comes from JS (a JS producer can send to the queue), so `json` and `v8` read with `Cbor.js_values`:
+## `undefined` and `null` of a field are no key (`UndefinedAsNull`, `NullAsAbsent`).
 ## Typed data: the format, what a JS peer sees, and what survives a round trip are in MODULES.md 1, "Formats of typed data".
 import Io
 import Js
@@ -11,13 +13,16 @@ import cbor.Cbor
 
 Queue(a) :: { name : Str, content_type : Str, write : a -> Js, read : List(U8) -> Try(a, Str) }.{
 
-	## The content type "json": a JS consumer gets the message as an object. No `BigInt` (use `Queue.v8`).
+	## The content type "json": a JS consumer gets the message as an object. The JSON forms (`pf.plain`): an integer of
+	## 2^53 or more (a `BigInt` in JS) is decimal text, a `List(U8)` and a `Cbor.Bytes` are base64 text, a `Dec` with a
+	## fraction is a number. The read takes decimal text for an integer type (`IntFromText`), so a `U64`, a `U128` and an
+	## `I128` round-trip (up to 39 digits). The read takes base64 text for a `List(U8)` and a `Cbor.Bytes` (`BytesFromBase64`).
 	json : Str -> Queue(a) where [a.Cbor.Writable, a.Cbor.Readable(errs)]
 	json = |name| Queue.{
 		name,
 		content_type: "json",
 		write: |v| Packed(Cbor.encode(v)),
-		read: |body| Cbor.parse(body).map_err(|e| Str.inspect(e)),
+		read: |body| Cbor.parse_with(body, { allow: [UndefinedAsNull, NullAsAbsent, IntFromText, BytesFromBase64] }).map_err(|e| Str.inspect(e)),
 	}
 
 	## The binding for the manifest (`Worker.new({ bindings: [...] })`, MODULES.md 3): the kind `queue`.
@@ -31,7 +36,20 @@ Queue(a) :: { name : Str, content_type : Str, write : a -> Js, read : List(U8) -
 		name,
 		content_type: "v8",
 		write: |v| Packed(Cbor.encode(v)),
-		read: |body| Cbor.parse(body).map_err(|e| Str.inspect(e)),
+		read: |body| Cbor.parse_with(body, { allow: [UndefinedAsNull, NullAsAbsent] }).map_err(|e| Str.inspect(e)),
+	}
+
+	## The same queue, with a read that also takes the messages of platform 0.0.9 (roc-cbor 0.2.3) that are still in
+	## flight after the deploy: a `List(U8)` that 0.2.3 wrote is an array of integers (`BytesFromArray`, with
+	## `PaddedNumbers`, `Cbor.legacy_0_2`). For the consumer of one deploy, until the old messages are gone (MODULES.md 1,
+	## "Migration from platform 0.0.9"). Then use the queue constant again.
+	legacy_0_2 : Queue(a) -> Queue(a) where [a.Cbor.Readable(errs)]
+	legacy_0_2 = |q| {
+		json_int : List(Cbor.Leniency)
+		json_int = if (q.content_type == "json") [IntFromText, BytesFromBase64] else []
+		leniencies : List(Cbor.Leniency)
+		leniencies = [UndefinedAsNull, NullAsAbsent, PaddedNumbers, BytesFromArray].concat(json_int)
+		Queue.{ name: q.name, content_type: q.content_type, write: q.write, read: |body| Cbor.parse_with(body, { allow: leniencies }).map_err(|e| Str.inspect(e)) }
 	}
 
 	## The content type "text".
@@ -244,3 +262,24 @@ expect retry_options(1_001) == [("delaySeconds", Int(2))]
 expect retry_options(1_000 * 90_000) == [("delaySeconds", Int(86_400))]
 expect options("json", Err(MissingField)) == [("contentType", Text("json"))]
 expect options("text", Ok(2_500)) == [("contentType", Text("text")), ("delaySeconds", Int(3))]
+# JSON read: base64 text reads into a List(U8) and a Cbor.Bytes, decimal text into a U128 above 2^64 and an I128 below -2^63.
+WideRead : { data : List(U8), wide : U128, low : I128 }
+
+wide_read : Queue(WideRead)
+wide_read = Queue.json("Q")
+
+BytesRead : { data : Cbor.Bytes }
+
+bytes_read : Queue(BytesRead)
+bytes_read = Queue.json("Q")
+
+# The v8 read stays strict: base64 text is not bytes.
+v8_read : Queue({ data : List(U8) })
+v8_read = Queue.v8("Q")
+
+expect {
+	text = Cbor.encode({ data: "AQL/", wide: "1267650600228229401496703205376", low: "-170141183460469231731687303715884105728" })
+	(wide_read.read)(text) == Ok({ data: [1, 2, 255], wide: 1_267_650_600_228_229_401_496_703_205_376, low: -170_141_183_460_469_231_731_687_303_715_884_105_728 })
+}
+expect (bytes_read.read)(Cbor.encode({ data: "AQL/" })).map_ok(|m| m.data.to_list()) == Ok([1, 2, 255])
+expect (v8_read.read)(Cbor.encode({ data: "AQL/" })).is_err()

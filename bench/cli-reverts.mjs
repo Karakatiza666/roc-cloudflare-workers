@@ -18,6 +18,12 @@ const mutations = [
   R('nightly: the pin is compared the wrong way', /^8i |^8q /, ['if (pinDate < minDate) return', 'if (pinDate > minDate) return']),
   R('nightly: a warn does not fail --check', /^8r /, ["if (it.level === 'wrong' || (it.level === 'warn' && a.check)) fail = true;", "if (it.level === 'wrong') fail = true;"]),
   R('nightly: sync reads another key of cfw.json', /^8m |^8n /, ["'utf8')).min_nightly ?? null;", "'utf8')).minNightly ?? null;"]),
+  // Audit 0.0.10 (research/audit-0.0.10/REPORT.md). Names start with "audit" (`node bench/cli-reverts.mjs audit`).
+  R('audit N8: the trailing-comma scan does not skip strings', /^10a /, ["    if (c === '\"') {\n      const start = i;\n      for (i++; i < out.length", "    if (false) {\n      const start = i;\n      for (i++; i < out.length"]),
+  R('audit N8: a comma before } is kept', /^1a jsonc|^10a /, ["if (out[j] !== '}' && out[j] !== ']') clean += c;", "if (out[j] !== ']') clean += c;"]),
+  R('audit N7: a JSON config gets TOML parts again', /^10b |^2 jsonc/, ["const text = (it) => (isToml ? it.add : jsonPartOf(it.add));", "const text = (it) => it.add;"]),
+  R('audit N9: a raw event! app is not passed to checkConfig', /^10d |^10e /, ["raw: got === null });", "raw: false });"]),
+  R('audit S11: no note for env tables', /^10f /, ["  if (envs.length) note(", "  if (false) note("]),
 ];
 
 const filter = process.argv[2];

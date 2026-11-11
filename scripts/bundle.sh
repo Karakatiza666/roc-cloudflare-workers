@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Make the release file in dist/ (PLAN.md 11a):
 #   dist/<hash>.tar.zst    the platform bundle: platform/*.roc, LICENSE, targets/wasm32/host.wasm, js/ (TRANSITION.md 4.1)
-# Steps: the glue is the glue of the pinned nightly, the production host (zig build), a production app on it
+# Steps: each header package is a URL, the glue is the glue of the pinned nightly, the production host (zig build), a production app on it
 # (bench/app.roc) with the layout and export checks, the bundle.
 # Usage: ZIG=<zig 0.17> [ROC=<roc>] [REPO=<owner/repo>] scripts/bundle.sh [version]
 # The default version is the tag of HEAD, else 0.0.3-local. Roc refuses the version 0.0.0 in a platform URL
@@ -21,6 +21,10 @@ export ROC_CACHE_DIR=${ROC_CACHE_DIR:-$PWD/.cache/roc} XDG_CACHE_HOME=${XDG_CACH
 work=.cache/release
 rm -rf "$work" dist
 mkdir -p "$work" dist
+
+# 0. Each package of the platform header is an https:// URL: the bundle keeps the header as it is, so a local path
+# (a roc-cbor checkout) builds on this machine only (audit 0.0.10, B1).
+scripts/check-packages.sh platform/main.roc >&2
 
 # 1. The glue must equal the committed file (the same check as bench/ci-layout.sh).
 ROC=$ROC bench/glue.sh "$work/glue" >&2

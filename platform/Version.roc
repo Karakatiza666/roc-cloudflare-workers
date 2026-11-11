@@ -12,6 +12,8 @@ Version :: { name : Str }.{
 	declare : Version -> { name : Str, kind : Str, props : List((Str, Str)) }
 	declare = |b| { name: b.name, kind: "version", props: [] }
 
+	## The id, the tag and the time (ms) of the deployed version. A binding that is not in the config is a crash (a 500
+	## response) with the name of the binding, not an error value (decided, PLAN.md OO1).
 	metadata! : Version => { id : Str, tag : Str, timestamp_ms : U64 }
 	metadata! = |v| match Js.call!([
 		Get(Root("env"), v.name),

@@ -20,12 +20,14 @@ Rpc(iface, arg, ret, err) :: { name : Str, iface_name : Str }.{
 
 	## The callee. `self` is `Object.Self` in a Durable Object (a Worker uses `on_worker`). A class takes a list of
 	## `Rpc.Serves` of one `iface`. The result of the handler is the reply (`Reply`), also an `Err`. A tag that is not in `err` does not compile. An argument that
-	## does not parse is a throw with the text `bad argument: <error>` (the caller gets `RpcErr`).
+	## does not parse is a throw with the text `bad argument: <error>` (the caller gets `RpcErr`). The argument comes from JS
+	## (a JS caller, or the structured clone of a Roc caller), so it reads with `Cbor.js_values`: `undefined` and `null` of
+	## a field are no key (`UndefinedAsNull`, `NullAsAbsent`).
 	on : Rpc(iface, arg, ret, err), (self, arg => Try(ret, err)) -> Rpc.Serves(iface, self) where [arg.Cbor.Readable(errs), ret.Cbor.Writable, err.Cbor.Writable]
 	on = |m, f!| Rpc.Serves.{
 		name: m.name,
 		iface_name: m.iface_name,
-		run!: |self, bytes| match Cbor.parse(bytes) {
+		run!: |self, bytes| match Cbor.parse_with(bytes, { allow: [UndefinedAsNull, NullAsAbsent] }) {
 			Ok(a) => match f!(self, a) {
 				Ok(r) => Ok(ok_head.concat(Cbor.encode(r)))
 				Err(e) => Ok(err_head.concat(Cbor.encode(e)))
@@ -40,11 +42,12 @@ Rpc(iface, arg, ret, err) :: { name : Str, iface_name : Str }.{
 	on_worker = |m, f!| Rpc.on(m, |_, a| f!(a))
 
 	## The bytes of a reply as the result of `call!`: an `Err` of the callee is `Remote(err)`, a reply that does not fit
-	## is `Infra(BadData)`.
+	## is `Infra(BadData)`. The reply comes from JS (a JS callee, or the structured clone of a Roc callee): it reads with
+	## `Cbor.js_values` (`UndefinedAsNull`, `NullAsAbsent`).
 	reply_of : List(U8) -> Try(ret, [Infra([BadData(Str)]), Remote(err)]) where [ret.Cbor.Readable(e1), err.Cbor.Readable(e2)]
 	reply_of = |bytes| {
 		r : Try(Reply(ret, err), _)
-		r = Cbor.parse(bytes)
+		r = Cbor.parse_with(bytes, { allow: [UndefinedAsNull, NullAsAbsent] })
 		match r {
 			Ok(Reply.Ok(v)) => Ok(v)
 			Ok(Reply.Err(e)) => Err(Remote(e))
@@ -99,10 +102,10 @@ Rpc(iface, arg, ret, err) :: { name : Str, iface_name : Str }.{
 	## The `err` of a method with no errors. It has no values. `[]` has no derived codec, so this type has its own: it
 	## writes nothing (it has no values), and a reply `{"Err": ...}` does not parse (`BadData`).
 	NoErr := [].{
-		parser_for : Cbor -> (Cbor.State -> Try({ value : Rpc.NoErr, rest : Cbor.State }, [InvalidCbor(U64)]))
+		parser_for : Cbor -> (Cbor.Reader -> Try({ value : Rpc.NoErr, rest : Cbor.Reader }, [InvalidCbor(U64)]))
 		parser_for = |_| |_state| Err(InvalidCbor(0))
 
-		encoder_for : Cbor -> (Rpc.NoErr, List(U8) -> Try(List(U8), []))
+		encoder_for : Cbor -> (Rpc.NoErr, Cbor.Writer -> Try(Cbor.Writer, []))
 		encoder_for = |_| |_v, out| Ok(out)
 	}
 

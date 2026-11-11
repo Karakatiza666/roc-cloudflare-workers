@@ -2,12 +2,19 @@
 //
 // Profile. Definite lengths only. The reader takes any width of an argument (also f16 and f32).
 // The writer takes the shortest width for each argument, also for the head of an array and of a map
-// (JS knows the count first). Floats are always f64. Tags: 27 (a Ref or an Error) and 24 (Packed).
+// (JS knows the count first). Floats are always f64. Tags: 27 (a Ref or an Error), 24 (Packed), 2 and 3 (bignums), 64 (a blob).
 // Reserved values (28 to 30), indefinite lengths, other tags and other simple values are errors.
+//
+// Tags 2 and 3 (bignums, RFC 8949 3.4.3): roc-cbor 0.5.0 writes a U128 or an I128 outside -2^64 to 2^64 - 1 as a
+// bignum. The reader gives a BigInt. It takes -2^127 to 2^128 - 1 (the range of I128 and U128 together); a larger
+// value is a RangeError. The writer writes a BigInt outside -2^64 to 2^64 - 1 as a bignum with no leading zero byte.
+// Tag 64 (RFC 8746, a uint8 array): a byte string. `Sql.blob(b)` of Roc writes it. The reader gives a `BlobBytes`: a
+// Uint8Array of its own class, so `sqlParams` can tell one blob (also as the only parameter) from a bare `List(U8)`,
+// which is a plain Uint8Array. The writer writes a `BlobBytes` as a plain byte string (tag 64 is not kept).
 // Depth: 64 containers or less, both ways. Text must be valid UTF-8. Bytes after the value are an error.
 //
 // Tag 4 (a decimal fraction, RFC 8949 3.4.4, the encoding of a Dec of Roc that has a fraction): [exponent, mantissa],
-// the mantissa an integer or a bignum (tags 2 and 3, only inside tag 4). The reader gives the plain object
+// the mantissa an integer or a bignum (tags 2 and 3). The reader gives the plain object
 // `{ $dec: [exponent, mantissa] }` (exponent: a Number, mantissa: a Number, or a BigInt of 2^53 or more) and the
 // writer turns such an object back into the same tag 4. The value stays exact: a Roc to Roc RPC goes decode, structured
 // clone (it keeps a plain object, but not a class instance), encode. JS turns it into a Number with `decNumber` only
@@ -17,6 +24,9 @@
 // for a limit (cut input, depth, size). The shim maps both to status 1.
 
 export const MAX_DEPTH = 64;
+
+// The bytes of tag 64 (`Sql.blob`): a Uint8Array that is marked as a blob.
+export class BlobBytes extends Uint8Array {}
 
 // The key of the plain object that stands for a tag 4 value.
 export const DEC_KEY = '$dec';
@@ -41,6 +51,33 @@ export function plain(v, level = 0) {
   if (proto !== Object.prototype && proto !== null) return v;
   const o = {};
   for (const k of Object.keys(v)) Object.defineProperty(o, k, { value: plain(v[k], level + 1), enumerable: true, writable: true, configurable: true });
+  return o;
+}
+
+// The base64 text of bytes (RFC 4648 section 4: the alphabet A-Z a-z 0-9 + /, with `=` padding), as `btoa` gives it.
+export function base64(u8) {
+  let t = '';
+  for (let i = 0; i < u8.length; i += 0x8000) t += String.fromCharCode(...u8.subarray(i, i + 0x8000));
+  return btoa(t);
+}
+
+// A copy of `v` for JSON.stringify (a JSON message: `Queue.json`, the metadata of a KV key). The JSON forms:
+// | Decoded value | JSON |
+// | tag 4 value (a Dec with a fraction) | a Number (rounded to the nearest double) |
+// | BigInt (an integer of 2^53 or more, a bignum) | decimal text: "18446744073709551616" (JSON.stringify throws for a BigInt) |
+// | Uint8Array (a byte string: a List(U8), a Cbor.Bytes) | base64 text (RFC 4648 section 4, with padding) |
+// Other values stay as they are.
+export function forJson(v, level = 0) {
+  if (typeof v === 'bigint') return v.toString();
+  if (isDec(v)) return decNumber(v);
+  if (v === null || typeof v !== 'object') return v;
+  if (v instanceof Uint8Array) return base64(v);
+  if (level >= MAX_DEPTH) throw depthError();
+  if (Array.isArray(v)) return v.map((x) => forJson(x, level + 1));
+  const proto = Object.getPrototypeOf(v);
+  if (proto !== Object.prototype && proto !== null) return v;
+  const o = {};
+  for (const k of Object.keys(v)) Object.defineProperty(o, k, { value: forJson(v[k], level + 1), enumerable: true, writable: true, configurable: true });
   return o;
 }
 
@@ -123,10 +160,18 @@ export class Writer {
   float(x) { this.room(9); this.buf[this.n++] = 0xfb; this.dv.setFloat64(this.n, x); this.n += 8; if (this.n > this.limit) this.over(); }
   // A safe-integer Number.
   int(v) { if (v >= 0) this.head(0, v); else this.head(1, -1 - v); }
-  // A BigInt from -2^64 to 2^64 - 1 (the range of the major types 0 and 1). The caller checks its own range.
+  // A BigInt. From -2^64 to 2^64 - 1 it is an integer (major type 0 or 1), else a bignum (tag 2, or tag 3 for -1 - n)
+  // with no leading zero byte (RFC 8949 3.4.3, the preferred form). The caller checks its own range.
   bigint(v) {
     const major = v >= 0n ? 0 : 1, a = v >= 0n ? v : -1n - v;
-    if (a < 0x20000000000000n) this.head(major, Number(a)); else this.head64(major, a);
+    if (a < 0x20000000000000n) return this.head(major, Number(a));
+    if (a < (1n << 64n)) return this.head64(major, a);
+    let hex = a.toString(16);
+    if (hex.length % 2) hex = '0' + hex;
+    const u8 = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < u8.length; i++) u8[i] = parseInt(hex.slice(2 * i, 2 * i + 2), 16);
+    this.tag(major === 0 ? 2 : 3);
+    this.bytes(u8);
   }
   // The tag 4 value of `{ $dec: [exponent, mantissa] }` (the caller checks it with isDec). A mantissa out of the range of the
   // major types 0 and 1 is a bignum (tag 2 or 3).
@@ -134,14 +179,7 @@ export class Writer {
     const [exp, mant] = d[DEC_KEY];
     this.tag(4); this.array(2); this.int(exp);
     if (typeof mant === 'number') return this.int(mant);
-    if (mant >= -(1n << 64n) && mant < (1n << 64n)) return this.bigint(mant);
-    const a = mant >= 0n ? mant : -1n - mant;
-    let hex = a.toString(16);
-    if (hex.length % 2) hex = '0' + hex;
-    const u8 = new Uint8Array(hex.length / 2);
-    for (let i = 0; i < u8.length; i++) u8[i] = parseInt(hex.slice(2 * i, 2 * i + 2), 16);
-    this.tag(mant >= 0n ? 2 : 3);
-    this.bytes(u8);
+    return this.bigint(mant);
   }
   // Bytes that are already CBOR (a prefix of a tag, for example).
   raw(u8) { this.room(u8.length); this.buf.set(u8, this.n); this.n += u8.length; }
@@ -334,6 +372,8 @@ class Reader {
         if (t === 27) return this.generic();
         if (t === 24) return this.packed(level);
         if (t === 4) return this.decimal(level);
+        if (t === 2 || t === 3) return this.bignum(t);
+        if (t === 64) return this.blob();
         return this.fail(`tag ${t} is not in the profile`);
       }
       default: return this.simple(info);
@@ -404,6 +444,22 @@ class Reader {
     }
     return { [DEC_KEY]: [exp, mant] };
   }
+  // Tag 2 or 3 (the head of the tag is read): a byte string, the magnitude n. Gives the BigInt n (tag 2) or -1 - n
+  // (tag 3). A value outside -2^127 to 2^128 - 1 (the range of I128 and U128) is a RangeError.
+  bignum(t) {
+    this.need(1);
+    const bb = this.u8[this.at];
+    if (bb >> 5 !== 2) this.fail(`tag ${t} needs a byte string`);
+    this.at++;
+    const n = this.len(bb & 31, 1);
+    let big = 0n;
+    for (let i = 0; i < n; i++) big = (big << 8n) | BigInt(this.u8[this.at + i]);
+    this.at += n;
+    if (t === 2 ? big >= 1n << 128n : big >= 1n << 127n) {
+      throw new RangeError(`CBOR: the bignum at byte ${this.base + this.at - n} is outside -2^127 to 2^128 - 1 (the range of I128 and U128)`);
+    }
+    return t === 2 ? big : -1n - big;
+  }
   // An integer item (major type 0 or 1): a Number, or a BigInt of 2^53 or more.
   int(what) {
     this.need(1);
@@ -412,6 +468,15 @@ class Reader {
     const n = this.arg(ib & 31);
     if (major === 0) return n;
     return typeof n === 'number' && n < 0x20000000000000 ? -1 - n : -1n - BigInt(n);
+  }
+  // Tag 64 (the head of the tag is read): a byte string. Gives a BlobBytes.
+  blob() {
+    this.need(1);
+    const ib = this.u8[this.at++];
+    if (ib >> 5 !== 2) this.fail('tag 64 needs a byte string');
+    const n = this.len(ib & 31, 1), b = new BlobBytes(n);
+    b.set(this.u8.subarray(this.at, this.at + n)); this.at += n;
+    return b;
   }
   // Tag 24: a byte string with one CBOR item. It reads as that item.
   packed(level) {

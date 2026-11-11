@@ -26,6 +26,35 @@ V8Msg : { n : U64, big : U64, data : Cbor.Bytes }
 v8q : Queue(V8Msg)
 v8q = Queue.v8("V8Q")
 
+## Cbor.js_values: a message of a JS producer with `null` or `undefined` for `note` reads as no key. The checks call the
+## `queue` handler directly (the queue `jsnull`).
+NullMsg : { n : U64, note : Try(Str, [Missing]) }
+
+jsnull : Queue(NullMsg)
+jsnull = Queue.json("JSNULL")
+
+## A message of platform 0.0.9 in flight (roc-cbor 0.2.3): a `List(U8)` is an array of integers. `legacy_0_2()` reads
+## it, the queue constant does not (the queues `legacy` and `strict`).
+BytesMsg : { n : U64, data : List(U8) }
+
+old_bytes : Queue(BytesMsg)
+old_bytes = Queue.v8("OLDB")
+
+## The JSON forms of `Queue.json` (`pf.plain`): bytes are base64 text, a U128 is decimal text (its JS consumer is in
+## `worker.js`, the queue `b64j`).
+B64Msg : { label : Str, data : List(U8), wide : U128 }
+
+b64j : Queue(B64Msg)
+b64j = Queue.json("B64J")
+
+## The round trip through JSON (roc-cbor 0.5.0): `List(U8)` and `Cbor.Bytes` are base64 text (`BytesFromBase64`), a U128 above
+## 2^64 and an I128 below -2^63 are decimal text (`IntFromText`). The route `wide` sends, the check feeds the JSON that
+## the JS consumer got to the queue `b64read`.
+WideMsg : { label : Str, data : List(U8), bytes : Cbor.Bytes, wide : U128, low : I128 }
+
+wide_j : Queue(WideMsg)
+wide_j = Queue.json("B64J")
+
 QueueRoutes :: [].{
 	route! : Request, List(Str) => Response
 	route! = |req, path| {
@@ -45,6 +74,8 @@ QueueRoutes :: [].{
 			["text"] => out(texts.send!(Q.text(req, "s")))
 			["bytes"] => out(bin.send!([1, 2, 255]))
 			["v8"] => out(v8q.send!({ n: 5, big: 1_152_921_504_606_846_976, data: Cbor.bytes([1, 2, 3]) }))
+			["b64"] => out(b64j.send!({ label: job.label, data: [1, 2, 255], wide: 1_267_650_600_228_229_401_496_703_205_376 }))
+			["wide"] => out(wide_j.send!({ label: job.label, data: [1, 2, 255], bytes: Cbor.bytes([0, 128, 254]), wide: 1_267_650_600_228_229_401_496_703_205_376, low: -170_141_183_460_469_231_731_687_303_715_884_105_728 }))
 			_ => Response.from_text(404, "no route")
 		}
 	}
@@ -94,6 +125,23 @@ QueueRoutes :: [].{
 			Ok({})
 		}
 		"handler-err" => Err(Boom)
+		"jsnull" => {
+			_ = jsnull.each!(batch, |_msg, m| Ok(Log.info!("jsnull", { n: m.n, note: m.note ?? "none" })))
+			Ok({})
+		}
+		"b64read" => {
+			r = wide_j.each!(batch, |_msg, m| Ok(Log.info!("b64read", { label: m.label, data: Str.inspect(m.data), bytes: Str.inspect(m.bytes.to_list()), wide: Str.inspect(m.wide), low: Str.inspect(m.low) })))
+			Log.info!("b64read batch", { acked: r.acked, retried: r.retried })
+			Ok({})
+		}
+		"legacy" => {
+			_ = old_bytes.legacy_0_2().each!(batch, |_msg, m| Ok(Log.info!("legacy", { n: m.n, len: m.data.len() })))
+			Ok({})
+		}
+		"strict" => {
+			_ = old_bytes.each!(batch, |_msg, m| Ok(Log.info!("strict", { n: m.n, len: m.data.len() })))
+			Ok({})
+		}
 		_ => Ok({})
 	}
 }

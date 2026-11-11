@@ -94,6 +94,44 @@ D1Routes :: [].{
 	}
 }
 
+## The bytes 0 to 255, in order.
+all_bytes : List(U8)
+all_bytes = {
+	var $list = []
+	for i in (0.U64).until(256) {
+		$list = $list.append(i.to_u8_wrap())
+	}
+	$list
+}
+
+BlobRow : { d : Sql.Blob, n : I64, h : Str }
+
+ListRow : { d : List(U8) }
+
+blob_case! : Str, List(U8) => Response
+blob_case! = |key, bytes| {
+	w = db.run!("INSERT INTO bl (k, d) VALUES (?, ?)", (key, Sql.blob(bytes)))
+	typed : Try(BlobRow, _)
+	typed = db.first!("SELECT d, length(d) AS n, hex(d) AS h FROM bl WHERE k = ?", key)
+	as_list : Try(ListRow, _)
+	as_list = db.first!("SELECT d FROM bl WHERE k = ?", key)
+	untyped = db.rows!("SELECT d FROM bl WHERE k = ?", key)
+	typed_ok = match typed {
+		Ok(r) => r.d == Sql.blob(bytes) and r.d.to_list() == bytes
+		Err(_) => Bool.False
+	}
+	list_ok = match as_list {
+		Ok(r) => r.d == bytes
+		Err(_) => Bool.False
+	}
+	rows_ok = Str.inspect(untyped.map_ok(|r| r.rows)) == "Ok([[Blob(${Str.inspect(bytes)})]])"
+	head = match typed {
+		Ok(r) => "n=${r.n.to_str()} hex=${r.h}"
+		Err(e) => "typed=${Str.inspect(e)}"
+	}
+	Response.from_text(200, "${Str.inspect(w.map_ok(|i| i.changes))} ${head} typed=${Str.inspect(typed_ok)} list=${Str.inspect(list_ok)} rows=${Str.inspect(rows_ok)}")
+}
+
 out : Try(a, e) -> Response
 out = |r| Response.from_text(
 	200,
@@ -420,6 +458,13 @@ params! = |case| match case {
 	}
 	"u64max" => stored!("u64max", db.run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("u64max", 9_223_372_036_854_775_807.U64)))
 	"u64over" => stored!("u64over", db.run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("u64over", 9_223_372_036_854_775_808.U64)))
+	# roc-cbor 0.5.0 encodes a U128 and an I128: in I64 they bind as a number or decimal text; above 64 bits they are a
+	# bignum (a BigInt in JS), and outside I64 a BadParam.
+	"u128" => stored!("u128", db.run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("u128", 5.U128)))
+	"u128_p53" => stored!("u128_p53", db.run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("u128_p53", 9_007_199_254_740_993.U128)))
+	"i128_max" => stored!("i128_max", db.run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("i128_max", 9_223_372_036_854_775_807.I128)))
+	"u128_big" => stored!("u128_big", db.run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("u128_big", 18_446_744_073_709_551_616.U128)))
+	"i128_big" => stored!("i128_big", db.run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("i128_big", -18_446_744_073_709_551_617.I128)))
 	# 2^53 + 1 as an I64 and as a U64: text binds, an INTEGER column gives the exact integer.
 	"p53" => stored!("p53", db.run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("p53", 9_007_199_254_740_993.I64)))
 	"p53_u64" => stored!("p53_u64", db.run!("INSERT INTO pi (k, v) VALUES (?, ?)", ("p53_u64", 9_007_199_254_740_993.U64)))
@@ -501,11 +546,30 @@ params! = |case| match case {
 		r = db.first!("SELECT typeof(?1) || ':' || hex(?1) AS t", Sql.blob([1, 2]))
 		out(r)
 	}
-	# A `List(U8)` is a list of parameters, not one blob (use `Sql.blob`).
+	# A bare `List(U8)` is a plain byte string: JS cannot tell it from a list of integer parameters, so it is a BadParam. `Sql.blob` is tagged.
 	"bare_bytes" => {
 		bytes : List(U8)
 		bytes = [1, 2]
 		out(db.rows!("SELECT ? AS a, ? AS b", bytes))
+	}
+	# The forms that work: [Sql.blob(b)] (one blob), a List(U8) item of a tuple (a blob), a tuple of integers.
+	# A blob written with `Sql.blob` (as the only parameter, and in a tuple) and read back into a `Sql.Blob` field (typed read
+	# of `first!`), into a `List(U8)` field, and into the `Sql` value of `rows!`. `?` is the case: an empty blob, one byte,
+	# all 256 byte values. The answer: the size and the hex that SQLite sees, then three equality checks.
+	"blob_empty" => blob_case!("empty", [])
+	"blob_one" => blob_case!("one", [0])
+	"blob_all" => blob_case!("all", all_bytes)
+	"blob_list" => {
+		r : Try(TextRow, _)
+		r = db.first!("SELECT typeof(?1) || ':' || hex(?1) AS t", [Sql.blob([1, 2])])
+		out(r)
+	}
+	"bytes_item" => {
+		bytes : List(U8)
+		bytes = [1, 2]
+		r : Try(TextRow, _)
+		r = db.first!("SELECT typeof(?2) || ':' || hex(?2) || ':' || ?1 AS t", ("k", bytes))
+		out(r)
 	}
 	"bare_bool" => out(db.run!("INSERT INTO pi (k, v) VALUES ('bare_bool', ?)", Bool.True))
 	"bare_run" => {

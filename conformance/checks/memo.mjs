@@ -63,7 +63,7 @@ export const checks = [
     await sleep(100);
     const all = await linesWith(t, 'Memo "conformance-unreadable"', 1);
     eq(all.length, 1, 'log lines for the name (one for each isolate)');
-    eq(lines[0], 'Memo "conformance-unreadable": the value of load! does not parse back from its CBOR form (MissingRequiredField("note")). It is not pinned, so each get! runs load! again. Use a type that round-trips (MODULES.md 9).', 'the log line');
+    eq(lines[0], 'Memo "conformance-unreadable": the value of load! does not parse back from its CBOR form (InvalidCbor(49) at note). It is not pinned, so each get! runs load! again. Use a type that round-trips (MODULES.md 9).', 'the log line');
     return lines[0];
   }],
   // MODULES.md 9: a pinned value of an older type (the same name) loads again, with no log line; the new value is pinned.

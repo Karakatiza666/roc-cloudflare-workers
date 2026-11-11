@@ -61,15 +61,16 @@ const REFUSED_HEADERS = new Set(['content-length', 'transfer-encoding', 'connect
 const TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
 // The table of `on_trap` (TR5, TR6): `default` and the given causes, each `{ status, headers: [[name, value], ...], body:
-// Uint8Array }`. A bad value is a throw that names the field (`on_trap.crash.status`), so the load fails. The result has the
+// Uint8Array }`. A bad value is a throw that names the Roc field (`on_trap.crashed.status`), so the load fails. The result has the
 // same form, with plain arrays and the body as a Uint8Array of its own (no other code has a reference to it).
 export function checkTraps(t) {
-  const bad = (field, why) => new Error(`makeHandler: Worker.new on_trap.${field}: ${why}`);
+  // The text names the Roc field: the cause `crash` is the field `crashed` (audit 0.0.10, N13).
+  const bad = (field, why) => new Error(`makeHandler: Worker.new on_trap.${field.replace(/^crash(?=\.|\[|$)/, 'crashed')}: ${why}`);
   if (typeof t !== 'object' || Array.isArray(t)) throw bad('', `the table is not an object: ${JSON.stringify(t)}`);
   if (!Object.hasOwn(t, 'default')) throw bad('default', 'the field default is missing');
   const out = {};
   for (const [cause, f] of Object.entries(t)) {
-    if (!TRAP_CAUSES.includes(cause)) throw bad(cause, `the cause is not one of ${TRAP_CAUSES.join(', ')}`);
+    if (!TRAP_CAUSES.includes(cause)) throw bad(cause, `the cause is not one of ${TRAP_CAUSES.map((c) => (c === 'crash' ? 'crashed' : c)).join(', ')}`);
     if (typeof f !== 'object' || f === null) throw bad(cause, 'the entry is not an object');
     const status = typeof f.status === 'bigint' ? Number(f.status) : f.status;
     if (!Number.isInteger(status) || status < 400 || status > 599) throw bad(`${cause}.status`, `the status ${status} is not 400 to 599`);

@@ -24,6 +24,7 @@ mkdir -p .cache
 glue0=$(cat host/roc_platform_abi.zig | md5sum)
 # The builds get 1800 s: with nightly 11-06 on a CI runner, bench/build.sh went over 600 s (release 0.0.8, exit 124).
 STEP_TIMEOUT=1800 step "build (bench/build.sh, layout check of the outputs)" bench/build.sh
+step "scripts/check-packages-test.sh (B1: each package of the platform header is an https:// URL)" scripts/check-packages-test.sh
 step "glue is the glue of the pinned nightly (as at the start)" test "$(cat host/roc_platform_abi.zig | md5sum)" = "$glue0"
 
 step "exports-test.mjs (7a: the two export lists, requests on the production build)" node bench/exports-test.mjs bench/out/app_prod.wasm bench/out/app.wasm
@@ -88,6 +89,7 @@ step "conformance/run.mjs (8c, 8d: a route for each function and Io twin in Mini
 step "conformance/must-not-compile.sh (8c: a Secret in Log fields and in a CBOR encode does not compile)" conformance/must-not-compile.sh
 step "conformance/tmpdir-test.sh (8f: run.mjs leaves no temp dir: a normal run, FAIL start, SIGTERM)" conformance/tmpdir-test.sh bench/out/conformance.wasm
 step "memo-roundtrip/dev-check.sh (the memo checks in a --opt=dev build, roc-cbor 0.2.3, roc#12782)" research/memo-roundtrip/dev-check.sh
+STEP_TIMEOUT=1800 step "stack-modes.sh (the stack of speed, size and dev builds: 1 MiB, 1 MiB, 2 MiB; a value nested 50 levels deep in dev)" bench/stack-modes.sh bench/out/conformance.wasm
 # The test helper (research/design-notes/test-helper.md 7, 10): examples/hello and test-helper/app on the production host
 # (platform/targets/wasm32/host.wasm, made by bench/build.sh), in Miniflare.
 th=.cache/test-helper

@@ -13,6 +13,7 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const I = 'js/index.js', M = 'js/manifest.js';
 const R = (name, checks, ...edits) => ({ name, checks, edits });
 const reverts = [
+  R('audit N13: the text names the manifest cause crash, not the Roc field crashed', ['node:1r', 'node:1r2'], [M, "on_trap.${field.replace(/^crash(?=\\.|\\[|$)/, 'crashed')}", 'on_trap.${field}']),
   R('S2: a body of 4,097 bytes passes (off by one)', ['node:1e'], [M, 'f.body.length > TRAP_LIMITS.bodyBytes', 'f.body.length > TRAP_LIMITS.bodyBytes + 1']),
   R('S3: the same body object for each response of a cause', ['node:4d', 'conformance'], [M, `  const f = traps[cause] ?? traps.default;
   const headers`, `  const f = traps[cause] ?? traps.default;

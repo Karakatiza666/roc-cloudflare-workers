@@ -2,7 +2,7 @@
 // The CBOR profile is in cbor.js. The ref table of a task (API.md RS1) is `Refs`.
 import { Writer, MAX_DEPTH, depthError, decode, isDec } from './cbor.js';
 
-export { Writer, TooLarge, BufferFull, decode, MAX_DEPTH, DEC_KEY, isDec, decNumber, plain } from './cbor.js';
+export { Writer, TooLarge, BufferFull, decode, MAX_DEPTH, DEC_KEY, isDec, decNumber, plain, forJson, base64 } from './cbor.js';
 
 // The ref table of one task. One id for each object: the same object gives the same id (RS1).
 // Ids start at 1. The table keeps its objects until `clear()` (the end, the trap or the cancel of the task).
@@ -50,8 +50,9 @@ const TAG_PACKED = new Uint8Array([0xd8, 0x18]);
 const REF_HEAD = new Uint8Array([0xd8, 0x1b, 0x82, 0x63, 0x52, 0x65, 0x66]); // 27, [2], "Ref"
 const ERROR_HEAD = new Uint8Array([0xd8, 0x1b, 0x83, 0x65, 0x45, 0x72, 0x72, 0x6f, 0x72]); // 27, [3], "Error"
 
-// J1: the range of an Int is i64. Typed data (Packed) also takes up to 2^64 - 1, for a U64.
-const I64_MIN = -(1n << 63n), I64_MAX = (1n << 63n) - 1n, U64_MAX = (1n << 64n) - 1n;
+// J1: the range of an Int is i64. Typed data (Packed) takes -2^127 to 2^128 - 1, for an I128 and a U128 (roc-cbor 0.5.0):
+// outside -2^64 to 2^64 - 1 the writer writes a bignum (tag 2 or 3).
+const I64_MIN = -(1n << 63n), I64_MAX = (1n << 63n) - 1n, I128_MIN = -(1n << 127n), U128_MAX = (1n << 128n) - 1n;
 
 const isHeaders = (v) => typeof Headers !== 'undefined' && v instanceof Headers;
 const isDomException = (v) => typeof DOMException !== 'undefined' && v instanceof DOMException;
@@ -70,7 +71,7 @@ function put(w, v, refs, level, typed) {
     case 'number': return Number.isSafeInteger(v) ? w.int(v) : w.float(v);
     case 'string': return w.text(v);
     case 'bigint':
-      if (v < I64_MIN || v > (typed ? U64_MAX : I64_MAX)) throw new RangeError(`BigInt ${v} is outside ${typed ? 'the range of I64 and U64' : 'i64'} (J1)`);
+      if (typed ? v < I128_MIN || v > U128_MAX : v < I64_MIN || v > I64_MAX) throw new RangeError(`BigInt ${v} is outside ${typed ? 'the range of I128 and U128' : 'i64'} (J1)`);
       return w.bigint(v);
     case 'function': case 'symbol': return ref(w, v, refs, typed);
   }

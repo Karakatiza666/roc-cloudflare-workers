@@ -11,6 +11,6 @@ url=https://github.com/Karakatiza666/roc-cbor/releases/download/0.2.3/GkHriTGSE8
 dep=()
 [ -n "${ROC_CBOR:-}" ] && dep=(--replace-dep "$url" "$ROC_CBOR")
 mkdir -p bench/out
-"$ROC" build --opt=dev --target=wasm32 --no-cache "${dep[@]}" --output=bench/out/conformance-dev.wasm conformance/app.roc || [ $? -eq 2 ]
+"$ROC" build --opt=dev --target=wasm32 --no-cache --wasm-stack-size="$(cat compat/dev-stack-size)" "${dep[@]}" --output=bench/out/conformance-dev.wasm conformance/app.roc || [ $? -eq 2 ]
 # "memo " with the space: not the checks with "memory" in the name.
 node conformance/run.mjs bench/out/conformance-dev.wasm "memo "

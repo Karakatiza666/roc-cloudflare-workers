@@ -28,6 +28,7 @@ export const checks = [
       'CREATE TABLE rid (id INTEGER PRIMARY KEY, v TEXT)',
       'CREATE TABLE pt (k TEXT, a, b INTEGER, c, d)',
       'CREATE TABLE pi (k TEXT PRIMARY KEY, v INTEGER)',
+      'CREATE TABLE bl (k TEXT PRIMARY KEY, d BLOB)',
       'CREATE TABLE p (id INTEGER PRIMARY KEY)',
       'CREATE TABLE t (id INTEGER PRIMARY KEY, u TEXT UNIQUE, n INTEGER NOT NULL, c INTEGER CHECK (c >= 0), p INTEGER REFERENCES p(id))',
       'CREATE TABLE s (id INTEGER PRIMARY KEY, v INTEGER) STRICT',
@@ -257,6 +258,19 @@ export const checks = [
   ['d1 params: a U64 of 2^63 - 1 is stored exact', async (t) => {
     answer(await par(t, 'u64max'), 'Ok [{ t: "integer", v: "9223372036854775807" }]');
   }],
+  // roc-cbor 0.5.0 encodes U128 and I128 (a bignum above 64 bits): D1 takes no BigInt, so in I64 the value binds as for
+  // an I64, and outside I64 it is BadParam.
+  ['d1 params: a U128 and an I128 in I64 bind exact; above 64 bits (a bignum) they are BadParam and store no row', async (t) => {
+    answer(await par(t, 'u128'), 'Ok [{ t: "integer", v: "5" }]');
+    answer(await par(t, 'u128_p53'), 'Ok [{ t: "integer", v: "9007199254740993" }]');
+    answer(await par(t, 'i128_max'), 'Ok [{ t: "integer", v: "9223372036854775807" }]'); // not negative: a check of u64over counts v < 0
+    for (const [c, n] of [['u128_big', '18446744073709551616'], ['i128_big', '-18446744073709551617']]) {
+      const r = await par(t, c);
+      ok(r.body.startsWith(`Err Infra(D1Err({ message: "SQL parameter 1: the integer ${n} does not fit I64`) && r.body.includes('name: "BadParam"'), `${c}: got ${r.body}`);
+    }
+    const db = await t.mf.getD1Database('DB');
+    eq((await db.prepare("SELECT count(*) AS n FROM pi WHERE k IN ('u128_big', 'i128_big')").first()).n, 0, 'rows of the refused inserts');
+  }],
   ['d1 params: a U64 of 2^63 is BadParam, and no row (never a negative number) is stored', async (t) => {
     const r = await par(t, 'u64over');
     ok(r.body.startsWith('Err Infra(D1Err({ message: "SQL parameter 1: the integer 9223372036854775808 does not fit I64"') && r.body.includes('name: "BadParam"'), `got ${r.body}`);
@@ -325,17 +339,36 @@ export const checks = [
     answer(await par(t, 'bare_int'), 'Ok { id: 7 }');
     answer(await par(t, 'bare_dec'), 'Ok { id: 42 }');
     answer(await par(t, 'bare_null'), 'Ok { t: "null" }');
-    answer(await par(t, 'bare_blob'), 'Ok { t: "blob:0102" }');
     answer(await par(t, 'bare_run'), 'Ok { t: "x" }');
   }],
   ['d1 params: a bare value in a session and in Sql.stmt of a batch', async (t) => {
     answer(await par(t, 'bare_session'), 'Ok { t: "in session" }');
     answer(await par(t, 'bare_batch'), 'Ok { t: "in batch" }');
   }],
-  ['d1 params: a bare List(U8) is a list of parameters, not one blob; a bare Bool is BadParam as an item', async (t) => {
-    answer(await par(t, 'bare_bytes'), 'Ok { columns: ["a", "b"], rows: [[Int(1), Int(2)]] }');
+  // roc-cbor 0.5.0: a List(U8) is a plain byte string, so a bare List(U8) is BadParam with the form that works. Sql.blob(b)
+  // is tagged (CBOR tag 64), so it is one blob also as the only parameter. A List(U8) item of a tuple is a blob.
+  ['d1 params: a bare List(U8) is BadParam that names Sql.blob; a bare Sql.blob is one blob; a bare Bool is BadParam as an item', async (t) => {
+    const r = await par(t, 'bare_bytes');
+    ok(r.body.startsWith('Err Infra(D1Err({ message: "SQL parameters: bare bytes [1, 2] (a List(U8)) are not a parameter list') && r.body.includes('Write Sql.blob(b) for one blob') && r.body.includes('name: "BadParam"'), `bare_bytes: got ${r.body}`);
+    answer(await par(t, 'bare_blob'), 'Ok { t: "blob:0102" }');
+    answer(await par(t, 'blob_list'), 'Ok { t: "blob:0102" }');
+    answer(await par(t, 'bytes_item'), 'Ok { t: "blob:0102:k" }');
     const b = await par(t, 'bare_bool');
     ok(b.body.includes('name: "BadParam"') && b.body.includes('SQL parameter 0: a Bool is not a SQL value, use 0 or 1'), `got ${b.body}`);
+  }],
+  // Sql.blob: written (tag 64, in a tuple), stored as a BLOB, read back into a Sql.Blob field, a List(U8) field and the Sql
+  // value of rows!. The empty blob, one byte 0, and all 256 byte values (the hex that SQLite sees is the same bytes).
+  ['d1 blob: Sql.blob is stored as a BLOB and reads back into Sql.Blob, List(U8) and rows! (empty, one byte, all 256 byte values)', async (t) => {
+    const all = Array.from({ length: 256 }, (_, i) => i);
+    const hex = all.map((i) => i.toString(16).padStart(2, '0')).join('');
+    answer(await par(t, 'blob_empty'), 'Ok(1) n=0 hex= typed=True list=True rows=True');
+    answer(await par(t, 'blob_one'), 'Ok(1) n=1 hex=00 typed=True list=True rows=True');
+    answer(await par(t, 'blob_all'), `Ok(1) n=256 hex=${hex.toUpperCase()} typed=True list=True rows=True`);
+    const db = await t.mf.getD1Database('DB');
+    const row = await db.prepare("SELECT typeof(d) AS ty, length(d) AS n FROM bl WHERE k = 'all'").first();
+    eq(row.ty, 'blob', 'column type of the stored value');
+    eq(row.n, 256, 'size of the stored value');
+    eq((await db.prepare("SELECT typeof(d) AS ty, length(d) AS n FROM bl WHERE k = 'empty'").first()).ty, 'blob', 'empty blob is a blob, not NULL');
   }],
   ['d1 params: the old Sql tag form ([Text("ann")], a bare Int(5), Blob in a tuple) is BadParam that names the new form', async (t) => {
     for (const [c, text] of [

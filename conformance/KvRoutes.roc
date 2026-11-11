@@ -5,6 +5,7 @@ import pf.Request
 import pf.Response
 import pf.Kv
 import pf.Io
+import pf.Cbor
 import Q
 
 Prefs : { theme : Str, n : U64, big : U64 }
@@ -105,6 +106,61 @@ KvRoutes :: [].{
 			["put_ttl_io"] => show(Io.run!(plain.put_with(k, v, { ttl_ms: ttl })))
 			["put_expires"] => show(plain.put_with!(k, v, { expires_ms: expires }))
 			["put_meta"] => show(plain.put_with!(k, v, { metadata: meta }))
+			# pf.plain: KV stores the metadata as JSON. A U64 of 2^60 and a U128 of 2^100 are decimal text, a List(U8) base64.
+			["put_meta_wide"] => show(plain.put_with!(k, v, { metadata: Kv.Metadata.of({ big: 1_152_921_504_606_846_976.U64, wide: 1_267_650_600_228_229_401_496_703_205_376.U128, data: [1.U8, 2, 255] }) }))
+			["put_meta_wide_io"] => show(Io.run!(plain.put_with(k, v, { ttl_ms: 120_000, metadata: Kv.Metadata.of({ big: 1_152_921_504_606_846_976.U64, wide: 1_267_650_600_228_229_401_496_703_205_376.U128, data: [1.U8, 2, 255] }) })))
+			["put_meta_rt"] => show(plain.put_with!(k, v, { metadata: Kv.Metadata.of({ data: [1.U8, 2, 255], bytes: Cbor.bytes([0, 128, 254]), wide: 1_267_650_600_228_229_401_496_703_205_376.U128, low: -170_141_183_460_469_231_731_687_303_715_884_105_728.I128 }) }))
+			["get_meta_rt"] => {
+				r : Try({ value : Str, metadata : Try({ data : List(U8), bytes : Cbor.Bytes, wide : U128, low : I128 }, [Missing]) }, _)
+				r = plain.get_with_metadata!(k)
+				show(r.map_ok(|x| { value: x.value, metadata: x.metadata.map_ok(|m| { data: m.data, bytes: m.bytes.to_list(), wide: m.wide, low: m.low }) }))
+			}
+			["parse_meta_rt"] => match plain.list!({ prefix: k }) {
+				Ok(page) => {
+					each = page.keys.map(
+						|key| match key.metadata {
+							Ok(m) => {
+								p : Try({ data : List(U8), bytes : Cbor.Bytes, wide : U128, low : I128 }, _)
+								p = m.parse()
+								q = p.map_ok(|x| { data: x.data, bytes: x.bytes.to_list(), wide: x.wide, low: x.low })
+								"${key.name}: ${Str.inspect(q)}"
+							}
+							Err(Missing) => "${key.name}: none"
+						},
+					)
+					ok(Str.join_with(each, "; "))
+				}
+				Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+			}
+			["get_meta_big"] => {
+				r : Try({ value : Str, metadata : Try({ big : U64 }, [Missing]) }, _)
+				r = plain.get_with_metadata!(k)
+				show(r)
+			}
+			["get_meta_wide"] => {
+				r : Try({ value : Str, metadata : Try({ big : U64, wide : U128 }, [Missing]) }, _)
+				r = plain.get_with_metadata!(k)
+				show(r)
+			}
+			# Metadata of platform 0.0.9 (a List(U8) as a JSON array): parse_legacy reads it, parse does not.
+			["list_legacy"] => match plain.list!({ prefix: k }) {
+				Ok(page) => {
+					each = page.keys.map(
+						|key| match key.metadata {
+							Ok(m) => {
+								old : Try({ data : List(U8), n : I64 }, _)
+								old = m.parse_legacy()
+								now : Try({ data : List(U8), n : I64 }, _)
+								now = m.parse()
+								"${key.name}: legacy=${Str.inspect(old)} strict=${Str.inspect(now.is_ok())}"
+							}
+							Err(Missing) => "${key.name}: none"
+						},
+					)
+					ok(Str.join_with(each, "; "))
+				}
+				Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
+			}
 			["delete"] => show(plain.delete!(k))
 			["delete_io"] => show(Io.run!(plain.delete(k)))
 			["json_put"] => show(prefs.put!(k, value))

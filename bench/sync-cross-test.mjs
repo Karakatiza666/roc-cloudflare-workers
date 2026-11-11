@@ -7,8 +7,8 @@
 // Each case is a repo dir (a `.git` dir) with the Worker `caller` and the Worker `callee`, each with a Wrangler config and an app.wasm.
 import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -16,7 +16,20 @@ const wasmDir = resolve(process.argv[2] ?? join(root, 'bench/out'));
 const W = (f) => join(wasmDir, `${f}.wasm`);
 const cli = join(root, 'js/cli.mjs');
 const tmp = mkdtempSync(join(tmpdir(), 'sync-cross-'));
-process.on('exit', () => rmSync(tmp, { recursive: true, force: true }));
+// Case 4b needs a directory with no `.git` at or above it. TMPDIR can be in a git worktree (a machine rule puts it there),
+// so 4b uses the first of TMPDIR and ~/.cache that has no `.git` above it, in a directory of its own.
+const hasGitAbove = (d) => {
+  for (let x = resolve(d); ; x = dirname(x)) {
+    if (existsSync(join(x, '.git'))) return true;
+    if (dirname(x) === x) return false;
+  }
+};
+const noGitBase = [tmpdir(), join(homedir(), '.cache')].find((d) => existsSync(d) && !hasGitAbove(d));
+const tmpNoGit = noGitBase ? mkdtempSync(join(noGitBase, 'sync-cross-nogit-')) : null;
+process.on('exit', () => {
+  rmSync(tmp, { recursive: true, force: true });
+  if (tmpNoGit) rmSync(tmpNoGit, { recursive: true, force: true });
+});
 let failed = false;
 const fail = (...m) => {
   failed = true;
@@ -42,7 +55,7 @@ const callerConfig = (edit = (c) => c) =>
 let k = 0;
 // A repo: `.git`, the Worker `caller` and the Worker `callee` (the wasm of each). Returns the dirs.
 function repo({ callee = 'app_link_callee', config = callerConfig(), git = true, calleeName = 'callee' } = {}) {
-  const r = join(tmp, `r${k++}`);
+  const r = join(git ? tmp : tmpNoGit, `r${k++}`);
   mkdirSync(join(r, 'caller'), { recursive: true });
   mkdirSync(join(r, 'callee'), { recursive: true });
   if (git) mkdirSync(join(r, '.git'));
@@ -119,8 +132,9 @@ const expectLinks = (name, r, code, ...res) => {
   const a = repo({ config: callerConfig((c) => ((c.services[0].service = 'nobody'), c)) });
   expectLinks('4a target config not found: a note, the other links are checked, exit 0', run(a.caller, 'sync'), 0, link('note', 'service LEDGER', 'no Wrangler config with name = "nobody" under .*: the link is not checked'), ADMIN('ok', 'interface "AdminApi"'));
   // No `.git` above the caller: the repo root is the caller dir, so the callee is not found.
-  const b = repo({ git: false });
-  expectLinks('4b no .git: the repo root is the dir of the config, the callee is not found: notes, exit 0', run(b.caller, 'sync'), 0, LEDGER('note', 'no Wrangler config with name = "callee"'), ROOMS('note', 'no Wrangler config with name = "callee"'));
+  if (!tmpNoGit) fail('4b no .git: TMPDIR and ~/.cache both have a .git at or above them, so the case cannot run');
+  const b = tmpNoGit ? repo({ git: false }) : null;
+  if (b) expectLinks('4b no .git: the repo root is the dir of the config, the callee is not found: notes, exit 0', run(b.caller, 'sync'), 0, LEDGER('note', 'no Wrangler config with name = "callee"'), ROOMS('note', 'no Wrangler config with name = "callee"'));
   // The wasm of the target is not built: the note has the build command.
   const c = repo();
   rmSync(join(c.callee, 'app.wasm'));

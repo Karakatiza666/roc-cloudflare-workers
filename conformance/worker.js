@@ -62,12 +62,13 @@ const Handler = makeHandler(app, { ops, now, wrapEnv, heapCheckWhenIdle: false, 
 // a `Uint8Array` here, and a `U64` of 2^60 is a `BigInt`. `GET /__queue_seen` gives them.
 const seen = [];
 // roc-cbor 0.2.0: the messages that the JS consumers of the queues `decj` (json) and `decvjs` (v8) got, as JSON text (a BigInt is `<n>n`).
+// roc-cbor 0.5.0: also `b64j` (json): bytes are base64 text and a U128 is decimal text.
 // `GET /__dec_seen` gives them: a Dec with a fraction is a Number in `decj` and `{ $dec: [exponent, mantissa] }` in `decvjs`.
 const decSeen = [];
 
 export default class extends Handler {
   async queue(batch) {
-    if (batch.queue === 'decj' || batch.queue === 'decvjs') {
+    if (batch.queue === 'decj' || batch.queue === 'decvjs' || batch.queue === 'b64j') {
       for (const m of batch.messages) {
         decSeen.push({ queue: batch.queue, text: JSON.stringify(m.body, (_k, v) => (typeof v === 'bigint' ? `${v}n` : v)) });
         m.ack();
@@ -131,6 +132,18 @@ export default class extends Handler {
       }
       return Response.json(out);
     }
+    // Cbor.js_values: a JS caller of the Roc method `greet` gives `title` as null, as undefined, as no key and as text.
+    if (path === '/__greet') {
+      const out = [];
+      for (const arg of [{ name: 'ann', title: null }, { name: 'bob', title: undefined }, { name: 'cy' }, { name: 'dee', title: 'Dr' }]) {
+        try {
+          out.push(await this.env.SELF.greet(arg));
+        } catch (e) {
+          out.push(`${e.name}: ${e.message}`);
+        }
+      }
+      return Response.json(out);
+    }
     // 8h item 2: what a JS caller sees of the reply of `busy` (RpcMethods.roc): the plain object `{ Ok }` or `{ Err }`
     // of each callee, for n = 1, 2, 3. The default export, `Admin` and an object of `Counter`.
     if (path === '/__wire') {
@@ -178,7 +191,15 @@ export default class extends Handler {
   // 8f: JS callees of the RPC checks. MC5: the JS kinds of the fields of the argument (a `Cbor.Bytes` field is a
   // `Uint8Array`, a `List(U8)` field an `Array`). The RPC limit: a text of `n` bytes. A reply is a `Reply` of `Rpc.roc`: `{ Ok: value }`.
   inspect(arg) {
-    return { Ok: { data: kind(arg?.data), list: kind(arg?.list) } };
+    return { Ok: { data: kind(arg?.data), list: kind(arg?.list), arr: kind(arg?.arr) } };
+  }
+  // Cbor.js_values: a reply with a null field and an undefined field (an optional field that JS does not set).
+  jsnull() {
+    return { Ok: { a: 1, note: null, extra: undefined } };
+  }
+  // roc-cbor 0.5.0: a U128 and an I128 above 64 bits are bignums (tags 2, 3), a BigInt here. The reply adds 1 to each.
+  wide(arg) {
+    return { Ok: { u: arg.u + 1n, i: arg.i + 1n, kinds: `${typeof arg.u} ${typeof arg.i}` } };
   }
   big(arg) {
     return { Ok: 'x'.repeat(Number(arg.n)) };

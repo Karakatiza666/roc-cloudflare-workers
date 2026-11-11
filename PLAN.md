@@ -3069,7 +3069,7 @@ Not released, not tagged. The new version has 4 changes for app authors and one 
 
 ### Status of the design-issue doc fixes, 2e and 9 (2026-10-27)
 
-Not released, not committed. The list is `design_issues_tmp.md` (each row has its state and evidence). Nightly: the pinned 2026-10-26 (`compat/last-stack-first-nightly`).
+Not released, not committed. The list is `research/design_issues_tmp.md` (each row has its state and evidence). Nightly: the pinned 2026-10-26 (`compat/last-stack-first-nightly`).
 
 | Item | Change | Test |
 | --- | --- | --- |

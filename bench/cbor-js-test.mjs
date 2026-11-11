@@ -4,7 +4,8 @@
 // bench/cbor-js-reverts.mjs breaks the code in a copy, one change at a time, and checks that tests fail.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { Writer, TooLarge, BufferFull, decode, MAX_DEPTH, Refs, Packed, Kept, toJs, fromJs, pack, DEC_KEY, isDec, decNumber, plain } from '../js/values.js';
+import { Writer, TooLarge, BufferFull, decode, MAX_DEPTH, Refs, Packed, Kept, toJs, fromJs, pack, DEC_KEY, isDec, decNumber, plain, forJson, base64 } from '../js/values.js';
+import { BlobBytes } from '../js/cbor.js';
 import * as proto from '../research/api-probe/cbor/cbor.mjs';
 
 const hex = (u8) => Buffer.from(u8).toString('hex');
@@ -85,9 +86,32 @@ test('HD7 RFC 8949 A: the same value with another width of argument (decode only
     ['b801616101', { a: 1 }], ['bb0000000000000001616101', { a: 1 }], ['d9001841' + '00', 0], ['da0000001841' + '00', 0], ['db000000000000001841' + '00', 0]];
   for (const [h, v] of same) assert.deepStrictEqual(dec(h), v, h);
 });
-test('HD7 RFC 8949 A: not in the profile is an error (bignums, tags 0 1 23 32, simple values, integer keys)', () => {
+test('HD7 RFC 8949 A: the bignums (tags 2 and 3) read as BigInt (roc-cbor 0.5.0 writes a U128 and an I128 so)', () => {
+  assert.deepStrictEqual(dec('c249010000000000000000'), 2n ** 64n);
+  assert.deepStrictEqual(dec('c349010000000000000000'), -(2n ** 64n) - 1n);
+});
+test('tag 64 (Sql.blob): a byte string reads as a BlobBytes, a plain byte string does not; the tag needs a byte string', () => {
+  const b = dec('d84043010203');
+  assert.ok(b instanceof BlobBytes && b instanceof Uint8Array);
+  assert.deepStrictEqual([...b], [1, 2, 3]);
+  const e = dec('d84040');
+  assert.ok(e instanceof BlobBytes && e.length === 0);
+  const plain = dec('43010203');
+  assert.ok(plain instanceof Uint8Array && !(plain instanceof BlobBytes));
+  const inList = dec('82d8404101d84040');
+  assert.ok(inList[0] instanceof BlobBytes && inList[1] instanceof BlobBytes && inList[0][0] === 1 && inList[1].length === 0);
+  assert.ok(dec('d840590100' + '00'.repeat(256)) instanceof BlobBytes);
+  typeErr('d840' + '00', /tag 64 needs a byte string/);
+  typeErr('d840' + '80', /tag 64 needs a byte string/);
+  typeErr('d840' + '6161', /tag 64 needs a byte string/);
+  rangeErr('d840', /input ends/);
+  rangeErr('d8404301', /input ends|longer than/);
+  // The writer keeps no tag: a BlobBytes is a plain byte string (a Sql.Blob reads it back).
+  assert.equal(enc(b), '43010203');
+});
+test('HD7 RFC 8949 A: not in the profile is an error (tags 0 1 23 32, simple values, integer keys)', () => {
   const out = [
-    ['c249010000000000000000', 'tag 2'], ['c349010000000000000000', 'tag 3'], ['c074323031332d30332d32315432303a30343a30305a', 'tag 0'],
+    ['c074323031332d30332d32315432303a30343a30305a', 'tag 0'],
     ['c11a514b67b0', 'tag 1'], ['c1fb41d452d9ec200000', 'tag 1'], ['d74401020304', 'tag 23'],
     ['d82076687474703a2f2f7777772e6578616d706c652e636f6d', 'tag 32'], ['f0', 'simple value 16'], ['f8ff', 'simple value 24'],
     ['a201020304', 'a map key must be text'],
@@ -262,8 +286,23 @@ test('integers: 2^53 + 1, 2^64 - 1 (Packed) and -2^63 round trip, in a tree and 
   assert.deepStrictEqual(fromJs(pack(2n ** 64n - 1n)), 2n ** 64n - 1n);
   assert.deepStrictEqual(fromJs(pack([2n ** 64n - 1n, 2n ** 63n])), [2n ** 64n - 1n, 2n ** 63n]);
   assert.equal(hex(pack(2n ** 64n - 1n)), 'd81849' + '1bffffffffffffffff');
-  assert.throws(() => pack(2n ** 64n), cls(RangeError, /outside/));
-  assert.throws(() => pack(-(2n ** 63n) - 1n), cls(RangeError, /outside/));
+  // A Packed value takes -2^127 to 2^128 - 1 (I128 and U128): a bignum outside -2^64 to 2^64 - 1. A tree (J1) takes i64 only.
+  assert.throws(() => toJs(2n ** 63n, refs), cls(RangeError, /outside i64/));
+  assert.throws(() => toJs(-(2n ** 63n) - 1n, refs), cls(RangeError, /outside i64/));
+  assert.throws(() => pack(2n ** 128n), cls(RangeError, /outside the range of I128 and U128/));
+  assert.throws(() => pack(-(2n ** 127n) - 1n), cls(RangeError, /outside the range of I128 and U128/));
+});
+test('integers: a BigInt outside -2^64 to 2^64 - 1 in Packed is a bignum (tag 2, tag 3), shortest, and reads back', () => {
+  assert.equal(hex(pack(2n ** 64n)), 'd8184b' + 'c249010000000000000000');
+  assert.equal(hex(pack(-(2n ** 64n) - 1n)), 'd8184b' + 'c349010000000000000000');
+  assert.equal(hex(pack(-(2n ** 64n))), 'd81849' + '3bffffffffffffffff'); // -2^64 is major type 1
+  assert.equal(hex(pack(2n ** 128n - 1n)), 'd81852' + 'c250' + 'ff'.repeat(16));
+  assert.equal(hex(pack(-(2n ** 127n))), 'd81852' + 'c350' + '7f' + 'ff'.repeat(15));
+  assert.equal(hex(pack(2n ** 72n)), 'd8184c' + 'c2' + '4a' + '01' + '00'.repeat(9)); // no leading zero byte
+  for (const v of [2n ** 64n, -(2n ** 64n) - 1n, 2n ** 128n - 1n, -(2n ** 127n), 12345678901234567890123n, -(2n ** 100n)]) {
+    assert.deepStrictEqual(fromJs(pack(v)), v, `packed ${v}`);
+    assert.deepStrictEqual(fromJs(pack({ k: [v] })), { k: [v] }, `packed in a tree ${v}`);
+  }
 });
 test('J2 Uint8Array, ArrayBuffer, DataView, other typed arrays and Buffer give Bytes (a copy, at the right offset)', () => {
   const ab = new ArrayBuffer(16); new Uint8Array(ab).forEach((_, i, a) => { a[i] = i; });
@@ -516,13 +555,32 @@ test('Dec decode: tags 2 and 3 inside tag 4 (the mantissa) give a Number or a Bi
   assert.deepStrictEqual(dec('c48200c349010000000000000000'), D(0, -(2n ** 64n) - 1n));
   assert.deepStrictEqual(dec('c48200c2480020000000000000'), D(0, 2n ** 53n));
 });
-test('Dec decode: tag 2 and 3 outside tag 4 are an error (the profile has no bignum)', () => {
-  typeErr('c24101', /tag 2 is not in the profile/);
-  typeErr('c34101', /tag 3 is not in the profile/);
-  typeErr('81c24101', /tag 2 is not in the profile/);
-  typeErr('a161' + '61' + 'c24101', /tag 2 is not in the profile/);
-  typeErr('82c48200c24101c24101', /tag 2 is not in the profile/); // the second one is outside
+test('bignum decode: tags 2 and 3 outside tag 4 are a BigInt from -2^127 to 2^128 - 1; larger is a RangeError', () => {
+  assert.deepStrictEqual(dec('c24101'), 1n);
+  assert.deepStrictEqual(dec('c34101'), -2n);
+  assert.deepStrictEqual(dec('81c24101'), [1n]);
+  assert.deepStrictEqual(dec('a161' + '61' + 'c24101'), { a: 1n });
+  assert.deepStrictEqual(dec('82c48200c24101c24101'), [D(0, 1), 1n]);
+  assert.deepStrictEqual(dec('c240'), 0n); // empty bytes: 0 (RFC 8949 3.4.3)
+  assert.deepStrictEqual(dec('c250' + 'ff'.repeat(16)), 2n ** 128n - 1n);
+  assert.deepStrictEqual(dec('c350' + '7f' + 'ff'.repeat(15)), -(2n ** 127n));
+  assert.deepStrictEqual(dec('c251' + '00' + 'ff'.repeat(16)), 2n ** 128n - 1n); // a leading zero byte reads (any width)
+  rangeErr('c251' + '01' + '00'.repeat(16), /outside -2\^127 to 2\^128 - 1/); // 2^128
+  rangeErr('c350' + '80' + '00'.repeat(15), /outside -2\^127 to 2\^128 - 1/); // -2^127 - 1
+  typeErr('c201', /tag 2 needs a byte string/);
+  typeErr('c3' + '6161', /tag 3 needs a byte string/);
+  rangeErr('c245' + '0102', /longer than the input/);
   typeErr('c482c24101' + '00', /exponent of tag 4 must be an integer/); // a bignum as the exponent
+});
+test('forJson (pf.plain, a JSON message): bytes are base64, a BigInt is decimal text, a Dec is a Number', () => {
+  const v = { b: new Uint8Array([1, 2, 255]), e: new Uint8Array(0), big: 2n ** 64n, neg: -(2n ** 70n), d: D(-1, 15), n: 3, s: 'x', z: null, l: [new Uint8Array([0xfb, 0xff]), 1n] };
+  const j = forJson(v);
+  assert.equal(JSON.stringify(j), '{"b":"AQL/","e":"","big":"18446744073709551616","neg":"-1180591620717411303424","d":1.5,"n":3,"s":"x","z":null,"l":["+/8=","1"]}');
+  assert.equal(base64(new Uint8Array(70000).fill(65)), Buffer.alloc(70000, 65).toString('base64')); // more than one chunk of 0x8000
+  assert.equal(forJson(2n ** 53n), '9007199254740992');
+  assert.equal(forJson(new Uint8Array([104, 105])), 'aGk=');
+  // plain (the other users) keeps bytes and BigInt as they are
+  assert.deepStrictEqual(plain({ b: new Uint8Array([1]), big: 5n }), { b: new Uint8Array([1]), big: 5n });
 });
 test('Dec decode: a bad shape of tag 4 is an error', () => {
   typeErr('c4' + '00', /tag 4 needs an array of 2 items/);

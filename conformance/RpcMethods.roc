@@ -51,8 +51,22 @@ RpcMethods :: [].{
 	purge = RpcMethods.admin_iface.method("purge")
 
 	## A JS method of `conformance/worker.js` (the default export): it gives the JS kinds of the fields of its argument.
-	inspect : Rpc(RpcMethods.Default, { data : Cbor.Bytes, list : List(U8) }, { data : Str, list : Str }, Rpc.NoErr)
+	inspect : Rpc(RpcMethods.Default, { data : Cbor.Bytes, list : List(U8), arr : Cbor.U8Array }, { data : Str, list : Str, arr : Str }, Rpc.NoErr)
 	inspect = RpcMethods.default_iface.method("inspect")
+
+	## A JS method of `conformance/worker.js`: a reply with `null` and `undefined` fields (`Cbor.js_values`).
+	jsnull : Rpc(RpcMethods.Default, {}, { a : I64, note : Try(Str, [Missing]), extra : Try(Str, [Missing]) }, Rpc.NoErr)
+	jsnull = RpcMethods.default_iface.method("jsnull")
+
+	## A JS method of `conformance/worker.js`: a U128 and an I128 above 64 bits (CBOR bignums) are a `BigInt` in JS; the
+	## reply adds 1 to each and comes back as bignums.
+	wide : Rpc(RpcMethods.Default, { u : U128, i : I128 }, { u : U128, i : I128, kinds : Str }, Rpc.NoErr)
+	wide = RpcMethods.default_iface.method("wide")
+
+	## A Roc method of the default export for a JS caller (`/__greet` of `conformance/worker.js`): the JS caller gives
+	## `title` as `null`, `undefined` or text (`Cbor.js_values`).
+	greet : Rpc.Iface(iface) -> Rpc(iface, { name : Str, title : Try(Str, [Missing]) }, Str, Rpc.NoErr)
+	greet = |i| i.method("greet")
 
 	## A JS method of `conformance/worker.js` that gives a text of `n` bytes (the RPC limit).
 	big : Rpc(RpcMethods.Default, { n : U64 }, Str, Rpc.NoErr)

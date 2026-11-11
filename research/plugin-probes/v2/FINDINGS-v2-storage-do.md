@@ -26,7 +26,7 @@ Found by: a probe file in this directory (`do_*`, `st_*`: compile only), `st_run
 | 9 | `Cache.put!` tees a stream body, so the client still gets it (old R7). `Ctx.wait_until!(cache.put(..))` does not compile now, see 43 | `st_smoke_out/run_kv_cache.toml`: second `/feed` is a `CF-Cache-Status: HIT` after `put_after!` | fixed |
 | 10 | `Ctx.respond!` is gone (old WebSocket and R2 notes about reading the body before `respond!`). `Response.after` replaces it | `MODULES.md` 11, `do_websockets.roc` | fixed |
 | 11 | `attach!` and `attachment!` took any type, so `attach!({ name })` stored a `Str` (old D2). `Object.attachment(name)` is typed, and the same code is a compile error | `do_p30.roc` | fixed |
-| 12 | `Time.now_ms!({})` and other `{}` calls: functions with no argument take `()`. The old form is a compile error ("expects 0 arguments") | `design_issues_tmp.md` row 4, compile | fixed |
+| 12 | `Time.now_ms!({})` and other `{}` calls: functions with no argument take `()`. The old form is a compile error ("expects 0 arguments") | `research/design_issues_tmp.md` row 4, compile | fixed |
 
 ## Old traps that are still true (the topics keep them)
 
@@ -44,8 +44,8 @@ Found by: a probe file in this directory (`do_*`, `st_*`: compile only), `st_run
 | 22 | `cache_ttl_ms` of `Kv.get_with!` under 30 s is `KvErr` ("Cache TTL must be at least 30"). The module does not raise it, as it does for `ttl_ms` | `st_run` route `kv_cache_ttl` | kept |
 | 23 | D1 gives a number above 2^53 rounded. A typed read is `BadData` with the fix in the text. `CAST(id AS TEXT)` into an `I64`, `U64` or `Id64` field is exact | `st_smoke_out/run_d1.toml`: `events` route gives `9007199254740993` exact | kept |
 | 24 | `Kv.put_with!` metadata must be `Kv.Metadata.of(rec)`, not a bare record (old note) | `st_p34.roc` | kept |
-| 25 | The `Meta` of `R2.Upload.complete!` has no `http` and no `custom` on the edge: use `head!` (old R5, `design_issues_tmp.md` X9, open) | docs (`platform/R2.roc`, `MODULES.md` 5.3) | kept, fact |
-| 26 | A function that the app defines but does not put in `Worker.new` or `Object.class` never runs, with no warning (`design_issues_tmp.md` X8) | `do_p37.roc` | kept |
+| 25 | The `Meta` of `R2.Upload.complete!` has no `http` and no `custom` on the edge: use `head!` (old R5, `research/design_issues_tmp.md` X9, open) | docs (`platform/R2.roc`, `MODULES.md` 5.3) | kept, fact |
+| 26 | A function that the app defines but does not put in `Worker.new` or `Object.class` never runs, with no warning (`research/design_issues_tmp.md` X8) | `do_p37.roc` | kept |
 | 27 | Storage calls with no wait between them are atomic. `init!` must be idempotent. The class must be in `new_sqlite_classes`. The export line must come before `makeHandler` (now written by `sync`). An RPC call cannot carry a socket. An attachment is 16,384 bytes or less. `batch.queue()` is the queue name. `Queue.json` cannot send an integer above 2^53 | docs (`MODULES.md` 7, 8, 12, 6, 1); `st_smoke.sh` prints the Wrangler parts | kept, fact |
 
 ## New traps
@@ -73,7 +73,7 @@ Found by: a probe file in this directory (`do_*`, `st_*`: compile only), `st_run
 | 46 | `Rpc.Infra` has 29 tags, and each costs 3 to 6 KB of wasm. An alias of the tags that the app uses (`Faults`) compiles with `?` on `Object.Cell.get_or!` | `do_p40.roc`; size from `MODULES.md` 1 | new |
 | 47 | `x.get!(..) ?? default` gives the default for every `Err`, also a `KvErr` or a `StorageErr`. `get_or!` gives it for a missing key only | semantics; `get_or!` in `do_objects.roc` and `st_kv.roc` | new |
 | 48 | `Object.cell` and a class with no `rpc` need no annotation to compile (`MODULES.md` 7 says to annotate a class with no `rpc`) | `do_p35.roc`, `do_p06.roc` | drift |
-| 49 | A bare `?` on `key.metadata` (`Try(Metadata, [Missing])`) compiles on nightly-2026-10-19, so `key.metadata?.parse()?` works. `MODULES.md` 5.2 and section 15 say it does not (the old doc drift of FINDINGS-storage, `design_issues_tmp.md` X6) | `st_kv.roc`, `cfw_kv_cache.roc`, `st_smoke_out/run_kv_cache.toml` (`/owner/ann` gives `ann`) | drift |
+| 49 | A bare `?` on `key.metadata` (`Try(Metadata, [Missing])`) compiles on nightly-2026-10-19, so `key.metadata?.parse()?` works. `MODULES.md` 5.2 and section 15 say it does not (the old doc drift of FINDINGS-storage, `research/design_issues_tmp.md` X6) | `st_kv.roc`, `cfw_kv_cache.roc`, `st_smoke_out/run_kv_cache.toml` (`/owner/ann` gives `ann`) | drift |
 | 50 | A misspelled handler name in `Object.class` is a compile error (extra record field), with a very long type in the message | `do_p36.roc` | new |
 | 51 | Roc writes the fields of a record in name order, so `{ user, text }` reaches a JS client as `{"text":..,"user":..}` | `st_smoke_out/st_ws_client.mjs` | fact |
 | 52 | An `Err` of `web_socket_message!` (here `msg.json()` on `not json`) is a log line `Room.webSocketMessage: failed: BadData(..)`, with no throw. The socket stays open | `st_smoke_out/st_ws_client.mjs`, `run_websockets.toml` | fact |

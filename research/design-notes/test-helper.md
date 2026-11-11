@@ -1,6 +1,6 @@
 # Design note: a test helper for apps (`js/test.mjs`)
 
-State: accepted by talon-04 (2026-11-02), with the decisions of section 9. Plan: section 10 (release 0.0.3). Built 2026-11-02 on the branch `test-helper` (not released): section 11 has the probe results, the changes to the design, the reset time and the registry migration.
+State: accepted by talon-04 (2026-11-02), with the decisions of section 9. Plan: section 10 (release 0.0.3). Built 2026-11-02 on the branch `test-helper`. Released in 0.0.3: `js/test.mjs` and `js/test-entry.js` are in each release since then (README.md "Testing an app"). Section 11 has the probe results, the changes to the design, the reset time and the registry migration.
 
 Rule ids: `API.md` has no family for an app test helper. This note proposes the family `TH` (TH1 to TH21, section 5.3). It cites the existing ids `OP3` (roots `env`, `ctx`, `event`), `RN15` (the clock), `RF9` (no fake platform in Roc), `AG1` (the app sees Roc only), `M1`, `3b` (deadline sweep) and `API.md` 10.1, 10.2, 11.
 

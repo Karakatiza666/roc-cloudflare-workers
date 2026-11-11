@@ -110,13 +110,13 @@ DecRoutes :: [].{
 				b = db.first!("SELECT 1 AS y", Sql.none)
 				Response.from_text(200, "all=${Str.inspect(a)} first=${Str.inspect(b)}")
 			}
-			# The options of `Cbor.parse_with` are optional: `{}`, and `{ int_from_text: Bool.True }`.
+			# The options of `Cbor.parse_with` are optional: `{}`, and `{ allow: [IntFromText] }`.
 			["options"] => {
 				raw = Cbor.encode({ user_id: "12" })
 				none : Try({ user_id : U64 }, _)
 				none = Cbor.parse_with(raw, {})
 				text_ok : Try({ user_id : U64 }, _)
-				text_ok = Cbor.parse_with(raw, { int_from_text: Bool.True })
+				text_ok = Cbor.parse_with(raw, { allow: [IntFromText] })
 				plain : Try({ user_id : U64 }, _)
 				plain = Cbor.parse(raw)
 				Response.from_text(200, "{}=${Str.inspect(none)} int_from_text=${Str.inspect(text_ok)} parse=${Str.inspect(plain)}")

@@ -78,7 +78,8 @@ run_io = |ai, model, input, o| {
 			Call(Root("pf"), "pack", [Slot(1), Lit(Int(o.max_bytes.to_i64_try() ?? I64.highest))]),
 		],
 		|r| match r {
-			Ok(Packed(bytes)) => match Cbor.parse(bytes) {
+			# The result comes from JS: `undefined` and `null` of a field are no key (`Cbor.js_values`).
+			Ok(Packed(bytes)) => match Cbor.parse_with(bytes, { allow: [UndefinedAsNull, NullAsAbsent] }) {
 				Ok(v) => Ok(v)
 				Err(e) => Err(Infra(BadData(Str.inspect(e))))
 			}

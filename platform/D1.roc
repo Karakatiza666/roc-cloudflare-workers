@@ -1,5 +1,5 @@
 ## A D1 database (MODULES.md 5.1): `env[name]`, one program for each call. Typed rows cross as one `Packed` value
-## (API.md 5.2) and `Cbor.parse_with` reads them into the type of the call (MC7), with `int_from_text`, so
+## (API.md 5.2) and `Cbor.parse_with` reads them into the type of the call (MC7), with `Cbor.sql_rows` and `IntFromText`, so
 ## `CAST(id AS TEXT)` goes straight into an `I64` field. A constraint failure is the flat `Constraint` (MC9), a read above its
 ## limit is `TooLarge` (MC11). A parameter outside ±(2^53 - 1) goes as decimal text: D1 takes no `BigInt`.
 ## Typed data: the format, what a JS peer sees, and what survives a round trip are in MODULES.md 1, "Formats of typed data".

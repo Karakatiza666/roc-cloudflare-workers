@@ -247,7 +247,21 @@ export function parseJsonc(text) {
       if (i === 0) throw new Error('a comment /* has no end');
     } else out += c;
   }
-  return JSON.parse(out.replace(/,(\s*[}\]])/g, '$1'));
+  // The trailing commas: a comma with only white space before a } or a ]. Not in a string (audit 0.0.10, N8).
+  let clean = '';
+  for (let i = 0; i < out.length; i++) {
+    const c = out[i];
+    if (c === '"') {
+      const start = i;
+      for (i++; i < out.length && out[i] !== '"'; i++) if (out[i] === '\\') i++;
+      clean += out.slice(start, i + 1);
+    } else if (c === ',') {
+      let j = i + 1;
+      while (j < out.length && /\s/.test(out[j])) j++;
+      if (out[j] !== '}' && out[j] !== ']') clean += c;
+    } else clean += c;
+  }
+  return JSON.parse(clean);
 }
 
 function findConfig(dir, given) {
@@ -270,6 +284,14 @@ const entriesOf = (cfg, k) => {
 const at = (o, path) => path.split('.').reduce((v, k) => (v === undefined || v === null ? undefined : v[k]), o);
 
 // ---- sync ----
+
+// A config part of `checkConfig` (TOML text) as JSON: one `"key": value,` line group for each top-level key.
+export function jsonPartOf(tomlText) {
+  const o = parseToml(tomlText, 'the part');
+  return Object.entries(o)
+    .map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v, null, 2)},`)
+    .join('\n');
+}
 
 // The import of the shim in the entry file: the relative path from `entryDir` to `cliDir` (the directory of this file:
 // the copy `.roc-cfw/` of a project, or `js/` of this repository).
@@ -473,8 +495,9 @@ export function checkNightly({ min, stackExports, pin, file = 'main.roc' }) {
 }
 
 // The checks of the Wrangler config against the manifest. Each item: `{ level: 'ok' | 'missing' | 'wrong' | 'note',
-// text, add? }`. `add`: a config part (TOML text) to add.
-export function checkConfig(m, cfg, { entry, scheduled }) {
+// text, add? }`. `add`: a config part (TOML text) to add. `raw`: the app has no Worker.new (a raw event!), so it gets
+// each event, a cron too.
+export function checkConfig(m, cfg, { entry, scheduled, raw = false }) {
   const out = [];
   const ok = (text) => out.push({ level: 'ok', text });
   const missing = (text, add) => out.push({ level: 'missing', text, add });
@@ -571,9 +594,15 @@ export function checkConfig(m, cfg, { entry, scheduled }) {
   if (need.length) missing(`triggers.crons has no ${need.map((c) => `"${c}"`).join(', ')}`, `[triggers]\ncrons = ${JSON.stringify([...have, ...need])}`);
   for (const c of have) {
     if (m.crons.includes(c)) continue;
-    if (scheduled) ok(`triggers.crons "${c}" goes to scheduled!`);
+    if (raw) note(`triggers.crons "${c}" goes to event! (a raw event!): the app must handle the scheduled event`);
+    else if (scheduled) ok(`triggers.crons "${c}" goes to scheduled!`);
     else wrong(`triggers.crons "${c}" has no handler: add Worker.cron("${c}", ...) to the crons of Worker.new, or a scheduled!`);
   }
+
+  // Environments (audit 0.0.10, S11): `wrangler deploy --env <name>` uses [env.<name>], and Wrangler does not copy the
+  // bindings of the top level into it. sync checks only the top level.
+  const envs = cfg.env && typeof cfg.env === 'object' && !Array.isArray(cfg.env) ? Object.keys(cfg.env) : [];
+  if (envs.length) note(`${envs.map((e) => `env.${e}`).join(', ')}: sync checks only the top level of the config. Wrangler does not copy bindings into an environment: each [env.<name>] needs its own copy of each binding of the top level (the date, the flags and triggers are copied). Check each environment by hand`);
   return out;
 }
 
@@ -822,7 +851,7 @@ function sync(argv) {
   const cfgName = relative(dir, cfgFile);
   let items;
   try {
-    items = checkConfig(m, readConfig(cfgFile), { entry: relative(dirname(cfgFile), entry).split('\\').join('/'), scheduled: m.handlers.includes('scheduled') });
+    items = checkConfig(m, readConfig(cfgFile), { entry: relative(dirname(cfgFile), entry).split('\\').join('/'), scheduled: m.handlers.includes('scheduled'), raw: got === null });
   } catch (e) {
     console.error(`roc-cloudflare-workers: ${e.message}`);
     process.exit(2);
@@ -854,12 +883,20 @@ function sync(argv) {
   // Two groups: the top-level keys (they go before the first table, and replace a key of the same name) and the
   // tables (at the end). A part of a note is a choice: it is shown as a comment.
   const adds = items.filter((it) => it.add && it.level !== 'ok');
-  const show = (it) => (it.level === 'note' ? `# A choice (${it.text.split(':')[0]}):\n${it.add.replace(/^/gm, '# ')}` : it.add);
-  const json = cfgFile.endsWith('.toml') ? '' : ' (as JSON)';
+  const isToml = cfgFile.endsWith('.toml');
+  // A JSON config gets each part as JSON keys of the top-level object (audit 0.0.10, N7). A comment is `//` (JSONC).
+  const text = (it) => (isToml ? it.add : jsonPartOf(it.add));
+  const mark = isToml ? '# ' : '// ';
+  const show = (it) => (it.level === 'note' ? `${mark}A choice (${it.text.split(':')[0]}):\n${text(it).replace(/^/gm, mark)}` : text(it));
   const top = adds.filter((it) => !it.add.startsWith('['));
   const tables = adds.filter((it) => it.add.startsWith('['));
-  if (top.length) console.log(`\nSet at the top of ${cfgName}${json}, before the first table (in place of a key of the same name):\n\n${top.map(show).join('\n')}`);
-  if (tables.length) console.log(`\nAdd to the end of ${cfgName}${json}:\n\n${tables.map(show).join('\n\n')}`);
+  if (isToml) {
+    if (top.length) console.log(`\nSet at the top of ${cfgName}, before the first table (in place of a key of the same name):\n\n${top.map(show).join('\n')}`);
+    if (tables.length) console.log(`\nAdd to the end of ${cfgName}:\n\n${tables.map(show).join('\n\n')}`);
+  } else {
+    if (top.length) console.log(`\nSet in the top-level object of ${cfgName} (in place of a key of the same name):\n\n${top.map(show).join('\n')}`);
+    if (tables.length) console.log(`\nAdd to the top-level object of ${cfgName} (when the key is there, add the items to its array or the keys to its object):\n\n${tables.map(show).join('\n\n')}`);
+  }
   if ([...items, ...links].some((it) => it.level === 'missing' || it.level === 'wrong')) fail = true;
   process.exit(fail ? 1 : 0);
 }

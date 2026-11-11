@@ -30,6 +30,10 @@ nap_cell = Object.cell("nap")
 late : Object.Cell(Str)
 late = Object.cell("late")
 
+## A cell of platform 0.0.9 (roc-cbor 0.2.3 bytes), for `Object.Cell.migrate!`.
+legacy_cell : Object.Cell({ data : List(U8), n : I64 })
+legacy_cell = Object.cell("legacy")
+
 ## Typed rows of the object SQL.
 Row : { id : I64, u : Str }
 
@@ -281,6 +285,19 @@ counter_fetch! = |self, req| match req.segments() {
 		some = count.get_or!(self, 42)
 		_ = count.delete!(self)
 		answer("none=${Str.inspect(none)} some=${Str.inspect(some)}")
+	}
+	# The migration from platform 0.0.9: the bytes that roc-cbor 0.2.3 wrote (research/cbor-0.5.0/legacy/write_0_2_3.roc) in
+	# the cell `legacy`. `get!` is BadData (strict), `migrate!` is Migrated then Current, then `get!` reads the value.
+	["cell_migrate"] => {
+		old = [0xa2, 0x64, 0x64, 0x61, 0x74, 0x61, 0x99, 0x00, 0x18].concat(List.repeat(7, 24)).concat([0x61, 0x6e, 0x01])
+		_ = Js.call!([Get(Root("ctx"), "storage"), Get(Slot(0), "kv"), Call(Slot(1), "put", [Lit(Text("legacy")), Lit(Bytes(old))])])
+		before = legacy_cell.get!(self)
+		first = legacy_cell.migrate!(self)
+		second = legacy_cell.migrate!(self)
+		after = legacy_cell.get!(self).map_ok(|v| (v.data.len(), v.n))
+		_ = legacy_cell.delete!(self)
+		none = legacy_cell.migrate!(self)
+		answer("before=${Str.inspect(before.is_err())} first=${Str.inspect(first)} second=${Str.inspect(second)} after=${Str.inspect(after)} none=${Str.inspect(none)}")
 	}
 	# `get_or!` of a cell whose value is not of its type: `BadData`, not the default.
 	["cell_or_bad"] => {

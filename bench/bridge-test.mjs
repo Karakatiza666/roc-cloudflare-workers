@@ -179,8 +179,9 @@ test('pin', async () => {
 test('hd3', async () => {
   // HD3: Roc fixtures to JS and back, compared in Roc with ==.
   const x = await run('hd3');
-  // A Packed value to JS is the value of its bytes (API.md 5: `Js` to JS), so it comes back as [1,2].
-  expectBody('hd3', x, 'hd3 true 29  packed=ok [[1,2]]');
+  // A Packed value to JS is the value of its bytes (API.md 5: `Js` to JS). roc-cbor 0.5.0 writes a List(U8) as a byte
+  // string, so it comes back as Bytes of 2 bytes (0.4: an array [1,2]).
+  expectBody('hd3', x, 'hd3 true 29  packed=ok [bytes:2]');
   return show(x);
 });
 test('hd6', async () => {

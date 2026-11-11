@@ -5,12 +5,13 @@
 import { answer, eq, ok } from '../assert.mjs';
 
 export const options = {
-  queueProducers: { JOBS: 'jobs', TEXTS: 'texts', BIN: 'bin', V8Q: 'v8' },
+  queueProducers: { JOBS: 'jobs', TEXTS: 'texts', BIN: 'bin', V8Q: 'v8', B64J: 'b64j' },
   queueConsumers: {
     jobs: { maxBatchSize: 20, maxBatchTimeout: 0.1, maxRetries: 3, retryDelay: 0 },
     texts: { maxBatchSize: 5, maxBatchTimeout: 0.1 },
     bin: { maxBatchSize: 5, maxBatchTimeout: 0.1 },
     v8: { maxBatchSize: 5, maxBatchTimeout: 0.1 },
+    b64j: { maxBatchSize: 5, maxBatchTimeout: 0.1 },
   },
 };
 
@@ -135,6 +136,52 @@ export const checks = [
     return r.body.slice(0, 160);
   }],
   // PLAN.md 8f: a `Queue.v8` message with a `Cbor.Bytes` field reaches a JS consumer as `Uint8Array`.
+  // Cbor.js_values: a JS producer gives `note` as null, as undefined or not at all: each reads as absent. A number is not a Str.
+  ['queue json: a message with a null or undefined field reads it as absent (UndefinedAsNull, NullAsAbsent)', async (t) => {
+    const r = await call(t, 'jsnull', [msg('a', { n: 1, note: null }), msg('b', { n: 2, note: undefined }), msg('c', { n: 3 }), msg('d', { n: 4, note: 'x' }), msg('e', { n: 5, note: 5 })]);
+    eq(JSON.stringify(r.explicitAcks), JSON.stringify(['a', 'b', 'c', 'd']), 'acked');
+    eq(JSON.stringify((r.retryMessages ?? []).map((x) => x.msgId)), JSON.stringify(['e']), 'retried');
+  }],
+  // A message of platform 0.0.9 in flight: roc-cbor 0.2.3 wrote a List(U8) as an array. Queue.legacy_0_2 reads it, the queue does not.
+  ['queue legacy_0_2: a List(U8) as an array (roc-cbor 0.2.3) reads with legacy_0_2() and not with the queue constant', async (t) => {
+    const old = [msg('o1', { n: 1, data: [1, 2, 3] }), msg('o2', { n: 2, data: new Uint8Array([4, 5]) })];
+    const a = await call(t, 'legacy', old);
+    eq(JSON.stringify(a.explicitAcks), JSON.stringify(['o1', 'o2']), 'legacy: acked');
+    const b = await call(t, 'strict', old);
+    eq(JSON.stringify(b.explicitAcks), JSON.stringify(['o2']), 'strict: acked');
+    eq(JSON.stringify((b.retryMessages ?? []).map((x) => x.msgId)), JSON.stringify(['o1']), 'strict: retried');
+  }],
+  // pf.plain: in a JSON message a List(U8) is base64 text and a U128 is decimal text (JSON.stringify throws for a BigInt).
+  ['queue json: a List(U8) is base64 text and a U128 above 2^53 decimal text for a JS consumer', async (t) => {
+    const label = id();
+    answer(await t.get(`/queue/b64?label=${label}`), 'Ok');
+    let m;
+    for (let i = 0; i < 400 && !m; i++) {
+      m = JSON.parse((await t.get('/__dec_seen')).body).find((x) => x.queue === 'b64j' && x.text.includes(`"${label}"`));
+      if (!m) await sleep(25);
+    }
+    ok(m, 'the JS consumer got no message');
+    eq(m.text, JSON.stringify({ data: 'AQL/', label, wide: '1267650600228229401496703205376' }), 'the message');
+    return m.text;
+  }],
+  // The round trip: Roc writes (pf.plain), the JS consumer gets JSON, and a Roc consumer reads that JSON back: List(U8) and
+  // Cbor.Bytes from base64 text (BytesFromBase64), U128 above 2^64 and I128 below -2^63 from decimal text (IntFromText).
+  ['queue json round trip: List(U8), Cbor.Bytes, U128 above 2^64 and I128 below -2^63 read back from the JSON the JS consumer got', async (t) => {
+    const label = id();
+    answer(await t.get(`/queue/wide?label=${label}`), 'Ok');
+    let m;
+    for (let i = 0; i < 400 && !m; i++) {
+      m = JSON.parse((await t.get('/__dec_seen')).body).find((x) => x.queue === 'b64j' && x.text.includes(`"${label}"`));
+      if (!m) await sleep(25);
+    }
+    ok(m, 'the JS consumer got no message');
+    eq(m.text, JSON.stringify({ bytes: 'AID+', data: 'AQL/', label, low: '-170141183460469231731687303715884105728', wide: '1267650600228229401496703205376' }), 'the JSON');
+    const r = await call(t, 'b64read', [msg('w1', JSON.parse(m.text))]);
+    eq(JSON.stringify(r.explicitAcks), JSON.stringify(['w1']), 'acked');
+    const [l] = await lines_n(t, 'b64read', label, 1);
+    eq(JSON.stringify([l.data, l.bytes, l.wide, l.low]), JSON.stringify(['[1, 2, 255]', '[0, 128, 254]', '1267650600228229401496703205376', '-170141183460469231731687303715884105728']), 'the values');
+    return m.text;
+  }],
   ['queue v8: a Cbor.Bytes field reaches a JS consumer as Uint8Array', async (t) => {
     answer(await t.get('/queue/v8'), 'Ok');
     let seen = [];

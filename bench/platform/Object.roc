@@ -551,6 +551,31 @@ Object(iface) :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id
 		## `storage.kv.delete(key)`. A key with no value is `Ok` too.
 		delete! : Object.Cell(a), Object.Self => Try({}, [Infra([StorageErr(Io.Thrown)])])
 		delete! = |c, _self| Js.call!(kv_ops("delete", [Lit(Text(c.key))])).map_ok(|_| {}).map_err(|t| Infra(StorageErr(t)))
+
+		## The migration from platform 0.0.9 (roc-cbor 0.2.3), once for each cell: a value that reads strict is `Current`
+		## (no write). Else it reads with `Cbor.legacy_0_2` and is written again with the writer of now: `Migrated`.
+		## A value that reads with neither is `BadData`, and the cell does not change (MODULES.md 1, "Migration from
+		## platform 0.0.9").
+		migrate! : Object.Cell(a), Object.Self => Try([Current, Migrated], [NotFound, Infra([BadData(Str), StorageErr(Io.Thrown)])]) where [a.Cbor.Readable(errs)]
+		migrate! = |c, self| {
+			read = c.read
+			match Js.call!(kv_ops("get", [Lit(Text(c.key))])) {
+				Ok(Bytes(bytes)) => match read(bytes) {
+					Ok(_) => Ok(Current)
+					Err(_) => {
+						old : Try(a, _)
+						old = Cbor.parse_with(bytes, { allow: [PaddedNumbers, BytesFromArray] })
+						match old {
+							Ok(v) => c.set!(self, v).map_ok(|_| Migrated)
+							Err(e) => Err(Infra(BadData("the cell ${c.key} does not read with Cbor.legacy_0_2: ${Str.inspect(e)}")))
+						}
+					}
+				}
+				Ok(Undefined) | Ok(Null) => Err(NotFound)
+				Ok(other) => Err(Infra(BadData("the cell ${c.key} holds ${Str.inspect(other)}, not CBOR bytes")))
+				Err(t) => Err(Infra(StorageErr(t)))
+			}
+		}
 	}
 
 	## A typed attachment of a socket (MODULES.md 12.1): CBOR bytes in `ws.serializeAttachment`. A constant (WR1), like
@@ -578,6 +603,29 @@ Object(iface) :: { namespace : Str, jurisdiction : Str, target : [Named(Str), Id
 			read = att.read
 			match Js.call!([Call(Ref(sock.ref), "deserializeAttachment", [])]) {
 				Ok(Bytes(bytes)) => read(bytes).map_err(|m| Infra(BadData("the attachment ${att.name}: ${m}")))
+				Ok(Null) | Ok(Undefined) => Err(NotFound)
+				Ok(other) => Err(Infra(BadData("the attachment ${att.name} is ${Str.inspect(other)}, not CBOR bytes")))
+				Err(t) => Err(Infra(BadData("${t.name}: ${t.message}")))
+			}
+		}
+
+		## The migration from platform 0.0.9 (roc-cbor 0.2.3) for the attachment of a socket that slept over the deploy:
+		## `Current` when it reads strict, else it reads with `Cbor.legacy_0_2` and is written again (`Migrated`).
+		migrate! : Object.Attachment(a), Object.Socket => Try([Current, Migrated], [NotFound, TooLarge, Infra([BadData(Str)])]) where [a.Cbor.Readable(errs)]
+		migrate! = |att, sock| {
+			read = att.read
+			match Js.call!([Call(Ref(sock.ref), "deserializeAttachment", [])]) {
+				Ok(Bytes(bytes)) => match read(bytes) {
+					Ok(_) => Ok(Current)
+					Err(_) => {
+						old : Try(a, _)
+						old = Cbor.parse_with(bytes, { allow: [PaddedNumbers, BytesFromArray] })
+						match old {
+							Ok(v) => att.set!(sock, v).map_ok(|_| Migrated)
+							Err(e) => Err(Infra(BadData("the attachment ${att.name} does not read with Cbor.legacy_0_2: ${Str.inspect(e)}")))
+						}
+					}
+				}
 				Ok(Null) | Ok(Undefined) => Err(NotFound)
 				Ok(other) => Err(Infra(BadData("the attachment ${att.name} is ${Str.inspect(other)}, not CBOR bytes")))
 				Err(t) => Err(Infra(BadData("${t.name}: ${t.message}")))

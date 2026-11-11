@@ -83,21 +83,23 @@ for (const form of ['toml', 'jsonc']) {
 }
 
 // ---- 2. Each missing part: the part is printed, exit 1 ----
-// name, change of the config, the text that the output has (a line of the check, and the part to add when it has one).
+// name, change of the config, the text that the output has (a line of the check, and the part to add when it has one),
+// and for jsonc the part to add as JSON (N7) in place of the TOML part.
 const cases = [
   ['migrations with new_classes (KV-backed) instead of new_sqlite_classes', (c) => (c.migrations = [{ tag: 'v1', new_classes: ['Counter'] }]), [/wrong +migrations: Counter is in new_classes \(KV-backed\)/]],
-  ['no migrations', (c) => delete c.migrations, [/missing +migrations: no new_sqlite_classes for Counter/, /new_sqlite_classes = \["Counter"\]/]],
-  ['a missing d1 binding', (c) => delete c.d1_databases, [/missing +\[\[d1_databases\]\] DB \(d1\): not in the config/, /\[\[d1_databases\]\]\nbinding = "DB"/]],
+  ['no migrations', (c) => delete c.migrations, [/missing +migrations: no new_sqlite_classes for Counter/, /new_sqlite_classes = \["Counter"\]/], [/missing +migrations: no new_sqlite_classes for Counter/, /"new_sqlite_classes": \[\n\s*"Counter"/]],
+  ['a missing d1 binding', (c) => delete c.d1_databases, [/missing +\[\[d1_databases\]\] DB \(d1\): not in the config/, /\[\[d1_databases\]\]\nbinding = "DB"/], [/missing +\[\[d1_databases\]\] DB \(d1\): not in the config/, /"d1_databases": \[\n\s*\{\n\s*"binding": "DB"/]],
   ['the binding DB under another kind (kv)', (c) => (delete c.d1_databases, c.kv_namespaces.push({ binding: 'DB', id: 'y' })), [/missing +\[\[d1_databases\]\] DB \(d1\): not in the config \(the config has DB as kv\)/]],
-  ['a missing cron', (c) => delete c.triggers, [/missing +triggers\.crons has no "\*\/5 \* \* \* \*"/, /\[triggers\]\ncrons = \["\*\/5 \* \* \* \*"\]/]],
-  ['a missing flag', (c) => (c.compatibility_flags = ['global_fetch_strictly_public']), [/missing +compatibility_flags has no enable_request_signal/, /compatibility_flags = \["global_fetch_strictly_public","enable_request_signal"\]/]],
-  ['a missing object namespace', (c) => delete c.durable_objects, [/missing +\[\[durable_objects\.bindings\]\] COUNTERS \(object\)/, /class_name = "Counter"/]],
+  ['a missing cron', (c) => delete c.triggers, [/missing +triggers\.crons has no "\*\/5 \* \* \* \*"/, /\[triggers\]\ncrons = \["\*\/5 \* \* \* \*"\]/], [/missing +triggers\.crons has no "\*\/5 \* \* \* \*"/, /"triggers": \{\n\s*"crons": \[\n\s*"\*\/5 \* \* \* \*"/]],
+  ['a missing flag', (c) => (c.compatibility_flags = ['global_fetch_strictly_public']), [/missing +compatibility_flags has no enable_request_signal/, /compatibility_flags = \["global_fetch_strictly_public","enable_request_signal"\]/], [/missing +compatibility_flags has no enable_request_signal/, /"compatibility_flags": \[\n\s*"global_fetch_strictly_public",\n\s*"enable_request_signal"\n\s*\]/]],
+  ['a missing object namespace', (c) => delete c.durable_objects, [/missing +\[\[durable_objects\.bindings\]\] COUNTERS \(object\)/, /class_name = "Counter"/], [/missing +\[\[durable_objects\.bindings\]\] COUNTERS \(object\)/, /"class_name": "Counter"/]],
   ['a namespace with another class_name', (c) => (c.durable_objects.bindings[0].class_name = 'Other'), [/wrong +\[\[durable_objects\.bindings\]\] COUNTERS \(object\): class_name is "Other", the app has "Counter"/]],
   ['a cron in the config with no handler and no scheduled!', (c) => c.triggers.crons.push('0 0 * * *'), [/wrong +triggers\.crons "0 0 \* \* \*" has no handler/]],
   ['a missing kv binding', (c) => delete c.kv_namespaces, [/missing +\[\[kv_namespaces\]\] KV \(kv\): not in the config/]],
 ];
 for (const form of ['toml', 'jsonc']) {
-  for (const [name, change, wants] of cases) {
+  for (const [name, change, tomlWants, jsonWants] of cases) {
+    const wants = form === 'jsonc' && jsonWants ? jsonWants : tomlWants;
     const cfg = complete();
     change(cfg);
     const dir = project(cfg, form);
@@ -406,6 +408,51 @@ for (const [name, wasmName, src] of [['6n the conformance app (all kinds, classe
   check('9a sync prints the status and the content type of each cause, and the causes that use default', miss.length === 0, `missing: ${JSON.stringify(miss)}\n${r.all}`);
   const b = run(project(complete(), 'toml'), 'sync');
   check('9b an app with no on_trap: one line', b.out.includes('on_trap: none. A trap gives the text response of the platform (trap <error>)'), b.out);
+}
+
+// ---- 10. Audit 0.0.10: N7, N8, N9, S11 ----
+{
+  const { parseJsonc } = await import(pathToFileURL(cli).href);
+  // N8: a trailing comma is removed only outside of strings. A string that has ",}" or ", ]" keeps it.
+  let got;
+  try {
+    got = parseJsonc('{ "a": "x,}", "b": "y, ]", "c": [1, 2, ], // c,}\n "d": "/* ,} */", }');
+  } catch (e) {
+    got = e.message;
+  }
+  check('10a (N8) parseJsonc keeps ",}" and ", ]" in a string and removes the trailing commas', JSON.stringify(got) === JSON.stringify({ a: 'x,}', b: 'y, ]', c: [1, 2], d: '/* ,} */' }), JSON.stringify(got));
+
+  // N7: a JSON config gets the parts to add as JSON, not as TOML.
+  const cfg = complete();
+  delete cfg.d1_databases;
+  delete cfg.triggers;
+  cfg.compatibility_flags = ['global_fetch_strictly_public'];
+  const dir = project(cfg, 'jsonc');
+  const r = run(dir, 'sync');
+  const after = r.out.slice(r.out.indexOf('\nSet in the top-level object'));
+  check('10b (N7) jsonc: the parts to add are JSON (keys in quotes, no [[ ]] table heads, no key = value)',
+    r.code === 1 && after.includes('"compatibility_flags": [') && after.includes('"d1_databases": [') && after.includes('"binding": "DB"') && after.includes('"crons": [') && !/^\[/m.test(after) && !/^\w+ = /m.test(after), `exit ${r.code}\n${r.out}`);
+  const t = run(project(cfg, 'toml'), 'sync');
+  check('10c (N7) toml: the parts to add stay TOML', t.out.includes('[[d1_databases]]\nbinding = "DB"') && t.out.includes('[triggers]\ncrons = ["*/5 * * * *"]'), t.out);
+
+  // N9: a raw event! app (no Worker.new) gets every event, a cron too: triggers.crons is a note, not wrong.
+  const rawCfg = { name: 'raw', main: 'worker.js', compatibility_date: '2026-10-01', compatibility_flags: ['enable_request_signal', 'global_fetch_strictly_public'], triggers: { crons: ['*/5 * * * *'] } };
+  const raw = project(rawCfg, 'toml');
+  copyFileSync(join(dirname(wasm), 'app.wasm'), join(raw, 'app.wasm'));
+  const rr = run(raw, 'sync');
+  check('10d (N9) a raw event! app with triggers.crons: a note, exit 0', rr.code === 0 && /^ {2}note +triggers\.crons "\*\/5 \* \* \* \*" goes to event! \(a raw event!\)/m.test(rr.out) && !/^ {2}wrong/m.test(rr.out), `exit ${rr.code}\n${rr.all}`);
+  const rc = run(raw, 'sync', '--check');
+  check('10e (N9) the same with --check: exit 0', rc.code === 0, `exit ${rc.code}\n${rc.all}`);
+
+  // S11: Wrangler does not inherit bindings into [env.<name>], and sync checks only the top level: a note names each env.
+  const envCfg = complete();
+  envCfg.env = { production: { name: 'b3-prod' }, staging: { name: 'b3-staging', d1_databases: [{ binding: 'DB', database_name: 'db', database_id: 'y' }] } };
+  for (const form of ['toml', 'jsonc']) {
+    const e = run(project(envCfg, form), 'sync');
+    check(`10f (S11) ${form}: a config with env tables: exit 0 and one note that names each env`, e.code === 0 && /^ {2}note +env\.production, env\.staging: sync checks only the top level of the config\. Wrangler does not copy bindings into an environment/m.test(e.out), `exit ${e.code}\n${e.out}`);
+  }
+  const noEnv = run(project(complete(), 'toml'), 'sync');
+  check('10g (S11) a config with no env table: no env note', !/^ {2}note +env\./m.test(noEnv.out), noEnv.out);
 }
 
 console.log(failed ? 'FAILED' : 'all passed');

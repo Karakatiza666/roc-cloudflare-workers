@@ -20,7 +20,7 @@ SqlRules :: [].{
 	## Typed rows (5.1): an integer field also reads canonical decimal text (`int_from_text`), and a parse error is
 	## `BadData` with the column name.
 	typed : List(U8) -> Try(a, [BadData(Str)]) where [a.Cbor.Readable(errs)]
-	typed = |bytes| match Cbor.parse_with(bytes, { int_from_text: Bool.True }) {
+	typed = |bytes| match Cbor.parse_with(bytes, { allow: Cbor.sql_rows.concat([IntFromText]) }) {
 		Ok(v) => Ok(v)
 		Err(InvalidCbor(pos)) => Err(BadData(bad_data(bytes, pos)))
 		Err(MissingRequiredField(name)) => Err(BadData("column ${name}: missing or NULL, read a nullable column into ${name} ?: a or Try(a, [Missing])"))
@@ -30,7 +30,7 @@ SqlRules :: [].{
 	## Typed rows as arrays (`D1.all_tuples!`): the same integer rules as `typed`. A row is a CBOR array, so the column has
 	## no name: `BadData` gives its index from 0.
 	typed_tuples : List(U8) -> Try(a, [BadData(Str)]) where [a.Cbor.Readable(errs)]
-	typed_tuples = |bytes| match Cbor.parse_with(bytes, { int_from_text: Bool.True }) {
+	typed_tuples = |bytes| match Cbor.parse_with(bytes, { allow: Cbor.sql_rows.concat([IntFromText]) }) {
 		Ok(v) => Ok(v)
 		Err(InvalidCbor(pos)) => Err(BadData(bad_tuple_data(bytes, pos)))
 		Err(other) => Err(BadData(Str.inspect(other)))

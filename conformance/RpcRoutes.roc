@@ -18,7 +18,7 @@ RpcRoutes :: [].{
 
 	## The RPC methods of the default export.
 	rpc : List(Rpc.Serves(RpcMethods.Default, {}))
-	rpc = [RpcMethods.ping(RpcMethods.default_iface).on_worker(default_ping!), RpcMethods.hello(RpcMethods.default_iface).on_worker(default_hello!)].concat(RpcErrRoutes.service_handlers(RpcMethods.default_iface))
+	rpc = [RpcMethods.ping(RpcMethods.default_iface).on_worker(default_ping!), RpcMethods.hello(RpcMethods.default_iface).on_worker(default_hello!), RpcMethods.greet(RpcMethods.default_iface).on_worker(default_greet!)].concat(RpcErrRoutes.service_handlers(RpcMethods.default_iface))
 
 	## The named entry points.
 	entrypoints : List(Rpc.Entrypoint)
@@ -40,8 +40,12 @@ RpcRoutes :: [].{
 			Err(e) => Response.from_text(200, "Err ${Str.inspect(e)}")
 		}
 		["admin_call"] => show(admin_service.call!(RpcMethods.purge, { prefix: "v1/" }))
-		# MC5: a `Cbor.Bytes` field reaches a JS callee as a `Uint8Array`, a `List(U8)` field as an `Array`.
-		["inspect"] => show(self_service.call!(RpcMethods.inspect, { data: Cbor.bytes([1, 2, 3]), list: [1, 2, 3] }))
+		# MC5: a `Cbor.Bytes` and a `List(U8)` field reach a JS callee as a `Uint8Array` (roc-cbor 0.5.0), a `Cbor.U8Array` as an `Array`.
+		["inspect"] => show(self_service.call!(RpcMethods.inspect, { data: Cbor.bytes([1, 2, 3]), list: [1, 2, 3], arr: Cbor.u8_array([1, 2, 3]) }))
+		# A JS reply with `null` and `undefined` fields reads with `Cbor.js_values`: no key.
+		["jsnull"] => show(self_service.call!(RpcMethods.jsnull, {}))
+		# A U128 of 2^100 and an I128 of -2^100: bignums to JS (a BigInt), and back.
+		["wide"] => show(self_service.call!(RpcMethods.wide, { u: 1_267_650_600_228_229_401_496_703_205_376, i: -1_267_650_600_228_229_401_496_703_205_376 }))
 		# The RPC limit: a reply above 32 MiB is `RpcErr`.
 		["big"] => match self_service.call!(RpcMethods.big, { n: 33_554_433 }) {
 			Ok(s) => Response.from_text(200, "Ok ${s.count_utf8_bytes().to_str()}")
@@ -59,6 +63,14 @@ show = |r| Response.from_text(200, Str.inspect(r))
 
 default_ping! : { n : I64 } => Try(Str, Rpc.NoErr)
 default_ping! = |{ n }| Ok("default ping ${n.to_str()}")
+
+default_greet! : { name : Str, title : Try(Str, [Missing]) } => Try(Str, Rpc.NoErr)
+default_greet! = |a| Ok(
+	match a.title {
+		Ok(t) => "${t} ${a.name}"
+		Err(Missing) => a.name
+	},
+)
 
 default_hello! : {} => Try(Str, Rpc.NoErr)
 default_hello! = |{}| Ok("default hello")

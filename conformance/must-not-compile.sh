@@ -52,6 +52,10 @@ cases=(
   'Id64 in JSON (write), bare|x = Encoding.Json.to_str(id)|encode_bytes'
   'Id64 in JSON (read)|x : Try({ id : Id64 }, _)\nx = Encoding.Json.parse("{}")|parse_bytes'
   'Id64.{ bits }|x = Id64.{ bits: 5 }|opaque'
+  'control: Sql.blob to_list is a List(U8)|x : List(U8)\nx = Sql.blob([1]).to_list()|-'
+  'control: Sql.blob in a parameter tuple|x = Sql.stmt("SELECT ?", Sql.blob([1]))|-'
+  'Sql.blob as a List(U8) (Sql.Blob is its own type)|x : List(U8)\nx = Sql.blob([1])|TYPE MISMATCH'
+  'Sql.blob has no List methods|x = Sql.blob([1]).len()|MISSING METHOD'
 )
 for c in "${cases[@]}"; do
   IFS='|' read -r name line want <<< "$c"
@@ -66,9 +70,9 @@ done
 out=$("$ROC" check "$dir/f64_json_ok.roc" 2>&1)
 if [ $? -eq 0 ]; then echo "PASS f64_json_ok.roc compiles"
 else echo "FAIL f64_json_ok.roc: a record with an F64 field does not compile as JSON"; echo "$out" | head -20; rc=1; fi
-# PLAN.md 8h item 3: SQL parameters. A U128 parameter fails with a missing `encode_u128`, a bare `[]` with "type not determined"
-# for `encoder_for`. Each `_ok` file is the same call with an allowed type (a U64, `Sql.none`).
-for pair in 'u128:encode_u128' 'empty:encoder_for'; do
+# PLAN.md 8h item 3: SQL parameters. A bare `[]` fails with "type not determined" for `encoder_for`. The `_ok` file is the
+# same call with an allowed type (`Sql.none`). A U128 parameter compiles since roc-cbor 0.5.0 (`sql_u128_ok.roc`, below).
+for pair in 'empty:encoder_for'; do
   kind=${pair%%:*}; word=${pair#*:}
   out=$("$ROC" check "$dir/sql_${kind}_bad.roc" 2>&1)
   if [ $? -eq 1 ] && grep -q "$word" <<< "$out"; then echo "PASS sql_${kind}_bad.roc does not compile (an error names $word)"
@@ -77,6 +81,9 @@ for pair in 'u128:encode_u128' 'empty:encoder_for'; do
   if [ $? -eq 0 ]; then echo "PASS sql_${kind}_ok.roc compiles"
   else echo "FAIL sql_${kind}_ok.roc: the control does not compile"; echo "$out" | head -20; rc=1; fi
 done
+out=$("$ROC" check "$dir/sql_u128_ok.roc" 2>&1)
+if [ $? -eq 0 ]; then echo "PASS sql_u128_ok.roc compiles (roc-cbor 0.5.0 encodes a U128)"
+else echo "FAIL sql_u128_ok.roc: a U128 SQL parameter does not compile"; echo "$out" | head -20; rc=1; fi
 # 8h: a `set!` of a typed socket attachment with a value of another type (attachment_bad.roc).
 # 8h: `<name>_bad.roc` must fail with an error that has the text `want`; `control` must compile.
 pair() {

@@ -98,15 +98,16 @@ Kv(a) :: { name : Str, write : a -> Try(Js, Str), read : List(U8) -> Try(a, Str)
 	put! = |kv, key, v| Io.run!(kv.put(key, v))
 
 	## `ttl_ms`: a value under 60 s is raised to 60 s (KV throws for less). `expires_ms`: a time of the clock. `metadata`: made by
-	## `Kv.Metadata.of(m)` (MC5), 1,024 bytes or less as JSON. It is not a type variable of the options: a call with no
+	## `Kv.Metadata.of(m)` (MC5), 1,024 bytes or less as JSON. The JSON forms (`pf.plain`): an integer of 2^53 or more is
+	## decimal text, a `List(U8)` is base64 text (it reads back as bytes), a `Dec` with a fraction a number. It is not a type variable of the options: a call with no
 	## `metadata` would leave the type of `m` open, and that does not compile ("type not determined", MODULES.md 5.2).
 	put_with : Kv(a), Str, a, { ttl_ms ?: U64, expires_ms ?: U64, metadata ?: Kv.Metadata } -> Io({}, [Infra([KvErr(Io.Thrown), BadData(Str)])])
 	put_with = |kv, key, v, opts| {
-		meta = match opts.?metadata {
-			Ok(m) => [("metadata", Packed(m.cbor))]
-			Err(_) => []
+		options = expiry(opts.?ttl_ms, opts.?expires_ms)
+		match opts.?metadata {
+			Ok(m) => put_meta_io(kv, key, v, options, m.cbor)
+			Err(_) => put_io(kv, key, v, options)
 		}
-		put_io(kv, key, v, expiry(opts.?ttl_ms, opts.?expires_ms).concat(meta))
 	}
 
 	put_with! : Kv(a), Str, a, { ttl_ms ?: U64, expires_ms ?: U64, metadata ?: Kv.Metadata } => Try({}, [Infra([KvErr(Io.Thrown), BadData(Str)])])
@@ -164,8 +165,16 @@ Kv(a) :: { name : Str, write : a -> Try(Js, Str), read : List(U8) -> Try(a, Str)
 		of : m -> Kv.Metadata where [m.Cbor.Writable]
 		of = |m| Kv.Metadata.{ cbor: Cbor.encode(m) }
 
+		## The metadata is JSON in KV: an integer of 2^53 or more is decimal text there, so an integer type also reads
+		## decimal text (`IntFromText`, up to 39 digits: a `U128` and an `I128` read back), and a `List(U8)` or `Cbor.Bytes` reads base64 text
+		## (`BytesFromBase64`).
 		parse : Kv.Metadata -> Try(m, [Infra([BadData(Str)])]) where [m.Cbor.Readable(errs)]
-		parse = |md| Cbor.parse(md.cbor).map_err(|e| Infra(BadData(Str.inspect(e))))
+		parse = |md| Cbor.parse_with(md.cbor, { allow: [IntFromText, BytesFromBase64] }).map_err(|e| Infra(BadData(Str.inspect(e))))
+
+		## `parse` that also reads metadata of platform 0.0.9 (roc-cbor 0.2.3): a `List(U8)` is a JSON array of integers
+		## (`Cbor.legacy_0_2`). For a migration once: read it, then `put_with!` the key again with `Kv.Metadata.of`.
+		parse_legacy : Kv.Metadata -> Try(m, [Infra([BadData(Str)])]) where [m.Cbor.Readable(errs)]
+		parse_legacy = |md| Cbor.parse_with(md.cbor, { allow: [IntFromText, BytesFromBase64, PaddedNumbers, BytesFromArray] }).map_err(|e| Infra(BadData(Str.inspect(e))))
 	}
 
 	## One key as a value: `get!`, `set!` and `delete!` with no key argument (MODULES.md 9).
@@ -254,7 +263,7 @@ meta_io = |kv, key, cache_ttl_ms, max| {
 				Undefined => Err(NotFound)
 				Bytes(bytes) => match read(bytes) {
 					Ok(value) => match field(fields, "metadata") {
-						Packed(cbor) => match Cbor.parse(cbor) {
+						Packed(cbor) => match Cbor.parse_with(cbor, { allow: [IntFromText, BytesFromBase64] }) {
 							Ok(m) => Ok({ value, metadata: Ok(m) })
 							Err(e) => Err(Infra(BadData("the metadata does not fit its type: ${Str.inspect(e)}")))
 						}
@@ -282,6 +291,28 @@ put_io = |kv, key, v, options| {
 			},
 		)
 		# A value that does not encode: no program, so nothing is sent.
+		Err(text) => Io.sync([], |_| Err(Infra(BadData("the value does not encode: ${text}"))))
+	}
+}
+
+## `put_io` with the metadata: `pf.plain` makes the JSON value of the metadata first (a `BigInt` as decimal text, bytes as
+## base64), because KV stores the metadata as JSON and `JSON.stringify` throws for a `BigInt`.
+put_meta_io : Kv(a), Str, a, List((Str, Js)), List(U8) -> Io({}, [Infra([KvErr(Io.Thrown), BadData(Str)])])
+put_meta_io = |kv, key, v, options, meta| {
+	write = kv.write
+	match write(v) {
+		Ok(js) => Io.new(
+			[
+				Get(Root("env"), kv.name),
+				Call(Root("pf"), "plain", [Lit(Packed(meta))]),
+				Record(options.map(|(k, o)| (k, Lit(o))).append(("metadata", Slot(1)))),
+				Call(Slot(0), "put", [Lit(Text(key)), Lit(js), Slot(2)]),
+			],
+			|r| match r {
+				Ok(_) => Ok({})
+				Err(t) => Err(Infra(KvErr(t)))
+			},
+		)
 		Err(text) => Io.sync([], |_| Err(Infra(BadData("the value does not encode: ${text}"))))
 	}
 }

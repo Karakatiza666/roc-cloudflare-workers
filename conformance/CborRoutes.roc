@@ -4,8 +4,20 @@
 import pf.Request
 import pf.Response
 import pf.Cbor
+import Q
 
 Person : { id : I64, name : Str, avatar : Cbor.Bytes }
+
+## A value of any depth, for the stack check (`?n=` levels): the derived codec of a recursive type uses one frame for each level.
+## In a `--opt=dev` build the frames are large (roc-lang/roc#12922): bench/stack-modes.sh uses it for the 2 MiB stack.
+Nest := [Leaf(I64), Node(Nest)].{
+	is_eq : _
+	encoder_for : _
+	parser_for : _
+}
+
+nest : U64 -> Nest
+nest = |n| if n == 0 Nest.Leaf(7) else Nest.Node(nest(n - 1))
 
 ## A text id that must start with `id-`: a custom `parser_for` made with `Cbor.Format` and `Cbor.State`.
 Tag := Str.{
@@ -40,7 +52,7 @@ error_path = |raw, parsed| match parsed {
 
 CborRoutes :: [].{
 	route! : Request, List(Str) => Response
-	route! = |_req, path| {
+	route! = |req, path| {
 		match path {
 			# A record with a `Cbor.Bytes` field: its bytes are a byte string (0x43), not an array.
 			["bytes"] => {
@@ -48,6 +60,15 @@ CborRoutes :: [].{
 				back : Try(Person, _)
 				back = Cbor.parse(raw)
 				text(Str.inspect(raw), Str.inspect(back.map_ok(|p| p.avatar.to_list())))
+			}
+			# `n` levels: encode, read back, compare. The answer has the size of the bytes and the result of the compare.
+			["nest"] => {
+				n = Q.num(req, "n")
+				value = nest(n)
+				raw = Cbor.encode(value)
+				back : Try(Nest, _)
+				back = Cbor.parse(raw)
+				text("n=${n.to_str()} bytes=${raw.len().to_str()}", "same=${Str.inspect(back == Ok(value))}")
 			}
 			["generic"] => {
 				got : Try(List(U64), _)
@@ -69,7 +90,7 @@ CborRoutes :: [].{
 				snake : Try({ user_id : U64 }, _)
 				snake = Cbor.parse(raw)
 				viaopt : Try({ user_id : U64 }, _)
-				viaopt = Cbor.parse_with(raw, { fields: Camel, int_from_text: Bool.False })
+				viaopt = Cbor.parse_with(raw, { fields: Camel, allow: [] })
 				text("${Str.inspect(camel)} ${Str.inspect(viaopt)}", Str.inspect(snake))
 			}
 			["path"] => {
@@ -95,7 +116,17 @@ CborRoutes :: [].{
 				items = round_trip([Ok("a"), Err(Null)])
 				bools : Try(List(Bool), _)
 				bools = Cbor.parse([0x84, 0xf4, 0xf5, 0x00, 0x01])
-				text("${Str.inspect(raw)} ${Str.inspect(required)} ${Str.inspect(optional.map_ok(|r| r.?note))}", "${Str.inspect(missing.map_ok(|r| r.note))} ${Str.inspect(items)} ${Str.inspect(bools)}")
+				# js_values (a value from JS): the null is no key, so ?: and Try(a, [Missing]) read it as absent, and a
+				# Try(a, [Null]) field is MissingRequiredField.
+				js_optional : Try(OptRec, _)
+				js_optional = Cbor.parse_with(raw, { allow: Cbor.js_values })
+				js_missing : Try(MissRec, _)
+				js_missing = Cbor.parse_with(raw, { allow: Cbor.js_values })
+				js_required : Try(NullRec, _)
+				js_required = Cbor.parse_with(raw, { allow: Cbor.js_values })
+				int_bools : Try(List(Bool), _)
+				int_bools = Cbor.parse_with([0x84, 0xf4, 0xf5, 0x00, 0x01], { allow: [BoolFromInt] })
+				text("${Str.inspect(raw)} ${Str.inspect(required)} ${Str.inspect(optional.map_ok(|r| r.?note))}", "${Str.inspect(missing.map_ok(|r| r.note))} ${Str.inspect(items)} ${Str.inspect(bools)} | js ${Str.inspect(js_optional.map_ok(|r| r.?note))} ${Str.inspect(js_missing.map_ok(|r| r.note))} ${Str.inspect(js_required)} ${Str.inspect(int_bools)}")
 			}
 			_ => Response.from_text(404, "no route")
 		}

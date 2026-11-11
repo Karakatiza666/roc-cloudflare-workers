@@ -57,12 +57,29 @@ jwk_list = [
 jwks : Memo(Jwks)
 jwks = Memo.new("conformance-jwks", { max_age_ms: 600_000 })
 
-## A type that never round-trips: `Err(Null)` in a record field writes no key, and a `Try(a, [Null])` field is
-## required (roc-cbor rules N4, N5). `get!` logs one line for the name, does not pin, and runs `load!` each time.
-Unreadable : { made : Str, note : Try(Str, [Null]) }
+## A text that writes as CBOR text and reads only a CBOR integer: a custom codec that does not round-trip. roc-cbor 0.5.0
+## reads back each derived type (`Err(Null)` writes `null` now), so the test type needs a codec of its own.
+Skew := Str.{
+	encoder_for : encoding -> (Skew, state -> Try(state, err)) where [encoding.encode_str : Str, state -> Try(state, err)]
+	encoder_for = |_| {
+		Encoding : encoding
+
+		|Skew.(s), state| Encoding.encode_str(s, state)
+	}
+
+	parser_for : Cbor.Format -> (Cbor.Reader -> Try({ value : Skew, rest : Cbor.Reader }, [InvalidCbor(U64)]))
+	parser_for = |enc| |state| {
+		parsed = enc.parse_i64(state)?
+		Ok({ value: Skew.(parsed.value.to_str()), rest: parsed.rest })
+	}
+}
+
+## A type that never round-trips: the field `note` writes text and reads an integer. `get!` logs one line for the
+## name, does not pin, and runs `load!` each time.
+Unreadable : { made : Str, note : Skew }
 
 load_unreadable! : () => Try(Unreadable, [LoadErr])
-load_unreadable! = || Ok({ made: WebCrypto.random_uuid!(), note: Err(Null) })
+load_unreadable! = || Ok({ made: WebCrypto.random_uuid!(), note: Skew.("text") })
 
 unreadable : Memo(Unreadable)
 unreadable = Memo.new("conformance-unreadable", { max_age_ms: 600_000 })

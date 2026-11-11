@@ -16,7 +16,8 @@ Hyperdrive :: { name : Str }.{
 	## What Workers gives for a database: the connection string and its parts. The two secrets do not show in a log line.
 	Config : { connection_string : Secret, host : Str, port : U16, user : Str, password : Secret, database : Str }
 
-	## A binding that is not in the config gives `undefined` fields (OP7): a crash with the name of the binding.
+	## A binding that is not in the config gives `undefined` fields (OP7): a crash (a 500 response) with the name of the
+	## binding, not an error value (decided, PLAN.md OO1).
 	config! : Hyperdrive => Hyperdrive.Config
 	config! = |h| match Js.call!([
 		Get(Root("env"), h.name),

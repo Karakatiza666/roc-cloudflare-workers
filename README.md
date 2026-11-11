@@ -2,7 +2,7 @@
 
 A Roc platform for Cloudflare Workers. The app compiles to a wasm32 reactor. The host is in Zig. Effects (fetch, D1, R2, KV, Cache API, Durable Object SQL) are direct-style hosted functions that wait on JS promises through JSPI.
 
-Status: phases A and B are built (`PLAN.md`). The release files are made by `scripts/bundle.sh` and published by `.github/workflows/release.yml` (`PLAN.md` 11). The latest release is 0.0.9: see "Changes in 0.0.9".
+Status: phases A and B are built (`PLAN.md`). The release files are made by `scripts/bundle.sh` and published by `.github/workflows/release.yml` (`PLAN.md` 11). The latest release is 0.0.9: see "Changes in 0.0.9". "Changes in 0.0.10" lists the changes for the next release (0.0.10 is not released yet).
 
 | Document | Content |
 | --- | --- |
@@ -18,7 +18,7 @@ Each release (tag `X.Y.Z`) has 1 file. The platform and the shim have the same v
 
 | File | Use |
 | --- | --- |
-| `<hash>.tar.zst` | The platform bundle. It goes in the header of the app. It has the Roc modules, `LICENSE`, the production host `targets/wasm32/host.wasm`, and the JS shim in `js/` (`index.js` and the other `*.js` files: `makeHandler`, `objectClass`, `entrypointClass`; `cli.mjs`: the command `sync`; `cfw.json`; `template/`). The packages `http` (roc-lang/http 2.0.0) and `cbor` (roc-cbor 0.2.3) stay URLs in the platform header: Roc downloads them. |
+| `<hash>.tar.zst` | The platform bundle. It goes in the header of the app. It has the Roc modules, `LICENSE`, the production host `targets/wasm32/host.wasm`, and the JS shim in `js/` (`index.js` and the other `*.js` files: `makeHandler`, `objectClass`, `entrypointClass`; `cli.mjs`: the command `sync`; `cfw.json`; `template/`). The packages `http` (roc-lang/http 2.0.0) and `cbor` (roc-cbor 0.5.0) stay URLs in the platform header: Roc downloads them. |
 
 There is no npm package and no `package.json` in a project. The release notes have the URL. The URL of the latest release:
 
@@ -34,6 +34,41 @@ There is no npm package and no `package.json` in a project. The release notes ha
 | 0.0.2 | `https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/0.0.2/f352LLRKJCZ4JJVEocp3H9e4e6Sxa6Ym5CxZ1GZCpfd.tar.zst` | `nightly-2026-10-31-f7bef6b` |
 
 Use the release URL. `dist/` of this repository is a local build of `scripts/bundle.sh` (gitignored). Its hash is not the hash of the release, so do not take a URL or a file from `dist/`.
+
+## Changes in 0.0.10
+
+Breaking changes are marked BREAKING in the first column. Data and code of 0.0.9 need work for each of them.
+
+| Item | Breaking? | Rule |
+| --- | --- | --- |
+| roc-cbor 0.5.0 (strict reads, new format) | BREAKING | The platform header moves from roc-cbor 0.2.3 to roc-cbor 0.5.0. The reads are strict. Some bytes that 0.0.9 wrote do not read. |
+| Migration of stored data from 0.0.9 | BREAKING | Run `Object.Cell.migrate!` and `Object.Attachment.migrate!` once after the deploy (`MODULES.md` 1, "Migration of stored data"). |
+| `List(U8)` writes a byte string | BREAKING | JS gets a `Uint8Array`, not an `Array`. |
+| A bare `List(U8)` as SQL parameters | BREAKING | `BadParam`. Use `Sql.blob(b)`. |
+| `null` from JS means "no field" | BREAKING for a type that needs `null` | On the paths with `Cbor.js_values`, a `null` field is no key. |
+| `Cbor.State`, custom `encoder_for` | BREAKING for a custom codec | `Cbor.Writer` replaces the old writer type. |
+| 128-bit numbers in JS | No | `U128` and `I128` are CBOR integers and bignums. JS gets a `BigInt`. |
+| Base64 bytes on JSON paths | No | `Queue.json` and the metadata of `Kv.put_with!` write bytes as base64 text. |
+| `Sql.Blob` | No | `Sql.blob(b)` is its own type (CBOR tag 64). |
+| Stack flag for `--opt=dev` | No | Add `--wasm-stack-size=2097152` (2 MiB) to a dev build. Speed and size builds keep 1 MiB from the header. |
+| Template: `/fetch` gets one fixed URL | No | The `main.roc` of `roc-cfw init` had `/fetch?url=U`, which fetched any URL of the client (an open fetch relay on a public URL). It now fetches `page_url`. A project made from an older template: remove the route or fix its URL. `examples/hello` keeps the open form for the repo tests only. |
+| `sync` | No | A `wrangler.json(c)` gets the parts to add as JSON. A raw `event!` app with `triggers.crons` gets a note, not `wrong`. A config with `[env.<name>]` tables gets a note: `sync` checks only the top level, and Wrangler does not copy bindings into an environment. A trailing comma in a string of a JSONC config stays. |
+| `on_trap` errors at load | No | The text names the Roc field `crashed` (`on_trap.crashed.status`), not `crash`. |
+
+The platform header moves from roc-cbor 0.2.3 to roc-cbor 0.5.0. The reads are strict now, and each module reads with the leniencies of its source (`MODULES.md` 1, "Null in a record"). Data of 0.0.9 that the app stores needs a migration once (`MODULES.md` 1, "Migration of stored data").
+
+| Change | In 0.0.9 | In 0.0.10 | What the app author does |
+| --- | --- | --- | --- |
+| `List(U8)` writes a byte string | An array of integers: JS got an `Array`. | A CBOR byte string: JS gets a `Uint8Array` (an RPC callee, a `Queue.v8` consumer). `Cbor.U8Array` (`Cbor.u8_array(list)`) writes an array of integers. | A JS peer that needs an `Array` of numbers (Workers AI `image`, `audio`) gets a `Cbor.U8Array` field. |
+| A bare `List(U8)` as SQL parameters | A list of integer parameters (`db.rows!(sql, bytes)` bound each byte). | `BadParam`: a `List(U8)` is a plain byte string, and JS cannot tell it from a list of integer parameters. `Sql.blob(b)` is its own type, `Sql.Blob` (CBOR tag 64 round a byte string), and a bare `Sql.blob(b)` binds as one blob. A byte string item of a list or a tuple is a blob. | Write `Sql.blob(b)` for one blob, a tuple for parameters. A BLOB column reads into a `Sql.Blob` field, a `List(U8)` field or a `Cbor.Bytes` field. |
+| `Err(Null)` in a record writes `null` | No key: a `Try(a, [Null])` field read it back as `MissingRequiredField`. | `null`. Cells, attachments and `Memo` values read it back as `Err(Null)` (strict). RPC, queue messages and `Ai.run!` results read a `null` field as no key (`Cbor.js_values`). | On RPC and queue types keep `x ?: a` or `Try(a, [Missing])` for a field that can be empty. |
+| Values from JS (`Cbor.js_values`) | `undefined` read as `null`, and a `null` field as no key, on each path (roc-cbor 0.2.2). | The same, but only where the value comes from JS: an RPC argument and reply, a `Queue.json` and `Queue.v8` message, an `Ai.run!` result. Elsewhere `undefined` is an error and `null` goes to the field. | Nothing for RPC and queues. |
+| The strict reader | A `Bool` read 0 and 1, a float read as an integer, padded heads read. | A `Bool` reads `false` and `true`. D1 and object SQL rows keep the SQL rules (`Cbor.sql_rows`: 0 and 1, NULL, BLOB arrays). | A `Cbor.parse` of the app that reads JS data adds `{ allow: [..] }` (`Cbor.Leniency`). |
+| `U128`, `I128` | No CBOR codec: a `U128` SQL parameter did not compile. | CBOR integers, bignums (tags 2, 3) above 64 bits. `js/cbor.js` reads and writes a bignum as a `BigInt` (-2^127 to 2^128 - 1). A SQL parameter outside I64 is `BadParam` (D1 takes no `BigInt`). | Nothing. |
+| JSON forms of `Queue.json` and KV metadata (`pf.plain`) | A `BigInt` made `QueueErr` (`JSON.stringify` throws). A `Uint8Array` was not possible (a `List(U8)` was an array). | A `BigInt` is decimal text, and the read takes it (`IntFromText`, up to 39 digits: a `U128` and an `I128` read back). Bytes are base64 text, and the read takes it (`BytesFromBase64`). | Nothing to avoid: both round-trip (roc-cbor 0.5.0). |
+| Migration from 0.0.9 | | `Cbor.legacy_0_2`, `Cbor.parse_legacy`, `Object.Cell.migrate!`, `Object.Attachment.migrate!`, `Kv.Metadata.parse_legacy`, `Queue.legacy_0_2`. No lenient read stays in the platform. | Run the migration of `MODULES.md` 1 once after the deploy. |
+| Stack size of a `--opt=dev` build | The header has 1 MiB. A dev build of a value nested 50 levels deep trapped. | A dev build takes `--wasm-stack-size=2097152` (2 MiB; `compat/dev-stack-size`, "Stack size" below). Speed and size builds keep 1 MiB. | Add the flag to the `roc build --opt=dev` step. |
+| `Cbor.State`, custom codecs | `Cbor.State`; `encoder_for` gave a `List(U8)`. | `Cbor.Reader` (`Cbor.State` stays as its alias). `encoder_for : Cbor.Format -> (T, Cbor.Writer -> Try(Cbor.Writer, err))`. The options `int_from_text` and `dec_from_text` are `{ allow: [IntFromText] }` and `{ allow: [DecFromText] }`. | Change a custom `encoder_for` to `Cbor.Writer` (the roc-cbor 0.5.0 migration table). |
 
 ## Changes in 0.0.9
 
@@ -114,7 +149,7 @@ The Roc API and the ABI do not change. An app built for 0.0.3 works with 0.0.4.
 | WebSockets: errors of `send!` and `close!`, who closed, subprotocols, a bounded receive queue (`MODULES.md` 12) | `send!` gave `Closed` for each throw. `close!` gave `{}` and dropped a throw. `WebSocket.Closed` was `{ code, reason, clean }`. A client could not read the subprotocol of the server, and a server could not pick one. The receive queue of a socket had no limit. A `receive!` after `close!` could give `Closed` with 1006 "Network connection lost." for a clean close (an `error` event of workerd was the close record). | `send!` of `WebSocket` and `Object.Socket`: `Try({}, [Closed, Infra([SocketErr(Thrown)])])` (`Closed` for a closing or closed socket). `close!`: `Try({}, [BadCode, TooLarge])`. `Closed` has `by : [Peer, Us, Transport]`. New: `WebSocket.accept_with!` (`protocols`, `max_queued_bytes`), `protocol`, `protocols`, `pick_protocol`, `default_max_queued_bytes`, `closed!` (the close record with no message taken), `extensions` (the `Sec-WebSocket-Extensions` of a client, `NotReported` for a server); `connect_with!` takes `max_queued_bytes`; `Object.Self.accept_with!` takes `protocols`. A message that comes while the queue holds 4 MiB or more closes the socket with 1008. A clean close gives its own code (`MODULES.md` 12.2, "The `error` event"). | Write `_ = socket.close!(...)` (or handle the `Try`) where `close!` was a statement. A match on the error of `send!` adds the `Infra` arm. A record pattern on a `WebSocket.Closed` names `by` (or `..`). An app that reads slowly from a fast peer sets `max_queued_bytes`. |
 | Roc nightly 2026-10-26 and later | The platform gave a warning (exit code 2). | `roc check` and `roc build` of the platform and the examples give 0 errors and 0 warnings. The nightlies 2026-10-19, 2026-10-26 and 2026-10-27 work too. `compat/last-stack-first-nightly` pins 2026-10-31 (f7bef6b), the nightly of the release build. From nightly 2026-10-28, the compiler adds 3 exports to each wasm module (`__stack_pointer`, `__stack_low`, `__stack_high`) and a maximum memory of 4 GiB minus the stack (65,520 pages). The platform does not use the 3 exports: the host owns the stack pointer. | A top-level `Io` value that another module joins with other `Infra(...)` errors is a type mismatch at `?` on 10-21 and later: write it as a function (`MODULES.md` 9). A `Memo` has no such problem in 0.0.2 (the row above). |
 
-The platform header has roc-cbor 0.2.3: an app that adds the roc-cbor URL too uses the same URL (`examples/hello/with_cbor.roc`).
+The platform header has roc-cbor 0.5.0: an app that adds the roc-cbor URL too uses the same URL (`examples/hello/with_cbor.roc`).
 
 The module names do not change. `MODULES.md` 1, "Modules", now marks the low-level modules (`Cbor`, `Native`, `Io`, `Js`): an app needs only `Cbor`, `Native` and the `Io` functions `run!`, `both!`, `all!`, `race!`, `timeout`. `Io.new` and `Io.sync` (for a binding author) stay in `Io`: they cannot move to `Js` (Roc refuses the import cycle).
 
@@ -122,11 +157,12 @@ Needs: a Roc nightly (see "Supported nightlies"), Node (JSPI: the tests use Node
 
 ### Supported nightlies
 
-Supported nightlies: `nightly-2026-10-19-601b54c` (the `min_nightly` of `js/cfw.json`) to `nightly-2026-11-06-34f137a` (the build of 0.0.9, `compat/last-stack-first-nightly`). A later nightly is not checked before a release: the scheduled job `nightly-layout` builds and tests each new one. Checked 2026-11-02 against the platform at 0.0.3 (`research/min-nightly/`): the conformance app (512 checks in Miniflare, with the `on_trap` checks), `bench/node-test.mjs` and `bench/handler-test.mjs` with the hosts of the release nightly.
+Supported nightlies: `nightly-2026-10-19-601b54c` (the `min_nightly` of `js/cfw.json`) to `nightly-2026-11-06-34f137a` (the build of 0.0.8 to 0.0.10, `compat/last-stack-first-nightly`). A later nightly is not checked before a release: the scheduled job `nightly-layout` builds and tests each new one. Checked 2026-11-02 against the platform at 0.0.3 (`research/min-nightly/`): the conformance app (512 checks in Miniflare, with the `on_trap` checks), `bench/node-test.mjs` and `bench/handler-test.mjs` with the hosts of the release nightly. Checked again 2026-11-11 for 0.0.10 (roc-cbor 0.5.0): `test-helper/app` builds with nightly 2026-10-19 (601b54c) and the roc-cbor 0.5.0 URL with 0 errors and 0 warnings against the hosts of the release nightly, and `test-helper/wrapenv-test.mjs` passes on it. The conformance app was not built again with 2026-10-19 (the CI job `min-nightly` does that).
 
 | Nightly | Result |
 | --- | --- |
-| 2026-10-31 (f7bef6b) | The release build. All tests pass |
+| 2026-11-06 (34f137a) | The release build of 0.0.8 to 0.0.10. All tests pass |
+| 2026-10-31 (f7bef6b) | The release build of 0.0.2 and 0.0.3. All tests passed then |
 | 2026-10-27 (de79a0f), 2026-10-21 (5349569), 2026-10-19 (601b54c) | Pass. The wasm has no `__stack_pointer`, `__stack_low` and `__stack_high` exports (the compiler adds them from 2026-10-28). The platform does not use them, so only `bench/exports-test.mjs` sees the difference |
 | 2026-10-18 (1df370f), 2026-10-14 (38a3029) | Not supported: the compiler crashes (SIGSEGV in `monotype`) on the conformance app. A small app can build, but a larger one can crash the compiler |
 | 2026-10-09 and older | Not supported: the module is not stack-first, and the shim refuses it |
@@ -148,6 +184,8 @@ The scripts run from the root: a build inside `examples/auction/` gives `PathOut
 ## Use it in your project
 
 A project has three files: `main.roc`, `worker.js`, `wrangler.toml`. A fourth, `talon.toml`, holds the scripts and the pin of the helper `roc-cfw`. The shim is a copy of `js/` of the platform bundle in `.roc-cfw/` (gitignored). `roc-cfw sync` makes the copy and runs the command `sync` of the shim, which writes `worker.js`.
+
+These steps were checked on 2026-10-27 with the versions in the table (platform 0.0.1). They were not run again for 0.0.10: `tln init` and `tln add` download releases, so a run needs the network and a published release. The commands and the files that they write did not change since then. The transcript below is from platform 0.0.1: since 0.0.2 the build gives 0 warnings.
 
 | Program | Version that was checked (2026-10-27) | Note |
 | --- | --- | --- |
@@ -178,7 +216,7 @@ $ tln x roc-cfw -- init
 roc-cfw: wrote main.roc, ./wrangler.toml (name hello), ./talon.toml, ./.gitignore
 roc-cfw: next: tln run build
 
-$ tln run build                        # with platform 0.0.1: exit 2 after the build, see the note
+$ tln run build                        # platform 0.0.1: 1 warning, so exit 2 and Talon 0.0.1 stops (0.0.2 and later: 0 warnings)
 0 errors and 1 warning found in 5.7s while successfully building:
     app.wasm
 
@@ -222,13 +260,6 @@ The commands of `roc-cfw` (run them with `tln x roc-cfw -- <command>`, or as a s
 | `roc-cfw init [--name <name>]` | Writes the template (the table above). It replaces only a stub body and never writes over a `wrangler.toml` |
 | `roc-cfw help` | The usage |
 
-Gaps of the released versions (2026-10-27):
-
-| Gap | Cause | What to do today | Fixed by |
-| --- | --- | --- | --- |
-| `tln run build` (and `dev`, `check`, `deploy`) stops after the `roc build` step with exit 2. `app.wasm` is written | Platform 0.0.1: the type `R2.Range` shadows a builtin type. `roc build` gives exit 2 for a warning, with each nightly. Talon 0.0.1 has no `ok-exit` for a step | Run the next step by hand: `tln x roc-cfw -- sync` (or `sync --check`), then `wrangler dev --local` | Platform 0.0.2 (`R2.ByteRange`). `tln init` selects it when it is 2 days old (from 2026-11-03), or now with `tln init --platform Karakatiza666/roc-cloudflare-workers@0.0.2` on a Talon after 0.0.1. Talon after 0.0.1 also has `ok-exit = [2]` for a step (Talon R-RUN18) |
-| `tln init --platform` gives `no release of Karakatiza666/roc-cloudflare-workers is old enough for min-release-age`, and `tln add --tool` finds no release of the helper | `min-release-age` is 2 days. Platform 0.0.1 is from 2026-10-26 20:41 UTC, `roc-cfw` 0.0.1 from 2026-10-27 07:52 UTC. Talon 0.0.1 has no `@<version>` for `init --platform` and no `min-release-age-exclude` | Wait for the age, or set `min-release-age = "0d"` in the Talon `config.toml` for this one setup | Time (the platform from 2026-10-28 20:41 UTC, the helper from 2026-10-29 07:52 UTC) |
-
 Update of the platform: `tln update pf` (a new URL in `main.roc`), then `tln run build`. `roc-cfw sync` sees a new hash and copies the new `js/`. The shim and the host must come from the same release. `tln update roc-cfw` moves the helper inside its range.
 
 The manual way, with no helper (a fallback):
@@ -251,7 +282,7 @@ The command `sync` of the shim (`roc-cfw sync` runs it):
 
 The steps below say what each file has.
 
-1. The app (`examples/hello/main.roc`). The header has the platform and nothing else. Put the release URL in place of `X.Y.Z/<hash>` (for 0.0.2, the URL in "What a release has"). The platform brings `Http`, `Cbor` and the types of `roc-lang/http`: the app has no `http` and no `cbor` entry.
+1. The app (`examples/hello/main.roc`). The header has the platform and nothing else. Put the release URL in place of `X.Y.Z/<hash>` (the URL of the latest release, in "What a release has"). The platform brings `Http`, `Cbor` and the types of `roc-lang/http`: the app has no `http` and no `cbor` entry.
 
 ```roc
 app [event!] { pf: platform "https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/X.Y.Z/<hash>.tar.zst" }
@@ -284,9 +315,11 @@ event! = |e| worker.event!(e)
 roc build --target=wasm32 --no-cache --output=app.wasm main.roc
 ```
 
-Use the default build mode (`--opt=speed`) or `--opt=size` for a release. `--opt=dev` also works for the platform: with roc-cbor 0.2.3 its own typed reads (D1 rows, a BLOB, `Memo` values, RPC and queue data) are right in a dev build. Your own code is not safe in a dev build when it calls `I128.to_u8_try`, `I128.to_u16_try`, `I128.to_i8_try` or `I128.to_i16_try`: on nightly 2026-10-31 the wasm32 dev backend gives a wrong result for them, until [roc-lang/roc#12782](https://github.com/roc-lang/roc/issues/12782) is fixed. Convert through `I64`, or build with `speed`.
+Use the default build mode (`--opt=speed`) or `--opt=size` for a release. `--opt=dev` also works for the platform: with roc-cbor 0.5.0 its own typed reads (D1 rows, a BLOB, `Memo` values, RPC and queue data) are right in a dev build. Your own code is not safe in a dev build when it calls `I128.to_u8_try`, `I128.to_u16_try`, `I128.to_i8_try` or `I128.to_i16_try`: on nightly 2026-10-31 the wasm32 dev backend gives a wrong result for them, until [roc-lang/roc#12782](https://github.com/roc-lang/roc/issues/12782) is fixed. Convert through `I64`, or build with `speed`.
 
-A `roc build` with warnings and no errors exits with 2, and it still writes the `.wasm` file. In a Talon script (Talon after 0.0.1), accept it on the build step: `{ run = "roc build --target=wasm32 --no-cache --output=app.wasm main.roc", ok-exit = [2] }` (Talon R-RUN18). Talon 0.0.1 has no `ok-exit`: there, the step stops the script (see "Gaps of the released versions").
+**Stack size.** The platform header has `initial_stack_size: 1048576` (1 MiB). A speed or size build uses it. A `--opt=dev` build needs more: its frames are large ([roc-lang/roc#12922](https://github.com/roc-lang/roc/issues/12922)), and the derived CBOR codec of a value nested 50 levels deep overflows 1 MiB (the request traps with "memory access out of bounds"). The header cannot depend on `--opt`, so add `--wasm-stack-size=2097152` (2 MiB) to a dev build: `roc build --opt=dev --target=wasm32 --wasm-stack-size=2097152 --output=app.wasm main.roc`. The flag replaces the header value, and the host reads the stack from the linker, so nothing else changes. A dev build without the flag keeps 1 MiB. `bench/stack-modes.sh` checks all of this (stack sizes of speed, size and dev builds, a value nested 50 levels deep in dev, and a control that fails at 1 MiB). The size for dev builds of the Talon scripts of the repository is in `compat/dev-stack-size`.
+
+A `roc build` with warnings and no errors exits with 2, and it still writes the `.wasm` file. In a Talon script (Talon after 0.0.1), accept it on the build step: `{ run = "roc build --target=wasm32 --no-cache --output=app.wasm main.roc", ok-exit = [2] }` (Talon R-RUN18). Talon 0.0.1 has no `ok-exit` (it refuses a step table with that key): there, the step stops the script, and you run the next steps by hand (`tln x roc-cfw -- sync`, then `wrangler dev --local`). The template `talon.toml` keeps plain steps for this reason.
 
 A `roc build` with type errors still writes the `.wasm` file. It prints "N errors and 0 warnings found ... while successfully building" and exits with 1 (checked 2026-10-20 with one bad line). A build is good only when the exit code is 0 and the text is "0 errors and 0 warnings". A script must check the exit code. In the repo, run the command from the root (a build inside `examples/auction/` gives `PathOutsideWorkspace`).
 
@@ -333,9 +366,30 @@ wrangler deploy
 | A D1 bookmark in local D1 | Local D1 takes any bookmark text in `with_session!(After(b))`. A local test cannot check a bookmark | `MODULES.md` 5.1 |
 | `.wrangler/` directories | `wrangler dev`, `wrangler d1 execute --local` and `getPlatformProxy` write local state in `.wrangler/` next to the Wrangler config, also when you run them from another directory (for example a test harness in `tests/` that names `../wrangler.toml`). A harness in a directory with its own config makes its own `.wrangler/` there. The template `.gitignore` has the line `.wrangler/`, which matches a `.wrangler/` directory at each depth. Delete these directories for a clean test: they hold the local D1, KV and R2 data | |
 
+## Known gaps
+
+Workers features that the platform does not have, and features that were not tested on the edge. A `Js` program can reach most of the missing APIs.
+
+| Feature | State | Effect on an app |
+| --- | --- | --- |
+| A Workflow written in Roc (`WorkflowEntrypoint`, `step.do`) | Not possible: it needs calls from JS into Roc | `Workflows` is a client only |
+| Workflows `restart`, `createBatch`, instance `delete` and `subscribe`; `create_with!` options other than `id` | Not built | Use a `Js` program |
+| `HTMLRewriter` | Not possible: it needs calls from JS into Roc | No streaming HTML rewrite |
+| `blockConcurrencyWhile` in a handler, `transactionSync` | Not possible: they need calls from JS into Roc. Only `init!` of a class runs in `blockConcurrencyWhile` | No explicit Durable Object transaction |
+| KV-backed Durable Object classes | Refused (`MODULES.md` 7) | Use SQLite-backed classes |
+| Images, Browser Rendering, mTLS, dispatch namespaces | No module | Use a `Js` program |
+| Containers, Pipelines | No module, not checked | Not supported |
+| `Ai`: binary output, `returnRawResponse`, an SSE parser for `stream!` | Not built | Use a `Js` program for image models |
+| `Ai` and `Vectorize` result shapes | Tested with stubs only | Real results can differ |
+| `TraceItem` fields `entrypoint`, `scriptVersion`, `cpuTime`, `wallTime`, `dispatchNamespace`, `truncated` | Not typed | A Tail Worker cannot read them |
+| `Response.from_http`, `to_http!` | Not built | Convert by hand |
+| Hyperdrive with a SQL driver | Only raw `Tcp` and `Hyperdrive.config!` | The app speaks the database protocol |
+| A queue body that CBOR cannot write | The message is retried with an empty body until the retry limit or the dead letter queue. The handler does not see it | Send only values that CBOR can write |
+| Not tested on the edge | `Tcp` StartTls, Ed25519, X25519, P-521, `location_hint`, `Email` `can_be_forwarded`, `web_socket_error!`, the socket limits, `binaryType` | Only local results (Miniflare, workerd) |
+
 ## Testing an app
 
-The release has a test helper: `.roc-cfw/test.mjs` (Node) and `.roc-cfw/test-entry.js` (the part in the isolate). `roc-cfw shim` copies both with the rest of `js/`. It runs the built app (`app.wasm` and the shim) in Miniflare with local bindings, with no `.wrangler/` dir and no network. The design and the rules TH1 to TH19 are in `research/design-notes/test-helper.md`.
+The release has a test helper: `.roc-cfw/test.mjs` (Node) and `.roc-cfw/test-entry.js` (the part in the isolate). `roc-cfw shim` copies both with the rest of `js/`. It runs the built app (`app.wasm` and the shim) in Miniflare with local bindings, with no `.wrangler/` dir and no network. The design and the rules TH1 to TH21 are in `research/design-notes/test-helper.md`.
 
 ```js
 // tests/app.test.mjs (node --test, or a plain script). The project has app.wasm and .roc-cfw/ (roc-cfw sync).
@@ -359,10 +413,10 @@ await app.close();
 | Call | Gives |
 | --- | --- |
 | `startApp(opts)` | The app in Miniflare. Options: `dir`, `wasm` (any path), `shim` (default `.roc-cfw` of `dir`), `config`, `now`, `d1`, `kv`, `r2`, `queues` (consumer settings), `outbound` (a table or a Node function), `services` (Node functions for service bindings), `bindings` (vars and secrets, on top of `vars` of the config), `compatibility` (`{ date, flags }`, default: the config), `count`, `hooks` (a module in the isolate), `options` (JSON `makeHandler` options on top of `worker.options.js`), `miniflare` (a dir or the module), `persist`, `modules`, `cf`, `miniflareOptions` (V4 options on top; a `ratelimits` key adds to the rate limits of the helper, any other key replaces the key of the helper), `ratelimits` (`{ NAME: { limit, period } }`, see Bindings) |
-| `app.fetch(pathOrUrl, init)` | A `Response` with `calls` (`{ DB: { n, ops, list: [{ op, session, kind, name }] } }`, the calls of the tasks of this request only; a queue `send` item also has `body` and `contentType`, a `sendBatch` item `bodies`: see Count) and `sessions` (`{ DB: [withSession arguments] }`). `init.now`: the clock before the request |
+| `app.fetch(pathOrUrl, init)` | A `Response` with `calls` (`{ DB: { n, ops, list: [{ op, session, kind, name }] } }`, the calls of the tasks of this request only; a queue `send` item also has `body` and `contentType`, a `sendBatch` item `bodies`: see Count) and `sessions` (`{ DB: [withSession arguments] }`). `init.now`: the clock before the request. `res.request`: the number of the request (1, 2, ...) |
 | `app.setNow(ms \| null)`, `app.advance(ms)`, `app.now` | The shim clock, through a control path (no Roc task, so no sweep). `app.now` is a getter: the clock of the isolate (`Time.now_ms!`), or `null` when the clock is real time (`Date.now`) |
 | `app.scheduled({ cron, time, now })` | `{ outcome, noRetry }` of `/cdn-cgi/local/scheduled` |
-| `app.queue(name, messages, { now })` | The result of the `queue` handler: `{ outcome, ackAll, retryBatch, explicitAcks, retryMessages }`. `retryBatch` is `{ retry, delaySeconds? }`, `explicitAcks` the acked ids, and `retryMessages` `[{ msgId, delaySeconds? }]`: `delaySeconds` is there when the consumer gives a delay (`retry_with!`, `retry_all_with!`; probe `research/test-helper/probes/p-retry-delay.mjs`). A message with no `timestamp` gets the helper clock |
+| `app.queue(name, messages, { now })` | `name` is the queue name (the `queue` of `[[queues.consumers]]`), not the binding name. The result of the `queue` handler: `{ outcome, ackAll, retryBatch, explicitAcks, retryMessages }`. `retryBatch` is `{ retry, delaySeconds? }`, `explicitAcks` the acked ids, and `retryMessages` `[{ msgId, delaySeconds? }]`: `delaySeconds` is there when the consumer gives a delay (`retry_with!`, `retry_all_with!`; probe `research/test-helper/probes/p-retry-delay.mjs`). A message with no `timestamp` gets the helper clock |
 | `app.d1(name)`, `app.kv(name)`, `app.r2(name)`, `app.queueProducer(name)`, `app.object(name)` | The Miniflare handles |
 | `app.sql(name, texts)` | SQL between requests, split as the seeds (one statement at a time; a trigger body stays whole) |
 | `await app.calls({ reset })` | Each counted call of any task since the last reset (`Response.after` work, objects, alarms) |
@@ -371,12 +425,14 @@ await app.close();
 | `app.reset()` | Waits for `idle`, then: D1 (drop the user tables and views, run the `d1` seeds again), KV and R2 (delete each key, seed again), the Cache API keys that the app put (`caches.default` and `caches.open(name)`), the clock (the `now` of the start), the pin table (`Memo`, `Js.pin!`), the calls, the outbound log and the answer order, `app.logs`. The isolate and the wasm stay. The rate limit counters (the key of each `limit` call gets a prefix with the number of resets: Miniflare keeps the counters in a Durable Object that Node cannot clear, so the old counters stay but are not used again). Not reset: Durable Object storage and alarms, queue messages in flight, module globals of JS (`ops`, `hooks`) |
 | `app.logs` | The structured log lines of workerd |
 | `app.close()` | Disposes Miniflare and removes the run dir |
-| `app.mf`, `app.url` | The Miniflare instance and its URL (no promise of stability) |
+| `app.takeTrace()` | With `CFW_TEST_TRACE=<file>` (an app on the trace host, `research/alloc/README.md` 6): the trace records since the last take. Allocator research only |
+| `app.mf`, `app.url`, `app.manifest`, `app.token` | The Miniflare instance, its URL, the manifest of the wasm, and the token of the control path (no promise of stability) |
 | `TEST_API` (export) | `1`, equal to `test` of `cfw.json`. A breaking change of `startApp` adds 1 |
 
 | Rule | What the helper does |
 | --- | --- |
 | Bindings | It reads the manifest of the wasm in Node. Each declared D1, KV, R2, queue producer, rate limit and object class of this Worker is made, seeded or empty (an object class is SQLite-backed). A rate limit binding (`RateLimit.binding`) gets `{ limit, period }` from the option `ratelimits`, else from `[[ratelimits]]` or `unsafe.bindings` of type `ratelimit` in the config (`simple`, `namespace_id`), else `RATELIMIT_DEFAULT` (export of `test.mjs`): 100 in 60 s. Miniflare allows `period` 10 or 60 only (else a throw). Miniflare counts by the real wall clock, not by `app.setNow`. A seed of a binding that the app does not declare is a throw with its name. A kind with no local form (`ai`, `vectorize`, a service) needs `services`, `bindings` or `hooks`. Queue consumers: the `queues.consumers` of the config. A config with no `queues.consumers` and an app with a `queue` handler: the Worker consumes each of its producer queues, so its own sends go to its `queue` handler. To keep the sends in the queue (a test that checks only `calls`), put `consumers = []` in `[queues]` of the test config. A D1 seed text runs as one batch; when the batch fails, its statements run again one at a time, so the error names the bad statement |
+| Seeds | Each seed text is one D1 batch (all or nothing). When the batch fails, the statements run again one at a time, so the error names the statement that fails. The statements before it stay in the database: after a failed seed, the database is partly seeded. Fix the seed, then `app.reset()` or a new `startApp` |
 | Count | `count: [names]`. A call is one round trip: D1 `all`, `run`, `first`, `raw`, `batch`, `exec` (`prepare`, `bind`, `withSession` are not calls); KV `get`, `getWithMetadata`, `put`, `delete`, `list`; R2 `get`, `head`, `put`, `delete`, `list`, `createMultipartUpload`, `resumeMultipartUpload`; a queue `send`, `sendBatch`; a rate limit `limit`. A queue `send` item in `list` also has `contentType` and `body`: `{ bytes (base64), size, value?, truncated? }`. `bytes` is the CBOR of the message (the UTF-8 for a text, the raw bytes for the type `bytes`), `value` the decoded value (a `BigInt` is `{ $bigint }`, a byte string is `{ $bytes }`). A `sendBatch` item has `bodies`, one such object (with `contentType`) for each message, and counts as one call. `delaySeconds` is kept when the call gives it: on a `send` item, on each message of `bodies`, and on a `sendBatch` item for the batch options (0.0.5). `bytes` keeps 4096 bytes at most (`BODY_MAX` of `test-entry.js`; `size` is the full length): a longer body has `truncated: true` and no `value`, because the calls of a request travel in a response header. The count uses the shim option `wrapEnv` (`MODULES.md` 3) |
 | Hooks | `hooks: 'tests/hooks.js'`: a module in the isolate. Its exports `wrapEnv(env, info)` and `fetch(request, env, next)` run after the count. Its local imports are in the module list |
 | Outbound | A table `{ 'METHOD url': [answer, ...] }`: each request to a key takes the next answer, then the last again. An answer is a `Response`, or `{ status, headers, body, chunked }`. The helper sets `Content-Length` from the body. `chunked: true` sends the body in chunks with no length: use it for a byte count or a size limit test (workerd frames a body by its `Content-Length`: a smaller value cuts the body, a larger one makes the read wait). A request with no key gets a 599 and goes to `unmatched`. A Node function in place of the table, or of one answer, gives a `Response` or an answer object |
@@ -403,7 +459,7 @@ The traps of a test setup. The helper avoids T1 to T3, T5, T6 and T8 by default.
 ```sh
 ZIG=<zig 0.17> bench/build.sh      # the hosts, the glue, the test apps
 ZIG=<zig 0.17> WORKERD=<workerd> bench/test-all.sh
-ZIG=<zig 0.17> scripts/bundle.sh 0.1.0-rc.1   # dist/: the bundle and the shim package
+ZIG=<zig 0.17> scripts/bundle.sh 0.1.0-rc.1   # dist/: the bundle
 scripts/test_bundle.sh                        # the examples against dist/, in wrangler
 ```
 

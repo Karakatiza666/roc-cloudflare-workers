@@ -20,3 +20,4 @@ bench/app_link_callee_b.roc
 .roc-cfw/
 bench/app_trap_none.roc
 bench/app_trace.roc
+.tmp/

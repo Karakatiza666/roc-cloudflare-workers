@@ -70,7 +70,7 @@ try {
   expect('use (a later task)', await get('use k1'), 'ok [bytes:32,true,{type:"secret",extractable:false}]');
   expect('pack', await get('pack 200'), 'packed rows=200 ids=19900 last=pkg-199 1.199');
   expect('find', await get('find b'), 'ok {id:"b",body:2}');
-  expect('hd3', await get('hd3'), 'hd3 true 29  packed=ok [[1,2]]');
+  expect('hd3', await get('hd3'), 'hd3 true 29  packed=ok [bytes:2]'); // roc-cbor 0.5.0: a List(U8) is a byte string
   const oom = await get('op failAlloc');
   if (oom.status !== 503 || !/oom/.test(oom.body)) fail(`oom: ${oom.status} ${oom.body}`);
   console.log(`oom: ${oom.status} ${oom.body}`);
