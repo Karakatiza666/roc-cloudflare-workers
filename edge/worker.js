@@ -1,73 +1,123 @@
-// PLAN.md 11c: the worker of the edge app (edge/app.roc) on Cloudflare. It is conformance/worker.js with the route
-// `GET /__edge` (below). The worker of the conformance app (PLAN.md 8c) in Miniflare: `app.wasm` (conformance/app.roc on the bench platform)
-// behind `makeHandler`. Each response has the waits of its task (`x-waits`, the bench export `task_waits`) and its time
-// in ms (`x-ms`), and its crossings (`x-awaits`, `x-calls`: the calls of `js_await` and `js_call`, from `stats.crossings`
-// of the runner): `run.mjs` sends one request at a time. `GET /__stats`: the task table. `GET /__mem`: the size of wasm memory in bytes (10a).
-import app from 'app.wasm';
-import { makeHandler, objectClass, entrypointClass } from './js/index.js';
+// PLAN.md 11c: the worker of the edge app (edge/app.roc) on Cloudflare. It is the worker of the conformance app
+// (conformance/worker.js, copied by edge/deploy.sh as `conformance-worker.js`) with these changes, so the two do not
+// drift apart:
+//   - The queues of the edge have the prefix `rocplat-test-`. `queue` removes it before the conformance worker and the
+//     Roc app see the name (`jobs`, `v8`, `decv`, ...).
+//   - The JS consumers (`v8`, `decj`, `decvjs`, `b64j`) can run in another isolate than the request that reads what
+//     they got. So they write it to D1 (table `edge_seen`), and `/__queue_seen` and `/__dec_seen` read it from there.
+//   - The state of the JS stubs of conformance/bindings.js (the calls, the Vectorize store) is per isolate, and the
+//     edge sends the requests of one check to many isolates. So a request that can use the stubs loads the state from D1
+//     (table `edge_stub_state`) first and saves it at its end: the state is the same in each isolate.
+//   - Each console call (the line as `wrangler tail` gives it) also goes to D1 (table `edge_logs`), from each isolate
+//     of the Worker and of its Durable Objects: `GET /__logs?since=<id>` gives the lines after that row. edge/run-edge.mjs
+//     reads them while a check waits for a line, because `wrangler tail` can be seconds late. A line over 64 kB goes
+//     only to the tail.
+//   - The routes of the edge run: `/__edge`, `/__js`, `/__jsgrow`, `/__blob` (below).
+import Base from './conformance-worker.js';
 import { readFlag } from './js/host.js';
-// 11c, the 128 MB check: the var ISOLATE_BYTES (a deploy of edge/deploy.sh with EXTRA_TOML) raises the budget of M3, so wasm
-// can grow past the 128 MB of the isolate. Not set: the default of js/budget.js.
+import { stubState, setStubState } from './bindings.js';
 import { env as cfEnv } from 'cloudflare:workers';
-import { withStubs, stubRoute, Flow, Waiter } from './bindings.js';
-export { Flow, Waiter };
+export * from './conformance-worker.js';
 
-// PLAN.md 8f: the Durable Object classes and the named entry point of the app (conformance/ObjectRoutes.roc,
-// RpcRoutes.roc), one line each, before `makeHandler` (the manifest checks them at load).
-export const Counter = objectClass('Counter');
-export const Store = objectClass('Store');
-export const Flaky = objectClass('Flaky');
-export const Slow = objectClass('Slow');
-export const Ticker = objectClass('Ticker');
-export const KvOnly = objectClass('KvOnly');
-export const Admin = entrypointClass('Admin');
-// PLAN.md 8f part 3: the class of the hibernation API (conformance/WebSocketRoutes.roc).
-export const Room = objectClass('Room');
-const exported = { Counter, Store, Flaky, Slow, Ticker, KvOnly, Admin, Room };
-const kind = (v) => (v === null ? 'null' : Array.isArray(v) ? 'Array' : typeof v === 'object' ? Object.getPrototypeOf(v)?.constructor?.name ?? 'null-proto' : typeof v);
-
-// The root `ops` (API.md 6.4). `lib` is an object of functions, not a function (the option check, PLAN.md 8a O4).
-const ops = {
-  lib: { twice: (n) => n * 2 },
-};
-// `tailMaxBytes`: 100 kB, so a trace with the logs of 2 MiB (cut by workerd to 200 kB) is above the limit (checks/tail.mjs).
-// `initMs`: the `Init` deadline of API.md 10.2, smaller for the test (class `Slow`).
-const isolateBytes = cfEnv?.ISOLATE_BYTES ? { isolateBytes: Number(cfEnv.ISOLATE_BYTES) } : {};
-const Handler = makeHandler(app, { ops, heapCheckWhenIdle: false, tailMaxBytes: 100_000, initMs: 1000, ...isolateBytes });
+const PREFIX = 'rocplat-test-';
+const JS_QUEUES = new Set(['v8', 'decj', 'decvjs', 'b64j']);
 // 11c: JS memory that `/__jsgrow` holds (the 128 MB check with the JS heap).
 const held = [];
-
-// The messages that the JS consumer of the queue `v8` got (PLAN.md 8f): a `Queue.v8` message with a `Cbor.Bytes` field is
-// a `Uint8Array` here, and a `U64` of 2^60 is a `BigInt`. `GET /__queue_seen` gives them.
-const seen = [];
 // 11c: an id of this isolate (made at the first request: no random value at global scope), its start and its request count.
 let isolate = null;
 
-export default class extends Handler {
+// The id of this isolate (the header `x-edge-isolate`), made at the first request (no random value at global scope).
+let logIso = null;
+// The log lines that are not yet in D1. A write starts at the next turn (a timer) and at the end of each request
+// (`waitUntil`). A failed write loses the lines of the fast path only (the tail has them).
+const unsent = [];
+let flushTimer = null;
+const logsTable = 'CREATE TABLE IF NOT EXISTS edge_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, level TEXT, message TEXT)';
+function flushLogs() {
+  flushTimer = null;
+  if (!unsent.length || !cfEnv?.DB) return Promise.resolve();
+  const db = cfEnv.DB;
+  const lines = unsent.splice(0);
+  return db.batch([db.prepare(logsTable), ...lines.map((l) => db.prepare('INSERT INTO edge_logs (level, message) VALUES (?, ?)').bind(l.level, l.message))]).catch(() => {});
+}
+const logText = (m) => {
+  if (typeof m === 'string') return m;
+  try {
+    return JSON.stringify(m);
+  } catch {
+    return String(m);
+  }
+};
+for (const level of ['log', 'info', 'warn', 'error', 'debug']) {
+  const orig = console[level].bind(console);
+  console[level] = (...args) => {
+    const message = args.map(logText).join(' ');
+    if (message.length <= 65536) {
+      unsent.push({ level: level === 'log' ? 'info' : level, message });
+      flushTimer ??= setTimeout(flushLogs, 0);
+    }
+    orig(...args);
+  };
+}
+
+// The paths that can use the stubs (`STUB_*`, the bucket `TRACE`), and the state of the stubs in D1 (one row).
+const STUB_PATHS = /^\/(__stub_calls|__stub_reset|__d1_calls|ai\/|vectorize\/|analytics\/|workflows\/|r2\/|d1\/batch)/;
+const stubTable = (db) => db.prepare('CREATE TABLE IF NOT EXISTS edge_stub_state (k INTEGER PRIMARY KEY, state TEXT)').run();
+async function loadStubs(db) {
+  await stubTable(db);
+  const row = await db.prepare('SELECT state FROM edge_stub_state WHERE k = 1').first();
+  if (row) setStubState(row.state);
+  return row?.state ?? stubState();
+}
+async function saveStubs(db, loaded) {
+  const now = stubState();
+  if (now !== loaded) await db.prepare('INSERT OR REPLACE INTO edge_stub_state (k, state) VALUES (1, ?)').bind(now).run();
+}
+
+const seenTable = (db) => db.prepare('CREATE TABLE IF NOT EXISTS edge_seen (n INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT, rec TEXT)').run();
+
+export default class extends Base {
   async queue(batch) {
-    if (batch.queue !== 'rocplat-test-v8') return super.queue(batch);
-    for (const m of batch.messages) {
-      const b = m.body;
-      seen.push({ id: m.id, n: b.n, big: `${typeof b.big} ${String(b.big)}`, isUint8Array: b.data instanceof Uint8Array, data: b.data instanceof Uint8Array ? [...b.data] : b.data });
-      console.log('v8 seen', JSON.stringify(seen[seen.length - 1])); // 11c: the consumer can run in another isolate
-      m.ack();
+    const name = batch.queue.startsWith(PREFIX) ? batch.queue.slice(PREFIX.length) : batch.queue;
+    if (JS_QUEUES.has(name)) {
+      // The same records as conformance/worker.js (`seen` of `v8`, `decSeen` of the others).
+      const db = this.env.DB;
+      await seenTable(db);
+      for (const m of batch.messages) {
+        const b = m.body;
+        const rec = name === 'v8'
+          ? { kind: 'queue', v: { id: m.id, n: b.n, big: `${typeof b.big} ${String(b.big)}`, isUint8Array: b.data instanceof Uint8Array, data: b.data instanceof Uint8Array ? [...b.data] : b.data } }
+          : { kind: 'dec', v: { queue: name, text: JSON.stringify(b, (_k, v) => (typeof v === 'bigint' ? `${v}n` : v)) } };
+        await db.prepare('INSERT INTO edge_seen (kind, rec) VALUES (?, ?)').bind(rec.kind, JSON.stringify(rec.v)).run();
+        m.ack();
+      }
+      return flushLogs();
+    }
+    // The batch with the name of the local run. Methods are called on the real batch.
+    const local = new Proxy(batch, { get: (t, k) => (k === 'queue' ? name : typeof t[k] === 'function' ? t[k].bind(t) : t[k]) });
+    try {
+      return await super.queue(local);
+    } finally {
+      await flushLogs();
     }
   }
 
-  // The JS stubs of conformance/bindings.js are in the env of each request.
-  constructor(ctx, env) {
-    super(ctx, withStubs(env));
-  }
   async fetch(request) {
     const path = new URL(request.url).pathname;
-    if (path === '/__queue_seen') return Response.json(seen);
-    const r = Handler.runner;
-    const stub = stubRoute(path);
-    if (stub) return stub;
-    if (path === '/__stats') {
-      const s = r.tasks.stats;
-      return Response.json({ live: r.x.live_bytes(), tasks: r.tasks.size, refsLive: s.refsLive, contextsLive: s.contextsLive, alarms: r.stats.alarms });
+    if (path === '/__queue_seen' || path === '/__dec_seen') {
+      const db = this.env.DB;
+      await seenTable(db);
+      const { results } = await db.prepare('SELECT rec FROM edge_seen WHERE kind = ? ORDER BY n').bind(path === '/__queue_seen' ? 'queue' : 'dec').all();
+      return Response.json(results.map((r) => JSON.parse(r.rec)));
     }
+    if (path === '/__logs') {
+      const db = this.env.DB;
+      await db.prepare(logsTable).run();
+      const { results } = await db.prepare('SELECT id, level, message FROM edge_logs WHERE id > ? ORDER BY id LIMIT 2000').bind(Number(new URL(request.url).searchParams.get('since') ?? 0)).all();
+      return Response.json(results);
+    }
+    logIso ??= crypto.randomUUID().slice(0, 8);
+    const r = Base.runner;
     // 11c, 5d: the isolate, the request count, the two flags of 5a, and the counters of the runner and the task table.
     isolate ??= { id: crypto.randomUUID().slice(0, 8), since: Date.now(), requests: 0 };
     isolate.requests++;
@@ -85,13 +135,26 @@ export default class extends Handler {
     // edge/run-edge.mjs). Body: `{ b, chain }`, a chain of `[method, args]` on `env[b]`. An arg `{ $chain }` is a chain on the
     // same binding (a D1 statement of a batch), `{ $bytes }` is base64. A result with a body is read to `{ $body }`.
     if (path === '/__js' && request.method === 'POST') {
-      const { b, chain } = await request.json();
+      // A large bytes arg comes as the request body (`{ $raw: true }`), with the call in the header `x-js`.
+      const raw = request.headers.get('x-js');
+      const { b, chain } = raw ? JSON.parse(raw) : await request.json();
       const run = async (c) => {
         let v = this.env[b];
         for (const [m, args] of c) v = await v[m](...await Promise.all(args.map(arg)));
         return v;
       };
-      const arg = (a) => (a && a.$chain ? run(a.$chain) : a && a.$bytes !== undefined ? Uint8Array.from(atob(a.$bytes), (c) => c.charCodeAt(0)) : a);
+      // `{ $date }` is a Date (R2 `httpMetadata.cacheExpiry`). Objects and arrays are read field by field.
+      const arg = async (a) => {
+        if (a === null || typeof a !== 'object') return a;
+        if (a.$chain) return run(a.$chain);
+        if (a.$bytes !== undefined) return Uint8Array.from(atob(a.$bytes), (c) => c.charCodeAt(0));
+        if (a.$date !== undefined) return new Date(a.$date);
+        if (a.$raw) return request.body;
+        if (Array.isArray(a)) return Promise.all(a.map(arg));
+        const o = {};
+        for (const [k, v] of Object.entries(a)) o[k] = await arg(v);
+        return o;
+      };
       const b64 = (buf) => { let s = ''; const u = new Uint8Array(buf); for (let i = 0; i < u.length; i += 32768) s += String.fromCharCode(...u.subarray(i, i + 32768)); return btoa(s); };
       const out = async (v) => {
         if (v instanceof ArrayBuffer || ArrayBuffer.isView(v)) return { $bytes: b64(v.buffer ?? v) };
@@ -114,7 +177,7 @@ export default class extends Handler {
       const mine = [];
       for (let i = 0; i < Number(q.get('mb')); i++) { const b = new Uint8Array(1 << 20); b.fill(i & 255); mine.push(b); }
       held.push(mine);
-      await new Promise((r) => setTimeout(r, Number(q.get('hold') ?? 0)));
+      await new Promise((res) => setTimeout(res, Number(q.get('hold') ?? 0)));
       held.splice(held.indexOf(mine), 1);
       return new Response(`jsgrew mb=${mine.length} isolate=${isolate.id}`);
     }
@@ -136,42 +199,17 @@ export default class extends Handler {
       }
       return Response.json(out);
     }
-    if (path === '/__mem') return new Response(String(r.x.memory.buffer.byteLength));
-    // FO6 (PLAN.md 8f): a JS call with no argument of the RPC method `hello` (argument type `{}`): the default export
-    // (`SELF`) and an object of `Counter`.
-    if (path === '/__noarg') {
-      const out = {};
-      for (const [k, stub] of [['default', () => this.env.SELF], ['object', () => this.env.COUNTERS.getByName('noarg')]]) {
-        try {
-          out[k] = await stub().hello();
-        } catch (e) {
-          out[k] = `${e.name}: ${e.message}`;
-        }
-      }
-      return Response.json(out);
-    }
-    // 8f: the own names of the prototype of an exported class (`?class=`), or of the default export.
-    if (path === '/__proto') {
-      const C = exported[new URL(request.url).searchParams.get('class')] ?? Handler;
-      return Response.json(Object.getOwnPropertyNames(C.prototype).sort());
-    }
-    const w0 = r.x.task_waits();
-    const c0 = { ...r.stats.crossings };
-    const t0 = Date.now();
-    const res = await super.fetch(request);
+    let res;
+    if (STUB_PATHS.test(path)) {
+      const loaded = await loadStubs(this.env.DB);
+      res = await super.fetch(request);
+      await saveStubs(this.env.DB, loaded);
+    } else res = await super.fetch(request);
+    // The isolate of each answer: edge/run-edge.mjs runs a check again when its requests went to two isolates.
+    if (res.status === 101 || res.webSocket) return res;
+    this.ctx?.waitUntil?.(flushLogs());
     const out = new Response(res.body, res);
-    out.headers.set('x-waits', String(r.x.task_waits() - w0));
-    out.headers.set('x-awaits', String(r.stats.crossings.await - c0.await));
-    out.headers.set('x-calls', String(r.stats.crossings.call - c0.call));
-    out.headers.set('x-ms', String(Date.now() - t0));
+    out.headers.set('x-edge-isolate', logIso);
     return out;
-  }
-  // 8f: JS callees of the RPC checks. MC5: the JS kinds of the fields of the argument (a `Cbor.Bytes` field is a
-  // `Uint8Array`, a `List(U8)` field an `Array`). The RPC limit: a text of `n` bytes. A reply is a `Reply` of `Rpc.roc`: `{ Ok: value }`.
-  inspect(arg) {
-    return { Ok: { data: kind(arg?.data), list: kind(arg?.list) } };
-  }
-  big(arg) {
-    return { Ok: 'x'.repeat(Number(arg.n)) };
   }
 }

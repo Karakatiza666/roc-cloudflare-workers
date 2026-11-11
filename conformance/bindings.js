@@ -117,7 +117,31 @@ const traceBucket = (b) => new Proxy(b, {
     return v.bind(t);
   },
 });
-export const withStubs = (env) => new Proxy(env, { get: (t, k) => (typeof k === 'string' && k in stubs ? stubs[k] : k === 'TRACE' ? traceBucket(Reflect.get(t, k)) : Reflect.get(t, k)) });
+// No `TRACE` in the env (a config with no such bucket): undefined, as for any missing binding (not a throw of `new Proxy`).
+export const withStubs = (env) => new Proxy(env, { get: (t, k) => (typeof k === 'string' && k in stubs ? stubs[k] : k === 'TRACE' && Reflect.get(t, k) ? traceBucket(Reflect.get(t, k)) : Reflect.get(t, k)) });
+
+// The state of the stubs (the calls, the Vectorize store, the gets of `vanishes`) as JSON text, and its load. Not used
+// here: on the edge each isolate has its own state, so edge/worker.js keeps one state in D1 and loads it at each request.
+export const stubState = () => JSON.stringify({ calls, store: [...store.entries()], vanishGets, d1Calls });
+export const setStubState = (text) => {
+  const j = JSON.parse(text);
+  calls = j.calls;
+  store = new Map(j.store);
+  vanishGets = j.vanishGets;
+  d1Calls = j.d1Calls ?? 0;
+};
+
+// The D1 calls of the requests with the header `x-count-d1` (the shim option `wrapEnv` of conformance/worker.js).
+// `takeD1Calls`: the count, then 0 (`GET /__d1_calls`).
+let d1Calls = 0;
+export const countD1 = () => {
+  d1Calls++;
+};
+export const takeD1Calls = () => {
+  const n = d1Calls;
+  d1Calls = 0;
+  return n;
+};
 
 // `/__stub_calls`: the calls so far, as JSON. `/__stub_reset`: clear them and the Vectorize store. Null for any other path.
 export function stubRoute(path) {

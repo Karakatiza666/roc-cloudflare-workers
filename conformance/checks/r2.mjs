@@ -32,6 +32,8 @@ async function hit(t, path, headers = {}) {
   const out = {};
   for (const [k, v] of [...res.headers].sort()) {
     if (['mf-content-encoding', 'content-length', 'date', 'x-waits', 'x-awaits', 'x-calls', 'x-ms', 'transfer-encoding'].includes(k)) continue;
+    // Edge form (`t.edge`, PLAN.md 11c): the headers that Cloudflare and edge/worker.js add to each answer.
+    if (t.edge && ['alt-svc', 'cf-ray', 'nel', 'report-to', 'server', 'server-timing', 'cf-cache-status', 'x-edge-isolate'].includes(k)) continue;
     out[k] = v;
   }
   return { status: res.status, headers: out, text };
@@ -288,7 +290,10 @@ export const checks = [
       if (got.includes('abort')) break;
       await new Promise((res) => setTimeout(res, 50));
     }
-    eq(JSON.stringify(got), JSON.stringify(['createMultipartUpload', 'uploadPart 1 5242880', 'abort']), 'the multipart calls');
+    // Edge form (`t.edge`, PLAN.md 11c): the `/broken` of the echo Worker has a known length (a Worker origin cannot send a
+    // body with no length that errors: the edge makes it a clean end), so the put is one put of the stream, which fails.
+    const want = t.edge ? [] : ['createMultipartUpload', 'uploadPart 1 5242880', 'abort'];
+    eq(JSON.stringify(got), JSON.stringify(want), 'the multipart calls');
   }],
   ['r2 put_with! only_if with a stream of unknown length over 5 MiB is R2Err (no upload, no object)', async (t) => {
     const { r, calls: c } = await gen(t, 'gcond', 6 * MiB, '&etag=anything');

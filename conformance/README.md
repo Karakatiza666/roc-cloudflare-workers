@@ -49,7 +49,8 @@ What a check gets (`t`):
 | --- | --- |
 | `t.get(path, init)` | `{ status, body, waits, awaits, calls, ms }` of `dispatchFetch`. `awaits` and `calls` count the crossings of the request ("one crossing" tests). |
 | `t.server` | The URL of the local server: `/hello`, `/ten`, `/slow` (2 s), `/echo` (method, header `x-test`, body), `/status/<n>`, `/big?n=` and `/drip?parts=&size=&gap=` (byte i is i % 251, `checks/body.mjs`) |
-| `t.edge` | `undefined` here, `true` in `edge/run-edge.mjs`. A check with a local form and an edge form of an answer reads it (assets media type, workflow id, rate limit, jurisdiction, queue batch text, `Http` errors of 8d, R2 multipart `Meta`: `PLAN.md` 11c, EP7). The local form stays strict. |
+| `t.edge` | `undefined` here, `true` in `edge/run-edge.mjs`. A check with a local form and an edge form of an answer reads it (assets media type, workflow id, rate limit, jurisdiction, queue batch text, `Http` errors of 8d, R2 multipart `Meta`, the headers that Cloudflare adds, the `cf` of the client, KV that is eventually consistent: `PLAN.md` 11c, EP7). The local form stays strict. |
+| `t.wsEcho` | `undefined` here. In `edge/run-edge.mjs`: the WebSocket echo server of the echo Worker (`checks/websocket.mjs` uses it in place of its local server, which the edge cannot reach) |
 | `t.logs` | The structured log lines of workerd (`{ level, message }`) since the start |
 | `t.mf` | The Miniflare instance (`getD1Database`, `getR2Bucket`, ... to set up or read data) |
 | `t.entry` | The text of `worker.js` (8f: a check edits it to test the load) |

@@ -2726,6 +2726,35 @@ How the items ran: `edge/run-edge.mjs` runs the checks of `conformance/checks/*.
 
 Results of `edge/run-edge.mjs`: run 1 (empty bindings, no queues and workflows) 213 checks PASS, 69 FAIL; run 2 (with queues and workflows, the data of run 1 still there) 211 PASS, 71 FAIL. A FAIL has one of three causes: the check cannot run on the edge (a call of Miniflare, a second Miniflare, a local socket server, a binding that is not configured), the data of the run (KV eventual consistency, a row or an object of run 1), or a real difference. Each real difference is a row below; the checks that cannot run are in the list "Not run".
 
+Edge run of 2026-11-11 (platform 0.0.9 and 0.0.10, harness of the branch `edge-harness`). Account: Workers Paid, wrangler 4.151.0, OAuth login, client in Athens (colo `ATH`). Ledger: `edge/ledger.md` (the run of 2026-10-17: `edge/ledger-2026-10-17.md`). Results: `edge/results/conformance-0.0.10.txt`, `edge/results/conformance-0.0.9.txt` (the checks of the tag 0.0.9 with the same edge forms: `edge/results/conformance-0.0.9-edge-forms.patch`); `node edge/compare.mjs <a> <b> <label-a> <label-b> <conformance-a> <conformance-b>` gives the table of differences. No platform code changed.
+
+| Run | PASS | FAIL | SKIP | Checks |
+| --- | --- | --- | --- | --- |
+| 0.0.10 (built from the tag) | 454 | 2 | 70 | 526 |
+| 0.0.9 (built from the tag, its own checks) | 444 | 1 | 67 | 512 |
+
+What changed in the harness:
+
+| Part | Change |
+| --- | --- |
+| `edge/gen-app.mjs`, `edge/build.sh` | `edge/app.roc` is written from `conformance/app.roc` (the route `/edge`, `scheduled!` of `EdgeRoutes.roc`), so the edge app has each route module of the local app. It is not in git. |
+| `edge/worker.js` | It imports `conformance/worker.js` (copied as `conformance-worker.js`) and adds only the edge parts: the queue prefix `rocplat-test-` is removed before the app sees the name; the JS consumers write to D1 (`/__queue_seen`, `/__dec_seen`); the state of the JS stubs is in D1 (the edge sends the requests of one check to many isolates, also on one HTTP/2 connection); each console line goes to D1 (`/__logs`, faster than `wrangler tail`); the header `x-edge-isolate`. |
+| `edge/deploy.sh` | The bindings of all check options: `TRACE` (bucket `rocplat-test-trace`), `AFTER`, `STATS`, the queues `b64j`, `decj`, `decv`, `decvjs`. A lifecycle rule on each new bucket. `delete` removes the queue consumers first. `SRC=<checkout>` deploys another tag. No `KVONLY`: the account refuses a KV-backed class (code 10099). |
+| `edge/run-edge.mjs` | `SKIP` with a reason, not `FAIL`: each Miniflare-only call (`MF-ONLY`) and the table `EDGE_ONLY_SKIP` (tail, email, Hyperdrive, local TCP servers, secrets store, KV-backed class). `t.entry` is the real worker text, `t.wsEcho` the WebSocket echo of the echo Worker. A check whose requests went to two isolates and that fails runs again (at most 8 times). `/__js` sends a Date and large bytes. |
+| `edge/echo.js` | All routes of the local server, and `/ws` (WebSocket echo). |
+| `edge/fresh-run.sh`, `edge/wipe-r2.mjs` | One run on fresh resources: empty buckets, delete, deploy, run. |
+| Checks (edge forms) | `http` 8d (the body now ends with a line end), `request cf` (the real colo), `kv` (eventually consistent `list`, one write a second for a key), `objects` init (KV read of the flag can be old), alarm retries (longer backoff), `respond!` (a first request makes the object), `r2` (the headers that Cloudflare adds, the broken stream below), `websocket` (the echo server). The local forms are not changed. |
+
+R2 stream uploads on the edge: they work. The 7 FAILs "Cannot create proxy with a non-object" of the earlier run came from the harness: the edge app had no bucket `TRACE`, and `withStubs` of `conformance/bindings.js` made `new Proxy(undefined)`. With `TRACE` bound: one put for a stream of unknown length up to 5 MiB (1 KiB, exactly 5 MiB), a multipart upload above it (11 MiB: 3 parts, 5 MiB + 1 byte: 2 parts, exact size and content type), `only_if` rules, `length_bytes`: PASS. A source that breaks gives `R2Err` and no object. One part cannot run on the edge: a Worker origin cannot send a body of unknown length that errors (a stream error and a gzip body with no trailer both reach the client as a clean end; only a body shorter than its `content-length` errors, and that body has a known length, so R2 takes it in one put). So the edge form of that check expects no multipart call.
+
+The remaining FAILs change from run to run (5 runs of 0.0.10: 44, 21, 4, 4, 2 FAILs while the harness improved). Their causes:
+
+| Check | Cause |
+| --- | --- |
+| memo get!: a value that does not parse back gives one log line | Memo logs once for each isolate (a probe: 4 requests, 4 isolates, 3 new lines). The edge spreads the requests, so 2 or 4 lines. Isolate-local by design. |
+| websocket by: a drop with no close frame (1006) is Transport | The "echo closed" line with 1006 did not come within 2.5 s. It passed in the earlier runs of the same build: timing of the edge. |
+| pin, webcrypto pinned key, kv `/__mem` | Isolate-local state: they pass when one attempt stays on one isolate (the line names the attempt). |
+
 Edge items (E1 to E53). "Same?" compares the edge with the local result:
 
 | # | Item (plan) | Local | Edge | Same? | Evidence |

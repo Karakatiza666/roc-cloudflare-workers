@@ -8,6 +8,17 @@ const q = encodeURIComponent;
 const MiB = 1024 * 1024;
 const route = (t, name, k = '', extra = '') => t.get(`/kv/${name}?k=${q(k)}${extra}`);
 const rand = () => Math.random().toString(36).slice(2);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// The keys of `list({ prefix })`. Edge form (`t.edge`, PLAN.md 11c): `list` is eventually consistent (a new key or a new
+// expiration can show up to 60 s later), so it reads again until `ready(keys)`, for at most 70 s.
+async function listed(t, kv, prefix, ready) {
+  let keys = (await kv.list({ prefix })).keys;
+  for (let i = 0; t.edge && i < 35 && !ready(keys); i++) {
+    await sleep(2000);
+    keys = (await kv.list({ prefix })).keys;
+  }
+  return keys;
+}
 
 export const checks = [
   ['kv setup (a big value and keys, with the binding of Miniflare)', async (t) => {
@@ -156,7 +167,7 @@ export const checks = [
     answer(await route(t, 'put_ttl', k, '&v=a&ttl=60001'), 'Ok {}');
     answer(await route(t, 'put_ttl_io', `${k}-io`, '&v=a&ttl=120000'), 'Ok {}');
     const after = Math.floor(Date.now() / 1000);
-    const keys = (await kv.list({ prefix: 'ttl-' })).keys;
+    const keys = await listed(t, kv, 'ttl-', (ks) => ks.some((x) => x.name === k) && ks.some((x) => x.name === `${k}-io`));
     const at = (name) => keys.find((x) => x.name === name)?.expiration;
     // 60,001 ms is 61 s (rounded up, not 60): the expiration is between `before + 61` and `after + 62`.
     ok(at(k) >= before + 61 && at(k) <= after + 62, `ttl 60,001 ms: expiration ${at(k)}, want ${before + 61} to ${after + 62}`);
@@ -215,23 +226,34 @@ export const checks = [
     await route(t, 'delete', k);
   }],
   ['kv Cell: set!, get!, delete! and the twins', async (t) => {
-    await route(t, 'cell_delete');
+    // A write of the one key of the Cell. Edge form (`t.edge`, PLAN.md 11c): KV takes one write a second for a key
+    // (429 Too Many Requests), so 2 s before each write.
+    const write = async (...a) => {
+      if (t.edge) await sleep(2000);
+      return route(t, ...a);
+    };
+    await write('cell_delete');
     answer(await route(t, 'cell_get'), 'Err NotFound');
-    answer(await route(t, 'cell_set', '', '&v=dark'), 'Ok {}');
+    answer(await write('cell_set', '', '&v=dark'), 'Ok {}');
     answer(await route(t, 'cell_get'), 'Ok { big: 1152921504606846976, n: 3, theme: "dark" }');
     answer(await route(t, 'cell_get_io'), 'Ok { big: 1152921504606846976, n: 3, theme: "dark" }');
-    answer(await route(t, 'cell_delete'), 'Ok {}');
+    answer(await write('cell_delete'), 'Ok {}');
     answer(await route(t, 'cell_get'), 'Err NotFound');
-    answer(await route(t, 'cell_set_io', '', '&v=dark'), 'Ok {}');
-    answer(await route(t, 'cell_delete_io'), 'Ok {}');
+    answer(await write('cell_set_io', '', '&v=dark'), 'Ok {}');
+    answer(await write('cell_delete_io'), 'Ok {}');
     answer(await route(t, 'cell_get_io'), 'Err NotFound');
   }],
   ['kv Cell set_with!: ttl_ms', async (t) => {
     const kv = await t.mf.getKVNamespace('KV');
+    // Edge form (`t.edge`): one write a second for a key (429 Too Many Requests), and a `list` that can be late.
+    if (t.edge) await sleep(2000);
+    const before = Math.floor(Date.now() / 1000);
     answer(await route(t, 'cell_set_ttl', '', '&v=dark&ttl=90000'), 'Ok {}');
-    const exp = (await kv.list({ prefix: 'cell-prefs' })).keys[0].expiration;
-    ok(Math.abs(exp - (Math.floor(Date.now() / 1000) + 90)) <= 2, `expiration ${exp}`);
+    const exp = (await listed(t, kv, 'cell-prefs', (ks) => ks[0]?.expiration >= before + 88))[0].expiration;
+    ok(Math.abs(exp - (before + 90)) <= 2, `expiration ${exp}`);
+    if (t.edge) await sleep(2000);
     answer(await route(t, 'cell_set_ttl_io', '', '&v=dark&ttl=120000'), 'Ok {}');
+    if (t.edge) await sleep(2000);
     await route(t, 'cell_delete');
   }],
   ['kv get_or!: only NotFound gets the default, a value that does not parse stays BadData', async (t) => {
@@ -291,19 +313,28 @@ export const checks = [
   ['kv ttl_ms under 60 s is raised to 60 s (put_with!, the Io twin, Cell.set_with!), and 60 s or more is kept', async (t) => {
     const kv = await t.mf.getKVNamespace('KV');
     const k = `clamp-${rand()}`;
-    const before = Math.floor(Date.now() / 1000);
-    const exp = async (name) => (await kv.list({ prefix: name })).keys.find((x) => x.name === name)?.expiration;
+    // `before`: the time of each put (the whole check takes many seconds on the edge).
+    let before = 0;
+    const put = async (...a) => {
+      before = Math.floor(Date.now() / 1000);
+      answer(await route(t, ...a), 'Ok {}');
+    };
+    const inWindow = (e, secs) => e >= before + secs && e <= before + secs + 5;
+    const exp = async (name, secs) => (await listed(t, kv, name, (ks) => ks.some((x) => x.name === name && inWindow(x.expiration, secs)))).find((x) => x.name === name)?.expiration;
     const near = (e, secs, what) => ok(e >= before + secs && e <= before + secs + 5, `${what}: expiration ${e}, want about ${before + secs}`);
     for (const [ms, secs] of [[0, 60], [1, 60], [59_999, 60], [60_000, 60], [120_000, 120]]) {
-      answer(await route(t, 'put_ttl', `${k}-${ms}`, `&v=a&ttl=${ms}`), 'Ok {}');
-      near(await exp(`${k}-${ms}`), secs, `put_with! ttl ${ms}`);
+      await put('put_ttl', `${k}-${ms}`, `&v=a&ttl=${ms}`);
+      near(await exp(`${k}-${ms}`, secs), secs, `put_with! ttl ${ms}`);
     }
-    answer(await route(t, 'put_ttl_io', `${k}-io`, '&v=a&ttl=10000'), 'Ok {}');
-    near(await exp(`${k}-io`), 60, 'Io twin ttl 10000');
-    answer(await route(t, 'cell_set_ttl', '', '&v=dark&ttl=10000'), 'Ok {}');
-    near(await exp('cell-prefs'), 60, 'Cell.set_with! ttl 10000');
-    answer(await route(t, 'cell_set_ttl_io', '', '&v=dark&ttl=5000'), 'Ok {}');
-    near(await exp('cell-prefs'), 60, 'Cell.set_with Io twin ttl 5000');
+    await put('put_ttl_io', `${k}-io`, '&v=a&ttl=10000');
+    near(await exp(`${k}-io`, 60), 60, 'Io twin ttl 10000');
+    // Edge form: KV takes one write a second for a key (429 Too Many Requests).
+    if (t.edge) await sleep(2000);
+    await put('cell_set_ttl', '', '&v=dark&ttl=10000');
+    near(await exp('cell-prefs', 60), 60, 'Cell.set_with! ttl 10000');
+    if (t.edge) await sleep(2000);
+    await put('cell_set_ttl_io', '', '&v=dark&ttl=5000');
+    near(await exp('cell-prefs', 60), 60, 'Cell.set_with Io twin ttl 5000');
     await route(t, 'cell_delete');
   }],
 ];

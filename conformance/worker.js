@@ -4,7 +4,7 @@
 // of the runner): `run.mjs` sends one request at a time. `GET /__stats`: the task table. `GET /__mem`: the size of wasm memory in bytes (10a).
 import app from 'app.wasm';
 import { makeHandler, objectClass, entrypointClass } from './js/index.js';
-import { withStubs, stubRoute, Flow, Waiter } from './bindings.js';
+import { withStubs, stubRoute, countD1, takeD1Calls, Flow, Waiter } from './bindings.js';
 import { countBinding } from './js/test-entry.js';
 export { Flow, Waiter };
 
@@ -40,9 +40,11 @@ globalThis.clearTimeout = (id) => (liveTimers.delete(id), clearT(id));
 const ops = {
   lib: {
     twice: (n) => n * 2,
+    // On the edge `Date.now()` does not move while JS runs (it moves at I/O), so the loop also ends after a count
+    // (the edge run; about 20 to 40 ms of work for ms = 20: one `Date.now()` is about 30 ns there).
     spin: (ms) => {
       const t0 = Date.now();
-      while (Date.now() - t0 < ms);
+      for (let i = 0; i < ms * 50_000 && Date.now() - t0 < ms; i++);
     },
   },
 };
@@ -54,8 +56,8 @@ const now = () => Date.now() + clockSkew;
 // `initMs`: the `Init` deadline of API.md 10.2, smaller for the test (class `Slow`).
 // The shim option `wrapEnv` (TH11, checks/wrapenv.mjs): a request with the header `x-count-d1` gets a counted `DB` (the count
 // of the test helper, js/test-entry.js). `GET /__d1_calls` gives the count and sets it to 0.
-let d1Calls = 0;
-const wrapEnv = (env, info) => (info.kind === 'Fetch' && info.event?.headers?.has?.('x-count-d1') && env.DB ? { ...env, DB: countBinding(env.DB, () => d1Calls++, () => {}) } : env);
+// The count is in conformance/bindings.js (`countD1`, `takeD1Calls`), with the state of the stubs (the edge run shares it).
+const wrapEnv = (env, info) => (info.kind === 'Fetch' && info.event?.headers?.has?.('x-count-d1') && env.DB ? { ...env, DB: countBinding(env.DB, countD1, () => {}) } : env);
 const Handler = makeHandler(app, { ops, now, wrapEnv, heapCheckWhenIdle: false, tailMaxBytes: 100_000, initMs: 1000 });
 
 // The messages that the JS consumer of the queue `v8` got (PLAN.md 8f): a `Queue.v8` message with a `Cbor.Bytes` field is
@@ -114,8 +116,7 @@ export default class extends Handler {
       return new Response(String(clockSkew));
     }
     if (path === '/__d1_calls') {
-      const n = d1Calls;
-      d1Calls = 0;
+      const n = takeD1Calls();
       return new Response(String(n));
     }
     if (path === '/__mem') return new Response(String(r.x.memory.buffer.byteLength));

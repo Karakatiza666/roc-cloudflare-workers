@@ -13,7 +13,10 @@ let echo = null;
 // `{"n":5}`, "delay <ms> <text>" gives "echo <text>" after <ms>, "close me" closes with 4005 "peer bye", each other text
 // "echo <text>", bytes come back. It picks the first subprotocol that the client asks for (the default of `ws`), and
 // takes `permessage-deflate` when the client offers it (a client of workerd offers no extension of its own).
+// Edge form (`t.wsEcho`, PLAN.md 11c): the same server in the echo Worker of edge/run-edge.mjs (a local server is not
+// reachable from the edge).
 function echoServer(t) {
+  if (t.wsEcho) return Promise.resolve(t.wsEcho);
   if (echo) return echo;
   const { WebSocketServer } = createRequire(import.meta.url)(join(dirname(t.mfDir), 'ws'));
   const wss = new WebSocketServer({ port: 0, host: '127.0.0.1', perMessageDeflate: true });

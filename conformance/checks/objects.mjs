@@ -184,7 +184,14 @@ export const checks = [
     has(first, 'Err Infra(ObjectErr(');
     has(first, 'Flaky.init: failed: InitFailed');
     await kv.delete('fail-init');
-    const second = await t.get('/objects/flaky?name=f1');
+    let second = await t.get('/objects/flaky?name=f1');
+    // Edge form (`t.edge`, PLAN.md 11c): KV is eventually consistent (a read can give the old value for up to 60 s), so
+    // the object can read the flag again: each next fetch! runs init! again, until it reads that the flag is gone.
+    for (let i = 0; t.edge && i < 35 && !second.body.startsWith('ok '); i++) {
+      has(second, 'Flaky.init: failed: InitFailed');
+      await sleep(2000);
+      second = await t.get('/objects/flaky?name=f1');
+    }
     ok(second.body.startsWith('ok '), `second: ${second.body}`);
     return `${first.body.slice(0, 120)} | ${second.body.slice(0, 20)}`;
   }],
@@ -220,6 +227,9 @@ export const checks = [
     has(r, 'new_sqlite_classes');
   }],
   ['objects respond! in the Fetch of an object: the response first, the cell after', async (t) => {
+    // Edge form (`t.edge`, PLAN.md 11c): the first request to a new object can take more than the 250 ms of `fast` (the
+    // object is made). One request first: the object is there.
+    if (t.edge) await counter(t, 'late', 'r');
     answer(await t.get('/objects/respond?name=r'), 'early fast=True');
     await sleep(500);
     answer(await counter(t, 'late', 'r'), 'Ok("written")');
@@ -245,7 +255,9 @@ export const checks = [
   }],
   // The alarm started in the first check: Workers runs it again after each `Err` (2 s, then 4 s).
   ['objects alarm!: Err while retry_count < 2 runs 3 times, with retry_count and is_retry', async (t) => {
-    for (let i = 0; i < 120 && ticks(t).length < 3; i++) await sleep(100);
+    // Edge form (`t.edge`, PLAN.md 11c): the edge waits longer between the runs of a failed alarm (a backoff that grows),
+    // so the check waits up to 60 s.
+    for (let i = 0; i < (t.edge ? 600 : 120) && ticks(t).length < 3; i++) await sleep(100);
     await sleep(300);
     const got = ticks(t).map((x) => `${x.retry_count} ${x.is_retry}`);
     eq(got.join(', '), '0 false, 1 true, 2 true', 'the runs');

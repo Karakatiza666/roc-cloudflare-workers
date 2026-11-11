@@ -18,8 +18,11 @@ const q = encodeURIComponent;
 const text = (body, extra = {}) => ({ status: 200, body, waits: 0, awaits: 0, calls: 0, ms: 0, ...extra });
 // The answers of the edge, by path. A function gets the number of the call of that path (from 1).
 const edgeAnswers = {
-  [`/http/get?url=${q('http://127.0.0.1:1/')}`]: () => text('403 error code: 1003'),
-  [`/http/get?url=${q('http://no-such-host.invalid/')}`]: () => text('530 error code: 1016'),
+  // Since 2026-11 (edge/results/conformance-0.0.10.txt) the body of the error page ends with a line end.
+  [`/http/get?url=${q('http://127.0.0.1:1/')}`]: () => text('403 error code: 1003\n'),
+  [`/http/get?url=${q('http://no-such-host.invalid/')}`]: () => text('530 error code: 1016\n'),
+  // The cf of the client of the edge run of 2026-11-11.
+  '/cf': () => text('colo=Ok("ATH") metro_code=Err(Missing) asn=Ok(3329) is_eu_country=True'),
   '/assets/fetch?path=/hello.txt': () => text('status=200 type=text/plain body=hello-asset\n', { awaits: 2 }),
   '/assets/pass?path=/hello.txt': () => text('hello-asset\n', { awaits: 1 }),
   '/assets/pass_io?path=/hello.txt': () => text('hello-asset\n'),
@@ -31,7 +34,7 @@ const edgeAnswers = {
   '/ratelimit/limit_io?key=c': () => text('Ok'),
   '/objects/jurisdiction?name=x': () => text(`Ok("${'b'.repeat(64)}")`),
   '/objects/id?name=x': () => text(`outside=Ok("${HEX64}") same=True`),
-  '/queue/batch?count=101': () => text('Err QueueErr({ message: "batch message count of 101 exceeds limit of 100 (10206)", name: "Error" })'),
+  '/queue/batch?count=101': () => text('Err Infra(QueueErr({ message: "batch message count of 101 exceeds limit of 100 (10206)", name: "Error" }))'),
   '/workflows/create?binding=FLOW&pname=x&n=3': () => text(`Ok id=cf_${HEX64}`, { awaits: 1 }),
   '/workflows/create_io?binding=FLOW&pname=x&n=3': () => text(`Ok id=cf_${HEX64}`, { awaits: 1 }),
   '/workflows/create_with_none?binding=FLOW&pname=x&n=1': () => text(`Ok id=cf_${HEX64}`),
@@ -39,6 +42,7 @@ const edgeAnswers = {
 const checks = [
   'http 8d: a closed port is Network',
   'http 8d: a host that does not exist is Network',
+  'request cf: colo Ok, a field that is not set Err(Missing)',
   'assets fetch!: a file, one wait (the body of the answer is read in a second one)',
   'assets fetch (Io twin)',
   'assets fetch!: the url of the request',

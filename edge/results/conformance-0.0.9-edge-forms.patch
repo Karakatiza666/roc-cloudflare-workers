@@ -1,0 +1,324 @@
+diff --git a/conformance/bindings.js b/conformance/bindings.js
+index ef0007c..7a6bbb9 100644
+--- a/conformance/bindings.js
++++ b/conformance/bindings.js
+@@ -117,7 +117,31 @@ const traceBucket = (b) => new Proxy(b, {
+     return v.bind(t);
+   },
+ });
+-export const withStubs = (env) => new Proxy(env, { get: (t, k) => (typeof k === 'string' && k in stubs ? stubs[k] : k === 'TRACE' ? traceBucket(Reflect.get(t, k)) : Reflect.get(t, k)) });
++// No `TRACE` in the env (a config with no such bucket): undefined, as for any missing binding (not a throw of `new Proxy`).
++export const withStubs = (env) => new Proxy(env, { get: (t, k) => (typeof k === 'string' && k in stubs ? stubs[k] : k === 'TRACE' && Reflect.get(t, k) ? traceBucket(Reflect.get(t, k)) : Reflect.get(t, k)) });
++
++// The state of the stubs (the calls, the Vectorize store, the gets of `vanishes`) as JSON text, and its load. Not used
++// here: on the edge each isolate has its own state, so edge/worker.js keeps one state in D1 and loads it at each request.
++export const stubState = () => JSON.stringify({ calls, store: [...store.entries()], vanishGets, d1Calls });
++export const setStubState = (text) => {
++  const j = JSON.parse(text);
++  calls = j.calls;
++  store = new Map(j.store);
++  vanishGets = j.vanishGets;
++  d1Calls = j.d1Calls ?? 0;
++};
++
++// The D1 calls of the requests with the header `x-count-d1` (the shim option `wrapEnv` of conformance/worker.js).
++// `takeD1Calls`: the count, then 0 (`GET /__d1_calls`).
++let d1Calls = 0;
++export const countD1 = () => {
++  d1Calls++;
++};
++export const takeD1Calls = () => {
++  const n = d1Calls;
++  d1Calls = 0;
++  return n;
++};
+ 
+ // `/__stub_calls`: the calls so far, as JSON. `/__stub_reset`: clear them and the Vectorize store. Null for any other path.
+ export function stubRoute(path) {
+diff --git a/conformance/checks/cf.mjs b/conformance/checks/cf.mjs
+index c66e03d..fdcfb98 100644
+--- a/conformance/checks/cf.mjs
++++ b/conformance/checks/cf.mjs
+@@ -1,10 +1,16 @@
+ // `Request.Cf` (MODULES.md 4, PLAN.md 8c): conformance/CfRoutes.roc. run.mjs gives Miniflare a cf with `colo` and with
+ // no `metroCode`.
+-import { answer } from '../assert.mjs';
++import { answer, ok } from '../assert.mjs';
+ 
+ export const options = {};
+ 
+ export const checks = [
+-  ['request cf: colo Ok, a field that is not set Err(Missing)', async (t) =>
+-    answer(await t.get('/cf'), 'colo=Ok("DFW") metro_code=Err(Missing) asn=Ok(395747) is_eu_country=False')],
++  // Edge form (`t.edge`, PLAN.md 11c): the cf of the real place of the client: a colo of 3 letters, an asn, and a
++  // metro_code that is set only in the US.
++  ['request cf: colo Ok, a field that is not set Err(Missing)', async (t) => {
++    const r = await t.get('/cf');
++    if (!t.edge) return answer(r, 'colo=Ok("DFW") metro_code=Err(Missing) asn=Ok(395747) is_eu_country=False');
++    ok(r.status === 200 && /^colo=Ok\("[A-Z]{3}"\) metro_code=(Err\(Missing\)|Ok\("\d+"\)) asn=Ok\(\d+\) is_eu_country=(True|False)$/.test(r.body), `got ${r.status} ${r.body} (edge form)`);
++    return r.body;
++  }],
+ ];
+diff --git a/conformance/checks/http.mjs b/conformance/checks/http.mjs
+index b32568e..891da8c 100644
+--- a/conformance/checks/http.mjs
++++ b/conformance/checks/http.mjs
+@@ -54,15 +54,16 @@ export const checks = [
+   // PLAN.md 8d: the error map. The texts go to bench/README.md.
+   // Local form: a throw, so `Network`. Edge form (`t.edge`, PLAN.md 11c, E17, E18, EP1): no throw, a Cloudflare error response,
+   // so `Ok` with the status and the body: 403 `error code: 1003` (a closed port of 127.0.0.1), 530 `error code: 1016` (no DNS name).
++  // Since 2026-11 the edge ends the body with a line end (`Http.cloudflare_error` allows a final line end).
+   ['http 8d: a closed port is Network', async (t) => {
+     const r = await t.get(`/http/get?url=${q('http://127.0.0.1:1/')}`);
+-    if (t.edge) ok(r.body === '403 error code: 1003', `got ${r.body}, want 403 error code: 1003 (edge form)`);
++    if (t.edge) ok(/^403 error code: 1003\n?$/.test(r.body), `got ${JSON.stringify(r.body)}, want 403 error code: 1003 (edge form)`);
+     else ok(r.body.startsWith('Network '), `got ${r.body}, want Network`);
+     return r.body;
+   }],
+   ['http 8d: a host that does not exist is Network', async (t) => {
+     const r = await t.get(`/http/get?url=${q('http://no-such-host.invalid/')}`);
+-    if (t.edge) ok(r.body === '530 error code: 1016', `got ${r.body}, want 530 error code: 1016 (edge form)`);
++    if (t.edge) ok(/^530 error code: 1016\n?$/.test(r.body), `got ${JSON.stringify(r.body)}, want 530 error code: 1016 (edge form)`);
+     else ok(r.body.startsWith('Network '), `got ${r.body}, want Network`);
+     return r.body;
+   }],
+diff --git a/conformance/checks/kv.mjs b/conformance/checks/kv.mjs
+index 261e7af..8b7a98a 100644
+--- a/conformance/checks/kv.mjs
++++ b/conformance/checks/kv.mjs
+@@ -8,6 +8,17 @@ const q = encodeURIComponent;
+ const MiB = 1024 * 1024;
+ const route = (t, name, k = '', extra = '') => t.get(`/kv/${name}?k=${q(k)}${extra}`);
+ const rand = () => Math.random().toString(36).slice(2);
++const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
++// The keys of `list({ prefix })`. Edge form (`t.edge`, PLAN.md 11c): `list` is eventually consistent (a new key or a new
++// expiration can show up to 60 s later), so it reads again until `ready(keys)`, for at most 70 s.
++async function listed(t, kv, prefix, ready) {
++  let keys = (await kv.list({ prefix })).keys;
++  for (let i = 0; t.edge && i < 35 && !ready(keys); i++) {
++    await sleep(2000);
++    keys = (await kv.list({ prefix })).keys;
++  }
++  return keys;
++}
+ 
+ export const checks = [
+   ['kv setup (a big value and keys, with the binding of Miniflare)', async (t) => {
+@@ -156,7 +167,7 @@ export const checks = [
+     answer(await route(t, 'put_ttl', k, '&v=a&ttl=60001'), 'Ok {}');
+     answer(await route(t, 'put_ttl_io', `${k}-io`, '&v=a&ttl=120000'), 'Ok {}');
+     const after = Math.floor(Date.now() / 1000);
+-    const keys = (await kv.list({ prefix: 'ttl-' })).keys;
++    const keys = await listed(t, kv, 'ttl-', (ks) => ks.some((x) => x.name === k) && ks.some((x) => x.name === `${k}-io`));
+     const at = (name) => keys.find((x) => x.name === name)?.expiration;
+     // 60,001 ms is 61 s (rounded up, not 60): the expiration is between `before + 61` and `after + 62`.
+     ok(at(k) >= before + 61 && at(k) <= after + 62, `ttl 60,001 ms: expiration ${at(k)}, want ${before + 61} to ${after + 62}`);
+@@ -215,23 +226,34 @@ export const checks = [
+     await route(t, 'delete', k);
+   }],
+   ['kv Cell: set!, get!, delete! and the twins', async (t) => {
+-    await route(t, 'cell_delete');
++    // A write of the one key of the Cell. Edge form (`t.edge`, PLAN.md 11c): KV takes one write a second for a key
++    // (429 Too Many Requests), so 2 s before each write.
++    const write = async (...a) => {
++      if (t.edge) await sleep(2000);
++      return route(t, ...a);
++    };
++    await write('cell_delete');
+     answer(await route(t, 'cell_get'), 'Err NotFound');
+-    answer(await route(t, 'cell_set', '', '&v=dark'), 'Ok {}');
++    answer(await write('cell_set', '', '&v=dark'), 'Ok {}');
+     answer(await route(t, 'cell_get'), 'Ok { big: 1152921504606846976, n: 3, theme: "dark" }');
+     answer(await route(t, 'cell_get_io'), 'Ok { big: 1152921504606846976, n: 3, theme: "dark" }');
+-    answer(await route(t, 'cell_delete'), 'Ok {}');
++    answer(await write('cell_delete'), 'Ok {}');
+     answer(await route(t, 'cell_get'), 'Err NotFound');
+-    answer(await route(t, 'cell_set_io', '', '&v=dark'), 'Ok {}');
+-    answer(await route(t, 'cell_delete_io'), 'Ok {}');
++    answer(await write('cell_set_io', '', '&v=dark'), 'Ok {}');
++    answer(await write('cell_delete_io'), 'Ok {}');
+     answer(await route(t, 'cell_get_io'), 'Err NotFound');
+   }],
+   ['kv Cell set_with!: ttl_ms', async (t) => {
+     const kv = await t.mf.getKVNamespace('KV');
++    // Edge form (`t.edge`): one write a second for a key (429 Too Many Requests), and a `list` that can be late.
++    if (t.edge) await sleep(2000);
++    const before = Math.floor(Date.now() / 1000);
+     answer(await route(t, 'cell_set_ttl', '', '&v=dark&ttl=90000'), 'Ok {}');
+-    const exp = (await kv.list({ prefix: 'cell-prefs' })).keys[0].expiration;
+-    ok(Math.abs(exp - (Math.floor(Date.now() / 1000) + 90)) <= 2, `expiration ${exp}`);
++    const exp = (await listed(t, kv, 'cell-prefs', (ks) => ks[0]?.expiration >= before + 88))[0].expiration;
++    ok(Math.abs(exp - (before + 90)) <= 2, `expiration ${exp}`);
++    if (t.edge) await sleep(2000);
+     answer(await route(t, 'cell_set_ttl_io', '', '&v=dark&ttl=120000'), 'Ok {}');
++    if (t.edge) await sleep(2000);
+     await route(t, 'cell_delete');
+   }],
+   ['kv get_or!: only NotFound gets the default, a value that does not parse stays BadData', async (t) => {
+@@ -291,19 +313,28 @@ export const checks = [
+   ['kv ttl_ms under 60 s is raised to 60 s (put_with!, the Io twin, Cell.set_with!), and 60 s or more is kept', async (t) => {
+     const kv = await t.mf.getKVNamespace('KV');
+     const k = `clamp-${rand()}`;
+-    const before = Math.floor(Date.now() / 1000);
+-    const exp = async (name) => (await kv.list({ prefix: name })).keys.find((x) => x.name === name)?.expiration;
++    // `before`: the time of each put (the whole check takes many seconds on the edge).
++    let before = 0;
++    const put = async (...a) => {
++      before = Math.floor(Date.now() / 1000);
++      answer(await route(t, ...a), 'Ok {}');
++    };
++    const inWindow = (e, secs) => e >= before + secs && e <= before + secs + 5;
++    const exp = async (name, secs) => (await listed(t, kv, name, (ks) => ks.some((x) => x.name === name && inWindow(x.expiration, secs)))).find((x) => x.name === name)?.expiration;
+     const near = (e, secs, what) => ok(e >= before + secs && e <= before + secs + 5, `${what}: expiration ${e}, want about ${before + secs}`);
+     for (const [ms, secs] of [[0, 60], [1, 60], [59_999, 60], [60_000, 60], [120_000, 120]]) {
+-      answer(await route(t, 'put_ttl', `${k}-${ms}`, `&v=a&ttl=${ms}`), 'Ok {}');
+-      near(await exp(`${k}-${ms}`), secs, `put_with! ttl ${ms}`);
++      await put('put_ttl', `${k}-${ms}`, `&v=a&ttl=${ms}`);
++      near(await exp(`${k}-${ms}`, secs), secs, `put_with! ttl ${ms}`);
+     }
+-    answer(await route(t, 'put_ttl_io', `${k}-io`, '&v=a&ttl=10000'), 'Ok {}');
+-    near(await exp(`${k}-io`), 60, 'Io twin ttl 10000');
+-    answer(await route(t, 'cell_set_ttl', '', '&v=dark&ttl=10000'), 'Ok {}');
+-    near(await exp('cell-prefs'), 60, 'Cell.set_with! ttl 10000');
+-    answer(await route(t, 'cell_set_ttl_io', '', '&v=dark&ttl=5000'), 'Ok {}');
+-    near(await exp('cell-prefs'), 60, 'Cell.set_with Io twin ttl 5000');
++    await put('put_ttl_io', `${k}-io`, '&v=a&ttl=10000');
++    near(await exp(`${k}-io`, 60), 60, 'Io twin ttl 10000');
++    // Edge form: KV takes one write a second for a key (429 Too Many Requests).
++    if (t.edge) await sleep(2000);
++    await put('cell_set_ttl', '', '&v=dark&ttl=10000');
++    near(await exp('cell-prefs', 60), 60, 'Cell.set_with! ttl 10000');
++    if (t.edge) await sleep(2000);
++    await put('cell_set_ttl_io', '', '&v=dark&ttl=5000');
++    near(await exp('cell-prefs', 60), 60, 'Cell.set_with Io twin ttl 5000');
+     await route(t, 'cell_delete');
+   }],
+ ];
+diff --git a/conformance/checks/objects.mjs b/conformance/checks/objects.mjs
+index 19541ce..d4a25de 100644
+--- a/conformance/checks/objects.mjs
++++ b/conformance/checks/objects.mjs
+@@ -184,7 +184,14 @@ export const checks = [
+     has(first, 'Err Infra(ObjectErr(');
+     has(first, 'Flaky.init: failed: InitFailed');
+     await kv.delete('fail-init');
+-    const second = await t.get('/objects/flaky?name=f1');
++    let second = await t.get('/objects/flaky?name=f1');
++    // Edge form (`t.edge`, PLAN.md 11c): KV is eventually consistent (a read can give the old value for up to 60 s), so
++    // the object can read the flag again: each next fetch! runs init! again, until it reads that the flag is gone.
++    for (let i = 0; t.edge && i < 35 && !second.body.startsWith('ok '); i++) {
++      has(second, 'Flaky.init: failed: InitFailed');
++      await sleep(2000);
++      second = await t.get('/objects/flaky?name=f1');
++    }
+     ok(second.body.startsWith('ok '), `second: ${second.body}`);
+     return `${first.body.slice(0, 120)} | ${second.body.slice(0, 20)}`;
+   }],
+@@ -220,6 +227,9 @@ export const checks = [
+     has(r, 'new_sqlite_classes');
+   }],
+   ['objects respond! in the Fetch of an object: the response first, the cell after', async (t) => {
++    // Edge form (`t.edge`, PLAN.md 11c): the first request to a new object can take more than the 250 ms of `fast` (the
++    // object is made). One request first: the object is there.
++    if (t.edge) await counter(t, 'late', 'r');
+     answer(await t.get('/objects/respond?name=r'), 'early fast=True');
+     await sleep(500);
+     answer(await counter(t, 'late', 'r'), 'Ok("written")');
+@@ -245,7 +255,9 @@ export const checks = [
+   }],
+   // The alarm started in the first check: Workers runs it again after each `Err` (2 s, then 4 s).
+   ['objects alarm!: Err while retry_count < 2 runs 3 times, with retry_count and is_retry', async (t) => {
+-    for (let i = 0; i < 120 && ticks(t).length < 3; i++) await sleep(100);
++    // Edge form (`t.edge`, PLAN.md 11c): the edge waits longer between the runs of a failed alarm (a backoff that grows),
++    // so the check waits up to 60 s.
++    for (let i = 0; i < (t.edge ? 600 : 120) && ticks(t).length < 3; i++) await sleep(100);
+     await sleep(300);
+     const got = ticks(t).map((x) => `${x.retry_count} ${x.is_retry}`);
+     eq(got.join(', '), '0 false, 1 true, 2 true', 'the runs');
+diff --git a/conformance/checks/r2.mjs b/conformance/checks/r2.mjs
+index f083924..536334d 100644
+--- a/conformance/checks/r2.mjs
++++ b/conformance/checks/r2.mjs
+@@ -32,6 +32,8 @@ async function hit(t, path, headers = {}) {
+   const out = {};
+   for (const [k, v] of [...res.headers].sort()) {
+     if (['mf-content-encoding', 'content-length', 'date', 'x-waits', 'x-awaits', 'x-calls', 'x-ms', 'transfer-encoding'].includes(k)) continue;
++    // Edge form (`t.edge`, PLAN.md 11c): the headers that Cloudflare and edge/worker.js add to each answer.
++    if (t.edge && ['alt-svc', 'cf-ray', 'nel', 'report-to', 'server', 'server-timing', 'cf-cache-status', 'x-edge-isolate'].includes(k)) continue;
+     out[k] = v;
+   }
+   return { status: res.status, headers: out, text };
+@@ -288,7 +290,10 @@ export const checks = [
+       if (got.includes('abort')) break;
+       await new Promise((res) => setTimeout(res, 50));
+     }
+-    eq(JSON.stringify(got), JSON.stringify(['createMultipartUpload', 'uploadPart 1 5242880', 'abort']), 'the multipart calls');
++    // Edge form (`t.edge`, PLAN.md 11c): the `/broken` of the echo Worker has a known length (a Worker origin cannot send a
++    // body with no length that errors: the edge makes it a clean end), so the put is one put of the stream, which fails.
++    const want = t.edge ? [] : ['createMultipartUpload', 'uploadPart 1 5242880', 'abort'];
++    eq(JSON.stringify(got), JSON.stringify(want), 'the multipart calls');
+   }],
+   ['r2 put_with! only_if with a stream of unknown length over 5 MiB is R2Err (no upload, no object)', async (t) => {
+     const { r, calls: c } = await gen(t, 'gcond', 6 * MiB, '&etag=anything');
+diff --git a/conformance/checks/websocket.mjs b/conformance/checks/websocket.mjs
+index 0d4a327..2a79a7d 100644
+--- a/conformance/checks/websocket.mjs
++++ b/conformance/checks/websocket.mjs
+@@ -13,7 +13,10 @@ let echo = null;
+ // `{"n":5}`, "delay <ms> <text>" gives "echo <text>" after <ms>, "close me" closes with 4005 "peer bye", each other text
+ // "echo <text>", bytes come back. It picks the first subprotocol that the client asks for (the default of `ws`), and
+ // takes `permessage-deflate` when the client offers it (a client of workerd offers no extension of its own).
++// Edge form (`t.wsEcho`, PLAN.md 11c): the same server in the echo Worker of edge/run-edge.mjs (a local server is not
++// reachable from the edge).
+ function echoServer(t) {
++  if (t.wsEcho) return Promise.resolve(t.wsEcho);
+   if (echo) return echo;
+   const { WebSocketServer } = createRequire(import.meta.url)(join(dirname(t.mfDir), 'ws'));
+   const wss = new WebSocketServer({ port: 0, host: '127.0.0.1', perMessageDeflate: true });
+diff --git a/conformance/worker.js b/conformance/worker.js
+index 5581f96..7f234db 100644
+--- a/conformance/worker.js
++++ b/conformance/worker.js
+@@ -4,7 +4,7 @@
+ // of the runner): `run.mjs` sends one request at a time. `GET /__stats`: the task table. `GET /__mem`: the size of wasm memory in bytes (10a).
+ import app from 'app.wasm';
+ import { makeHandler, objectClass, entrypointClass } from './js/index.js';
+-import { withStubs, stubRoute, Flow, Waiter } from './bindings.js';
++import { withStubs, stubRoute, countD1, takeD1Calls, Flow, Waiter } from './bindings.js';
+ import { countBinding } from './js/test-entry.js';
+ export { Flow, Waiter };
+ 
+@@ -40,9 +40,11 @@ globalThis.clearTimeout = (id) => (liveTimers.delete(id), clearT(id));
+ const ops = {
+   lib: {
+     twice: (n) => n * 2,
++    // On the edge `Date.now()` does not move while JS runs (it moves at I/O), so the loop also ends after a count
++    // (the edge run; about 20 to 40 ms of work for ms = 20: one `Date.now()` is about 30 ns there).
+     spin: (ms) => {
+       const t0 = Date.now();
+-      while (Date.now() - t0 < ms);
++      for (let i = 0; i < ms * 50_000 && Date.now() - t0 < ms; i++);
+     },
+   },
+ };
+@@ -54,8 +56,8 @@ const now = () => Date.now() + clockSkew;
+ // `initMs`: the `Init` deadline of API.md 10.2, smaller for the test (class `Slow`).
+ // The shim option `wrapEnv` (TH11, checks/wrapenv.mjs): a request with the header `x-count-d1` gets a counted `DB` (the count
+ // of the test helper, js/test-entry.js). `GET /__d1_calls` gives the count and sets it to 0.
+-let d1Calls = 0;
+-const wrapEnv = (env, info) => (info.kind === 'Fetch' && info.event?.headers?.has?.('x-count-d1') && env.DB ? { ...env, DB: countBinding(env.DB, () => d1Calls++, () => {}) } : env);
++// The count is in conformance/bindings.js (`countD1`, `takeD1Calls`), with the state of the stubs (the edge run shares it).
++const wrapEnv = (env, info) => (info.kind === 'Fetch' && info.event?.headers?.has?.('x-count-d1') && env.DB ? { ...env, DB: countBinding(env.DB, countD1, () => {}) } : env);
+ const Handler = makeHandler(app, { ops, now, wrapEnv, heapCheckWhenIdle: false, tailMaxBytes: 100_000, initMs: 1000 });
+ 
+ // The messages that the JS consumer of the queue `v8` got (PLAN.md 8f): a `Queue.v8` message with a `Cbor.Bytes` field is
+@@ -114,8 +116,7 @@ export default class extends Handler {
+       return new Response(String(clockSkew));
+     }
+     if (path === '/__d1_calls') {
+-      const n = d1Calls;
+-      d1Calls = 0;
++      const n = takeD1Calls();
+       return new Response(String(n));
+     }
+     if (path === '/__mem') return new Response(String(r.x.memory.buffer.byteLength));
