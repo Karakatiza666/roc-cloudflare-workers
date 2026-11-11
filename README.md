@@ -2,7 +2,7 @@
 
 A Roc platform for Cloudflare Workers. The app compiles to a wasm32 reactor. The host is in Zig. Effects (fetch, D1, R2, KV, Cache API, Durable Object SQL) are direct-style hosted functions that wait on JS promises through JSPI.
 
-Status: phases A and B are built (`PLAN.md`). The release files are made by `scripts/bundle.sh` and published by `.github/workflows/release.yml` (`PLAN.md` 11). The latest release is 0.0.9: see "Changes in 0.0.9". "Changes in 0.0.10" lists the changes for the next release (0.0.10 is not released yet).
+Status: phases A and B are built (`PLAN.md`). The release files are made by `scripts/bundle.sh` and published by `.github/workflows/release.yml` (`PLAN.md` 11). The latest release is 0.0.10: see "Changes in 0.0.10".
 
 | Document | Content |
 | --- | --- |
@@ -24,6 +24,7 @@ There is no npm package and no `package.json` in a project. The release notes ha
 
 | Release | URL for the app header | Built with |
 | --- | --- | --- |
+| 0.0.10 | `https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/0.0.10/Dfyn36P4a9t8519ZVXDkHrmvXA9cbzrjkN4YHJuVfkGd.tar.zst` | `nightly-2026-11-06-34f137a` |
 | 0.0.9 | `https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/0.0.9/HxEw3vEufHwg2oQesjY4jExSRb6iejCVUQqzHY56Lq1w.tar.zst` | `nightly-2026-11-06-34f137a` |
 | 0.0.8 | `https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/0.0.8/DDDLMRuP5Qxi8pcCWbP7AHg5gmrmGTRN1jWqDjbfEbSe.tar.zst` | `nightly-2026-11-06-34f137a` |
 | 0.0.7 | `https://github.com/Karakatiza666/roc-cloudflare-workers/releases/download/0.0.7/H2XzG4R2kci1kL4iVzvjx4CF1ohs1XYv1CMHjZzJ5TTi.tar.zst` | `nightly-2026-11-04-2622062` |
